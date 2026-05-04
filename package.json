@@ -1,0 +1,44 @@
+{
+  "name": "entity",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "test": "node e2e/test-browser.js",
+    "test:e2e": "node e2e/test-browser.js",
+    "build": "npm --prefix packages/app run build && npm --prefix packages/db run build && npm --prefix packages/server run build",
+    "electron": "npm --prefix electron run dev",
+    "electron:build": "npm --prefix electron run build",
+    "test:unit": "echo \"No unit tests configured\"",
+    "test:live": "node scripts/ctrl-live-smoke.mjs",
+    "test:deploy": "bash scripts/ctrl-deploy-path-check.sh",
+    "test:docker": "npm run test:deploy",
+    "ctrl:gate": "bash scripts/ctrl-gate-runner.sh",
+    "ctrl:full": "npm run ctrl:gate && npm run test:live && npm run test:deploy",
+    "scan:private-defaults": "node scripts/scan-private-defaults.mjs"
+  },
+  "workspaces": [
+    "packages/*",
+    "electron"
+  ],
+  "dependencies": {
+    "@sentry/node": "^10.39.0",
+    "@types/cors": "^2.8.19",
+    "better-sqlite3": "^11.10.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/chokidar": "^1.7.5",
+    "@types/compression": "^1.8.1",
+    "@types/express": "^4.17.21",
+    "@types/node": "^25.2.3",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.3.1"
+  },
+  "ctrl": {
+    "mode": "mvp"
+  }
+}

@@ -1,0 +1,13 @@
+Fix MarkdownPreview.tsx to render HTML content in .md files.
+
+Many Obsidian vault files contain raw HTML (Evernote imports) in .md files. Currently shows as raw text.
+
+Steps:
+1. cd packages/app && npm install rehype-raw rehype-sanitize
+2. In packages/app/src/components/MarkdownPreview.tsx:
+   - Import rehypeRaw from 'rehype-raw'
+   - Import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+   - Create a custom schema extending defaultSchema to allow: font (with color attr), u, b, i, em, strong, div, span, br, ul, ol, li, table, tr, td, th, h1-h6, a (href), img (src, alt), p, pre, code
+   - Add [rehypeRaw, rehypeSanitize(customSchema)] to rehypePlugins array in ReactMarkdown
+3. If content has significant HTML tags, show a small 'HTML' badge indicator
+4. Do NOT modify any files outside packages/app/src/components/MarkdownPreview.tsx (except package.json for deps)

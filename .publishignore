@@ -1,0 +1,9 @@
+secrets/
+scripts/ralph/
+*.log
+CODEX-TASK.md
+INTEGRATION-SPEC.md
+MC-SERVER-REFERENCE.js
+MC-SOURCE.html
+run-ralph-3.sh
+task_plan.md

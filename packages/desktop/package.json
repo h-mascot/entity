@@ -1,0 +1,13 @@
+{
+  "name": "entity-desktop",
+  "version": "0.1.0",
+  "description": "Legacy wrapper package. Canonical desktop packaging lives in /electron.",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix ../../electron run dev",
+    "build": "npm --prefix ../../electron run build:renderer",
+    "package": "npm --prefix ../../electron run build",
+    "package:all": "npm --prefix ../../electron run build"
+  },
+  "author": "Henry Mascot"
+}

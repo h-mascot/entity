@@ -1,0 +1,66 @@
+{
+  "id": "geordi-swarm",
+  "name": "Geordi Swarm",
+  "version": "0.1.0",
+  "kind": "product",
+  "description": "Autonomous code factory for Entity",
+  "author": "Enterprise Crew",
+  "host": ["entity-server", "entity-ui"],
+  "entityVersion": {
+    "min": "0.1.0"
+  },
+  "capabilities": [
+    "ui.tab.register",
+    "ui.task-detail.extend",
+    "api.routes.register",
+    "data.migrations.register",
+    "data.tables.own",
+    "runtime.dispatch.orchestrate",
+    "tasks.events.observe",
+    "admin.settings.register",
+    "activity.emit"
+  ],
+  "entrypoints": {
+    "server": "./packages/server/src/swarm/index.ts",
+    "ui": "./packages/app/src/components/SwarmBoard.tsx"
+  },
+  "hooks": ["task:created", "task:updated", "task:moved"],
+  "routes": [
+    {
+      "basePath": "/api/swarm",
+      "entry": "./packages/server/src/swarm/routes.ts"
+    }
+  ],
+  "ui": {
+    "tab": {
+      "label": "Swarm",
+      "icon": "factory",
+      "component": "SwarmBoard",
+      "placement": "sidebar"
+    },
+    "taskDetailSlot": {
+      "component": "SwarmJobsSection"
+    }
+  },
+  "settings": {
+    "defaultProvider": "acp",
+    "maxConcurrentJobs": 2,
+    "autoDispatch": false,
+    "retryLimit": 3
+  },
+  "storage": {
+    "tables": ["swarm_jobs", "swarm_proofs"],
+    "migrationsDir": "./packages/server/src/swarm/migrations"
+  },
+  "ownerBoundaries": {
+    "ownsRoutes": true,
+    "ownsTables": true,
+    "modifiesCoreSchema": false,
+    "requiresCoreSlots": [
+      "sidebar.tab",
+      "task-detail.section",
+      "task.events",
+      "websocket.namespace"
+    ]
+  }
+}

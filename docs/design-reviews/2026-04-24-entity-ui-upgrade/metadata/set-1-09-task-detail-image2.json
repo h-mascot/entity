@@ -1,0 +1,15 @@
+{
+  "model": "gpt-image-2",
+  "endpoint": "https://api.openai.com/v1/images/edits",
+  "set": "set-1",
+  "view": "09-task-detail",
+  "viewName": "Task Detail View",
+  "size": "1536x1024",
+  "quality": "medium",
+  "startedAt": "2026-04-24T06:13:28.604Z",
+  "completedAt": "2026-04-24T06:14:42.954Z",
+  "status": 200,
+  "ok": true,
+  "requestId": "req_507bbdbb78b24b15b36fd916d6aa8e3c",
+  "outputPath": "set-1/09-task-detail.png"
+}

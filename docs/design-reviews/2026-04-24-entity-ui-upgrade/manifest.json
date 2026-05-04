@@ -1,0 +1,53 @@
+{
+  "artifactPack": "2026-04-24-entity-ui-upgrade",
+  "createdAt": "2026-04-24",
+  "root": "docs/design-reviews/2026-04-24-entity-ui-upgrade",
+  "purpose": "Entity UI screenshot capture and Image 2.0 redesign recommendations",
+  "modelPolicy": {
+    "imageModel": "gpt-image-2",
+    "endpoint": "https://api.openai.com/v1/images/edits",
+    "fallbackUsed": false,
+    "apiKeyPersisted": false
+  },
+  "canonicalViews": [
+    { "id": "01-files", "name": "Files", "level": "first" },
+    { "id": "02-agents", "name": "Agents", "level": "first" },
+    { "id": "03-tasks", "name": "Tasks", "level": "first" },
+    { "id": "04-services", "name": "Services", "level": "first" },
+    { "id": "05-chat", "name": "Chat", "level": "first" },
+    { "id": "06-admin", "name": "Admin", "level": "first" },
+    { "id": "07-docs-view", "name": "Docs View", "level": "second" },
+    { "id": "08-agent-detail", "name": "Agent Detail View", "level": "second" },
+    { "id": "09-task-detail", "name": "Task Detail View", "level": "second" }
+  ],
+  "sets": {
+    "actual": { "label": "Current captured UI", "expected": 9, "present": 9, "validated": true, "viewport": "1440x1000" },
+    "set-1": { "label": "Polished Evolution", "expected": 9, "present": 9, "validated": true, "size": "1536x1024" },
+    "set-2": { "label": "Alternate IA Direction", "expected": 9, "present": 9, "validated": true, "size": "1536x1024" }
+  },
+  "validation": {
+    "script": "visual-validate.cjs --include-generated",
+    "resultsPath": "metadata/visual-validation-all.json",
+    "pngCount": 27,
+    "failures": 0
+  },
+  "reviewAgents": {
+    "requested": 20,
+    "completed": 20,
+    "concurrencyLimitObserved": 6,
+    "notesPath": "agent-notes/"
+  },
+  "primaryArtifacts": {
+    "actualScreenshots": "actual/*.png",
+    "generatedSet1": "set-1/*.png",
+    "generatedSet2": "set-2/*.png",
+    "prompts": "prompts/*.txt",
+    "apiMetadata": "metadata/set-*-*-image2.json",
+    "report": "report.md"
+  },
+  "knownCaveats": [
+    "Some agent notes were written while generation was still in progress and may mention images as missing; manifest and visual-validation-all.json are authoritative for final coverage.",
+    "Several actual captures show loading or sparse states for Agents, Chat, Services, and Agent Detail; use them as current-state evidence, not exhaustive loaded-state specs.",
+    "Prompt metadata came from DOM text and may include off-screen or stale text; generated images are concept references, not exact implementation specs."
+  ]
+}

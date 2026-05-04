@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entity - Simplified UI Mockup</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    /* Using actual design tokens from Entity index.css */
+    :root {
+      --bg-primary: #000;
+      --bg-secondary: #111;
+      --bg-tertiary: #1a1a1a;
+      --border-primary: #222;
+      --border-secondary: #333;
+      --text-primary: #fff;
+      --text-secondary: #e0e0e0;
+      --text-muted: #7c7c7c;
+      --accent: #0af;
+      --accent-muted: rgba(0, 170, 255, 0.15);
+      --error: #f66;
+      --warning: #f90;
+      --success: #0c6;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .shell {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* Icon Rail - Slim sidebar */
+    .icon-rail {
+      width: 56px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-primary);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 0;
+      gap: 4px;
+    }
+
+    .icon-rail .logo {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      margin-bottom: 16px;
+    }
+
+    .icon-rail .nav-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+
+    .icon-rail .nav-btn:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+    }
+
+    .icon-rail .nav-btn.active {
+      background: var(--accent-muted);
+      color: var(--accent);
+    }
+
+    .icon-rail .divider {
+      width: 24px;
+      height: 1px;
+      background: var(--border-primary);
+      margin: 8px 0;
+    }
+
+    .icon-rail .spacer {
+      flex: 1;
+    }
+
+    /* Context Panel */
+    .context-panel {
+      width: 220px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-primary);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .context-panel .section-header {
+      padding: 16px 16px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+
+    .context-panel .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .context-panel .nav-item:hover {
+      background: var(--bg-tertiary);
+    }
+
+    .context-panel .nav-item.active {
+      color: var(--accent);
+      background: var(--accent-muted);
+    }
+
+    .context-panel .nav-item .indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    .context-panel .nav-item .indicator.offline {
+      background: var(--text-muted);
+    }
+
+    /* Main Content */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .main-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border-primary);
+      background: var(--bg-secondary);
+    }
+
+    .main-header .title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .main-header .title-group .icon {
+      font-size: 24px;
+    }
+
+    .main-header .title-group h1 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .main-header .title-group .subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .main-header .actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .main-header .status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .main-header .status .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--warning);
+    }
+
+    .main-header .status .dot.online {
+      background: var(--success);
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+    }
+
+    .btn-primary:hover {
+      filter: brightness(1.1);
+    }
+
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-secondary);
+    }
+
+    .btn-secondary:hover {
+      background: var(--border-primary);
+    }
+
+    .btn-icon {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid var(--border-primary);
+      color: var(--text-muted);
+      border-radius: 6px;
+    }
+
+    .btn-icon:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+    }
+
+    /* Task Content Area */
+    .task-content {
+      flex: 1;
+      padding: 24px;
+      overflow-y: auto;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 300px;
+      color: var(--text-muted);
+      gap: 12px;
+    }
+
+    .empty-state .icon {
+      font-size: 48px;
+      opacity: 0.3;
+    }
+
+    .empty-state p {
+      font-size: 14px;
+    }
+
+    /* Insights Toggle */
+    .insights-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      margin-top: 16px;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    .insights-toggle:hover {
+      background: var(--border-primary);
+    }
+
+    /* Comparison section */
+    .comparison {
+      display: flex;
+      gap: 40px;
+      padding: 40px;
+      background: var(--bg-tertiary);
+      margin: 20px;
+      border-radius: 12px;
+    }
+
+    .comparison .side {
+      flex: 1;
+    }
+
+    .comparison h3 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border-primary);
+    }
+
+    .comparison ul {
+      list-style: none;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .comparison li {
+      padding: 6px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .comparison .removed {
+      color: var(--error);
+      text-decoration: line-through;
+      opacity: 0.7;
+    }
+
+    .comparison .added {
+      color: var(--success);
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <!-- Slim Icon Rail -->
+    <div class="icon-rail">
+      <div class="logo">⚡</div>
+
+      <button class="nav-btn" title="Files">📁</button>
+      <button class="nav-btn" title="Crew">🤖</button>
+      <button class="nav-btn active" title="Tasks">☑️</button>
+
+      <div class="divider"></div>
+
+      <div class="spacer"></div>
+
+      <button class="nav-btn" title="Settings">⚙️</button>
+    </div>
+
+    <!-- Context Panel (changes per view) -->
+    <div class="context-panel">
+      <div class="section-header">Mission</div>
+      <div class="nav-item active">
+        <span>○</span>
+        <span>Ops</span>
+      </div>
+      <div class="nav-item">
+        <span>○</span>
+        <span>Strategic</span>
+      </div>
+      <div class="nav-item">
+        <span>○</span>
+        <span>Admin</span>
+      </div>
+
+      <div class="section-header">Filter by</div>
+      <div class="nav-item">
+        <span>▸</span>
+        <span>Agent</span>
+      </div>
+      <div class="nav-item">
+        <span>▸</span>
+        <span>Priority</span>
+      </div>
+      <div class="nav-item">
+        <span>▸</span>
+        <span>Project</span>
+      </div>
+
+      <div class="section-header">Crew Online</div>
+      <div class="nav-item">
+        <span class="indicator"></span>
+        <span>Ada</span>
+      </div>
+      <div class="nav-item">
+        <span class="indicator"></span>
+        <span>Spock</span>
+      </div>
+      <div class="nav-item">
+        <span class="indicator offline"></span>
+        <span>Scotty</span>
+      </div>
+      <div class="nav-item">
+        <span class="indicator"></span>
+        <span>Henry</span>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <div class="main-header">
+        <div class="title-group">
+          <span class="icon">⚡</span>
+          <div>
+            <h1>Mission Control</h1>
+            <span class="subtitle">Him's Enterprise Crew</span>
+          </div>
+        </div>
+        <div class="actions">
+          <div class="status">
+            <span class="dot"></span>
+            <span>Offline</span>
+          </div>
+          <button class="btn btn-primary">+ New task</button>
+          <button class="btn-icon">⚙️</button>
+        </div>
+      </div>
+
+      <div class="task-content">
+        <div class="empty-state">
+          <span class="icon">☑️</span>
+          <p>No tasks due today</p>
+        </div>
+
+        <div class="insights-toggle">
+          <span>▸</span>
+          <span>Insights</span>
+        </div>
+
+        <!-- Comparison for reference -->
+        <div class="comparison">
+          <div class="side">
+            <h3>Removed (Noise)</h3>
+            <ul>
+              <li class="removed">❌ Horizontal sidebar tabs</li>
+              <li class="removed">❌ "ACTIVE TASKS" section</li>
+              <li class="removed">❌ Status cards (all zeros)</li>
+              <li class="removed">❌ 8 inline filter buttons</li>
+              <li class="removed">❌ Duplicate "Agents" tab</li>
+              <li class="removed">❌ Multiple status indicators</li>
+              <li class="removed">❌ Second settings icon</li>
+            </ul>
+          </div>
+          <div class="side">
+            <h3>Added (Signal)</h3>
+            <ul>
+              <li class="added">✓ Icon rail (always visible)</li>
+              <li class="added">✓ Context panel (view-specific)</li>
+              <li class="added">✓ Filters in sidebar (collapsible)</li>
+              <li class="added">✓ Crew status in sidebar</li>
+              <li class="added">✓ Single status indicator</li>
+              <li class="added">✓ Clean content area</li>
+              <li class="added">✓ Progressive disclosure</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

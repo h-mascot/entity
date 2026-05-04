@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClawChat - Talk to Ada</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #121212; color: #fff; }
+        button { padding: 20px 40px; font-size: 24px; border-radius: 50px; border: none; background: #007bff; color: white; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #0056b3; }
+        button:active { transform: scale(0.95); }
+        .status { margin-top: 20px; font-size: 18px; color: #aaa; }
+    </style>
+</head>
+<body>
+    <h1>ClawChat 🎙️</h1>
+    <button id="talkButton">Connect & Talk</button>
+    <div class="status" id="status">Ready</div>
+
+    <script>
+        let ws;
+        let audioContext;
+        const talkButton = document.getElementById('talkButton');
+        const status = document.getElementById('status');
+
+        talkButton.addEventListener('click', async () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+                return;
+            }
+
+            status.textContent = "Requesting microphone...";
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    status.textContent = "Connected. Start speaking!";
+                    talkButton.textContent = "Disconnect";
+                    talkButton.style.background = "#dc3545";
+
+                    const source = audioContext.createMediaStreamSource(stream);
+                    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+                    
+                    source.connect(processor);
+                    processor.connect(audioContext.destination);
+
+                    processor.onaudioprocess = (e) => {
+                        if (ws.readyState === WebSocket.OPEN) {
+                            const inputData = e.inputBuffer.getChannelData(0);
+                            const pcm16 = new Int16Array(inputData.length);
+                            for (let i = 0; i < inputData.length; i++) {
+                                pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+                            }
+                            ws.send(pcm16.buffer);
+                        }
+                    };
+                };
+
+                ws.onmessage = async (event) => {
+                    const arrayBuffer = await event.data.arrayBuffer();
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    const source = audioContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(audioContext.destination);
+                    source.start();
+                };
+
+                ws.onclose = () => {
+                    status.textContent = "Disconnected.";
+                    talkButton.textContent = "Connect & Talk";
+                    talkButton.style.background = "#007bff";
+                    stream.getTracks().forEach(track => track.stop());
+                };
+
+                ws.onerror = (e) => {
+                    console.error("WebSocket error:", e);
+                    status.textContent = "Connection error.";
+                };
+
+            } catch (err) {
+                console.error("Mic access denied or error:", err);
+                status.textContent = "Microphone access denied.";
+            }
+        });
+    </script>
+</body>
+</html>

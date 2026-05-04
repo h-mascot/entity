@@ -1,0 +1,44 @@
+{
+  "name": "@entity/electron",
+  "version": "0.0.1",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dev": "DEV_URL=http://localhost:5173 electron .",
+    "build:renderer": "npm --prefix ../packages/app run build && rm -rf renderer && mkdir -p renderer && cp -R ../packages/app/dist/. renderer/",
+    "build": "npm run build:renderer && electron-builder --mac dmg --win nsis"
+  },
+  "build": {
+    "appId": "com.entity.missioncontrol",
+    "productName": "Entity",
+    "files": [
+      "main.js",
+      "renderer/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "electronVersion": "34.5.8"
+  },
+  "devDependencies": {
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "description": "Entity Mission Control Desktop",
+  "author": "Enterprise Crew"
+}

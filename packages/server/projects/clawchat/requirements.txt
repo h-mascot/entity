@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+pipecat-ai[silero,elevenlabs,deepgram,openai]
+python-dotenv

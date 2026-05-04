@@ -1,0 +1,251 @@
+import { createFileIndexRepository } from '../../../db/src/file-index';
+import { createFileSourceRepository, type FileSourceRecord } from '../../../db/src/file-sources';
+import { classifyFile } from './classify';
+import { createFileSourceAdapter } from './adapters/registry';
+import { emitFsAudit } from './security';
+import { recordFsOperation } from './metrics';
+
+const MAX_SOURCE_DEPTH = 8;
+const MAX_DIRECTORIES_PER_SOURCE = 5000;
+
+const IGNORED_DIRECTORIES = new Set([
+  'node_modules', '.git', '.next', '.cache', 'dist', '__pycache__',
+  '.venv', 'venv', '.tox', 'coverage', '.nyc_output', 'build',
+  'chromadb', '.openclaw',
+  'box', 'tmp', 'secrets', 'orphaned-sessions', 'calls',
+]);
+
+function isMissingPathError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'ENOENT') {
+    return true;
+  }
+
+  if (!(err instanceof Error)) {
+    return false;
+  }
+
+  const normalized = err.message.trim().toLowerCase();
+  return (
+    normalized.includes('no such file') ||
+    normalized.includes('does not exist') ||
+    normalized.includes('not found')
+  );
+}
+
+function normalizeDirectoryPath(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '.') {
+    return '';
+  }
+
+  return trimmed.replace(/\/+$/, '');
+}
+
+interface IndexRunnerOptions {
+  maxConcurrentSources?: number;
+  maxFilesPerSource?: number;
+}
+
+export class FileIndexRunner {
+  private readonly sourceRepo = createFileSourceRepository();
+  private readonly indexRepo = createFileIndexRepository();
+  private readonly maxConcurrentSources: number;
+  private readonly maxFilesPerSource: number;
+
+  constructor(options: IndexRunnerOptions = {}) {
+    this.maxConcurrentSources = Math.max(1, options.maxConcurrentSources ?? 2);
+    this.maxFilesPerSource = Math.max(10, options.maxFilesPerSource ?? 10000);
+  }
+
+  async runOnce(): Promise<void> {
+    const sources = this.sourceRepo.listSources(false);
+    const queue = [...sources];
+    const workers: Promise<void>[] = [];
+
+    for (let i = 0; i < this.maxConcurrentSources; i += 1) {
+      workers.push(
+        (async () => {
+          let source: FileSourceRecord | undefined = queue.shift();
+          while (source) {
+            await this.indexSource(source);
+            source = queue.shift();
+          }
+        })()
+      );
+    }
+
+    await Promise.all(workers);
+  }
+
+  async runOnceForSource(sourceId: string): Promise<void> {
+    const normalized = sourceId.trim();
+    if (!normalized) {
+      return;
+    }
+
+    const source = this.sourceRepo.getSource(normalized);
+    if (!source || !source.enabled) {
+      return;
+    }
+
+    await this.indexSource(source);
+  }
+
+  private async indexSource(source: FileSourceRecord): Promise<void> {
+    const startedAt = Date.now();
+    const run = this.indexRepo.startSyncRun(source.id);
+    let filesScanned = 0;
+    let filesIndexed = 0;
+
+    try {
+      const adapter = createFileSourceAdapter(source);
+      await adapter.validate(source);
+
+      const queue: Array<{ path: string; depth: number }> = [{ path: '', depth: 0 }];
+      const queuedDirectories = new Set<string>(['']);
+      const visitedDirectories = new Set<string>();
+      const visitedFiles = new Set<string>();
+
+      while (queue.length > 0) {
+        if (filesScanned >= this.maxFilesPerSource) {
+          break;
+        }
+
+        if (visitedDirectories.size >= MAX_DIRECTORIES_PER_SOURCE) {
+          break;
+        }
+
+        const next = queue.shift();
+        if (!next) {
+          break;
+        }
+
+        const directoryPath = normalizeDirectoryPath(next.path);
+        queuedDirectories.delete(directoryPath);
+        if (visitedDirectories.has(directoryPath)) {
+          continue;
+        }
+
+        visitedDirectories.add(directoryPath);
+
+        let nodes: Array<{ path: string; name: string; isDirectory: boolean }> = [];
+        try {
+          nodes = await adapter.list(directoryPath);
+        } catch (err) {
+          if (isMissingPathError(err)) {
+            continue;
+          }
+          const message = err instanceof Error ? err.message : 'Unknown list error';
+          emitFsAudit('index.dir.error', { sourceId: source.id, path: directoryPath, error: message });
+          if (!directoryPath) {
+            throw err;
+          }
+          continue;
+        }
+
+        for (const node of nodes) {
+          if (filesScanned >= this.maxFilesPerSource) {
+            break;
+          }
+
+          if (node.isDirectory) {
+            const dirName = node.name.toLowerCase();
+            if (IGNORED_DIRECTORIES.has(dirName)) {
+              continue;
+            }
+
+            const nextDepth = next.depth + 1;
+            if (nextDepth > MAX_SOURCE_DEPTH) {
+              continue;
+            }
+
+            const childPath = normalizeDirectoryPath(node.path);
+            if (visitedDirectories.has(childPath) || queuedDirectories.has(childPath)) {
+              continue;
+            }
+
+            if (visitedDirectories.size + queuedDirectories.size >= MAX_DIRECTORIES_PER_SOURCE) {
+              continue;
+            }
+
+            queue.push({ path: childPath, depth: nextDepth });
+            queuedDirectories.add(childPath);
+            continue;
+          }
+
+          if (visitedFiles.has(node.path)) {
+            continue;
+          }
+
+          visitedFiles.add(node.path);
+          filesScanned += 1;
+
+          try {
+            const file = await adapter.read(node.path);
+            const classification = classifyFile(node.path, file.content);
+
+            this.indexRepo.upsertRecord({
+              id: `${source.id}:${node.path}`,
+              source_id: source.id,
+              path: node.path,
+              title: classification.title,
+              type: classification.type,
+              agent: classification.agent,
+              origin: classification.origin,
+              is_recurring: classification.isRecurring,
+              recurring_pattern: classification.recurringPattern ?? null,
+              tags: JSON.stringify(classification.tags),
+              updated_at: file.updatedAt ?? null,
+              indexed_at: new Date().toISOString(),
+              preview: file.content.slice(0, 280),
+              content_hash: classification.contentHash,
+            });
+
+            filesIndexed += 1;
+          } catch (err) {
+            if (isMissingPathError(err)) {
+              continue;
+            }
+            const message = err instanceof Error ? err.message : 'Unknown read error';
+            emitFsAudit('index.file.error', { sourceId: source.id, path: node.path, error: message });
+          }
+        }
+      }
+
+      this.indexRepo.finishSyncRun(run.id, 'ok', {
+        filesScanned,
+        filesIndexed,
+      });
+      recordFsOperation({
+        operation: 'index.source',
+        sourceId: source.id,
+        durationMs: Date.now() - startedAt,
+        success: true,
+      });
+      this.sourceRepo.updateSource(source.id, {
+        health: filesIndexed > 0 || filesScanned === 0 ? 'ok' : 'degraded',
+        last_synced_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown index error';
+      this.indexRepo.finishSyncRun(run.id, 'error', {
+        error: message,
+        filesScanned,
+        filesIndexed,
+      });
+      this.sourceRepo.updateSource(source.id, {
+        health: 'error',
+        last_synced_at: new Date().toISOString(),
+      });
+      recordFsOperation({
+        operation: 'index.source',
+        sourceId: source.id,
+        durationMs: Date.now() - startedAt,
+        success: false,
+        error: message,
+      });
+      emitFsAudit('index.source.error', { sourceId: source.id, error: message });
+    }
+  }
+}

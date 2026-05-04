@@ -1,0 +1,119 @@
+
+> @entity/app@0.0.1 dev
+> vite --host 127.0.0.1 --port 4173
+
+Port 4173 is in use, trying another one...
+
+  VITE v5.4.21  ready in 117 ms
+
+  ➜  Local:   http://127.0.0.1:4174/
+7:17:13 PM [vite] page reload index.html
+10:43:12 PM [vite] hmr update /src/index.css, /src/components/CodeMirrorEditor.tsx
+10:43:21 PM [vite] hmr update /src/components/CodeMirrorEditor.tsx, /src/index.css
+10:43:52 PM [vite] hmr update /src/index.css
+10:44:27 PM [vite] hmr update /src/App.tsx, /src/index.css
+10:44:40 PM [vite] hmr update /src/App.tsx, /src/index.css
+10:56:24 PM [vite] hmr update /src/components/PresenceChips.tsx, /src/index.css
+10:56:36 PM [vite] hmr update /src/components/PresenceChips.tsx, /src/index.css
+10:57:25 PM [vite] hmr update /src/App.tsx, /src/index.css
+10:58:07 PM [vite] hmr update /src/App.tsx, /src/index.css
+1:09:44 AM [vite] hmr update /src/index.css, /src/App.tsx, /src/components/FileTree.tsx, /src/components/TaskBoard.tsx, /src/components/settings/FileSourcesSettings.tsx, /src/components/QuickSwitcher.tsx, /src/components/UnifiedFileDashboard.tsx, /src/components/SourceFileTree.tsx
+1:09:55 AM [vite] hmr update /src/index.css, /src/App.tsx, /src/components/FileTree.tsx, /src/components/TaskBoard.tsx, /src/components/settings/FileSourcesSettings.tsx, /src/components/QuickSwitcher.tsx, /src/components/UnifiedFileDashboard.tsx, /src/components/SourceFileTree.tsx
+1:19:08 AM [vite] hmr update /src/components/SourceFileTree.tsx, /src/index.css
+1:19:31 AM [vite] hmr update /src/components/SourceFileTree.tsx, /src/index.css
+1:21:09 AM [vite] hmr update /src/components/UnifiedFileDashboard.tsx, /src/index.css
+1:26:14 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:26:24 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:26:29 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:50:48 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:50:54 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:51:13 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:51:23 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:51:31 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:51:46 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:52:16 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:52:49 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:54:11 AM [vite] hmr update /src/components/CommentThread.tsx, /src/index.css
+1:54:25 AM [vite] hmr update /src/components/SuggestionPanel.tsx, /src/index.css
+1:54:34 AM [vite] hmr update /src/components/ReviewPanel.tsx, /src/index.css
+1:55:54 AM [vite] hmr update /src/index.css, /src/components/CodeMirrorEditor.tsx
+1:56:22 AM [vite] hmr update /src/index.css
+1:56:51 AM [vite] hmr update /src/index.css
+1:57:35 AM [vite] hmr update /src/components/CodeMirrorEditor.tsx, /src/index.css
+2:23:07 AM [vite] hmr update /src/components/MarkdownPreview.tsx, /src/index.css
+2:23:31 AM [vite] hmr update /src/components/CommentThread.tsx, /src/index.css
+2:24:39 AM [vite] hmr update /src/components/SuggestionPanel.tsx, /src/index.css
+2:25:33 AM [vite] hmr update /src/components/ReviewPanel.tsx, /src/index.css
+2:26:27 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:26:34 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:26:40 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:26:50 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:26:55 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:27:05 AM [vite] hmr update /src/components/MarkdownPreview.tsx, /src/index.css
+2:27:07 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:27:33 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:29:20 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:29:37 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:29:41 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:30:38 AM [vite] hmr update /src/components/MarkdownPreview.tsx, /src/index.css
+2:38:51 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:38:55 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:40:53 AM [vite] hmr update /src/components/CodeMirrorEditor.tsx, /src/index.css
+2:42:29 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:42:38 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:42:46 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:42:52 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:43:05 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:43:10 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:43:15 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:43:23 AM [vite] hmr update /src/App.tsx, /src/index.css
+2:44:49 AM [vite] hmr update /src/App.tsx, /src/index.css
+3:14:14 AM [vite] hmr update /src/components/CodeMirrorEditor.tsx, /src/index.css
+3:15:01 AM [vite] hmr update /src/components/editor/AuthorshipStatsPanel.tsx, /src/index.css
+3:15:20 AM [vite] hmr update /src/App.tsx, /src/index.css
+3:15:32 AM [vite] hmr update /src/App.tsx, /src/index.css
+3:15:45 AM [vite] hmr update /src/App.tsx, /src/index.css
+3:16:09 AM [vite] hmr update /src/components/CodeMirrorEditor.tsx, /src/index.css
+3:38:07 AM [vite] hmr update /src/components/mission-control/MCOpsView.tsx, /src/index.css
+3:38:20 AM [vite] hmr update /src/components/mission-control/MCOpsView.tsx, /src/index.css
+3:38:44 AM [vite] hmr update /src/components/mission-control/MCOpsView.tsx, /src/index.css
+3:38:54 AM [vite] hmr update /src/components/mission-control/MCOpsView.tsx, /src/index.css
+3:41:51 AM [vite] hmr update /src/components/TaskBoard.tsx, /src/index.css
+4:10:20 AM [vite] hmr update /src/components/PresenceChips.tsx, /src/index.css
+4:10:55 AM [vite] hmr update /src/index.css, /src/components/CodeMirrorEditor.tsx
+4:11:45 AM [vite] hmr update /src/components/CodeMirrorEditor.tsx, /src/index.css
+4:13:03 AM [vite] hmr update /src/index.css, /src/components/CodeMirrorEditor.tsx
+4:13:14 AM [vite] hmr update /src/index.css, /src/components/CodeMirrorEditor.tsx
+4:13:51 AM [vite] hmr update /src/index.css
+4:15:31 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:15:42 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:16:01 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:16:40 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:17:02 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:17:08 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:17:22 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:17:28 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:18:24 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:19:09 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:19:23 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:19:42 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:20:21 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:20:39 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:20:51 AM [vite] hmr update /src/index.css, /src/components/CodeMirrorEditor.tsx
+4:21:45 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:23:33 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:23:43 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:24:15 AM [vite] hmr update /src/App.tsx, /src/index.css
+4:24:56 AM [vite] hmr update /src/index.css
+4:26:10 AM [vite] hmr update /src/index.css, /src/components/CodeMirrorEditor.tsx
+8:03:39 AM [vite] hmr update /src/App.tsx, /src/index.css
+8:05:25 AM [vite] hmr update /src/App.tsx, /src/index.css
+8:14:14 AM [vite] hmr update /src/App.tsx, /src/index.css
+1:00:42 PM [vite] hmr update /src/components/ReviewPanel.tsx, /src/index.css
+1:00:52 PM [vite] hmr update /src/index.css, /src/components/CodeMirrorEditor.tsx
+1:00:52 PM [vite] hmr update /src/index.css, /src/components/CodeMirrorEditor.tsx
+1:01:18 PM [vite] hmr update /src/components/CodeMirrorEditor.tsx, /src/index.css
+1:01:55 PM [vite] hmr update /src/index.css
+1:02:18 PM [vite] hmr update /src/components/CodeMirrorEditor.tsx, /src/index.css
+1:40:27 PM [vite] hmr update /src/index.css, /src/App.tsx, /src/components/UnifiedFileDashboard.tsx, /src/components/SourceFileTree.tsx, /src/components/settings/FileSourcesSettings.tsx
+1:42:02 PM [vite] hmr update /src/components/SourceFileTree.tsx, /src/index.css

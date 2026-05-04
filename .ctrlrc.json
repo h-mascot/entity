@@ -1,0 +1,15 @@
+{
+  "mode": "mvp",
+  "gates": {
+    "required": ["build"],
+    "coverage": false
+  },
+  "coverage": {
+    "threshold": 0,
+    "enforce": false
+  },
+  "hooks": {
+    "pre-commit": null,
+    "pre-push": "ctrl:gate"
+  }
+}

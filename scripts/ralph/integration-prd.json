@@ -1,0 +1,145 @@
+{
+  "branchName": "ralph/mc-integration",
+  "userStories": [
+    {
+      "id": "1",
+      "title": "Port Mission Control Task Board",
+      "description": "Create TaskBoard.tsx panel with drag-and-drop kanban. Columns: backlog, todo, doing, review, done. Task cards show: title, assignee, column, activity indicator. API endpoints from MC's server.js ported to Express. Use @dnd-kit/core for drag-drop.",
+      "acceptanceCriteria": [
+        "TaskBoard component renders kanban with 5 columns",
+        "Tasks display title, assignee emoji, column",
+        "Drag-and-drop moves cards between columns",
+        "API endpoints: GET /tasks, POST /tasks, PUT /tasks/:id, PUT /tasks/:id/move",
+        "SQLite backend stores tasks"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "2",
+      "title": "Task API + SQLite Backend",
+      "description": "Port MC's task API to Entity server. Use better-sqlite3 for local DB. Schema: tasks(id, name, description, column, assignee, created_at, updated_at, metadata). Seed with current MC data from tasks.db. Express server at packages/server.",
+      "acceptanceCriteria": [
+        "Server exposes REST API for tasks",
+        "SQLite schema created on startup",
+        "Current MC data loaded into Entity SQLite",
+        "CRUD operations work via curl/API",
+        "Better-sqlite3 installed and working"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "3",
+      "title": "Unified Activity Log",
+      "description": "Merge Entity's ActivityStream with MC's activity endpoints. One timeline showing: agent activity (file edits, tool calls) + task activity (created, moved, completed). Stored in SQLite activities table. API: GET /activities?limit=100.",
+      "acceptanceCriteria": [
+        "Activities table in SQLite",
+        "API: GET /activities?limit=100",
+        "Both agent and task activity in one stream",
+        "Click activity to navigate to context (task or file)",
+        "Activity types color-coded"
+      ],
+      "priority": 3,
+      "passes": true
+    },
+    {
+      "id": "4",
+      "title": "MC Color Scheme Applied Globally",
+      "description": "Apply MC's color palette to entire Entity app. CSS variables: --bg-primary: #000, --bg-secondary: #111, --border-primary: #222, --border-secondary: #333, --text-primary: #fff, --accent: #0af. All Tailwind config, CSS, React components use unified colors.",
+      "acceptanceCriteria": [
+        "Tailwind config uses CSS variables",
+        "All panels use unified colors",
+        "No hardcoded hex outside CSS variables",
+        "App looks cohesive across all panels",
+        "Dark theme consistent throughout"
+      ],
+      "priority": 4,
+      "passes": true
+    },
+    {
+      "id": "5",
+      "title": "Electron Desktop App",
+      "description": "Add Electron packaging. Main process: native menus, window controls, SQLite file location. Renderer: loads Entity web app. Build script: npm run electron:build produces .dmg and .exe. Electron-builder installed.",
+      "acceptanceCriteria": [
+        "electron/ folder with main.js",
+        "npm run electron launches desktop app",
+        "SQLite works in user data dir",
+        "DMG/EXE builds successfully",
+        "App menu and window controls work"
+      ],
+      "priority": 5,
+      "passes": true
+    },
+    {
+      "id": "6",
+      "title": "Expo Mobile App",
+      "description": "Mobile wrapper (existing in Entity) enhanced for MC integration. Responsive layout: bottom nav instead of sidebar. Touch-friendly drag-and-drop for kanban. Expo SDK 52.",
+      "acceptanceCriteria": [
+        "Expo app loads Entity",
+        "Bottom nav: Files, Agents, Tasks, Activity",
+        "Kanban cards touch-draggable",
+        "App builds for iOS/Android",
+        "Responsive layout works on mobile"
+      ],
+      "priority": 6,
+      "passes": true
+    },
+    {
+      "id": "7",
+      "title": "agent-browser E2E Tests",
+      "description": "Write test suite that opens app via agent-browser, verifies: task board loads, can create task, drag card, activity stream shows entries. Tests run after each build. Use agent-browser CLI.",
+      "acceptanceCriteria": [
+        "e2e/test-browser.js exists",
+        "Opens http://localhost:5173 (dev) or app window",
+        "Tests: task creation, Drag-drop, activity display",
+        "All tests pass",
+        "Tests run via npm test"
+      ],
+      "priority": 7,
+      "passes": true
+    },
+    {
+      "id": "8",
+      "title": "DB Sync Layer (Local ↔ Cloud)",
+      "description": "Abstract DB access. db/local.js (SQLite), db/cloud.js (REST). App checks: if Electron/Mobile → local; if web + cloud configured → cloud. Environment variable selects mode: LOCAL, CLOUD.",
+      "acceptanceCriteria": [
+        "packages/db/ layer with local/cloud adapters",
+        "Environment variable selects mode: LOCAL, CLOUD",
+        "Task operations work in both modes",
+        "Seamless switch without app restart",
+        "API abstraction works transparently"
+      ],
+      "priority": 8,
+      "passes": true
+    },
+    {
+      "id": "9",
+      "title": "Responsive Layout",
+      "description": "App adapts layout: Desktop (sidebar left), Tablet (sidebar togglable), Mobile (bottom nav). Task board: scrollable columns on mobile. Breakpoints at 768px and 1024px.",
+      "acceptanceCriteria": [
+        "Sidebar on desktop (≥1024px)",
+        "Bottom nav on mobile (<768px)",
+        "Task board scrolls horizontally on mobile",
+        "Panels collapse/resize responsively",
+        "No horizontal scroll on desktop"
+      ],
+      "priority": 9,
+      "passes": true
+    },
+    {
+      "id": "10",
+      "title": "Offline Mode Indicator",
+      "description": "Visual indicator when working offline (local SQLite only). Shows sync status: 'Offline • Local only' or 'Online • Cloud synced'. Green dot for online, gray for offline. Badge in header.",
+      "acceptanceCriteria": [
+        "Sync status badge in header",
+        "Shows when cloud unavailable",
+        "Changes color based on connection",
+        "Persists across refresh",
+        "Accurate status after reload"
+      ],
+      "priority": 10,
+      "passes": true
+    }
+  ]
+}

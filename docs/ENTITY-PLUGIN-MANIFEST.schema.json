@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://entity.local/schemas/plugin-manifest.schema.json",
+  "title": "Entity Plugin Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "version", "kind", "description", "entityVersion", "capabilities"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable plugin identifier. Kebab-case."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "description": "Plugin version, semver recommended."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["behavior", "integration", "product", "runtime", "data-source", "ui"]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "author": {
+      "type": "string"
+    },
+    "host": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["openclaw", "entity-server", "entity-ui", "standalone"]
+      },
+      "description": "Which runtime(s) load this plugin. Distinct from kind (plugin type)."
+    },
+    "entityVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min"],
+      "properties": {
+        "min": { "type": "string" },
+        "max": { "type": "string" }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "messaging.inbound.observe",
+          "messaging.outbound.transform",
+          "messaging.threading.route",
+          "runtime.subagent.bind",
+          "runtime.dispatch.orchestrate",
+          "ui.tab.register",
+          "ui.panel.register",
+          "ui.task-detail.extend",
+          "api.routes.register",
+          "data.migrations.register",
+          "data.tables.own",
+          "tasks.events.observe",
+          "tasks.actions.register",
+          "documents.preview.render",
+          "documents.source.adapter",
+          "documents.metadata.enrich",
+          "admin.settings.register",
+          "admin.status.probe",
+          "activity.emit"
+        ]
+      }
+    },
+    "entrypoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "server": { "type": "string" },
+        "ui": { "type": "string" }
+      }
+    },
+    "hooks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "task:created",
+          "task:updated",
+          "task:moved",
+          "message:outbound",
+          "message:inbound",
+          "subagent:spawning",
+          "subagent:ended",
+          "subagent:delivery-target"
+        ]
+      }
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["basePath"],
+        "properties": {
+          "basePath": {
+            "type": "string",
+            "pattern": "^/api/[a-z0-9-]+(?:/[a-z0-9-]+)*$"
+          },
+          "entry": { "type": "string" }
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tab": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["label", "component"],
+          "properties": {
+            "label": { "type": "string" },
+            "icon": { "type": "string" },
+            "component": { "type": "string" },
+            "placement": {
+              "type": "string",
+              "enum": ["sidebar", "mission-control", "settings"]
+            }
+          }
+        },
+        "taskDetailSlot": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "component": { "type": "string" }
+          }
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "description": "Default plugin settings. Persisted separately from manifest."
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tables": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "migrationsDir": { "type": "string" }
+      }
+    },
+    "ownerBoundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ownsRoutes": { "type": "boolean" },
+        "ownsTables": { "type": "boolean" },
+        "modifiesCoreSchema": { "type": "boolean" },
+        "requiresCoreSlots": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

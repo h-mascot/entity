@@ -1,0 +1,88 @@
+{
+  "source": "Codex in-app browser localStorage key entity-ui-gallery-picks",
+  "capturedAt": "2026-04-24T19:42:00+01:00",
+  "artifactFolder": "docs/design-reviews/2026-04-24-entity-ui-upgrade",
+  "complete": false,
+  "missingViews": [
+    {
+      "viewId": "05-chat",
+      "view": "Chat",
+      "level": "first",
+      "reason": "No saved pick was present in browser localStorage."
+    }
+  ],
+  "picks": [
+    {
+      "viewId": "01-files",
+      "view": "Files",
+      "level": "first",
+      "selectedSet": "set-1",
+      "selectedDirection": "Polished Evolution",
+      "sourceImage": "set-1/01-files.png",
+      "reviewNote": "agent-notes/01-files-review.md"
+    },
+    {
+      "viewId": "02-agents",
+      "view": "Agents",
+      "level": "first",
+      "selectedSet": "set-1",
+      "selectedDirection": "Polished Evolution",
+      "sourceImage": "set-1/02-agents.png",
+      "reviewNote": "agent-notes/02-agents-review.md"
+    },
+    {
+      "viewId": "03-tasks",
+      "view": "Tasks",
+      "level": "first",
+      "selectedSet": "set-1",
+      "selectedDirection": "Polished Evolution",
+      "sourceImage": "set-1/03-tasks.png",
+      "reviewNote": "agent-notes/03-tasks-review.md"
+    },
+    {
+      "viewId": "04-services",
+      "view": "Services",
+      "level": "first",
+      "selectedSet": "set-1",
+      "selectedDirection": "Polished Evolution",
+      "sourceImage": "set-1/04-services.png",
+      "reviewNote": "agent-notes/04-services-review.md"
+    },
+    {
+      "viewId": "06-admin",
+      "view": "Admin",
+      "level": "first",
+      "selectedSet": "set-2",
+      "selectedDirection": "Alternate IA Direction",
+      "sourceImage": "set-2/06-admin.png",
+      "reviewNote": "agent-notes/06-admin-review.md"
+    },
+    {
+      "viewId": "07-docs-view",
+      "view": "Docs View",
+      "level": "second",
+      "selectedSet": "set-2",
+      "selectedDirection": "Alternate IA Direction",
+      "sourceImage": "set-2/07-docs-view.png",
+      "reviewNote": "agent-notes/07-docs-view-review.md"
+    },
+    {
+      "viewId": "08-agent-detail",
+      "view": "Agent Detail View",
+      "level": "second",
+      "selectedSet": "set-2",
+      "selectedDirection": "Alternate IA Direction",
+      "sourceImage": "set-2/08-agent-detail.png",
+      "reviewNote": "agent-notes/08-agent-detail-review.md"
+    },
+    {
+      "viewId": "09-task-detail",
+      "view": "Task Detail View",
+      "level": "second",
+      "selectedSet": "set-1",
+      "selectedDirection": "Polished Evolution",
+      "sourceImage": "set-1/09-task-detail.png",
+      "reviewNote": "agent-notes/09-task-detail-review.md"
+    }
+  ]
+}

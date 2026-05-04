@@ -1,0 +1,84 @@
+version: 1
+profile:
+  displayName: Team Workspace
+  ownerName: Operations
+server:
+  host: 127.0.0.1
+  port: 3000
+  workspaceRoot: ./workspace
+  publicBaseUrl: http://localhost:3000
+  apiBaseUrl: http://localhost:3000
+  wsBaseUrl: ws://localhost:3000
+  databasePath: ./data/entity.sqlite
+  logPath: ./logs/entity.log
+docs:
+  allowedExtensions:
+    - md
+    - markdown
+    - txt
+    - log
+    - json
+    - jsonl
+    - yaml
+    - yml
+    - csv
+    - tsv
+agents:
+  - id: assistant
+    name: Assistant
+    role: general
+    avatar: null
+    emoji: "🤖"
+    enabled: true
+    fileSources: []
+    gateway:
+      type: none
+      url: null
+      tokenRef: null
+fileSources:
+  - id: workspace
+    displayName: Workspace
+    type: local
+    basePath: ./workspace
+    baseUrl: null
+    enabled: true
+    icon: null
+    agentBindings:
+      - assistant
+tasks:
+  columns:
+    - todo
+    - doing
+    - review
+    - done
+  priorities:
+    - P1
+    - P2
+    - P3
+    - P4
+  defaultAssignee: assistant
+  assigneesFromAgents: true
+  projects:
+    - General
+services: []
+providers: {}
+plugins:
+  entity-services:
+    # Public installs start with no configured private services.
+    # Add explicit services through Admin plugin settings or this config path.
+    settings:
+      entityBaseUrl: http://localhost:3000
+      externalAdminUrl: ""
+      externalAdminName: External Admin
+      services: []
+      discoverGatewayServices: false
+      discoverMacServices: false
+voice:
+  defaultProvider: browser
+  providers: {}
+deploy:
+  mode: local
+  preserveDatabase: true
+  dryRunByDefault: true
+terminal:
+  targets: []

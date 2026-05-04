@@ -1,0 +1,136 @@
+{
+  "branchName": "ralph/phase2-watch-mode",
+  "userStories": [
+    {
+      "id": "1",
+      "title": "Agent Activity Stream - Data Model & Hook",
+      "description": "Create a useActivityStream hook that connects to the OpenClaw Gateway WebSocket and collects agent activity events. Store activities in a Zustand store with type ActivityEntry { id, agentName, agentEmoji, action, description, timestamp, filePath?, toolName?, type: 'file_edit'|'tool_call'|'message_sent'|'command_run'|'research'|'thinking' }. For now, generate mock activity data every 2-5 seconds to simulate real agent activity. Include a maxEntries limit of 200.",
+      "acceptanceCriteria": [
+        "useActivityStream hook exists and returns activities array",
+        "ActivityEntry type is defined",
+        "Mock data generates realistic agent activities for Ada, Spock, Scotty",
+        "Activities are stored in state and limited to 200 entries",
+        "Hook can be paused/resumed"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "2",
+      "title": "Agent Activity Stream - UI Panel",
+      "description": "Create an ActivityStream component that renders as a panel (togglable bottom panel or sidebar tab). Each entry shows: agent emoji + name, action description, relative timestamp (e.g. '2s ago'), and an icon for the activity type. Color-code entries by agent (Ada=purple, Spock=blue, Scotty=orange). Auto-scroll to latest with a 'pause auto-scroll' button. Clicking an entry that has a filePath should trigger file open.",
+      "acceptanceCriteria": [
+        "ActivityStream component renders in the UI",
+        "Activities are color-coded by agent",
+        "Auto-scrolls to latest entries",
+        "Pause button stops auto-scroll",
+        "Entries with filePath are clickable",
+        "Relative timestamps update live"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "3",
+      "title": "Watch Mode Toggle - State & UI",
+      "description": "Add a Watch Mode toggle button to the top toolbar bar. When enabled: the editor becomes read-only (disable CodeMirror editing), show a 'WATCHING' badge/indicator, and display 'Following: [Agent Emoji] [Agent Name]' in the top bar. Store watchMode and followingAgent in app state. In Watch Mode, clicking an agent in the sidebar should switch who you're following.",
+      "acceptanceCriteria": [
+        "Toggle button exists in top bar",
+        "Clicking toggle switches between Watch and Interact mode",
+        "In Watch Mode, CodeMirror is read-only",
+        "WATCHING indicator visible when active",
+        "Following agent name displayed",
+        "Clicking agent in sidebar changes followed agent"
+      ],
+      "priority": 3,
+      "passes": true
+    },
+    {
+      "id": "4",
+      "title": "Watch Mode - Auto-Follow Agent Files",
+      "description": "In Watch Mode, when the followed agent edits a file (from activity stream), automatically switch the editor to that file. Add smooth transition (brief fade or slide). Show a ghost cursor indicator (highlighted line or cursor marker) at the position where the agent is 'working'. Use mock data from activity stream to simulate file switches every 5-10 seconds.",
+      "acceptanceCriteria": [
+        "File auto-switches when followed agent changes files",
+        "Transition animation between files",
+        "Ghost cursor or highlight shows agent position",
+        "Only auto-follows in Watch Mode, not Interact Mode",
+        "Can manually override by clicking file tree"
+      ],
+      "priority": 4,
+      "passes": true
+    },
+    {
+      "id": "5",
+      "title": "Agent Focus Tracking in Sidebar",
+      "description": "In the Agents sidebar tab, add 'Currently editing: filename.md' under each online agent. Show a small file icon and the filename. Add a pulsing green dot when agent is actively writing (has recent activity < 10s). Clicking the filename opens that file in the editor. Source the current file from the activity stream data.",
+      "acceptanceCriteria": [
+        "Each agent shows current file in sidebar",
+        "Pulsing dot for actively writing agents",
+        "Clicking filename opens the file",
+        "Updates when agent switches files",
+        "Shows nothing for offline agents"
+      ],
+      "priority": 5,
+      "passes": true
+    },
+    {
+      "id": "6",
+      "title": "Notification Center - Toasts",
+      "description": "Add a toast notification system (bottom-right corner). Support types: task_complete (green border), error (red), mention (blue), info (gray). Toasts auto-dismiss after 5 seconds. Click to expand/see details. Add a bell icon in the top bar with unread count badge. Use a simple Zustand store for notifications.",
+      "acceptanceCriteria": [
+        "Toast notifications appear in bottom-right",
+        "Color-coded by type",
+        "Auto-dismiss after 5 seconds",
+        "Bell icon with unread count in top bar",
+        "Click toast to see details",
+        "Notifications stored in state"
+      ],
+      "priority": 6,
+      "passes": true
+    },
+    {
+      "id": "7",
+      "title": "Notification Center - History Panel",
+      "description": "Clicking the bell icon opens a dropdown panel showing notification history. Each notification shows type icon, message, timestamp. Mark as read on view. Clear all button. Maximum 50 notifications stored. Panel closes when clicking outside.",
+      "acceptanceCriteria": [
+        "Bell icon click opens notification panel",
+        "Shows history of notifications",
+        "Mark as read on view",
+        "Clear all button works",
+        "Panel closes on outside click",
+        "Max 50 notifications"
+      ],
+      "priority": 7,
+      "passes": true
+    },
+    {
+      "id": "8",
+      "title": "Split Pane View",
+      "description": "Add ability to split the editor into two panes (left/right). Add a 'Split' button in the file tab bar. Each pane has its own file, own edit/preview toggle. Draggable resize handle between panes. Close button on the second pane to return to single view. In Watch Mode, left pane follows agent while right pane stays on user's chosen file.",
+      "acceptanceCriteria": [
+        "Split button creates two editor panes",
+        "Each pane loads independent files",
+        "Resize handle works between panes",
+        "Close button removes split",
+        "In Watch Mode, agent following applies to left pane only"
+      ],
+      "priority": 8,
+      "passes": true
+    },
+    {
+      "id": "9",
+      "title": "File Change History",
+      "description": "Add a 'History' button to the file toolbar. When clicked, shows a side panel with recent file changes: timestamp, author (agent name or 'You'), and a short summary. Clicking a change shows an inline diff view (green for additions, red for deletions). Store last 10 versions of each opened file on the server side in memory. Simple implementation - no git integration needed.",
+      "acceptanceCriteria": [
+        "History button exists on file toolbar",
+        "Shows list of recent changes with timestamps",
+        "Author shown (agent or human)",
+        "Clicking change shows diff",
+        "Diff highlights additions (green) and deletions (red)",
+        "Server stores last 10 versions per file"
+      ],
+      "priority": 9,
+      "passes": true
+    }
+  ]
+}

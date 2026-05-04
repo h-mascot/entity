@@ -1,0 +1,135 @@
+Edit the provided Entity Chat screenshot into a high-fidelity desktop UI redesign concept.
+
+Design set: Alternate IA Direction.
+
+Direction: Explore a stronger information architecture with clearer left navigation, a more structured command/context bar, and sharper separation between overview, work area, and audit/detail zones. Keep the same operational density and professional console feel.
+
+Product context: Entity is a local operational workspace and execution surface for files, agents, tasks, services, chat, admin, agent-native editing, activity, notifications, and plugins.
+
+This view's job: workspace chat with local/cloud/offline context and agent collaboration.
+
+Visual constraints: keep the first viewport as an actual usable app screen, dense but organized, dark mode, restrained color, strong contrast, no landing page, no hero section, no decorative gradient orbs, no nested cards, no oversized marketing typography, no beige/purple-dominant one-note palette.
+
+UX constraints: make the page easier to scan, group related controls, clarify primary actions, preserve workflows visible in the screenshot, and only add controls that fit this view context. Prefer fewer duplicated controls and clearer state indicators over more decoration.
+
+Rendering constraints: produce one realistic desktop application screenshot, 1536x1024 landscape, crisp text-like UI labels, consistent grid alignment, professional SaaS/ops console polish.
+
+Current headings: Login
+
+Current visible controls: Add to Dock, ×, files, agents, tasks, services, chat, admin, 🔔, TerminalShow, ada-gwspockscottymacenterprise, Start, TerminalShow, ada-gwspockscottymacenterprise, Start, All sourcesZoraVaultSpockAdaEntity, All typesDaily ReviewBusiness ReviewBlogPRDProject DocScriptOne-off, All originsCronsTasksManualUnknown, All agentsAdaSpockScottyGeordiZoraMidasUhuraBookHenryOther, 2026-04-14cronAda • memory/2026-04-14.md • blog • ada## Overnight proactive work
+- Reviewed proactive mandate, recent memory (Apr 12-14), live calendar, inbox, Slack-derived signal already captured in memory, and recent Fireflies-derived signal.
+- Reconfirmed the strongest pattern:
+  - insurer interest keeps clustering around narro, Soteria Demo Proof KitunknownAda • output/soteria/2026-04-14-soteria-demo-proof-kit.md • project-doc • henry# Soteria Demo Proof Kit
+
+Date: 2026-04-14
+Web link: http://100.106.69.9:8788/#/output/soteria/2026-04-14-soteria-demo-proof-kit.md
+
+## Why this exists
+The repeated signal across recent memory, calendar, inbox, Slack, and Fireflies is simple:
+- insurers are responding to narrow w, Bird Multi-Host Install ReportunknownAda • output/2026-04-13-bird-enterprise-mascotm3-install-report.md • one-off • henry# Bird Multi-Host Install Report
+
+## Scope
+- Install Bird on Enterprise
+- Install Bird on MascotM3
+- Update shared tool references so all agents, including Book on MascotM3, have the Bird X/Twitter read path documented
+
+## Install Result
+### Enterprise
+- `bird` path: `/Users/ente, Bird CLI Fix ReportunknownAda • output/2026-04-13-bird-cli-fix-report.md • one-off • ada# Bird CLI Fix Report
+
+## Summary
+Restored Bird CLI on ada-gateway.
+
+## Root Cause
+`bird` on PATH resolved to `/home/henrymascot/bin/bird`, which pointed to `/home/henrymascot/Code/bird/dist/cli.js` from an older local repo. That binary only supported `bird tweet` and ignored new, CrewLink: Link Posts ImplementationunknownAda • output/crewlink-link-posts.md • project-doc • ada# CrewLink: Link Posts Implementation
+
+## Changes
+Added `url` and `post_type` fields to CrewLink posts schema and API.
+
+### File Modified: `~/clawd/projects/agent-social/server.js`
+
+### Schema Changes
+- Added `post_type TEXT DEFAULT 'text'` column
+- Added `url TEXT` column
+- Adde, Entity Pull Deployer — git-pull based deploy for Enterprise-Crew-skillsunknownAda • output/deploy-path/entity-pull-deploy.sh • script • scotty#!/usr/bin/env bash
+# Entity Pull Deployer — git-pull based deploy for Enterprise-Crew-skills
+# Runs on each gateway to pull latest changes and reinstall entity-mc
+#
+# Usage:
+#   entity-pull-deploy.sh [--check-only] [--manifest <path>]
+#
+# --check-only: Only check if update neede, Entity Deploy Webhook ListenerunknownAda • output/deploy-path/entity-webhook-listener.sh • script • ada#!/usr/bin/env bash
+# Entity Deploy Webhook Listener
+# Lightweight HTTP server that listens for GitHub webhook push events
+# and triggers the pull deployer on each agent.
+#
+# Runs on ada-gateway (accessible via Tailscale).
+# GitHub Actions sends a webhook here after successful CI, entity-webhook.serviceunknownAda • output/deploy-path/entity-webhook.service • script • scotty[Unit]
+Description=Entity Deploy Webhook Listener
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/jamify/clawd-scotty/scripts/deploy/entity-webhook-listener.sh --port 9191
+Restart=always
+RestartSec=10
+Environment=HOME=/home/jamify
+
+[Install]
+WantedBy=multi-user.target, github-action-deploy.ymlunknownAda • output/deploy-path/github-action-deploy.yml • one-off • othername: Deploy Entity MC
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'entity-mc/**'
+      - '*/SKILL.md'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    needs: []  # Add your test/lint job here when ready
+    if: github.repository == 'henrino3/Enterprise-Crew-skills'
+    s, Entity Deploy Path — Architecture & Trust ModeltaskAda • output/deploy-path/DEPLOY-PATH.md • script • ada# Entity Deploy Path — Architecture & Trust Model
+
+## Problem
+GitHub Actions runs on public runners that can't SSH through Tailscale to reach agent gateways (ada-gateway, scotty Pi). Deploy drift was recurring because updates to `Enterprise-Crew-skills` repo had to be manually pu, Ada Resilience RunbookunknownAda • memory/ada-recovery-runbook.md • script • ada# Ada Resilience Runbook
+
+## Quick Reference
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Watchdog cron** | ada-gateway crontab (every 5min) | Auto-restart if gateway dies |
+| **Recovery scripts** | Scotty: `~/clawd/skills/ada-recovery/scripts/` | Re, Task #149: CrewLink Profile Updates - Implementation EvidencetaskAda • output/task-149-evidence.md • script • ada# Task #149: CrewLink Profile Updates - Implementation Evidence
+
+## Task Description
+Add PATCH /api/agents/{name} for description/metadata updates.
+
+## Implementation Status
+✅ **COMPLETE** - Endpoint already implemented
+
+## File Location
+**Path:** `/Users/henrymascot/Code/crewlin, Ripple Engine Repair Proof — 2026-04-11unknownAda • output/ripple-effect/2026-04-11-proof.md • script • other# Ripple Engine Repair Proof — 2026-04-11
+
+## What changed
+- Repaired `scripts/ripple-effect/orchestrate-actions.sh` so it consumes the analyzer's current JSON schema and reports real dependency actions.
+- Added `scripts/ripple-effect/monitor-ripple.sh` as a lightweight daily dry, 2026-04-10-ada-watchdog-review.txtcronAda • output/2026-04-10-ada-watchdog-review.txt • script • adaAda-gateway watchdog stabilization report
+Timestamp: 2026-04-10 01:09 UTC
+
+Changes applied:
+- Rewrote /home/henrymascot/scripts/ada-watchdog.sh as a lightweight health check using flock, timeout, systemctl --user, and the local gateway health endpoint.
+- Removed recursive use of, Book SSH Routing ReferencemanualVault • SuperAda/Ada/memory/projects/book-ssh-routing.md • project-doc • ada# Book SSH Routing Reference
+
+Updated: 2026-04-07 14:07 UTC
+Purpose: durable host routing notes for Book (Hermes).
+
+## Primary Hosts
+
+- ada-gateway
+  - SSH: `ssh henrymascot@100.106.69.9`
+  - Tailscale IP: `100.106.69.9`
+
+- spock-gateway
+  - SSH: `ssh henrymascot@100.78.229.38`, family-dashboard.err.logmanualAda • projects/family-dashboard/family-dashboard.err.log • project-doc • other, family-dashboard.logmanualAda • projects/family-dashboard/family-dashboard.log • project-doc • otherCastle Mascot Family Dashboard running at http://localhost:3030
+
+Current screen content summary: Add to Dock × ⚡ Entity Files Agents Tasks Services Chat Admin 🔔 Loading chat... Terminal Show

@@ -1,0 +1,10 @@
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.db.bak*
+*.db.backup*
+*.db.corrupt
+.env
+codex-build.log
+node_modules/

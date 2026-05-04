@@ -1,0 +1,21 @@
+Edit the provided Entity Docs View screenshot into a high-fidelity desktop UI redesign concept.
+
+Design set: Polished Evolution.
+
+Direction: Preserve the current Entity shell and workflows. Improve hierarchy, spacing, legibility, density, action grouping, icon clarity, and scan speed without changing the mental model. Keep a restrained dark operational console, not a marketing page.
+
+Product context: Entity is a local operational workspace and execution surface for files, agents, tasks, services, chat, admin, agent-native editing, activity, notifications, and plugins.
+
+This view's job: readable markdown docs with audio, share, breadcrumbs, and navigation back to Entity.
+
+Visual constraints: keep the first viewport as an actual usable app screen, dense but organized, dark mode, restrained color, strong contrast, no landing page, no hero section, no decorative gradient orbs, no nested cards, no oversized marketing typography, no beige/purple-dominant one-note palette.
+
+UX constraints: make the page easier to scan, group related controls, clarify primary actions, preserve workflows visible in the screenshot, and only add controls that fit this view context. Prefer fewer duplicated controls and clearer state indicators over more decoration.
+
+Rendering constraints: produce one realistic desktop application screenshot, 1536x1024 landscape, crisp text-like UI labels, consistent grid alignment, professional SaaS/ops console polish.
+
+Current headings: Entity MC Context, Purpose, Why it exists, Architecture, Shared runtime bundle, Skill files, Manifest model, Install behavior, Cron behavior, Verification and rollback, Verify, Rollback, Rollout strategy, Prior working deployment context, Runtime update rule, Current status, DONE, NOT DONE
+
+Current visible controls: Add to Dock, ×, ← Entity Home, 🔗 Share, Listen, memory/rules/user-model/skill/project
+
+Current screen content summary: Add to Dock × ← Entity Home entity-mc-context.md memory / entity-mc-context.md /docs/memory/entity-mc-context.md 🔗 Share Listen Generate TTS for this document. HTML Entity MC Context Purpose entity-mc is the standard bootstrap skill for deploying Entity Mission Control helper tooling to crew agents without manual script copying. It packages the working Mission Control helper runtime into one reusable, versioned bundle with a thin installer layer and per-agent manifests. Why it exists Previous deployments relied on copying scripts by hand into agent homes, especially on Mac-hosted agents like Zora. That worked, but created drift risk, weak rollback, and awkward onboarding. entity-mc is the replacement direction: one canonical runtime one thin bootstrap/install skill tiny per-agent manifests idempotent install/update verification and rollback built in Architecture Shared runtime bundle Canonical scripts packaged from skills/entity-mc/source-scripts/: mc.sh mc-auto-pull.sh mc-assign-model.sh mc-build-context.sh mc-stall-check.sh Note: source-scripts/ is the safe staging source (not workspace scripts/ which may contain wrapper stubs after install). Skill files Located at: skills/entity-mc/SKILL.md skills/entity-mc/VERSION skills/entity-mc/lib.sh skills/entity-mc/install.sh skills/entity-mc/verify.sh skills/entity-mc/rollback.sh Manifest model Per-agent manifests live under: skills/entity-mc/manifests/ Current manifests: ada.env scotty.env spock.env book.env zora.env Manifest fields include: agent name target home target scripts dir state dir install mode (copy or symlink) cron

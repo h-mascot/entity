@@ -1,0 +1,35 @@
+{
+  "id": "geordi-swarm",
+  "name": "Geordi Swarm",
+  "version": "0.1.0",
+  "kind": "product",
+  "description": "Autonomous code factory \u2014 dispatch build jobs to AI coding agents",
+  "capabilities": [
+    "ui.task-detail.extend",
+    "api.routes.register",
+    "data.tables.own",
+    "tasks.events.observe",
+    "admin.settings.register"
+  ],
+  "hooks": ["task:created", "task:updated", "task:moved"],
+  "entrypoints": {
+    "server": "./index.ts",
+    "ui": "./packages/app/src/components/SwarmBoard.tsx"
+  },
+  "ui": {
+    "mountPoint": { "type": "module-sub-view", "module": "tasks" },
+    "component": "SwarmBoard",
+    "label": "Swarm",
+    "icon": "factory"
+  },
+  "routes": [{ "basePath": "/api/swarm", "entry": "./routes.ts" }],
+  "settings": {
+    "defaultProvider": "acp",
+    "maxConcurrentJobs": 2,
+    "autoDispatch": false
+  },
+  "storage": {
+    "tables": ["swarm_jobs", "swarm_proofs"],
+    "migrationsDir": "./migrations"
+  }
+}

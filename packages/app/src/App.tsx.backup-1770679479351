@@ -1,0 +1,3614 @@
+import { useState, useEffect, useCallback, useRef, useMemo, type FormEvent } from 'react';
+import MarkdownPreview from './components/MarkdownPreview';
+import FileTree from './components/FileTree';
+import SourceFileTree from './components/SourceFileTree';
+import UnifiedFileDashboard from './components/UnifiedFileDashboard';
+import CodeMirrorEditor, {
+  type EditorAuthorshipRange,
+  type EditorCursorActivity,
+  type EditorNewCommentRequest,
+  type EditorSelectionRange,
+  type EditorSelectionSnapshot,
+  type EditorSuggestingEditRequest,
+} from './components/CodeMirrorEditor';
+import AuthorshipStatsPanel from './components/editor/AuthorshipStatsPanel';
+import { CommentThreadPanel } from './components/CommentThread';
+import { NewCommentPopover, type NewCommentPopoverAnchor } from './components/NewCommentPopover';
+import { PresenceChips } from './components/PresenceChips';
+import { ReviewPanel } from './components/ReviewPanel';
+import { SuggestionPanel } from './components/SuggestionPanel';
+import { ToastViewport, type ToastItem } from './components/Toast';
+import QuickSwitcher from './components/QuickSwitcher';
+import ActivityStream from './components/ActivityStream';
+import TaskBoard from './components/TaskBoard';
+import FileSourcesSettings from './components/settings/FileSourcesSettings';
+import MobileBottomNav, { type MobileTab } from './components/MobileBottomNav';
+import { useWebSocket } from './hooks/useWebSocket';
+import { useActivityStream } from './hooks/useActivityStream';
+import { useFileSources } from './hooks/useFileSources';
+import { useFollowMode } from './hooks/useFollowMode';
+import { useTaskBoard, type TaskBoardTask } from './hooks/useTaskBoard';
+import { useIsMobile } from './hooks/useIsMobile';
+import { useSyncStatus } from './hooks/useSyncStatus';
+import { runtime } from './config/runtime';
+import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
+import { createDocumentsApiClient, type DocumentsClientAuth } from './lib/documents-client';
+import type {
+  DocumentAuthorshipActor,
+  DocumentAuthorshipAuthorStats,
+  DocumentAuthorshipRangeRecord,
+  DocumentAuthorshipStats,
+  DocumentCommentThread,
+  DocumentPresenceRecord,
+  DocumentReviewFinding,
+  DocumentReviewMode,
+  DocumentReviewRunRecord,
+  DocumentSuggestionUiRecord,
+} from './types/collaboration';
+
+const LOGIN_REQUIRED_KEY = 'entity.auth.login-required.v1';
+const AUTH_SESSION_KEY = 'entity.auth.session.v1';
+const DOCUMENTS_AUTH_KEY = 'entity.documents.auth.v1';
+const MC_SHOW_ARCHIVE_KEY = 'mc_showArchive';
+const SIDEBAR_COLLAPSED_KEY = 'entity.sidebar.collapsed.v1';
+const RIGHT_SIDEBAR_COLLAPSED_KEY = 'entity.rightSidebar.collapsed.v1';
+const THEME_KEY = 'entity.theme.v1';
+const DEFAULT_LOGIN_PASSWORD = 'mission';
+const ENTERPRISE_ADMIN_URL = 'http://100.106.69.9:3002';
+
+interface Agent {
+  id: string;
+  name: string;
+  emoji: string;
+  model: string;
+  gateway: string;
+  status: 'online' | 'offline';
+  lastActivity?: {
+    action: string;
+    timestamp: string;
+  };
+}
+
+interface AuthSession {
+  username: string;
+  loggedInAt: string;
+}
+
+type WorkspaceTab = 'files' | 'agents' | 'tasks' | 'admin';
+
+function ElapsedTimer({ since }: { since: string }) {
+  const [elapsed, setElapsed] = useState('');
+  useEffect(() => {
+    const update = () => {
+      const diff = Date.now() - new Date(since).getTime();
+      if (diff < 0) { setElapsed('0s'); return; }
+      const secs = Math.floor(diff / 1000);
+      const mins = Math.floor(secs / 60);
+      const hrs = Math.floor(mins / 60);
+      const days = Math.floor(hrs / 24);
+      if (days > 0) setElapsed(days + 'd ' + (hrs % 24) + 'h');
+      else if (hrs > 0) setElapsed(hrs + 'h ' + (mins % 60) + 'm');
+      else if (mins > 0) setElapsed(mins + 'm ' + (secs % 60) + 's');
+      else setElapsed(secs + 's');
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [since]);
+  return <span className="font-mono text-[var(--accent)]">{elapsed}</span>;
+}
+type MCBoardTab = 'ops' | 'strategic' | 'insights';
+type MCRuntimeBoard = 'ops' | 'strategic' | 'agents';
+type MCAssigneeFilter = 'all' | 'Ada' | 'Spock' | 'Scotty' | 'Henry';
+type AdminSection = 'general' | 'missionControl' | 'integrations' | 'enterprise';
+type AppTheme = 'dark' | 'light' | 'kitz';
+type EditorCollaborationMode = 'editing' | 'suggesting' | 'viewing';
+
+const FALLBACK_AGENTS: Agent[] = [
+  { id: 'main', name: 'Ada', emoji: '🔮', model: 'Opus 4.6', gateway: 'ada-gateway', status: 'online' },
+  { id: 'spock', name: 'Spock', emoji: '🖖', model: 'Kimi', gateway: 'ada-gateway', status: 'online' },
+  { id: 'scotty', name: 'Scotty', emoji: '🔧', model: 'Sonnet', gateway: 'Pi', status: 'online' },
+];
+
+const AUTHORSHIP_ACTORS: readonly DocumentAuthorshipActor[] = ['human', 'ada', 'spock', 'scotty'];
+const AUTHORSHIP_ACTOR_SET = new Set<DocumentAuthorshipActor>(AUTHORSHIP_ACTORS);
+
+function buildDocumentId(sourceId: string | null, filePath: string): string {
+  return sourceId ? `${sourceId}:${filePath}` : `local:${filePath}`;
+}
+
+function computeDomSelectionAnchor(): NewCommentPopoverAnchor | null {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return null;
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    return null;
+  }
+
+  try {
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    if (!rect || (!Number.isFinite(rect.left) && !Number.isFinite(rect.top))) {
+      return null;
+    }
+
+    return {
+      left: rect.left,
+      top: rect.top,
+      bottom: rect.bottom,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAuthorshipActor(author: string): DocumentAuthorshipActor {
+  const normalized = author.trim().toLowerCase();
+  if (AUTHORSHIP_ACTOR_SET.has(normalized as DocumentAuthorshipActor)) {
+    return normalized as DocumentAuthorshipActor;
+  }
+
+  return 'human';
+}
+
+function toPercent(part: number, whole: number): number {
+  if (whole <= 0) {
+    return 0;
+  }
+
+  return Number(((part / whole) * 100).toFixed(2));
+}
+
+function formatAuthorshipBadgePercent(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0';
+  }
+
+  if (value < 1) {
+    return '<1';
+  }
+
+  const rounded = Math.round(value);
+  if (rounded <= 0) {
+    return '<1';
+  }
+
+  return String(rounded);
+}
+
+function createEmptyAuthorStats(): DocumentAuthorshipAuthorStats {
+  return {
+    ranges: 0,
+    reviewedRanges: 0,
+    coveredCharacters: 0,
+  };
+}
+
+function createEmptyAuthorshipStats(): DocumentAuthorshipStats {
+  const byAuthor: Record<string, DocumentAuthorshipAuthorStats> = {};
+  for (const actor of AUTHORSHIP_ACTORS) {
+    byAuthor[actor] = createEmptyAuthorStats();
+  }
+
+  return {
+    totalRanges: 0,
+    reviewedRanges: 0,
+    reviewedPercent: 0,
+    coveredCharacters: 0,
+    human: 0,
+    ada: 0,
+    spock: 0,
+    scotty: 0,
+    byAuthor,
+  };
+}
+
+function buildAuthorshipStats(contentLength: number, ranges: readonly DocumentAuthorshipRangeRecord[]): DocumentAuthorshipStats {
+  const stats = createEmptyAuthorshipStats();
+  const maxOffset = Math.max(0, Math.floor(contentLength));
+
+  for (const range of ranges) {
+    const start = Math.max(0, Math.min(maxOffset, Math.floor(range.start_offset)));
+    const end = Math.max(start, Math.min(maxOffset, Math.floor(range.end_offset)));
+    if (end <= start) {
+      continue;
+    }
+
+    const author = normalizeAuthorshipActor(range.author);
+    const span = end - start;
+    const authorStats = stats.byAuthor[author] ?? createEmptyAuthorStats();
+
+    stats.totalRanges += 1;
+    stats.coveredCharacters += span;
+    authorStats.ranges += 1;
+    authorStats.coveredCharacters += span;
+
+    if (range.reviewed) {
+      stats.reviewedRanges += 1;
+      authorStats.reviewedRanges += 1;
+    }
+
+    stats.byAuthor[author] = authorStats;
+  }
+
+  stats.reviewedPercent = toPercent(stats.reviewedRanges, stats.totalRanges);
+  stats.human = toPercent(stats.byAuthor.human?.coveredCharacters ?? 0, stats.coveredCharacters);
+  stats.ada = toPercent(stats.byAuthor.ada?.coveredCharacters ?? 0, stats.coveredCharacters);
+  stats.spock = toPercent(stats.byAuthor.spock?.coveredCharacters ?? 0, stats.coveredCharacters);
+  stats.scotty = toPercent(stats.byAuthor.scotty?.coveredCharacters ?? 0, stats.coveredCharacters);
+  return stats;
+}
+
+function readLoginRequired(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.localStorage.getItem(LOGIN_REQUIRED_KEY) === 'true';
+}
+
+function readAuthSession(): AuthSession | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(AUTH_SESSION_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    const username = typeof record.username === 'string' ? record.username.trim() : '';
+    const loggedInAt = typeof record.loggedInAt === 'string' ? record.loggedInAt : new Date().toISOString();
+    if (!username) {
+      return null;
+    }
+
+    return { username, loggedInAt };
+  } catch {
+    return null;
+  }
+}
+
+function persistLoginRequired(value: boolean) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(LOGIN_REQUIRED_KEY, value ? 'true' : 'false');
+}
+
+function persistAuthSession(session: AuthSession | null) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (!session) {
+    window.localStorage.removeItem(AUTH_SESSION_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+}
+
+function readDocumentsAuth(): DocumentsClientAuth | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(DOCUMENTS_AUTH_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    const kind = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
+    const token = typeof record.token === 'string' ? record.token.trim() : '';
+    if (!token) {
+      return null;
+    }
+
+    if (kind === 'service') {
+      const actorId = typeof record.actorId === 'string' ? record.actorId.trim() : '';
+      if (!actorId) {
+        return null;
+      }
+      return { kind: 'service', token, actorId };
+    }
+
+    return { kind: 'bearer', token };
+  } catch {
+    return null;
+  }
+}
+
+function persistDocumentsAuth(auth: DocumentsClientAuth | null) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (!auth) {
+    window.localStorage.removeItem(DOCUMENTS_AUTH_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(DOCUMENTS_AUTH_KEY, JSON.stringify(auth));
+}
+
+function readArchivePreference(): boolean {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+
+  const raw = window.localStorage.getItem(MC_SHOW_ARCHIVE_KEY);
+  if (raw === null) {
+    return true;
+  }
+  return raw === 'true';
+}
+
+function persistArchivePreference(value: boolean) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.setItem(MC_SHOW_ARCHIVE_KEY, value ? 'true' : 'false');
+}
+
+function readSidebarCollapsed(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+}
+
+function persistSidebarCollapsed(value: boolean) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, value ? 'true' : 'false');
+}
+
+function readRightSidebarCollapsed(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.localStorage.getItem(RIGHT_SIDEBAR_COLLAPSED_KEY) === 'true';
+}
+
+function persistRightSidebarCollapsed(value: boolean) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, value ? 'true' : 'false');
+}
+
+function normalizeTheme(value: string | null): AppTheme {
+  if (value === 'crew') {
+    return 'kitz';
+  }
+
+  if (value === 'light' || value === 'kitz' || value === 'dark') {
+    return value;
+  }
+  return 'dark';
+}
+
+function readThemePreference(): AppTheme {
+  if (typeof window === 'undefined') {
+    return 'dark';
+  }
+
+  try {
+    return normalizeTheme(window.localStorage.getItem(THEME_KEY));
+  } catch {
+    return 'dark';
+  }
+}
+
+function persistThemePreference(theme: AppTheme) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // Ignore persistence errors and keep in-memory theme state.
+  }
+}
+
+function applyDocumentTheme(theme: AppTheme) {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
+function formatElapsedTime(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h`;
+  }
+
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
+function buildTaskSearchSnippet(task: TaskBoardTask, query: string): string {
+  const description = task.description?.trim() ?? '';
+  if (!description) {
+    return `${task.project} • ${task.assignee} • ${task.priority}`;
+  }
+
+  const lowerDescription = description.toLowerCase();
+  const queryIndex = lowerDescription.indexOf(query);
+  if (queryIndex < 0) {
+    return description.length > 120 ? `${description.slice(0, 117)}...` : description;
+  }
+
+  const start = Math.max(0, queryIndex - 24);
+  const end = Math.min(description.length, queryIndex + query.length + 64);
+  const excerpt = description.slice(start, end).trim();
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < description.length ? '...' : '';
+  return `${prefix}${excerpt}${suffix}`;
+}
+
+function normalizePath(path: string): string {
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
+function buildLocalApiFallbackUrls(path: string): string[] {
+  const normalizedPath = normalizePath(path);
+  const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+
+  return Array.from(
+    new Set([
+      ...buildApiCandidates(normalizedPath, runtime.apiBase),
+      `http://localhost:3001/api${normalizedPath}`,
+      `http://127.0.0.1:3001/api${normalizedPath}`,
+      `http://${host}:3001/api${normalizedPath}`,
+    ])
+  );
+}
+
+async function requestWithFallback(urls: string[], init: RequestInit, fallbackMessage: string): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, init);
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+      return response;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(fallbackMessage);
+    }
+  }
+
+  throw lastError ?? new Error(fallbackMessage);
+}
+
+export default function App() {
+  const initialDocumentsAuth = readDocumentsAuth();
+  const [currentFile, setCurrentFile] = useState<string | null>(null);
+  const [currentSourceId, setCurrentSourceId] = useState<string | null>(null);
+  const [currentFileReadOnly, setCurrentFileReadOnly] = useState(false);
+  const [currentFileUpdatedAt, setCurrentFileUpdatedAt] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState('');
+  const [authorshipRanges, setAuthorshipRanges] = useState<DocumentAuthorshipRangeRecord[]>([]);
+  const [manualAuthorshipAuthor, setManualAuthorshipAuthor] = useState<DocumentAuthorshipActor>('human');
+  const [sidebarTab, setSidebarTab] = useState<WorkspaceTab>('files');
+  const [mobileTab, setMobileTab] = useState<MobileTab>('files');
+  const [tabletSidebarOpen, setTabletSidebarOpen] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [watchMode, setWatchMode] = useState(false);
+  const [editorCollabMode, setEditorCollabMode] = useState<EditorCollaborationMode>('editing');
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
+  const [agentsErrorDismissed, setAgentsErrorDismissed] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [followingAgent, setFollowingAgent] = useState<string | null>(null);
+  const [followDetached, setFollowDetached] = useState(false);
+  const [docPresenceByDocId, setDocPresenceByDocId] = useState<Record<string, Record<string, any>>>({});
+  const [documentsAuth, setDocumentsAuth] = useState<DocumentsClientAuth | null>(() => initialDocumentsAuth);
+  const [documentsAuthTokenDraft, setDocumentsAuthTokenDraft] = useState<string>(() => initialDocumentsAuth?.token ?? '');
+  const [documentsAuthKindDraft, setDocumentsAuthKindDraft] = useState<'bearer' | 'service'>(() =>
+    initialDocumentsAuth?.kind === 'service' ? 'service' : 'bearer'
+  );
+  const [documentsAuthActorDraft, setDocumentsAuthActorDraft] = useState<string>(() =>
+    initialDocumentsAuth?.kind === 'service' ? initialDocumentsAuth.actorId : 'ada'
+  );
+  const [commentThreads, setCommentThreads] = useState<DocumentCommentThread[]>([]);
+  const [suggestions, setSuggestions] = useState<DocumentSuggestionUiRecord[]>([]);
+  const [reviewRun, setReviewRun] = useState<DocumentReviewRunRecord | null>(null);
+  const [reviewFindings, setReviewFindings] = useState<DocumentReviewFinding[]>([]);
+  const [reviewMode, setReviewMode] = useState<DocumentReviewMode>('grammar');
+  const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null);
+  const [selectedSuggestionId, setSelectedSuggestionId] = useState<string | null>(null);
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [editorSelection, setEditorSelection] = useState<EditorSelectionSnapshot | null>(null);
+  const [focusRange, setFocusRange] = useState<EditorSelectionRange | null>(null);
+  const [commentPopover, setCommentPopover] = useState<{
+    anchor: NewCommentPopoverAnchor;
+    selection: EditorSelectionRange;
+    selectedText: string;
+  } | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [pendingOverlayRefresh, setPendingOverlayRefresh] = useState<{
+    event: 'document.comment' | 'document.suggestion' | 'document.review';
+    docId: string;
+    emittedAt?: string;
+  } | null>(null);
+  const [quickSwitcherOpen, setQuickSwitcherOpen] = useState(false);
+  const [activityPanelOpen, setActivityPanelOpen] = useState(false);
+  const [mobileActivityPanelOpen, setMobileActivityPanelOpen] = useState(false);
+  const [highlightTaskId, setHighlightTaskId] = useState<number | null>(null);
+  const [lastSaved, setLastSaved] = useState<number | null>(null);
+  const [reloadPrompt, setReloadPrompt] = useState<{ path: string; content: string } | null>(null);
+  const [loginRequired, setLoginRequired] = useState<boolean>(() => readLoginRequired());
+  const [loginGateArmedOnLoad] = useState<boolean>(() => readLoginRequired());
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => readAuthSession());
+  const [loginUsername, setLoginUsername] = useState<string>(() => readAuthSession()?.username ?? 'Henry');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [showArchiveColumn, setShowArchiveColumn] = useState<boolean>(() => readArchivePreference());
+  const [mcBoardTab, setMcBoardTab] = useState<MCBoardTab>('ops');
+  const [mcAssigneeFilter, setMcAssigneeFilter] = useState<MCAssigneeFilter>('all');
+  const [mcPriorityFilter, setMcPriorityFilter] = useState('all');
+  const [taskSearchOpen, setTaskSearchOpen] = useState(false);
+  const [taskSearchQuery, setTaskSearchQuery] = useState('');
+  const [adminSection, setAdminSection] = useState<AdminSection>('general');
+  const [enterpriseFrameNonce, setEnterpriseFrameNonce] = useState(0);
+  const [enterpriseFrameReady, setEnterpriseFrameReady] = useState(false);
+  const [enterpriseFrameTimedOut, setEnterpriseFrameTimedOut] = useState(false);
+  const [appTheme, setAppTheme] = useState<AppTheme>(() => readThemePreference());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState<boolean>(() => readRightSidebarCollapsed());
+  const saveTimeoutRef = useRef<NodeJS.Timeout>();
+  const lastContentRef = useRef('');
+  const currentFileRef = useRef<string | null>(null);
+  const taskSearchInputRef = useRef<HTMLInputElement>(null);
+  const isMobile = useIsMobile();
+  const {
+    activities,
+    loading: activityLoading,
+    error: activityError,
+  } = useActivityStream({ apiBase: runtime.apiBase, maxEntries: 200 });
+  const {
+    tasks,
+    loading: tasksLoading,
+    error: tasksError,
+    reloadTasks,
+  } = useTaskBoard({ apiBase: runtime.apiBase });
+  const {
+    sources: fileSources,
+    fetchFile: fetchSourceFile,
+  } = useFileSources({ apiBase: runtime.apiBase, enabled: runtime.fsMultiSourceEnabled });
+  const { status: syncStatus, label: syncStatusLabel } = useSyncStatus({ apiBase: runtime.apiBase });
+  const loginLocked = loginGateArmedOnLoad && loginRequired && !authSession;
+  const presenceStatusRef = useRef<Record<string, Record<string, string>>>({});
+  const currentDocIdRef = useRef<string | null>(null);
+  const documentsReadyRef = useRef(false);
+  const cursorHeartbeatTimeoutRef = useRef<number | null>(null);
+  const cursorHeartbeatPendingRef = useRef<{ docId: string; payload: Record<string, unknown> } | null>(null);
+  const cursorHeartbeatLastSentAtRef = useRef<number>(0);
+  const reviewPollAbortRef = useRef<AbortController | null>(null);
+  const reviewPollRunIdRef = useRef<string | null>(null);
+
+  const pushToast = useCallback((message: string, tone: ToastItem['tone'] = 'neutral') => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setToasts((prev) => [
+      ...prev,
+      {
+        id,
+        message,
+        tone,
+        createdAt: Date.now(),
+        ttlMs: 3000,
+      },
+    ]);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  }, []);
+
+  useEffect(() => {
+    persistLoginRequired(loginRequired);
+  }, [loginRequired]);
+
+  useEffect(() => {
+    persistAuthSession(authSession);
+  }, [authSession]);
+
+  useEffect(() => {
+    persistDocumentsAuth(documentsAuth);
+  }, [documentsAuth]);
+
+  useEffect(() => {
+    persistArchivePreference(showArchiveColumn);
+  }, [showArchiveColumn]);
+
+  useEffect(() => {
+    persistSidebarCollapsed(sidebarCollapsed);
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    persistRightSidebarCollapsed(rightSidebarCollapsed);
+  }, [rightSidebarCollapsed]);
+
+  useEffect(() => {
+    persistThemePreference(appTheme);
+    applyDocumentTheme(appTheme);
+  }, [appTheme]);
+
+  useEffect(() => {
+    if (!taskSearchOpen) {
+      return;
+    }
+
+    const rafId = window.requestAnimationFrame(() => {
+      taskSearchInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [taskSearchOpen]);
+
+  useEffect(() => {
+    if (sidebarTab !== 'admin' || adminSection !== 'enterprise') {
+      return;
+    }
+
+    setEnterpriseFrameReady(false);
+    setEnterpriseFrameTimedOut(false);
+
+    const timeoutId = window.setTimeout(() => {
+      setEnterpriseFrameTimedOut(true);
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [sidebarTab, adminSection, enterpriseFrameNonce]);
+
+  // Update ref
+  useEffect(() => {
+    currentFileRef.current = currentFile;
+  }, [currentFile]);
+
+  useEffect(() => {
+    setAuthorshipRanges([]);
+  }, [currentFile, currentSourceId]);
+
+  const currentDocId = useMemo(() => {
+    if (!currentFile) {
+      return null;
+    }
+    return buildDocumentId(currentSourceId, currentFile);
+  }, [currentFile, currentSourceId]);
+
+  useEffect(() => {
+    currentDocIdRef.current = currentDocId;
+  }, [currentDocId]);
+
+  // WebSocket for real-time updates
+  const { connected } = useWebSocket({
+    onFileChange: useCallback((path: string, content: string) => {
+      if (currentSourceId) {
+        return;
+      }
+      // If user is editing this file, show reload prompt
+      if (currentFileRef.current === path && editMode) {
+        setReloadPrompt({ path, content });
+      } else if (currentFileRef.current === path) {
+        // Live update in preview mode
+        setFileContent(content);
+      }
+    }, [currentSourceId, editMode]),
+    onFileCreate: useCallback((path: string) => {
+      // Refresh file tree if in files tab
+      // This would need a refresh trigger
+    }, []),
+    onFileDelete: useCallback((path: string) => {
+      if (currentSourceId) {
+        return;
+      }
+      if (currentFileRef.current === path) {
+        setCurrentFile(null);
+        setFileContent('');
+      }
+    }, [currentSourceId]),
+    onMention: useCallback((agent: string, document: string, instruction: string) => {
+      console.log(`[WS] ${agent} mentioned in ${document}: ${instruction}`);
+    }, []),
+    onEditorEvent: useCallback((message: { event: string; docId: string; payload: unknown; emittedAt?: string }) => {
+      const { event, docId, payload, emittedAt } = message;
+      const normalizedEvent = event.trim();
+      if (!payload || typeof payload !== 'object') {
+        return;
+      }
+
+      const record = payload as Record<string, unknown>;
+      if (normalizedEvent === 'document.cursor' || normalizedEvent === 'document:cursor') {
+        const actor = typeof record.actor === 'string' ? record.actor.trim().toLowerCase() : '';
+        if (!actor) {
+          return;
+        }
+
+        const heartbeatAtCandidate =
+          typeof record.heartbeatAt === 'string'
+            ? record.heartbeatAt
+            : typeof record.heartbeat_at === 'string'
+              ? record.heartbeat_at
+              : typeof emittedAt === 'string'
+                ? emittedAt
+                : null;
+        const heartbeatAt = typeof heartbeatAtCandidate === 'string' ? heartbeatAtCandidate : new Date().toISOString();
+
+        const presence = record.presence;
+        const cursorCandidate = record.cursor ?? record.cursor_json ?? record.position ?? record.selection;
+        const nextPresence =
+          presence && typeof presence === 'object'
+            ? presence
+            : cursorCandidate
+              ? {
+                  id: `cursor-${docId}-${actor}`,
+                  doc_id: docId,
+                  agent_id: actor,
+                  status: 'active',
+                  cursor_json: cursorCandidate,
+                  last_activity_at: heartbeatAt,
+                  created_at: heartbeatAt,
+                  updated_at: heartbeatAt,
+                }
+              : null;
+
+        if (!nextPresence || typeof nextPresence !== 'object') {
+          return;
+        }
+
+        setDocPresenceByDocId((current) => {
+          const existingDoc = current[docId] ?? {};
+          return {
+            ...current,
+            [docId]: {
+              ...existingDoc,
+              [actor]: nextPresence,
+            },
+          };
+        });
+        return;
+      }
+
+      if (normalizedEvent === 'document.presence' || normalizedEvent === 'document:presence') {
+        const actor = typeof record.actor === 'string' ? record.actor.trim().toLowerCase() : '';
+        const presence = record.presence;
+        if (!actor || !presence || typeof presence !== 'object') {
+          return;
+        }
+
+        const action = typeof record.action === 'string' ? record.action.trim().toLowerCase() : '';
+        const presenceRecord = presence as Record<string, unknown>;
+        const statusCandidate = typeof presenceRecord.status === 'string' ? presenceRecord.status.trim().toLowerCase() : '';
+        let nextStatus =
+          statusCandidate === 'active' || statusCandidate === 'idle' || statusCandidate === 'disconnected'
+            ? statusCandidate
+            : null;
+
+        if (!nextStatus && action === 'joined') {
+          nextStatus = 'active';
+        } else if (!nextStatus && action === 'left') {
+          nextStatus = 'disconnected';
+        }
+
+        const previousStatus = presenceStatusRef.current[docId]?.[actor] ?? null;
+        const prevWasDisconnected = !previousStatus || previousStatus === 'disconnected';
+        const nextIsDisconnected = !nextStatus || nextStatus === 'disconnected';
+
+        let toastAction: 'joined' | 'left' | null = null;
+        if (action === 'joined' || action === 'left') {
+          toastAction = action as 'joined' | 'left';
+        } else if (nextStatus) {
+          if (prevWasDisconnected && !nextIsDisconnected) {
+            toastAction = 'joined';
+          } else if (!prevWasDisconnected && nextIsDisconnected) {
+            toastAction = 'left';
+          }
+        }
+
+        if (docId === currentDocId && toastAction) {
+          const label =
+            actor === 'ada'
+              ? 'Ada'
+              : actor === 'spock'
+                ? 'Spock'
+                : actor === 'scotty'
+                  ? 'Scotty'
+                  : actor === 'human'
+                    ? 'Human'
+                    : actor;
+          pushToast(`${label} ${toastAction === 'joined' ? 'joined' : 'left'} the document`, 'neutral');
+        }
+
+        if (nextStatus) {
+          const existingDocStatuses = presenceStatusRef.current[docId] ?? {};
+          presenceStatusRef.current[docId] = {
+            ...existingDocStatuses,
+            [actor]: nextStatus,
+          };
+        }
+
+        setDocPresenceByDocId((current) => {
+          const existingDoc = current[docId] ?? {};
+          return {
+            ...current,
+            [docId]: {
+              ...existingDoc,
+              [actor]: presence,
+            },
+          };
+        });
+        return;
+      }
+
+      if (docId !== currentDocId) {
+        return;
+      }
+
+      if (normalizedEvent === 'document.comment' || normalizedEvent.startsWith('document:comment:')) {
+        setPendingOverlayRefresh({ event: 'document.comment', docId, emittedAt });
+        return;
+      }
+
+      if (normalizedEvent === 'document.suggestion' || normalizedEvent.startsWith('document:suggestion:')) {
+        setPendingOverlayRefresh({ event: 'document.suggestion', docId, emittedAt });
+        return;
+      }
+
+      if (normalizedEvent === 'document.review' || normalizedEvent === 'document:review:completed') {
+        setPendingOverlayRefresh({ event: 'document.review', docId, emittedAt });
+        return;
+      }
+    }, [currentDocId, pushToast]),
+  });
+
+  // Fetch agents from OpenClaw Gateway
+  useEffect(() => {
+    setAgentsLoading(true);
+    setAgentsError(null);
+    setAgentsErrorDismissed(false);
+
+    if (!runtime.openclawBase) {
+      setAgents(FALLBACK_AGENTS);
+      setAgentsLoading(false);
+      return;
+    }
+
+    fetch(`${runtime.openclawBase}/api/agents`)
+      .then(r => r.json())
+      .then(data => {
+        const agentList = data.list || data.agents || [];
+        setAgents(agentList.map((a: any) => ({
+          id: a.id || a.name?.toLowerCase(),
+          name: a.name || a.id,
+          emoji: a.emoji || '🤖',
+          model: a.model || 'unknown',
+          gateway: a.gateway || 'unknown',
+          status: 'online'
+        })));
+        setAgentsLoading(false);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'Unable to reach OpenClaw';
+        setAgentsError(message);
+        setAgentsErrorDismissed(false);
+        setAgents(FALLBACK_AGENTS);
+        setAgentsLoading(false);
+      });
+  }, []);
+
+  // Keep followed agent valid as agent list changes.
+  useEffect(() => {
+    if (agents.length === 0) {
+      setFollowingAgent(null);
+      return;
+    }
+
+    setFollowingAgent((current) => {
+      if (current && agents.some((agent) => agent.id === current)) {
+        return current;
+      }
+      const onlineAgent = agents.find((agent) => agent.status === 'online');
+      return (onlineAgent ?? agents[0]).id;
+    });
+  }, [agents]);
+
+  useEffect(() => {
+    if (!watchMode) {
+      setFollowDetached(false);
+      return;
+    }
+
+    // Re-attach follow when watch mode or target agent changes.
+    setFollowDetached(false);
+  }, [currentFile, followingAgent, watchMode]);
+
+  useEffect(() => {
+    if (isMobile) {
+      setTabletSidebarOpen(false);
+    }
+  }, [isMobile]);
+
+  // Fetch file content
+  useEffect(() => {
+    if (!currentFile) return;
+    if (runtime.fsMultiSourceEnabled && currentSourceId) {
+      fetchSourceFile(currentSourceId, currentFile)
+        .then((data) => {
+          setFileContent(data.content || '');
+          setCurrentFileReadOnly(Boolean(data.readOnly));
+          setCurrentFileUpdatedAt(data.updatedAt ?? null);
+          lastContentRef.current = data.content || '';
+          setLastSaved(Date.now());
+        })
+        .catch((err) => {
+          console.error(err);
+          setCurrentFileReadOnly(true);
+        });
+      return;
+    }
+
+    const encodedPath = encodeURIComponent(currentFile);
+    requestJsonWithFallback<{ content?: string }>({
+      urls: buildLocalApiFallbackUrls(`/file?path=${encodedPath}`),
+      fallbackError: 'Failed to fetch file.',
+    })
+      .then(d => {
+        setFileContent(d.content || '');
+        setCurrentFileReadOnly(false);
+        setCurrentFileUpdatedAt(null);
+        lastContentRef.current = d.content || '';
+        setLastSaved(Date.now());
+      })
+      .catch(console.error);
+  }, [currentFile, currentSourceId, fetchSourceFile]);
+
+  // Auto-save with debounce
+  const scheduleAutoSave = useCallback((content: string) => {
+    if (currentSourceId) {
+      return;
+    }
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(async () => {
+      if (content !== lastContentRef.current && currentFile) {
+        const encodedPath = encodeURIComponent(currentFile);
+        await requestWithFallback(
+          buildLocalApiFallbackUrls(`/file?path=${encodedPath}`),
+          {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content }),
+          },
+          'Failed to save file.'
+        );
+        lastContentRef.current = content;
+        setLastSaved(Date.now());
+      }
+    }, 2000);
+  }, [currentFile, currentSourceId]);
+
+  // Handle content changes
+  const handleContentChange = useCallback((newContent: string) => {
+    setFileContent(newContent);
+    scheduleAutoSave(newContent);
+  }, [scheduleAutoSave]);
+
+  const handleManualAttribution = useCallback(
+    (selection: EditorSelectionRange) => {
+      if (!currentFile) {
+        return;
+      }
+
+      const maxOffset = Math.max(0, fileContent.length);
+      const from = Math.max(0, Math.min(maxOffset, Math.floor(selection.from)));
+      const to = Math.max(from, Math.min(maxOffset, Math.floor(selection.to)));
+      if (to <= from) {
+        return;
+      }
+
+      setAuthorshipRanges((previous) => {
+        const existing = previous.find(
+          (range) => range.start_offset === from && range.end_offset === to
+        );
+        const existingAuthor = existing ? normalizeAuthorshipActor(existing.author) : null;
+        if (existing && existingAuthor === manualAuthorshipAuthor) {
+          return previous.filter((range) => range.id !== existing.id);
+        }
+
+        const now = new Date().toISOString();
+        const nextRange: DocumentAuthorshipRangeRecord = {
+          id: existing?.id ?? `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          doc_id: buildDocumentId(currentSourceId, currentFile),
+          start_offset: from,
+          end_offset: to,
+          author: manualAuthorshipAuthor,
+          reviewed: manualAuthorshipAuthor === 'human' ? true : existing?.reviewed ?? false,
+          created_at: existing?.created_at ?? now,
+          updated_at: now,
+        };
+
+        const withoutCurrent = existing ? previous.filter((range) => range.id !== existing.id) : previous;
+        return [...withoutCurrent, nextRange].sort((left, right) => {
+          if (left.start_offset !== right.start_offset) {
+            return left.start_offset - right.start_offset;
+          }
+          return left.end_offset - right.end_offset;
+        });
+      });
+    },
+    [currentFile, currentSourceId, fileContent.length, manualAuthorshipAuthor]
+  );
+
+  // Handle @mention - send to OpenClaw
+  const handleSave = useCallback(async () => {
+    if (!currentFile) return;
+    if (currentSourceId) return;
+
+    // Check for @mentions
+    const mentionRegex = /@(\w+)/g;
+    const matches = fileContent.match(mentionRegex);
+    if (matches && matches.length > 0) {
+      const mentionedAgents = [...new Set(matches.map(m => m.slice(1)))];
+      for (const agent of mentionedAgents) {
+        try {
+          await fetch(`${runtime.apiBase}/api/mention`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              agent,
+              document: currentFile,
+              instruction: `User mentioned you in ${currentFile.split('/').pop()}. Please help with the content.`,
+              context: fileContent.slice(0, 1000),
+              author: 'Henry',
+            }),
+          });
+          console.log(`[Mention] Notified ${agent}`);
+        } catch (e) {
+          console.error(`[Mention] Failed to notify ${agent}:`, e);
+        }
+      }
+    }
+
+    // Save file
+    const encodedPath = encodeURIComponent(currentFile);
+    await requestWithFallback(
+      buildLocalApiFallbackUrls(`/file?path=${encodedPath}`),
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: fileContent }),
+      },
+      'Failed to save file.'
+    );
+    lastContentRef.current = fileContent;
+    setLastSaved(Date.now());
+  }, [currentFile, currentSourceId, fileContent]);
+
+  const handleFileSelect = (path: string) => {
+    setSidebarTab('files');
+    setMobileTab('files');
+    setTabletSidebarOpen(false);
+    setCurrentSourceId(null);
+    setCurrentFile(path);
+    setCurrentFileReadOnly(false);
+    setCurrentFileUpdatedAt(null);
+    setEditMode(false);
+    setEditorCollabMode('editing');
+    setReloadPrompt(null);
+    setHighlightTaskId(null);
+  };
+
+  const handleSourceFileSelect = (sourceId: string, path: string) => {
+    setSidebarTab('files');
+    setMobileTab('files');
+    setTabletSidebarOpen(false);
+    setCurrentSourceId(sourceId);
+    setCurrentFile(path);
+    setEditMode(false);
+    setEditorCollabMode('editing');
+    setReloadPrompt(null);
+    setHighlightTaskId(null);
+  };
+
+  const handleBackToDashboard = () => {
+    setCurrentSourceId(null);
+    setCurrentFile(null);
+    setCurrentFileReadOnly(false);
+    setCurrentFileUpdatedAt(null);
+    setEditMode(false);
+    setEditorCollabMode('editing');
+    setReloadPrompt(null);
+    setHighlightTaskId(null);
+  };
+
+  const handleTaskSelect = (taskId: number) => {
+    setSidebarTab('tasks');
+    setMobileTab('tasks');
+    setTabletSidebarOpen(false);
+    setHighlightTaskId(taskId);
+  };
+
+  const handleSidebarTabChange = (tab: WorkspaceTab) => {
+    setSidebarTab(tab);
+    if (tab === 'admin') {
+      setMobileTab('files');
+    } else {
+      setMobileTab(tab);
+    }
+    setTabletSidebarOpen(false);
+  };
+
+  const handleReload = () => {
+    if (reloadPrompt) {
+      setFileContent(reloadPrompt.content);
+      lastContentRef.current = reloadPrompt.content;
+      setReloadPrompt(null);
+    }
+  };
+
+  const toggleWatchMode = useCallback(() => {
+    setWatchMode((prev) => {
+      const next = !prev;
+      if (next && !followingAgent && agents.length > 0) {
+        const onlineAgent = agents.find((agent) => agent.status === 'online');
+        setFollowingAgent((onlineAgent ?? agents[0]).id);
+      }
+      return next;
+    });
+  }, [agents, followingAgent]);
+
+  const openMissionControlModal = useCallback(() => {
+    const runtimeFn = (window as unknown as Record<string, unknown>).toggleModal;
+    if (typeof runtimeFn === 'function') {
+      (runtimeFn as () => void)();
+    }
+  }, []);
+
+  const applyArchiveVisibility = useCallback((visible: boolean) => {
+    const runtimeFn = (window as unknown as Record<string, unknown>).setArchiveVisibility;
+    if (typeof runtimeFn === 'function') {
+      (runtimeFn as (value: boolean) => void)(visible);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (sidebarTab !== 'tasks' && sidebarTab !== 'agents') {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const runtimeApi = window as unknown as Record<string, unknown>;
+      const boardToRender: MCRuntimeBoard = sidebarTab === 'agents'
+        ? 'agents'
+        : mcBoardTab === 'strategic'
+          ? 'strategic'
+          : 'ops';
+
+      const setBoard = runtimeApi.setBoard;
+      if (typeof setBoard === 'function') {
+        (setBoard as (board: MCRuntimeBoard, updateHash?: boolean) => void)(boardToRender, false);
+      }
+
+      const setAssignee = runtimeApi.filterByUser;
+      if (sidebarTab === 'tasks' && typeof setAssignee === 'function') {
+        (setAssignee as (assignee: MCAssigneeFilter) => void)(mcAssigneeFilter);
+      }
+
+      const setPriority = runtimeApi.setPriorityFilter;
+      if (sidebarTab === 'tasks' && typeof setPriority === 'function') {
+        (setPriority as (priority: string) => void)(mcPriorityFilter);
+      }
+
+      const setArchiveVisibility = runtimeApi.setArchiveVisibility;
+      if (typeof setArchiveVisibility === 'function') {
+        (setArchiveVisibility as (value: boolean) => void)(showArchiveColumn);
+      }
+    }, 50);
+
+    return () => window.clearTimeout(timer);
+  }, [mcAssigneeFilter, mcBoardTab, mcPriorityFilter, showArchiveColumn, sidebarTab]);
+
+  const handleLoginSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const username = loginUsername.trim() || 'Henry';
+      const password = loginPassword.trim();
+
+      if (password !== DEFAULT_LOGIN_PASSWORD) {
+        setLoginError('Invalid credentials');
+        return;
+      }
+
+      setAuthSession({
+        username,
+        loggedInAt: new Date().toISOString(),
+      });
+      setLoginUsername(username);
+      setLoginPassword('');
+      setLoginError('');
+    },
+    [loginPassword, loginUsername]
+  );
+
+  const handleLogout = useCallback(() => {
+    setAuthSession(null);
+    setLoginPassword('');
+    setLoginError('');
+  }, []);
+
+  const toggleLoginRequirement = useCallback((enabled: boolean) => {
+    setLoginRequired(enabled);
+    setLoginError('');
+    setLoginPassword('');
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && watchMode && !followDetached) {
+        e.preventDefault();
+        setFollowDetached(true);
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+        e.preventDefault();
+        setQuickSwitcherOpen(true);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
+        e.preventDefault();
+        if (currentFile) setEditMode(m => !m);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 's' && editMode && !watchMode) {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentFile, editMode, followDetached, handleSave, watchMode]);
+
+  const savedAgo = lastSaved ? Math.floor((Date.now() - lastSaved) / 1000) : 0;
+  const savedAgoLabel = savedAgo > 0 ? formatElapsedTime(savedAgo) : null;
+  const normalizedTaskSearchQuery = taskSearchQuery.trim().toLowerCase();
+  const taskSearchResults = useMemo(() => {
+    if (!normalizedTaskSearchQuery) {
+      return [];
+    }
+
+    return tasks
+      .filter((task) => {
+        const haystack = `${task.id} ${task.name} ${task.description ?? ''} ${task.assignee} ${task.project}`.toLowerCase();
+        return haystack.includes(normalizedTaskSearchQuery);
+      })
+      .slice(0, 8);
+  }, [tasks, normalizedTaskSearchQuery]);
+  const selectedAgentData = selectedAgent ? agents.find((agent) => agent.id === selectedAgent) : null;
+  const selectedSource = currentSourceId ? fileSources.find((source) => source.id === currentSourceId) : null;
+  const documentsClient = useMemo(
+    () =>
+      createDocumentsApiClient({
+        apiBase: runtime.apiBase,
+        auth: documentsAuth ?? undefined,
+      }),
+    [documentsAuth]
+  );
+  const remotePresence = useMemo(() => {
+    if (!currentDocId) {
+      return [];
+    }
+    const map = docPresenceByDocId[currentDocId] ?? {};
+    return Object.values(map).filter((entry) => entry && typeof entry === 'object') as DocumentPresenceRecord[];
+  }, [docPresenceByDocId, currentDocId]);
+  const followedAgentData = followingAgent ? agents.find((agent) => agent.id === followingAgent) : null;
+  const followedActorId = useMemo(() => {
+    if (followedAgentData?.name) {
+      return followedAgentData.name.trim().toLowerCase();
+    }
+    if (!followingAgent) {
+      return null;
+    }
+    return followingAgent.trim().toLowerCase();
+  }, [followedAgentData?.name, followingAgent]);
+  const followEnabled = Boolean(currentDocId) && Boolean(followedActorId) && watchMode && editMode && !followDetached;
+  const followGlowClassName = useMemo(() => {
+    if (!followEnabled) {
+      return '';
+    }
+
+    switch (followedActorId) {
+      case 'ada':
+        return 'following-ada';
+      case 'spock':
+        return 'following-spock';
+      case 'scotty':
+        return 'following-scotty';
+      default:
+        return 'following-generic';
+    }
+  }, [followEnabled, followedActorId]);
+  const followedPresence = useMemo(() => {
+    if (!currentDocId || !followedActorId) {
+      return null;
+    }
+
+    return docPresenceByDocId[currentDocId]?.[followedActorId] ?? null;
+  }, [currentDocId, docPresenceByDocId, followedActorId]);
+  const [followTypingPulseActive, setFollowTypingPulseActive] = useState(false);
+  useEffect(() => {
+    if (!followEnabled) {
+      setFollowTypingPulseActive(false);
+      return;
+    }
+
+    if (!followedPresence || typeof followedPresence !== 'object') {
+      setFollowTypingPulseActive(false);
+      return;
+    }
+
+    const presenceRecord = followedPresence as Record<string, unknown>;
+    const status = typeof presenceRecord.status === 'string' ? presenceRecord.status.trim().toLowerCase() : '';
+    const lastActivityAt =
+      typeof presenceRecord.last_activity_at === 'string' ? presenceRecord.last_activity_at : null;
+    const cursorJson = presenceRecord.cursor_json;
+
+    let action: string | null = null;
+    if (cursorJson && typeof cursorJson === 'object' && !Array.isArray(cursorJson)) {
+      const actionCandidate = (cursorJson as Record<string, unknown>).action;
+      if (typeof actionCandidate === 'string') {
+        action = actionCandidate.trim().toLowerCase();
+      }
+    }
+
+    let lastActivityMs: number | null = null;
+    if (typeof lastActivityAt === 'string') {
+      const parsed = Date.parse(lastActivityAt);
+      lastActivityMs = Number.isFinite(parsed) ? parsed : null;
+    }
+
+    const now = Date.now();
+    const typingWindowMs = 2500;
+    const isRecent = typeof lastActivityMs === 'number' ? now - lastActivityMs <= typingWindowMs : false;
+    const shouldPulse = isRecent && (action === 'typing' || (!action && status === 'active'));
+    setFollowTypingPulseActive(shouldPulse);
+
+    if (!shouldPulse || typeof lastActivityMs !== 'number') {
+      return;
+    }
+
+    const expiresInMs = Math.max(0, typingWindowMs - (now - lastActivityMs)) + 30;
+    const timeoutId = window.setTimeout(() => setFollowTypingPulseActive(false), expiresInMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [followEnabled, followedPresence]);
+  const followCursor = useMemo(() => {
+    if (!currentDocId || !followedActorId) {
+      return null;
+    }
+    const presence = docPresenceByDocId[currentDocId]?.[followedActorId] as any;
+    return presence?.cursor_json ?? null;
+  }, [currentDocId, docPresenceByDocId, followedActorId]);
+  const { cursor: debouncedFollowCursor } = useFollowMode({
+    enabled: followEnabled,
+    cursor: followCursor,
+    debounceMs: 100,
+  });
+  const canEditCurrentFile = Boolean(currentFile) && (!currentSourceId || !currentFileReadOnly);
+  const authorshipStats = useMemo(
+    () => buildAuthorshipStats(fileContent.length, authorshipRanges),
+    [authorshipRanges, fileContent.length]
+  );
+  const editorAuthorshipRanges = useMemo<EditorAuthorshipRange[]>(
+    () =>
+      authorshipRanges.map((range) => ({
+        startOffset: range.start_offset,
+        endOffset: range.end_offset,
+        author: normalizeAuthorshipActor(range.author),
+        reviewed: range.reviewed,
+      })),
+    [authorshipRanges]
+  );
+  const manualAttributionEnabled = runtime.agentNativeEditorEnabled;
+  const rightSidebarHasComments = commentThreads.length > 0;
+  const rightSidebarHasSuggestions = suggestions.length > 0;
+  const rightSidebarHasReview = reviewFindings.length > 0 || Boolean(reviewRun);
+  const rightSidebarHasPanels = rightSidebarHasComments || rightSidebarHasSuggestions || rightSidebarHasReview;
+  const rightSidebarIsCollapsed = rightSidebarCollapsed || !rightSidebarHasPanels;
+  const selectedAgentActivity = selectedAgentData
+    ? activities
+      .filter((entry) => entry.agentName.toLowerCase() === selectedAgentData.name.toLowerCase())
+      .slice(0, 10)
+    : [];
+  const activeTasks = tasks.filter((task) => {
+    if (task.column !== 'doing') return false;
+    // Only show tasks updated in the last 1 minute (actively being worked on)
+    const updatedAt = new Date(task.updated_at).getTime();
+    const oneMinuteAgo = Date.now() - 60 * 1000;
+    return updatedAt > oneMinuteAgo;
+  });
+  const onlineAgents = agents.filter((agent) => agent.status === 'online').length;
+  const workspaceTab = isMobile ? mobileTab : sidebarTab;
+  const enterpriseFrameSrc = ENTERPRISE_ADMIN_URL;
+
+  const documentsReady = Boolean(runtime.agentNativeEditorEnabled && currentDocId && currentSourceId && documentsAuth);
+
+  useEffect(() => {
+    documentsReadyRef.current = documentsReady;
+  }, [documentsReady]);
+
+  useEffect(() => {
+    if (!documentsReady && editorCollabMode === 'suggesting') {
+      setEditorCollabMode('editing');
+    }
+  }, [documentsReady, editorCollabMode]);
+
+  const handleToggleSuggestingMode = useCallback(() => {
+    if (!documentsReady) {
+      pushToast('Connect a Documents token to use suggesting mode.', 'warning');
+      return;
+    }
+
+    setEditorCollabMode((prev) => (prev === 'suggesting' ? 'editing' : 'suggesting'));
+  }, [documentsReady, pushToast]);
+
+  const handleExitSuggestingMode = useCallback(() => {
+    setEditorCollabMode((prev) => (prev === 'suggesting' ? 'editing' : prev));
+  }, []);
+
+  const handleSuggestingEdit = useCallback(
+    (request: EditorSuggestingEditRequest) => {
+      if (!documentsReady || !currentDocId) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          const response = await documentsClient.postSuggestion(currentDocId, {
+            from: request.from,
+            to: request.to,
+            originalText: request.originalText,
+            suggestedText: request.suggestedText,
+            type: request.type,
+          });
+          setSuggestions(response.suggestions);
+        } catch (error) {
+          pushToast(error instanceof Error ? error.message : 'Failed to create suggestion.', 'danger');
+        }
+      })();
+    },
+    [currentDocId, documentsClient, documentsReady, pushToast]
+  );
+
+  useEffect(() => {
+    if (cursorHeartbeatTimeoutRef.current !== null) {
+      window.clearTimeout(cursorHeartbeatTimeoutRef.current);
+      cursorHeartbeatTimeoutRef.current = null;
+    }
+    cursorHeartbeatPendingRef.current = null;
+    cursorHeartbeatLastSentAtRef.current = 0;
+  }, [currentDocId, documentsReady]);
+
+  useEffect(() => {
+    return () => {
+      if (cursorHeartbeatTimeoutRef.current !== null) {
+        window.clearTimeout(cursorHeartbeatTimeoutRef.current);
+        cursorHeartbeatTimeoutRef.current = null;
+      }
+      cursorHeartbeatPendingRef.current = null;
+      cursorHeartbeatLastSentAtRef.current = 0;
+    };
+  }, []);
+
+  const handleEditorCursorActivity = useCallback(
+    (activity: EditorCursorActivity) => {
+      if (!documentsReady || !currentDocId) {
+        return;
+      }
+
+      cursorHeartbeatPendingRef.current = {
+        docId: currentDocId,
+        payload: {
+          cursor: { pos: Math.max(0, Math.floor(activity.pos)) },
+          selection: {
+            from: Math.max(0, Math.floor(activity.selection.from)),
+            to: Math.max(0, Math.floor(activity.selection.to)),
+          },
+          action: activity.action,
+          status: 'active',
+        },
+      };
+
+      const scheduleFlush = (delayMs: number) => {
+        if (cursorHeartbeatTimeoutRef.current !== null) {
+          return;
+        }
+
+        cursorHeartbeatTimeoutRef.current = window.setTimeout(() => {
+          cursorHeartbeatTimeoutRef.current = null;
+
+          const pending = cursorHeartbeatPendingRef.current;
+          cursorHeartbeatPendingRef.current = null;
+
+          if (!pending || !documentsReadyRef.current || pending.docId !== currentDocIdRef.current) {
+            return;
+          }
+
+          cursorHeartbeatLastSentAtRef.current = Date.now();
+
+          void (async () => {
+            try {
+              const response = await documentsClient.postCursor(pending.docId, pending.payload);
+              const actor = response.actor?.trim?.().toLowerCase?.() ?? '';
+              if (!actor) {
+                return;
+              }
+
+              const nextStatus = response.presence.status?.trim?.().toLowerCase?.() ?? '';
+              if (nextStatus) {
+                const existingDocStatuses = presenceStatusRef.current[pending.docId] ?? {};
+                presenceStatusRef.current[pending.docId] = {
+                  ...existingDocStatuses,
+                  [actor]: nextStatus,
+                };
+              }
+
+              setDocPresenceByDocId((current) => {
+                const existingDoc = current[pending.docId] ?? {};
+                return {
+                  ...current,
+                  [pending.docId]: {
+                    ...existingDoc,
+                    [actor]: response.presence,
+                  },
+                };
+              });
+            } catch {
+              // Presence heartbeats are best-effort; avoid spamming toasts on transient failures.
+            }
+          })();
+        }, delayMs);
+      };
+
+      const now = Date.now();
+      const elapsedMs = now - cursorHeartbeatLastSentAtRef.current;
+      if (elapsedMs >= 500) {
+        scheduleFlush(0);
+      } else {
+        scheduleFlush(500 - elapsedMs);
+      }
+    },
+    [currentDocId, documentsClient, documentsReady]
+  );
+
+  const resolveAgentIdForActor = useCallback(
+    (actorId: string): string | null => {
+      const normalized = actorId.trim().toLowerCase();
+      if (!normalized || normalized === 'human') {
+        return null;
+      }
+
+      const direct = agents.find((agent) => agent.id.trim().toLowerCase() === normalized);
+      if (direct) {
+        return direct.id;
+      }
+
+      const byName = agents.find((agent) => agent.name.trim().toLowerCase() === normalized);
+      return byName ? byName.id : null;
+    },
+    [agents]
+  );
+
+  const applyPresenceSeed = useCallback(
+    (docId: string, presence: readonly DocumentPresenceRecord[]) => {
+      setDocPresenceByDocId((current) => {
+        const existingDoc = current[docId] ?? {};
+        const seeded: Record<string, any> = {};
+        const statusSeed: Record<string, string> = {};
+        for (const entry of presence) {
+          const actor = entry.agent_id?.trim?.().toLowerCase?.() ?? '';
+          if (!actor) continue;
+          seeded[actor] = entry;
+          const nextStatus = entry.status?.trim?.().toLowerCase?.() ?? '';
+          if (nextStatus) {
+            statusSeed[actor] = nextStatus;
+          }
+        }
+
+        const existingStatuses = presenceStatusRef.current[docId] ?? {};
+        presenceStatusRef.current[docId] = { ...statusSeed, ...existingStatuses };
+        return {
+          ...current,
+          [docId]: {
+            ...seeded,
+            ...existingDoc,
+          },
+        };
+      });
+    },
+    []
+  );
+
+  const refreshComments = useCallback(async () => {
+    if (!documentsReady || !currentDocId) {
+      return;
+    }
+
+    try {
+      const response = await documentsClient.getComments(currentDocId);
+      setCommentThreads(response.threads);
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Failed to refresh comments.', 'danger');
+    }
+  }, [currentDocId, documentsClient, documentsReady, pushToast]);
+
+  const refreshSuggestions = useCallback(async () => {
+    if (!documentsReady || !currentDocId) {
+      return;
+    }
+
+    try {
+      const response = await documentsClient.getSuggestions(currentDocId);
+      setSuggestions(response.suggestions);
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Failed to refresh suggestions.', 'danger');
+    }
+  }, [currentDocId, documentsClient, documentsReady, pushToast]);
+
+  const refreshReviewLatest = useCallback(async () => {
+    if (!documentsReady || !currentDocId) {
+      return;
+    }
+
+    try {
+      const state = await documentsClient.getState(currentDocId);
+      applyPresenceSeed(currentDocId, state.presence);
+
+      const latest = state.reviewSummary.latestRun;
+      setReviewRun(latest ?? null);
+      if (!latest) {
+        setReviewFindings([]);
+        return;
+      }
+
+      const review = await documentsClient.getReview(currentDocId, latest.id);
+      setReviewRun(review.run);
+      setReviewFindings(review.findings);
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Failed to refresh review.', 'danger');
+    }
+  }, [applyPresenceSeed, currentDocId, documentsClient, documentsReady, pushToast]);
+
+  useEffect(() => {
+    if (!pendingOverlayRefresh) {
+      return;
+    }
+
+    if (pendingOverlayRefresh.docId !== currentDocId) {
+      return;
+    }
+
+    if (!documentsReady) {
+      return;
+    }
+
+    if (pendingOverlayRefresh.event === 'document.comment') {
+      void refreshComments();
+      return;
+    }
+
+    if (pendingOverlayRefresh.event === 'document.suggestion') {
+      void refreshSuggestions();
+      return;
+    }
+
+    if (pendingOverlayRefresh.event === 'document.review') {
+      void refreshReviewLatest();
+    }
+  }, [currentDocId, documentsReady, pendingOverlayRefresh, refreshComments, refreshReviewLatest, refreshSuggestions]);
+
+  useEffect(() => {
+    if (!documentsReady || !currentDocId) {
+      setCommentThreads([]);
+      setSuggestions([]);
+      setReviewRun(null);
+      setReviewFindings([]);
+      setSelectedCommentId(null);
+      setSelectedSuggestionId(null);
+      setSelectedFindingId(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const [state, comments, suggestionsResponse] = await Promise.all([
+          documentsClient.getState(currentDocId),
+          documentsClient.getComments(currentDocId),
+          documentsClient.getSuggestions(currentDocId),
+        ]);
+        if (cancelled) return;
+
+        applyPresenceSeed(currentDocId, state.presence);
+        setAuthorshipRanges(state.collaboration.authorship_ranges);
+        setCommentThreads(comments.threads);
+        setSuggestions(suggestionsResponse.suggestions);
+
+        const latest = state.reviewSummary.latestRun;
+        setReviewRun(latest ?? null);
+        if (!latest) {
+          setReviewFindings([]);
+          return;
+        }
+
+        const review = await documentsClient.getReview(currentDocId, latest.id);
+        if (cancelled) return;
+        setReviewRun(review.run);
+        setReviewFindings(review.findings);
+      } catch (error) {
+        if (cancelled) return;
+        pushToast(error instanceof Error ? error.message : 'Failed to load collaboration overlays.', 'danger');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyPresenceSeed, currentDocId, documentsClient, documentsReady, pushToast]);
+
+  useEffect(() => {
+    if (!documentsReady || !currentDocId || !reviewRun || reviewRun.status !== 'running') {
+      reviewPollAbortRef.current?.abort();
+      reviewPollAbortRef.current = null;
+      reviewPollRunIdRef.current = null;
+      return;
+    }
+
+    if (reviewPollRunIdRef.current === reviewRun.id) {
+      return;
+    }
+
+    reviewPollAbortRef.current?.abort();
+    const controller = new AbortController();
+    reviewPollAbortRef.current = controller;
+    reviewPollRunIdRef.current = reviewRun.id;
+
+    const runId = reviewRun.id;
+
+    void (async () => {
+      const startedAt = Date.now();
+      const maxPollMs = 5 * 60_000;
+      let delayMs = 900;
+
+      while (!controller.signal.aborted) {
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        // If the user navigated away, drop this poll loop.
+        if (!documentsReadyRef.current || currentDocIdRef.current !== currentDocId) {
+          return;
+        }
+
+        try {
+          const response = await documentsClient.getReview(currentDocId, runId, { signal: controller.signal });
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          setReviewRun(response.run);
+          setReviewFindings(response.findings);
+
+          if (response.run.status !== 'running') {
+            reviewPollRunIdRef.current = null;
+            return;
+          }
+
+          delayMs = Math.min(3000, Math.round(delayMs * 1.2));
+        } catch {
+          // Transient failures: back off but keep polling for a reasonable window.
+          delayMs = Math.min(5000, Math.round(delayMs * 1.5));
+        }
+
+        if (Date.now() - startedAt > maxPollMs) {
+          reviewPollRunIdRef.current = null;
+          return;
+        }
+      }
+    })();
+
+    return () => {
+      controller.abort();
+    };
+  }, [currentDocId, documentsClient, documentsReady, reviewRun]);
+
+  const handleApplyReviewFindingFix = useCallback(
+    (findingId: string) => {
+      void (async () => {
+        if (currentFileReadOnly) {
+          pushToast('This source is read-only. Review fixes cannot be applied.', 'warning');
+          return;
+        }
+        if (!documentsReady || !currentDocId) {
+          pushToast('Connect a Documents token to apply review fixes.', 'warning');
+          return;
+        }
+        if (!reviewRun) {
+          pushToast('No review run selected.', 'warning');
+          return;
+        }
+
+        try {
+          const response = await documentsClient.applyReviewFinding(currentDocId, reviewRun.id, findingId);
+          setReviewRun(response.run);
+          setReviewFindings(response.findings);
+          pushToast('Fix applied.', 'success');
+          if (currentSourceId && currentFile) {
+            const updated = await fetchSourceFile(currentSourceId, currentFile);
+            setFileContent(updated.content || '');
+          }
+        } catch (error) {
+          pushToast(error instanceof Error ? error.message : 'Failed to apply fix.', 'danger');
+        }
+      })();
+    },
+    [currentDocId, currentFile, currentFileReadOnly, currentSourceId, documentsClient, documentsReady, fetchSourceFile, pushToast, reviewRun]
+  );
+
+  const handleIgnoreReviewFinding = useCallback(
+    (findingId: string) => {
+      void (async () => {
+        if (!documentsReady || !currentDocId) {
+          pushToast('Connect a Documents token to ignore findings.', 'warning');
+          return;
+        }
+        if (!reviewRun) {
+          pushToast('No review run selected.', 'warning');
+          return;
+        }
+
+        try {
+          const response = await documentsClient.ignoreReviewFinding(currentDocId, reviewRun.id, findingId);
+          setReviewRun(response.run);
+          setReviewFindings(response.findings);
+        } catch (error) {
+          pushToast(error instanceof Error ? error.message : 'Failed to ignore finding.', 'danger');
+        }
+      })();
+    },
+    [currentDocId, documentsClient, documentsReady, pushToast, reviewRun]
+  );
+
+  const renderAgentsPanel = () => (
+    <div className="p-2">
+      {agentsLoading && (
+        <div className="mc-shell-card mb-2 border px-3 py-2 text-xs text-[var(--text-muted)]">Loading agents…</div>
+      )}
+      {agentsError && (
+        <div className="mc-shell-card mb-2 border border-[var(--error)] px-3 py-2 text-xs text-[var(--error)]">
+          OpenClaw unavailable. Showing fallback agent data.
+        </div>
+      )}
+      {agents.map((agent) => (
+        <div key={agent.id}>
+          <button
+            onClick={() => {
+              if (watchMode) {
+                setFollowingAgent(agent.id);
+                setSelectedAgent(agent.id);
+                setFollowDetached(false);
+                return;
+              }
+              setSelectedAgent(selectedAgent === agent.id ? null : agent.id);
+            }}
+            className={`mc-shell-card mb-2 w-full border p-3 text-left transition-colors ${
+              selectedAgent === agent.id
+                ? 'border-[var(--border-secondary)] bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
+                : watchMode && followingAgent === agent.id
+                  ? 'border-[var(--accent)] bg-[var(--bg-secondary)] text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            <div className="mb-1 flex items-center gap-2">
+              <span className="text-lg">{agent.emoji}</span>
+              <span className="font-medium">{agent.name}</span>
+              <span className={`ml-auto h-2 w-2 rounded-full ${agent.status === 'online' ? 'bg-[var(--accent)]' : 'bg-[var(--text-muted)]'}`} />
+            </div>
+            <div className="text-xs text-[var(--text-muted)]">{agent.model} · {agent.gateway}</div>
+            {watchMode && followingAgent === agent.id && (
+              <div className="mt-1 text-xs text-[var(--accent)]">Following in Watch Mode</div>
+            )}
+          </button>
+          {selectedAgent === agent.id && (
+            <div className="mc-shell-card mb-4 ml-4 border p-3">
+              <div className="mb-2 text-xs uppercase tracking-wider text-[var(--text-muted)]">Recent Activity</div>
+              {selectedAgentActivity.length > 0 ? (
+                selectedAgentActivity.map((entry) => (
+                  <div key={entry.id} className="mb-2 border-b border-[var(--border-secondary)] pb-2 text-sm last:border-0">
+                    <div className="text-[var(--text-secondary)]">{entry.action || entry.description || 'Activity'}</div>
+                    <div className="text-xs text-[var(--text-muted)]">{new Date(entry.timestamp).toLocaleString()}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-xs text-[var(--text-muted)]">No recent activity</div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
+  const renderTaskSidebarPanel = () => (
+    <div className="p-2">
+      <div className="mb-2 px-2 text-xs uppercase tracking-wider text-[var(--text-muted)]">Active Tasks</div>
+      {tasksLoading && <div className="mb-2 px-2 text-xs text-[var(--text-muted)]">Loading tasks...</div>}
+      {tasksError && (
+        <div className="mb-2 rounded-md border border-[var(--border-secondary)] bg-[var(--bg-secondary)] px-2 py-2">
+          <div className="mb-2 text-xs text-[var(--error)]">Unable to load active tasks.</div>
+          <button
+            type="button"
+            onClick={() => void reloadTasks()}
+            className="mc-shell-btn px-2 py-0.5 text-[11px]"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {activeTasks.map((task) => (
+        <div key={task.id} className="mc-shell-card mb-1 w-full p-2 text-left text-sm">
+          <div className="truncate font-medium">{task.name}</div>
+          <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
+            <span>#{task.id} · {task.assignee}</span>
+            <span title={'Started: ' + task.updated_at}>⏱ <ElapsedTimer since={task.updated_at} /></span>
+          </div>
+        </div>
+      ))}
+      {activeTasks.length === 0 && (
+        <div className="px-2 text-xs text-[var(--text-muted)]">No active tasks</div>
+      )}
+    </div>
+  );
+
+  const renderAdminSidebarPanel = () => {
+    const items: Array<{ key: AdminSection; title: string; hint: string }> = [
+      { key: 'general', title: 'General settings', hint: 'Workspace + security' },
+      { key: 'missionControl', title: 'Mission Control', hint: 'Board + data behavior' },
+      { key: 'integrations', title: 'Integrations', hint: 'Gateway + sync' },
+      { key: 'enterprise', title: 'Openclaw', hint: 'Embedded crew admin' },
+    ];
+
+    return (
+      <div className="p-2">
+        {items.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => setAdminSection(item.key)}
+            className={`mc-shell-card mb-1 w-full border px-3 py-2 text-left transition-colors ${
+              adminSection === item.key
+                ? 'border-[var(--accent)] bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
+                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
+            }`}
+          >
+            <div className="text-sm font-medium">{item.title}</div>
+            <div className="text-xs text-[var(--text-muted)]">{item.hint}</div>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  const renderAdminWorkspace = () => {
+    if (adminSection === 'enterprise') {
+      return (
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          <iframe
+            key={enterpriseFrameNonce}
+            src={enterpriseFrameSrc}
+            title="Openclaw Admin"
+            className="block h-full w-full border-0 bg-[var(--bg-secondary)]"
+            loading="eager"
+            onLoad={() => {
+              setEnterpriseFrameReady(true);
+              setEnterpriseFrameTimedOut(false);
+            }}
+            onError={() => {
+              setEnterpriseFrameReady(false);
+              setEnterpriseFrameTimedOut(true);
+            }}
+          />
+          {!enterpriseFrameReady && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--bg-primary)]/45 p-4">
+              <div className="mc-shell-card w-full max-w-md border border-[var(--border-secondary)] p-4 text-center">
+                <div className="mb-2 text-sm font-medium text-[var(--text-primary)]">
+                  {enterpriseFrameTimedOut ? 'Unable to load Openclaw in this view' : 'Loading Openclaw...'}
+                </div>
+                <div className="mb-3 text-xs text-[var(--text-muted)]">
+                  {enterpriseFrameTimedOut
+                    ? 'Embedding may be blocked by browser or network security. Retry, or open it in a new tab.'
+                    : 'Connecting to the embedded admin dashboard.'}
+                </div>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEnterpriseFrameNonce((value) => value + 1)}
+                    className="mc-shell-btn px-3 py-1 text-xs"
+                  >
+                    Retry
+                  </button>
+                  <a
+                    href={ENTERPRISE_ADMIN_URL}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="mc-shell-btn px-3 py-1 text-xs"
+                  >
+                    Open in new tab
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-0 flex-1 overflow-auto p-4 lg:p-6">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
+          {adminSection === 'general' && (
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+                  <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Require login</div>
+                  <div className="mb-3 text-xs text-[var(--text-muted)]">Gate the full app behind the login prompt. Changes apply after refresh.</div>
+                  <button
+                    type="button"
+                    onClick={() => toggleLoginRequirement(!loginRequired)}
+                    className={`mc-shell-btn px-3 py-1 text-xs ${loginRequired ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''}`}
+                  >
+                    {loginRequired ? 'On' : 'Off'}
+                  </button>
+                </div>
+                <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+                  <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Session</div>
+                  <div className="mb-3 text-xs text-[var(--text-muted)]">
+                    {authSession ? `Logged in as ${authSession.username}` : 'No active login session'}
+                  </div>
+                  {authSession && (
+                    <button type="button" onClick={handleLogout} className="mc-shell-btn px-3 py-1 text-xs text-[var(--error)]">
+                      Sign out
+                    </button>
+                  )}
+                </div>
+                <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-2">
+                  <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Theme</div>
+                  <div className="mb-3 text-xs text-[var(--text-muted)]">Switch workspace colors and typography.</div>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    {([
+                      { value: 'dark', label: 'Dark', hint: 'Classic black shell' },
+                      { value: 'light', label: 'Light', hint: 'Clean white workspace' },
+                      { value: 'kitz', label: 'Kitz', hint: 'Enterprise gradient dark' },
+                    ] as const).map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setAppTheme(option.value)}
+                        className={`mc-shell-btn flex flex-col items-start gap-1 px-3 py-2 text-left ${
+                          appTheme === option.value
+                            ? 'mc-shell-btn-active border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)]'
+                            : ''
+                        }`}
+                        aria-pressed={appTheme === option.value}
+                      >
+                        <span className="text-sm font-medium">{option.label}</span>
+                        <span className="text-[11px] text-[var(--text-muted)]">{option.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <FileSourcesSettings apiBase={runtime.apiBase} enabled={runtime.fsMultiSourceEnabled} />
+            </>
+          )}
+
+          {adminSection === 'missionControl' && (
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+                <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Archive column</div>
+                <div className="mb-3 text-xs text-[var(--text-muted)]">Show or hide archive from board/header/counts.</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !showArchiveColumn;
+                    setShowArchiveColumn(next);
+                    applyArchiveVisibility(next);
+                  }}
+                  className={`mc-shell-btn px-3 py-1 text-xs ${showArchiveColumn ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''}`}
+                >
+                  {showArchiveColumn ? 'Visible' : 'Hidden'}
+                </button>
+              </div>
+              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+                <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Insights row</div>
+                <div className="text-xs text-[var(--text-muted)]">Insights panels are shown in Ops mode above the kanban board.</div>
+              </div>
+              <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-2">
+                <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Task data health</div>
+                <div className="mb-3 text-xs text-[var(--text-muted)]">
+                  {tasksLoading ? 'Refreshing tasks…' : `${tasks.length} tasks indexed in workspace.`}
+                </div>
+                <button type="button" onClick={() => void reloadTasks()} className="mc-shell-btn px-3 py-1 text-xs">
+                  Refresh task cache
+                </button>
+              </div>
+            </div>
+          )}
+
+          {adminSection === 'integrations' && (
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+                <div className="text-xs uppercase tracking-wider text-[var(--text-muted)]">WebSocket</div>
+                <div className={`mt-2 text-sm font-medium ${connected ? 'text-[var(--accent)]' : 'text-[var(--error)]'}`}>
+                  {connected ? 'Connected' : 'Disconnected'}
+                </div>
+              </div>
+              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+                <div className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Sync</div>
+                <div className="mt-2 text-sm font-medium text-[var(--text-primary)]">{syncStatusLabel}</div>
+              </div>
+              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+                <div className="text-xs uppercase tracking-wider text-[var(--text-muted)]">OpenClaw</div>
+                <div className={`mt-2 text-sm font-medium ${agentsError ? 'text-[var(--error)]' : 'text-[var(--accent)]'}`}>
+                  {agentsError ? 'Fallback' : 'Connected'}
+                </div>
+              </div>
+              <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-3">
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-[var(--text-primary)]">Documents API</div>
+                  <div className="text-xs text-[var(--text-muted)]">
+                    {documentsAuth
+                      ? (documentsAuth.kind === 'service' ? `Service as ${documentsAuth.actorId}` : 'Bearer')
+                      : 'Not connected'}
+                  </div>
+                </div>
+                <div className="mb-3 text-xs text-[var(--text-muted)]">
+                  Used for comments, suggestions, and reviews on source-backed files in the editor.
+                </div>
+
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const token = documentsAuthTokenDraft.trim();
+                    if (!token) {
+                      setDocumentsAuth(null);
+                      pushToast('Cleared Documents token.', 'neutral');
+                      return;
+                    }
+
+                    if (documentsAuthKindDraft === 'service') {
+                      const actorId = documentsAuthActorDraft.trim().toLowerCase();
+                      if (!actorId) {
+                        pushToast('Service tokens require an actor id (ada/spock/scotty).', 'warning');
+                        return;
+                      }
+                      setDocumentsAuth({ kind: 'service', token, actorId });
+                      pushToast('Service token saved.', 'success');
+                      return;
+                    }
+
+                    setDocumentsAuth({ kind: 'bearer', token });
+                    pushToast('Bearer token saved.', 'success');
+                  }}
+                  className="flex flex-col gap-2"
+                >
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <select
+                      value={documentsAuthKindDraft}
+                      onChange={(event) => setDocumentsAuthKindDraft(event.target.value as 'bearer' | 'service')}
+                      className="mc-shell-input w-full px-3 py-2 text-sm"
+                      aria-label="Token type"
+                    >
+                      <option value="bearer">Bearer token</option>
+                      <option value="service">Service token</option>
+                    </select>
+                    {documentsAuthKindDraft === 'service' ? (
+                      <input
+                        value={documentsAuthActorDraft}
+                        onChange={(event) => setDocumentsAuthActorDraft(event.target.value)}
+                        className="mc-shell-input w-full px-3 py-2 text-sm"
+                        placeholder="X-Entity-Actor (ada/spock/scotty)"
+                        aria-label="Service token actor id"
+                      />
+                    ) : (
+                      <div className="hidden md:block" aria-hidden="true" />
+                    )}
+                  </div>
+
+                  <input
+                    value={documentsAuthTokenDraft}
+                    onChange={(event) => setDocumentsAuthTokenDraft(event.target.value)}
+                    className="mc-shell-input w-full px-3 py-2 text-sm"
+                    placeholder="Paste token (Authorization: Bearer ...)"
+                    aria-label="Documents API token"
+                  />
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDocumentsAuth(null);
+                        setDocumentsAuthTokenDraft('');
+                        pushToast('Cleared Documents token.', 'neutral');
+                      }}
+                      className="mc-shell-btn px-3 py-1.5 text-xs"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="submit"
+                      className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)]"
+                    >
+                      Save
+                    </button>
+                  </div>
+
+                  <div className="text-[11px] text-[var(--text-muted)]">
+                    Requires scopes: <span className="text-[var(--text-secondary)]">documents:read</span> and{' '}
+                    <span className="text-[var(--text-secondary)]">documents:comment:write</span>/
+                    <span className="text-[var(--text-secondary)]">documents:suggest:write</span>/
+                    <span className="text-[var(--text-secondary)]">documents:review:write</span>.
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+    );
+  };
+
+  const renderSidebarContent = () => {
+    if (sidebarTab === 'files') {
+      return renderFileSidebarTree();
+    }
+
+    if (sidebarTab === 'admin') {
+      return renderAdminSidebarPanel();
+    }
+
+    if (sidebarTab === 'agents') {
+      return renderAgentsPanel();
+    }
+
+    return renderTaskSidebarPanel();
+  };
+
+  const renderFileSidebarTree = () => {
+    if (!runtime.fsMultiSourceEnabled) {
+      return <FileTree onSelect={handleFileSelect} selected={currentFile} />;
+    }
+
+    return (
+      <SourceFileTree
+        apiBase={runtime.apiBase}
+        selectedSourceId={currentSourceId}
+        selectedPath={currentFile}
+        onSelect={handleSourceFileSelect}
+      />
+    );
+  };
+
+  const renderContextRail = (showCloseButton: boolean) => (
+    <>
+      {showCloseButton && (
+        <div className="flex justify-end border-b border-[var(--border-primary)] px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setTabletSidebarOpen(false)}
+            className="mc-shell-btn px-2 py-1 text-xs font-medium"
+          >
+            Close
+          </button>
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-auto">{renderSidebarContent()}</div>
+    </>
+  );
+
+  const renderContextBar = () => {
+    if (sidebarTab === 'admin') {
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-[var(--text-muted)]">Admin control center</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setAdminSection('general')} className="mc-shell-btn px-2 py-1 text-xs">
+              General
+            </button>
+            <button type="button" onClick={() => setAdminSection('missionControl')} className="mc-shell-btn px-2 py-1 text-xs">
+              Mission Control
+            </button>
+            <button type="button" onClick={() => setAdminSection('integrations')} className="mc-shell-btn px-2 py-1 text-xs">
+              Integrations
+            </button>
+            <button type="button" onClick={() => setAdminSection('enterprise')} className="mc-shell-btn px-2 py-1 text-xs">
+              Openclaw
+            </button>
+            {adminSection === 'enterprise' && (
+              <a
+                href={ENTERPRISE_ADMIN_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="mc-shell-btn px-2 py-1 text-xs"
+              >
+                Open in new tab
+              </a>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (sidebarTab === 'tasks') {
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {(['ops', 'strategic', 'insights'] as const).map((board) => (
+              <button
+                key={board}
+                type="button"
+                onClick={() => setMcBoardTab(board)}
+                className={`mc-shell-btn px-3 py-1 text-xs font-medium capitalize ${
+                  mcBoardTab === board ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
+                }`}
+              >
+                {board}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={mcAssigneeFilter}
+              onChange={(event) => setMcAssigneeFilter(event.target.value as MCAssigneeFilter)}
+              className="mc-shell-input px-2 py-1 text-xs"
+              aria-label="Filter by assignee"
+            >
+              <option value="all">Assignee: All</option>
+              <option value="Ada">Ada</option>
+              <option value="Spock">Spock</option>
+              <option value="Scotty">Scotty</option>
+              <option value="Henry">Henry</option>
+            </select>
+            <select
+              value={mcPriorityFilter}
+              onChange={(event) => setMcPriorityFilter(event.target.value)}
+              className="mc-shell-input px-2 py-1 text-xs"
+              aria-label="Filter by priority"
+            >
+              <option value="all">Priority: All</option>
+              <option value="P0">Priority: P0</option>
+              <option value="P1">Priority: P1</option>
+              <option value="P2">Priority: P2</option>
+              <option value="P3">Priority: P3</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => {
+                setMcAssigneeFilter('all');
+                setMcPriorityFilter('all');
+                setTaskSearchQuery('');
+                setTaskSearchOpen(false);
+              }}
+              className="mc-shell-btn inline-flex h-8 w-8 items-center justify-center px-0 py-0 text-sm"
+              aria-label="Reset task filters"
+              title="Reset task filters"
+            >
+              ↺
+            </button>
+            <div className={`overflow-hidden transition-[max-width,opacity] duration-200 ${taskSearchOpen ? 'max-w-[16rem] opacity-100' : 'max-w-0 opacity-0'}`}>
+              <input
+                ref={taskSearchInputRef}
+                type="text"
+                value={taskSearchQuery}
+                onChange={(event) => setTaskSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    setTaskSearchQuery('');
+                    setTaskSearchOpen(false);
+                    return;
+                  }
+
+                  if (event.key === 'Enter' && taskSearchResults[0]) {
+                    handleTaskSelect(taskSearchResults[0].id);
+                    setTaskSearchOpen(false);
+                    setTaskSearchQuery('');
+                    window.setTimeout(() => {
+                      const runtimeApi = window as unknown as { openTaskDetail?: (taskId: number) => void };
+                      runtimeApi.openTaskDetail?.(taskSearchResults[0].id);
+                    }, 90);
+                  }
+                }}
+                placeholder="Search tasks..."
+                className="mc-shell-input w-56 px-3 py-1 text-xs"
+                aria-label="Search tasks"
+              />
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  if (taskSearchOpen) {
+                    setTaskSearchQuery('');
+                    setTaskSearchOpen(false);
+                    return;
+                  }
+                  setTaskSearchOpen(true);
+                }}
+                className={`mc-shell-btn inline-flex h-8 w-8 items-center justify-center px-0 py-0 text-sm ${
+                  taskSearchOpen ? 'mc-shell-btn-active border-[var(--accent)] text-[var(--text-primary)]' : ''
+                }`}
+                aria-label="Search tasks"
+                title="Search tasks"
+              >
+                🔍
+              </button>
+              {taskSearchOpen && normalizedTaskSearchQuery && (
+                <div className="absolute right-0 top-full z-20 mt-2 w-[min(24rem,88vw)] overflow-hidden rounded-lg border border-[var(--border-secondary)] bg-[var(--card-bg)] shadow-[0_16px_36px_rgba(0,0,0,0.32)]">
+                  {taskSearchResults.length > 0 ? (
+                    taskSearchResults.map((task) => (
+                      <button
+                        key={task.id}
+                        type="button"
+                        onClick={() => {
+                          handleTaskSelect(task.id);
+                          setTaskSearchOpen(false);
+                          setTaskSearchQuery('');
+                          window.setTimeout(() => {
+                            const runtimeApi = window as unknown as { openTaskDetail?: (taskId: number) => void };
+                            runtimeApi.openTaskDetail?.(task.id);
+                          }, 90);
+                        }}
+                        className="block w-full border-b border-[var(--border-primary)] px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-[var(--bg-tertiary)]"
+                      >
+                        <div className="text-sm font-medium text-[var(--text-primary)]">{task.name}</div>
+                        <div className="mt-0.5 text-[11px] text-[var(--text-muted)]">#{task.id} • {task.column} • {task.assignee}</div>
+                        <div className="mt-0.5 text-xs text-[var(--text-secondary)]">{buildTaskSearchSnippet(task, normalizedTaskSearchQuery)}</div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="px-3 py-3 text-xs text-[var(--text-muted)]">No task results found</div>
+                  )}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={openMissionControlModal}
+              className="mc-shell-btn mc-shell-btn-active inline-flex h-8 w-8 items-center justify-center px-0 py-0 text-base font-semibold text-[var(--text-primary)]"
+              aria-label="New task"
+              title="New task"
+            >
+              +
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (sidebarTab === 'agents') {
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-[var(--text-muted)]">
+            Agents online: {onlineAgents}/{agents.length}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedAgentData ? (
+              <span className="mc-shell-pill px-2 py-1 text-xs text-[var(--text-secondary)]">
+                Focus: {selectedAgentData.emoji} {selectedAgentData.name}
+              </span>
+            ) : (
+              <span className="mc-shell-pill px-2 py-1 text-xs text-[var(--text-secondary)]">Focus: none</span>
+            )}
+            <span className="mc-shell-pill px-2 py-1 text-xs text-[var(--text-secondary)]">
+              Watch: {watchMode ? 'On' : 'Off'}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex w-full flex-wrap items-center justify-between gap-2">
+        <div className="min-w-[220px] flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">
+              {currentFile ? `${selectedSource ? `${selectedSource.displayName} • ` : ''}${currentFile}` : 'No file selected'}
+            </div>
+            {runtime.fsMultiSourceEnabled && currentSourceId && (
+              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+                Source
+              </span>
+            )}
+            {runtime.fsMultiSourceEnabled && currentSourceId && currentFileReadOnly && (
+              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+                Read-only
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={editorCollabMode}
+            onChange={(event) => setEditorCollabMode(event.target.value as EditorCollaborationMode)}
+            className={`rounded border border-[var(--border-secondary)] bg-[var(--bg-tertiary)] px-2 py-1 text-xs text-[var(--text-secondary)] focus:border-[var(--accent)] focus:outline-none ${
+              currentFile ? '' : 'cursor-not-allowed opacity-40'
+            }`}
+            aria-label="Editor mode"
+            disabled={!currentFile}
+            title="Editor mode"
+          >
+            <option value="editing">Editing</option>
+            <option value="suggesting" disabled={!documentsReady}>
+              Suggesting
+            </option>
+            <option value="viewing">Viewing</option>
+          </select>
+          {runtime.agentNativeEditorEnabled && currentFile && authorshipStats.totalRanges > 0 && (
+            <div
+              className="flex items-center gap-1 text-xs text-[var(--text-muted)]"
+              aria-label="Authorship breakdown"
+              title={`Reviewed ${authorshipStats.reviewedPercent}%`}
+            >
+              {authorshipStats.human > 0 && <span>👤 {formatAuthorshipBadgePercent(authorshipStats.human)}%</span>}
+              {authorshipStats.ada > 0 && (
+                <span className="text-purple-400">Ada {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>
+              )}
+              {authorshipStats.spock > 0 && (
+                <span className="text-blue-400">Spock {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>
+              )}
+              {authorshipStats.scotty > 0 && (
+                <span className="text-green-400">Scotty {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>
+              )}
+            </div>
+          )}
+          {runtime.agentNativeEditorEnabled && currentDocId && remotePresence.length > 0 && (
+            <PresenceChips
+              presence={remotePresence}
+              selectedActorId={followEnabled ? followedActorId : null}
+              onSelectActor={(actorId) => {
+                const agentId = resolveAgentIdForActor(actorId);
+                if (!agentId) {
+                  pushToast('Follow mode is only available for agent cursors.', 'warning');
+                  return;
+                }
+
+                setEditMode(true);
+                setWatchMode(true);
+
+                setFollowingAgent((current) => {
+                  const normalized = current?.trim?.().toLowerCase?.() ?? '';
+                  const nextNormalized = agentId.trim().toLowerCase();
+                  if (followEnabled && normalized === nextNormalized) {
+                    setFollowDetached(true);
+                    return current;
+                  }
+                  setFollowDetached(false);
+                  return agentId;
+                });
+              }}
+            />
+          )}
+          {runtime.fsMultiSourceEnabled && currentFile && (
+            <button
+              type="button"
+              onClick={handleBackToDashboard}
+              className="mc-shell-btn px-3 py-1 text-xs"
+            >
+              Back to Dashboard
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={toggleWatchMode}
+            disabled={!currentFile}
+            className={`mc-shell-btn px-3 py-1 text-xs font-medium ${
+              watchMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
+            } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
+          >
+            {watchMode ? 'Watch Mode' : 'Interact Mode'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditMode((prev) => !prev)}
+            disabled={!currentFile}
+            className={`mc-shell-btn px-3 py-1 text-xs ${
+              editMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
+            } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
+          >
+            {editMode ? 'Preview' : 'Edit'}
+          </button>
+          {editMode && editorCollabMode !== 'viewing' && !watchMode && currentFile && canEditCurrentFile && (
+            <button
+              type="button"
+              onClick={handleSave}
+              className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--text-primary)]"
+            >
+              Save
+            </button>
+          )}
+          {/* Read-only is already shown as a pill next to the filename. */}
+          {savedAgoLabel && (
+            <span className="text-xs text-[var(--accent)]">Saved {savedAgoLabel} ago</span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderShellTopRows = () => (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4">
+        <div className="flex min-w-[320px] flex-1 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setTabletSidebarOpen(true)}
+            className="mc-shell-btn px-2 py-1 text-xs lg:hidden"
+          >
+            ☰
+          </button>
+          <div className="mr-1 text-sm font-semibold text-[var(--text-primary)]">⚡ Entity</div>
+          {(['files', 'agents', 'tasks', 'admin'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => handleSidebarTabChange(tab)}
+              className={`mc-shell-btn px-2 py-1 text-xs capitalize ${
+                sidebarTab === tab ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className="mc-shell-btn inline-flex items-center px-2 py-1 text-xs"
+            aria-label={connected ? 'Online' : 'Offline'}
+            title={connected ? 'Online' : 'Offline'}
+          >
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${connected ? 'bg-[var(--accent)]' : 'bg-orange-400'}`}
+              aria-hidden="true"
+            />
+          </span>
+        </div>
+      </div>
+      <div className="flex items-center border-b border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2 lg:px-4">
+        {renderContextBar()}
+      </div>
+    </>
+  );
+
+  const openExpandedSidebarTab = (tab: WorkspaceTab) => {
+    handleSidebarTabChange(tab);
+    setSidebarCollapsed(false);
+  };
+
+  const renderCollapsedContextMiniPanel = () => {
+    if (sidebarTab === 'files') {
+      return (
+        <button
+          type="button"
+          onClick={() => openExpandedSidebarTab('files')}
+          className="mc-shell-btn inline-flex h-10 w-10 items-center justify-center px-0 py-0 text-base text-[var(--text-primary)]"
+          aria-label="Open file browser"
+          title="Open file browser"
+        >
+          <span aria-hidden="true">🗂️</span>
+        </button>
+      );
+    }
+
+    if (sidebarTab === 'agents') {
+      return (
+        <div className="flex flex-col items-center gap-2">
+          {agents.slice(0, 4).map((agent) => (
+            <button
+              key={agent.id}
+              type="button"
+              onClick={() => {
+                handleSidebarTabChange('agents');
+                setSelectedAgent(agent.id);
+              }}
+              className={`mc-shell-btn relative inline-flex h-9 w-9 items-center justify-center px-0 py-0 text-sm ${
+                selectedAgent === agent.id ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
+              }`}
+              aria-label={agent.name}
+              title={`${agent.name} · ${agent.status}`}
+            >
+              <span aria-hidden="true">{agent.emoji}</span>
+              <span
+                className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ${
+                  agent.status === 'online' ? 'bg-[var(--accent)]' : 'bg-[var(--text-muted)]'
+                }`}
+                aria-hidden="true"
+              />
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    if (sidebarTab === 'admin') {
+      const miniItems: Array<{ key: AdminSection; icon: string; label: string }> = [
+        { key: 'general', icon: '🧩', label: 'General settings' },
+        { key: 'missionControl', icon: '📋', label: 'Mission Control' },
+        { key: 'integrations', icon: '🔌', label: 'Integrations' },
+        { key: 'enterprise', icon: '🧭', label: 'Openclaw' },
+      ];
+      return (
+        <div className="flex flex-col items-center gap-2">
+          {miniItems.map(({ key, icon, label }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                handleSidebarTabChange('admin');
+                setAdminSection(key);
+              }}
+              className={`mc-shell-btn inline-flex h-9 w-9 items-center justify-center px-0 py-0 text-sm ${
+                adminSection === key ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
+              }`}
+              aria-label={label}
+              title={label}
+            >
+              <span aria-hidden="true">{icon}</span>
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col items-center gap-2">
+        <div
+          className="mc-shell-pill inline-flex h-5 min-w-[1.25rem] items-center justify-center px-1 text-[10px] font-semibold text-[var(--text-primary)]"
+          aria-label={`${activeTasks.length} active tasks`}
+          title={`${activeTasks.length} active tasks`}
+        >
+          {activeTasks.length}
+        </div>
+        {activeTasks.slice(0, 5).map((task) => (
+          <button
+            key={task.id}
+            type="button"
+            onClick={() => openExpandedSidebarTab('tasks')}
+            className="mc-shell-btn inline-flex h-8 w-8 items-center justify-center px-0 py-0 text-[10px] text-[var(--text-secondary)]"
+            aria-label={task.name}
+            title={`#${task.id} · ${task.name}`}
+          >
+            <span className="truncate px-1">#{task.id}</span>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  const renderSidebar = (showCloseButton: boolean, allowCollapse = false) => (
+    <div className="flex h-full min-h-0 flex-col">
+      {allowCollapse && sidebarCollapsed ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center py-2">
+          <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pb-2">
+            {renderCollapsedContextMiniPanel()}
+          </div>
+        </div>
+      ) : (
+        renderContextRail(showCloseButton)
+      )}
+      {allowCollapse && (
+        <div className="border-t border-[var(--border-primary)] px-2 py-2">
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+            className="mc-shell-btn flex w-full items-center justify-center gap-1 px-2 py-1 text-xs"
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <span>{sidebarCollapsed ? '»' : '«'}</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderDesktopWorkspace = (viewport: 'desktop' | 'tablet') => (
+    <>
+      {sidebarTab === 'tasks' ? (
+        <div className="flex-1 min-h-0">
+          <TaskBoard
+            viewport={viewport}
+            compactShell
+            apiBase={runtime.mcApiBase}
+            showInsights={mcBoardTab === 'insights'}
+            activeTab={mcBoardTab === 'insights' ? 'insights' : 'kanban'}
+            searchQuery={taskSearchQuery}
+          />
+        </div>
+      ) : sidebarTab === 'agents' ? (
+        <div className="flex-1 min-h-0">
+          <TaskBoard
+            viewport={viewport}
+            compactShell
+            className="mc-agents-only"
+            apiBase={runtime.mcApiBase}
+            showInsights={false}
+          />
+        </div>
+      ) : sidebarTab === 'admin' ? (
+        <div className="flex min-h-0 flex-1 flex-col">{renderAdminWorkspace()}</div>
+      ) : (
+        <>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {currentFile ? (
+              <div className="flex min-h-0 flex-1">
+                <div className="flex min-h-0 flex-1 flex-col">
+                  {/* Avoid a second header row: file identity + actions live in the shell context bar above. */}
+
+                  <div className="min-h-0 flex-1 overflow-auto">
+                    {editMode ? (
+                      <div className={`h-full w-full ${followGlowClassName} ${followTypingPulseActive ? 'agent-typing' : ''}`}>
+                        <CodeMirrorEditor
+                          content={fileContent}
+                          onChange={handleContentChange}
+                          onSave={handleSave}
+                          readOnly={editorCollabMode === 'viewing' || watchMode || (editorCollabMode === 'editing' && currentFileReadOnly)}
+                          shortcutsEnabled={runtime.agentNativeEditorEnabled}
+                          collabMode={editorCollabMode}
+                          onSuggestingEdit={documentsReady ? handleSuggestingEdit : undefined}
+                          onToggleSuggestingMode={handleToggleSuggestingMode}
+                          onExitSuggestingMode={handleExitSuggestingMode}
+                          authorshipRanges={manualAttributionEnabled ? editorAuthorshipRanges : undefined}
+                          onManualAttribution={manualAttributionEnabled ? handleManualAttribution : undefined}
+                          onSelectionChange={setEditorSelection}
+                          onCursorActivity={documentsReady ? handleEditorCursorActivity : undefined}
+                          onNewComment={(request: EditorNewCommentRequest) => {
+                            if (!documentsReady || !currentDocId) {
+                              pushToast('Connect a Documents token to use comments.', 'warning');
+                              return;
+                            }
+
+                            setEditMode(true);
+                            setCommentPopover({
+                              anchor: request.anchor,
+                              selection: request.selection,
+                              selectedText: request.selectedText,
+                            });
+                          }}
+                          commentThreads={commentThreads}
+                          onSelectComment={(commentId) => {
+                            const thread = commentThreads.find((entry) => entry.id === commentId) ?? null;
+                            if (!thread) return;
+
+                            setEditMode(true);
+                            setRightSidebarCollapsed(false);
+                            setSelectedCommentId(commentId);
+                            setFocusRange({ from: thread.range.from, to: thread.range.to });
+
+                            window.requestAnimationFrame(() => {
+                              document.getElementById(`comment-thread-${commentId}`)?.scrollIntoView({ block: 'nearest' });
+                            });
+                          }}
+                          suggestions={suggestions}
+                          onSelectSuggestion={(suggestionId) => {
+                            const suggestion = suggestions.find((entry) => entry.id === suggestionId) ?? null;
+                            if (!suggestion) return;
+
+                            setEditMode(true);
+                            setRightSidebarCollapsed(false);
+                            setSelectedSuggestionId(suggestionId);
+                            setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
+                          }}
+                          onAcceptSuggestion={(suggestionId) => {
+                            void (async () => {
+                              if (currentFileReadOnly) {
+                                pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
+                                return;
+                              }
+                              if (!documentsReady || !currentDocId) {
+                                pushToast('Connect a Documents token to accept suggestions.', 'warning');
+                                return;
+                              }
+                              try {
+                                const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
+                                setSuggestions(response.suggestions);
+                                pushToast('Suggestion accepted.', 'success');
+                                if (currentSourceId && currentFile) {
+                                  const updated = await fetchSourceFile(currentSourceId, currentFile);
+                                  setFileContent(updated.content || '');
+                                }
+                              } catch (error) {
+                                pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'danger');
+                              }
+                            })();
+                          }}
+                          onRejectSuggestion={(suggestionId) => {
+                            void (async () => {
+                              if (!documentsReady || !currentDocId) {
+                                pushToast('Connect a Documents token to reject suggestions.', 'warning');
+                                return;
+                              }
+                              try {
+                                const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
+                                setSuggestions(response.suggestions);
+                                pushToast('Suggestion rejected.', 'neutral');
+                              } catch (error) {
+                                pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'danger');
+                              }
+                            })();
+                          }}
+                          reviewFindings={reviewFindings.filter((finding) => finding.status !== 'ignored')}
+                          onSelectFinding={(findingId) => {
+                            const finding = reviewFindings.find((entry) => entry.id === findingId) ?? null;
+                            if (!finding || !finding.range) return;
+
+                            setEditMode(true);
+                            setSelectedFindingId(findingId);
+                            setFocusRange({ from: finding.range.from, to: finding.range.to });
+                          }}
+                          onApplyFindingFix={handleApplyReviewFindingFix}
+                          onIgnoreFinding={handleIgnoreReviewFinding}
+                          remotePresence={remotePresence}
+                          focusRange={focusRange}
+                          followEnabled={followEnabled}
+                          followCursor={debouncedFollowCursor}
+                          onDetachFollow={() => setFollowDetached(true)}
+                        />
+                      </div>
+                    ) : (
+                      <div className="mx-auto max-w-4xl p-8">
+                        <MarkdownPreview content={fileContent} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {runtime.agentNativeEditorEnabled && (
+                  <aside
+                    className={`hidden shrink-0 flex-col border-l border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 lg:flex ${
+                      rightSidebarIsCollapsed ? 'w-8' : 'w-[280px]'
+                    }`}
+                  >
+                    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
+                      <div className={`flex shrink-0 ${rightSidebarIsCollapsed ? 'justify-center' : 'justify-start'} px-1 py-2`}>
+                        <button
+                          type="button"
+                          onClick={() => setRightSidebarCollapsed((prev) => !prev)}
+                          disabled={!rightSidebarHasPanels}
+                          className={`mc-shell-btn flex h-7 w-7 items-center justify-center px-0 py-0 text-xs ${
+                            !rightSidebarHasPanels ? 'cursor-not-allowed opacity-40' : ''
+                          }`}
+                          aria-label={rightSidebarIsCollapsed ? 'Expand right sidebar' : 'Collapse right sidebar'}
+                          title={
+                            !rightSidebarHasPanels
+                              ? 'No comments/suggestions/reviews'
+                              : rightSidebarIsCollapsed
+                                ? 'Expand sidebar'
+                                : 'Collapse sidebar'
+                          }
+                        >
+                          <span>{rightSidebarIsCollapsed ? '«' : '»'}</span>
+                        </button>
+                      </div>
+
+                      {!rightSidebarIsCollapsed && (
+                        <div className="min-h-0 flex-1 overflow-auto">
+                          {rightSidebarHasComments && (
+                            <CommentThreadPanel
+                              threads={commentThreads}
+                              onNewFromSelection={() => {
+                                if (!documentsReady || !currentDocId) {
+                                  pushToast('Connect a Documents token to use comments.', 'warning');
+                                  return;
+                                }
+                                if (!editorSelection || editorSelection.to <= editorSelection.from) {
+                                  pushToast('Select some text first.', 'warning');
+                                  return;
+                                }
+
+                                setEditMode(true);
+                                const anchor = computeDomSelectionAnchor() ?? { left: 24, top: 24, bottom: 24 };
+                                setCommentPopover({
+                                  anchor,
+                                  selection: { from: editorSelection.from, to: editorSelection.to },
+                                  selectedText: editorSelection.text,
+                                });
+                              }}
+                              onSelectThread={(threadId) => {
+                                const thread = commentThreads.find((entry) => entry.id === threadId) ?? null;
+                                if (!thread) return;
+                                setEditMode(true);
+                                setSelectedCommentId(threadId);
+                                setFocusRange({ from: thread.range.from, to: thread.range.to });
+                                window.requestAnimationFrame(() => {
+                                  document.getElementById(`comment-thread-${threadId}`)?.scrollIntoView({ block: 'nearest' });
+                                });
+                              }}
+                              onReply={(threadId, text) => {
+                                void (async () => {
+                                  if (!documentsReady || !currentDocId) {
+                                    pushToast('Connect a Documents token to reply.', 'warning');
+                                    return;
+                                  }
+                                  try {
+                                    const response = await documentsClient.postCommentReply(currentDocId, threadId, { text });
+                                    setCommentThreads(response.threads);
+                                    pushToast('Reply posted.', 'success');
+                                  } catch (error) {
+                                    pushToast(error instanceof Error ? error.message : 'Failed to post reply.', 'danger');
+                                  }
+                                })();
+                              }}
+                              onResolve={(threadId, resolved) => {
+                                void (async () => {
+                                  if (!documentsReady || !currentDocId) {
+                                    pushToast('Connect a Documents token to resolve comments.', 'warning');
+                                    return;
+                                  }
+                                  try {
+                                    const response = await documentsClient.postCommentResolve(currentDocId, threadId, { resolved });
+                                    setCommentThreads(response.threads);
+                                  } catch (error) {
+                                    pushToast(error instanceof Error ? error.message : 'Failed to update comment.', 'danger');
+                                  }
+                                })();
+                              }}
+                              selectedThreadId={selectedCommentId}
+                            />
+                          )}
+
+                          {rightSidebarHasSuggestions && (
+                            <SuggestionPanel
+                              suggestions={suggestions}
+                              selectedSuggestionId={selectedSuggestionId}
+                              onSelectSuggestion={(suggestionId) => {
+                                const suggestion = suggestions.find((entry) => entry.id === suggestionId) ?? null;
+                                if (!suggestion) return;
+                                setEditMode(true);
+                                setSelectedSuggestionId(suggestionId);
+                                setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
+                              }}
+                              onAccept={(suggestionId) => {
+                                void (async () => {
+                                  if (currentFileReadOnly) {
+                                    pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
+                                    return;
+                                  }
+                                  if (!documentsReady || !currentDocId) {
+                                    pushToast('Connect a Documents token to accept suggestions.', 'warning');
+                                    return;
+                                  }
+                                  try {
+                                    const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
+                                    setSuggestions(response.suggestions);
+                                    pushToast('Suggestion accepted.', 'success');
+                                    if (currentSourceId && currentFile) {
+                                      const updated = await fetchSourceFile(currentSourceId, currentFile);
+                                      setFileContent(updated.content || '');
+                                    }
+                                  } catch (error) {
+                                    pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'danger');
+                                  }
+                                })();
+                              }}
+                              onReject={(suggestionId) => {
+                                void (async () => {
+                                  if (!documentsReady || !currentDocId) {
+                                    pushToast('Connect a Documents token to reject suggestions.', 'warning');
+                                    return;
+                                  }
+                                  try {
+                                    const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
+                                    setSuggestions(response.suggestions);
+                                    pushToast('Suggestion rejected.', 'neutral');
+                                  } catch (error) {
+                                    pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'danger');
+                                  }
+                                })();
+                              }}
+                              selection={editorSelection}
+                              onCreateSuggestion={(input) => {
+                                void (async () => {
+                                  if (!documentsReady || !currentDocId) {
+                                    pushToast('Connect a Documents token to create suggestions.', 'warning');
+                                    return;
+                                  }
+                                  try {
+                                    const response = await documentsClient.postSuggestion(currentDocId, input);
+                                    setSuggestions(response.suggestions);
+                                    pushToast('Suggestion created.', 'success');
+                                  } catch (error) {
+                                    pushToast(error instanceof Error ? error.message : 'Failed to create suggestion.', 'danger');
+                                  }
+                                })();
+                              }}
+                            />
+                          )}
+
+                          {rightSidebarHasReview && (
+                            <ReviewPanel
+                              mode={reviewMode}
+                              onChangeMode={setReviewMode}
+                              onRunReview={() => {
+                                void (async () => {
+                                  if (!documentsReady || !currentDocId) {
+                                    pushToast('Connect a Documents token to run reviews.', 'warning');
+                                    return;
+                                  }
+                                  try {
+                                    const response = await documentsClient.postReview(currentDocId, { mode: reviewMode });
+                                    setReviewRun(response.run);
+                                    setReviewFindings(response.findings);
+                                    pushToast('Review started.', 'neutral');
+                                  } catch (error) {
+                                    pushToast(error instanceof Error ? error.message : 'Failed to start review.', 'danger');
+                                  }
+                                })();
+                              }}
+                              run={reviewRun}
+                              findings={reviewFindings}
+                              selectedFindingId={selectedFindingId}
+                              onSelectFinding={(findingId) => {
+                                const finding = reviewFindings.find((entry) => entry.id === findingId) ?? null;
+                                if (!finding || !finding.range) return;
+                                setEditMode(true);
+                                setSelectedFindingId(findingId);
+                                setFocusRange({ from: finding.range.from, to: finding.range.to });
+                              }}
+                              onApplyFix={handleApplyReviewFindingFix}
+                              onIgnoreFinding={handleIgnoreReviewFinding}
+                              content={fileContent}
+                            />
+                          )}
+
+                        </div>
+                      )}
+                    </div>
+                  </aside>
+                )}
+              </div>
+            ) : (
+              runtime.fsMultiSourceEnabled ? (
+                <UnifiedFileDashboard apiBase={runtime.apiBase} enabled onOpen={handleSourceFileSelect} />
+              ) : (
+                <div className="flex flex-1 flex-col items-center justify-center gap-4 text-[var(--text-muted)]">
+                  <span className="text-6xl">⚡</span>
+                  <span className="text-xl">Select a file to preview</span>
+                  <div className="flex gap-4 text-sm">
+                    <span className="mc-shell-card px-2 py-1">⌘P quick switch</span>
+                    <span className="mc-shell-card px-2 py-1">⌘E edit/preview</span>
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+        </>
+      )}
+      {sidebarTab !== 'admin' && (
+        <ActivityStream
+          activities={activities}
+          loading={activityLoading}
+          error={activityError}
+          isOpen={activityPanelOpen}
+          onToggleOpen={() => setActivityPanelOpen((prev) => !prev)}
+          onOpenFile={handleFileSelect}
+          onOpenTask={handleTaskSelect}
+        />
+      )}
+    </>
+  );
+
+
+  return (
+    <div className="entity-shell flex h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-secondary)]">
+      <QuickSwitcher
+        isOpen={quickSwitcherOpen}
+        onClose={() => setQuickSwitcherOpen(false)}
+        onSelect={(path, sourceId) => {
+          if (sourceId) {
+            handleSourceFileSelect(sourceId, path);
+            return;
+          }
+
+          handleFileSelect(path);
+        }}
+        apiBase={runtime.apiBase}
+        useUnifiedSearch={runtime.fsMultiSourceEnabled}
+      />
+
+      {reloadPrompt && (
+        <div className="fixed left-0 right-0 top-0 z-50 flex items-center justify-between border-b border-[var(--border-secondary)] bg-[var(--bg-secondary)] px-4 py-2 text-[var(--text-primary)]">
+          <span>📝 Agent updated this file. <strong>Reload to see changes?</strong></span>
+          <div className="flex gap-2">
+            <button
+              onClick={handleReload}
+              className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-3 py-1 text-sm font-medium text-[var(--text-primary)]"
+            >
+              Reload
+            </button>
+            <button onClick={() => setReloadPrompt(null)} className="mc-shell-btn px-3 py-1 text-sm">
+              Ignore
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="hidden min-w-0 flex-1 flex-col md:flex">
+        {renderShellTopRows()}
+        <div className="flex min-h-0 flex-1 bg-[var(--bg-primary)]">
+          <aside
+            className={`hidden shrink-0 flex-col border-r border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 lg:flex ${
+              sidebarCollapsed ? 'w-14' : 'w-64'
+            }`}
+          >
+            {renderSidebar(false, true)}
+          </aside>
+          <div className="hidden min-w-0 flex-1 flex-col lg:flex">{renderDesktopWorkspace('desktop')}</div>
+          <div className="flex min-w-0 flex-1 flex-col lg:hidden">{renderDesktopWorkspace('tablet')}</div>
+        </div>
+      </div>
+
+      {tabletSidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 hidden bg-[var(--overlay-strong)] md:block lg:hidden"
+          onClick={() => setTabletSidebarOpen(false)}
+        >
+          <aside
+            className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-[var(--border-primary)] bg-[var(--bg-primary)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {renderSidebar(true)}
+          </aside>
+        </div>
+      )}
+
+      <div className="flex min-w-0 flex-1 flex-col bg-[var(--bg-primary)] pb-14 md:hidden">
+        <div className="flex items-center justify-between border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
+          <div>
+            <div className="text-sm font-semibold">Entity Mission Control</div>
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
+              {workspaceTab} · {onlineAgents}/{agents.length} agents online
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className="mc-shell-btn inline-flex items-center px-2 py-1 text-[11px]"
+              aria-label={connected ? 'Online' : 'Offline'}
+              title={connected ? 'Online' : 'Offline'}
+            >
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${connected ? 'bg-[var(--accent)]' : 'bg-orange-400'}`}
+                aria-hidden="true"
+              />
+            </span>
+            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{mobileTab}</div>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1">
+          {mobileTab === 'files' && (
+            <div className="flex h-full min-h-0 flex-col">
+              <div className={`${currentFile ? 'h-1/2 min-h-0 border-b border-[var(--border-primary)]' : 'flex-1 min-h-0'}`}>
+                {renderFileSidebarTree()}
+              </div>
+              {currentFile && (
+                <div className="flex h-1/2 min-h-0 flex-col">
+                  <div className="flex items-center gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-xs">
+                    <span className="flex-1 truncate text-[var(--text-muted)]">
+                      {selectedSource ? `${selectedSource.displayName} • ` : ''}{currentFile}
+                    </span>
+                    {runtime.fsMultiSourceEnabled && (
+                      <button
+                        type="button"
+                        onClick={handleBackToDashboard}
+                        className="mc-shell-btn px-2 py-1 text-[11px]"
+                      >
+                        Back
+                      </button>
+                    )}
+                    <button
+                      disabled={!currentFile}
+                      onClick={() => setEditMode(!editMode)}
+                      className={`mc-shell-btn px-2 py-1 text-[11px] ${
+                        editMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
+                      } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
+                    >
+                      {editMode ? 'Preview' : 'Edit'}
+                    </button>
+                    {editMode && editorCollabMode !== 'viewing' && !watchMode && canEditCurrentFile && (
+                      <button
+                        onClick={handleSave}
+                        className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-2 py-1 text-[11px] font-medium text-[var(--text-primary)]"
+                      >
+                        Save
+                      </button>
+                    )}
+                  </div>
+                  {manualAttributionEnabled && (
+                    <div className="border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2">
+                      <AuthorshipStatsPanel
+                        stats={authorshipStats}
+                        selectedAuthor={manualAuthorshipAuthor}
+                        onSelectAuthor={setManualAuthorshipAuthor}
+                      />
+                    </div>
+                  )}
+                  <div className="min-h-0 flex-1 overflow-auto">
+                    {editMode ? (
+                      <div
+                        className={`h-full w-full ${followGlowClassName} ${followTypingPulseActive ? 'agent-typing' : ''}`}
+                      >
+                        <CodeMirrorEditor
+	                          content={fileContent}
+	                          onChange={handleContentChange}
+	                          onSave={handleSave}
+	                          readOnly={editorCollabMode === 'viewing' || watchMode || (editorCollabMode === 'editing' && currentFileReadOnly)}
+	                          shortcutsEnabled={runtime.agentNativeEditorEnabled}
+	                          collabMode={editorCollabMode}
+	                          onSuggestingEdit={documentsReady ? handleSuggestingEdit : undefined}
+	                          onToggleSuggestingMode={handleToggleSuggestingMode}
+	                          onExitSuggestingMode={handleExitSuggestingMode}
+	                          authorshipRanges={manualAttributionEnabled ? editorAuthorshipRanges : undefined}
+	                          onManualAttribution={manualAttributionEnabled ? handleManualAttribution : undefined}
+                          onCursorActivity={documentsReady ? handleEditorCursorActivity : undefined}
+	                          suggestions={suggestions}
+                          onSelectSuggestion={(suggestionId) => {
+                            const suggestion = suggestions.find((entry) => entry.id === suggestionId) ?? null;
+                            if (!suggestion) return;
+                            setEditMode(true);
+                            setSelectedSuggestionId(suggestionId);
+                            setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
+                          }}
+	                          onAcceptSuggestion={(suggestionId) => {
+	                            void (async () => {
+	                              if (currentFileReadOnly) {
+	                                pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
+	                                return;
+	                              }
+	                              if (!documentsReady || !currentDocId) {
+	                                pushToast('Connect a Documents token to accept suggestions.', 'warning');
+	                                return;
+	                              }
+	                              try {
+                                const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
+                                setSuggestions(response.suggestions);
+                                pushToast('Suggestion accepted.', 'success');
+                                if (currentSourceId && currentFile) {
+                                  const updated = await fetchSourceFile(currentSourceId, currentFile);
+                                  setFileContent(updated.content || '');
+                                }
+                              } catch (error) {
+                                pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'danger');
+                              }
+                            })();
+                          }}
+                          onRejectSuggestion={(suggestionId) => {
+                            void (async () => {
+                              if (!documentsReady || !currentDocId) {
+                                pushToast('Connect a Documents token to reject suggestions.', 'warning');
+                                return;
+                              }
+                              try {
+                                const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
+                                setSuggestions(response.suggestions);
+                                pushToast('Suggestion rejected.', 'neutral');
+                              } catch (error) {
+                                pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'danger');
+                              }
+                            })();
+                          }}
+                          reviewFindings={reviewFindings.filter((finding) => finding.status !== 'ignored')}
+                          onSelectFinding={(findingId) => {
+                            const finding = reviewFindings.find((entry) => entry.id === findingId) ?? null;
+                            if (!finding || !finding.range) return;
+                            setEditMode(true);
+                            setSelectedFindingId(findingId);
+                            setFocusRange({ from: finding.range.from, to: finding.range.to });
+                          }}
+                          onApplyFindingFix={handleApplyReviewFindingFix}
+                          onIgnoreFinding={handleIgnoreReviewFinding}
+                          remotePresence={remotePresence}
+                          followEnabled={followEnabled}
+                          followCursor={debouncedFollowCursor}
+                          onDetachFollow={() => setFollowDetached(true)}
+                        />
+                      </div>
+                    ) : (
+                      <div className="mx-auto max-w-3xl p-4">
+                        <MarkdownPreview content={fileContent} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {mobileTab === 'agents' && (
+            <div className="h-full overflow-auto">
+              {renderAgentsPanel()}
+            </div>
+          )}
+
+          {mobileTab === 'tasks' && (
+            <TaskBoard
+              viewport="mobile"
+              apiBase={runtime.mcApiBase}
+              showInsights={mcBoardTab === 'insights'}
+              activeTab={mcBoardTab === 'insights' ? 'insights' : 'kanban'}
+              searchQuery={taskSearchQuery}
+            />
+          )}
+
+          {mobileTab === 'activity' && (
+            <ActivityStream
+              activities={activities}
+              loading={activityLoading}
+              error={activityError}
+              isOpen={mobileActivityPanelOpen}
+              onToggleOpen={() => setMobileActivityPanelOpen((prev) => !prev)}
+              onOpenFile={handleFileSelect}
+              onOpenTask={handleTaskSelect}
+              fillHeight
+            />
+          )}
+        </div>
+      </div>
+
+      <MobileBottomNav
+        activeTab={mobileTab}
+        onChange={(tab) => {
+          setTabletSidebarOpen(false);
+          setMobileTab(tab);
+          if (tab === 'tasks') {
+            setSidebarTab('tasks');
+            return;
+          }
+          if (tab === 'files' || tab === 'agents') {
+            setSidebarTab(tab);
+          }
+        }}
+      />
+
+      <div
+        id="loginOverlay"
+        className={`fixed inset-0 z-[70] items-center justify-center bg-[var(--overlay-strong)] p-4 ${
+          loginLocked ? 'flex' : 'hidden'
+        }`}
+      >
+        <form
+          onSubmit={handleLoginSubmit}
+          className="w-full max-w-sm rounded-xl border border-[var(--border-secondary)] bg-[var(--card-bg)] p-6 text-[var(--text-secondary)] shadow-[0_16px_48px_rgba(0,0,0,0.35)]"
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-[var(--text-primary)]">Login</h2>
+          </div>
+          <p className="mb-4 text-sm text-[var(--text-muted)]">
+            Enter your workspace credentials (default password: {DEFAULT_LOGIN_PASSWORD}).
+          </p>
+          <input
+            id="loginUsername"
+            type="text"
+            placeholder="Username"
+            value={loginUsername}
+            onChange={(event) => setLoginUsername(event.target.value)}
+            className="mc-shell-input mb-2 w-full px-3 py-2 text-sm"
+            autoComplete="username"
+          />
+          <input
+            id="loginPassword"
+            type="password"
+            placeholder="Password"
+            value={loginPassword}
+            onChange={(event) => setLoginPassword(event.target.value)}
+            className="mc-shell-input mb-3 w-full px-3 py-2 text-sm"
+            autoComplete="current-password"
+          />
+          <button
+            type="submit"
+            className="mc-shell-btn mc-shell-btn-active w-full border-[var(--accent)] px-3 py-2 text-sm font-medium text-[var(--text-primary)]"
+          >
+            Login
+          </button>
+          <div id="loginError" className="mt-3 min-h-5 text-sm text-[var(--error)]">
+            {loginError}
+          </div>
+        </form>
+      </div>
+
+      {agentsError && !agentsErrorDismissed && (
+        <div className="fixed right-3 top-16 z-[75] flex items-center gap-2 rounded-md border border-[var(--error)] bg-[var(--bg-secondary)]/95 px-3 py-1 text-xs text-[var(--error)] md:top-20">
+          <span>Agent gateway offline. Using fallback agents.</span>
+          <button
+            type="button"
+            onClick={() => setAgentsErrorDismissed(true)}
+            className="mc-shell-btn px-2 py-0.5 text-[10px] text-[var(--error)]"
+            aria-label="Dismiss gateway error"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {commentPopover && (
+        <NewCommentPopover
+          anchor={commentPopover.anchor}
+          selectedText={commentPopover.selectedText}
+          onCancel={() => setCommentPopover(null)}
+          onSubmit={(text) => {
+            void (async () => {
+              const value = text.trim();
+              if (!value) return;
+              if (!documentsReady || !currentDocId) {
+                pushToast('Connect a Documents token to create comments.', 'warning');
+                return;
+              }
+
+              try {
+                const response = await documentsClient.postComment(currentDocId, {
+                  from: commentPopover.selection.from,
+                  to: commentPopover.selection.to,
+                  text: value,
+                  selectedText: commentPopover.selectedText,
+                });
+                setCommentThreads(response.threads);
+                setCommentPopover(null);
+                pushToast('Comment created.', 'success');
+              } catch (error) {
+                pushToast(error instanceof Error ? error.message : 'Failed to create comment.', 'danger');
+              }
+            })();
+          }}
+        />
+      )}
+
+      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
+    </div>
+  );
+}

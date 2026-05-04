@@ -1,0 +1,303 @@
+{
+  "includeGenerated": true,
+  "results": [
+    {
+      "file": "actual/01-files.png",
+      "size": 179685,
+      "width": 1440,
+      "height": 1000,
+      "luminanceRange": 197,
+      "colorBuckets": 43,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "actual/02-agents.png",
+      "size": 31731,
+      "width": 1440,
+      "height": 1000,
+      "luminanceRange": 164,
+      "colorBuckets": 33,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "actual/03-tasks.png",
+      "size": 292430,
+      "width": 1440,
+      "height": 1000,
+      "luminanceRange": 207,
+      "colorBuckets": 105,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "actual/04-services.png",
+      "size": 54972,
+      "width": 1440,
+      "height": 1000,
+      "luminanceRange": 183,
+      "colorBuckets": 33,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "actual/05-chat.png",
+      "size": 18744,
+      "width": 1440,
+      "height": 1000,
+      "luminanceRange": 155,
+      "colorBuckets": 26,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "actual/06-admin.png",
+      "size": 113570,
+      "width": 1440,
+      "height": 1000,
+      "luminanceRange": 189,
+      "colorBuckets": 75,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "actual/07-docs-view.png",
+      "size": 97680,
+      "width": 1440,
+      "height": 1000,
+      "luminanceRange": 250,
+      "colorBuckets": 22,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "actual/08-agent-detail.png",
+      "size": 80231,
+      "width": 1440,
+      "height": 1000,
+      "luminanceRange": 164,
+      "colorBuckets": 41,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "actual/09-task-detail.png",
+      "size": 188553,
+      "width": 1440,
+      "height": 1000,
+      "luminanceRange": 236,
+      "colorBuckets": 67,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-1/01-files.png",
+      "size": 1007283,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 202,
+      "colorBuckets": 103,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-1/02-agents.png",
+      "size": 349436,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 162,
+      "colorBuckets": 52,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-1/03-tasks.png",
+      "size": 1202262,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 180,
+      "colorBuckets": 130,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-1/04-services.png",
+      "size": 458614,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 210,
+      "colorBuckets": 108,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-1/05-chat.png",
+      "size": 994187,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 163,
+      "colorBuckets": 80,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-1/06-admin.png",
+      "size": 638740,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 172,
+      "colorBuckets": 120,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-1/07-docs-view.png",
+      "size": 821719,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 219,
+      "colorBuckets": 69,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-1/08-agent-detail.png",
+      "size": 1012399,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 203,
+      "colorBuckets": 131,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-1/09-task-detail.png",
+      "size": 936700,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 165,
+      "colorBuckets": 110,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-2/01-files.png",
+      "size": 897214,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 200,
+      "colorBuckets": 91,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-2/02-agents.png",
+      "size": 511877,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 159,
+      "colorBuckets": 60,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-2/03-tasks.png",
+      "size": 1183081,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 159,
+      "colorBuckets": 117,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-2/04-services.png",
+      "size": 515613,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 184,
+      "colorBuckets": 72,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-2/05-chat.png",
+      "size": 1147698,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 150,
+      "colorBuckets": 82,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-2/06-admin.png",
+      "size": 722458,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 229,
+      "colorBuckets": 146,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-2/07-docs-view.png",
+      "size": 767505,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 211,
+      "colorBuckets": 67,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-2/08-agent-detail.png",
+      "size": 1049392,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 186,
+      "colorBuckets": 130,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    },
+    {
+      "file": "set-2/09-task-detail.png",
+      "size": 871947,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 174,
+      "colorBuckets": 119,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    }
+  ],
+  "failures": []
+}

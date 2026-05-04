@@ -1,0 +1,15 @@
+{
+  "model": "gpt-image-2",
+  "endpoint": "https://api.openai.com/v1/images/edits",
+  "set": "set-1",
+  "view": "06-admin",
+  "viewName": "Admin",
+  "size": "1536x1024",
+  "quality": "medium",
+  "startedAt": "2026-04-24T06:10:08.297Z",
+  "completedAt": "2026-04-24T06:11:06.989Z",
+  "status": 200,
+  "ok": true,
+  "requestId": "req_94c33746277947cfaaa6c8cf725cf169",
+  "outputPath": "set-1/06-admin.png"
+}

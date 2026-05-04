@@ -1,0 +1,2 @@
+^Dnpx @openai/codex --full-auto 'Implement Entity MC P0 features: Tabs for Kanban/Insights toggle, Dashboard stats (Assigned/Due/Overdue/Capacity), Global search in header, DB schema update for priority/due_date/blocked/recurring/model/progress_status/archived fields. Check packages/db/ for schema. CRITICAL: Never overwrite entity-tasks.db or copy entire dist/.'
+script: /dev/stdin: Permission denied

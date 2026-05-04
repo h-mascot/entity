@@ -1,0 +1,17 @@
+{
+  "includeGenerated": false,
+  "results": [
+    {
+      "file": "set-1/01-files.png",
+      "size": 1007283,
+      "width": 1536,
+      "height": 1024,
+      "luminanceRange": 202,
+      "colorBuckets": 103,
+      "nonTransparent": 17600,
+      "okDimensions": true,
+      "okVisual": true
+    }
+  ],
+  "failures": []
+}

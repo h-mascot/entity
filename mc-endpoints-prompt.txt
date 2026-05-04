@@ -1,0 +1,36 @@
+## Task: Add missing MC compatibility endpoints
+
+### Files to modify:
+1. packages/server/src/index.ts
+
+### Context:
+The Mission Control frontend (MC-SOURCE.html) calls these endpoints that do not exist yet in the Entity server. The Entity server already has an activities table and createActivityRepository(). The task routes are registered in registerTaskRoutes().
+
+### What to do:
+
+**Endpoint 1: POST /api/tasks/:id/note**
+Add inside registerTaskRoutes(), after the delete route.
+- Parse { note, session_id } from req.body
+- Validate note is non-empty string and task exists
+- Log activity using the existing logActivity() helper with: source='task', type='task_updated', action='Added note', description=note (truncated to 200 chars), taskId=id
+- Reload and return the task
+
+**Endpoint 2: POST /api/tasks/:id/activity**  
+- Parse { action, user, details, type, session_id } from req.body
+- Validate task exists
+- Log activity using logActivity() with: source='task', type='task_updated', action=action, description=details, taskId=id, metadata={user, session_id, activityType: type}
+- Return { success: true }
+
+**Endpoint 3: GET /api/tasks/:id/comments**
+- Create a new table if not exists: task_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL, body TEXT NOT NULL, author TEXT DEFAULT 'Human', parent_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP)
+- Return all comments for the task ordered by created_at ASC
+- Return as JSON array
+
+**Endpoint 4: POST /api/tasks/:id/comments**
+- Parse { body, author, parent_id } from req.body
+- Insert into task_comments table
+- Return the created comment
+
+For the task_comments table: create it in bootstrap() function in packages/db/src/index.ts. Add the CREATE TABLE IF NOT EXISTS statement in the same db.exec block where other tables are created.
+
+Keep it simple. Use the same patterns as existing routes (parseTaskId, error handling, etc).

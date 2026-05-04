@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Enterprise Crew Status</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        background: #0d1117;
+        color: #e6edf3;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        margin: 0;
+        padding: 20px;
+      }
+
+      .page-shell {
+        margin: 0 auto;
+        max-width: 1320px;
+      }
+
+      .header-bar {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .header-copy h1 {
+        font-size: clamp(1.8rem, 2vw, 2.4rem);
+        line-height: 1.1;
+        margin: 0;
+      }
+
+      .header-meta {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: flex-end;
+      }
+
+      .meta-pill,
+      .system-pill {
+        align-items: center;
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 999px;
+        color: #8b949e;
+        display: inline-flex;
+        font-size: 0.95rem;
+        gap: 8px;
+        min-height: 40px;
+        padding: 0 14px;
+      }
+
+      .refresh-button {
+        align-items: center;
+        background: #238636;
+        border: 1px solid #2ea043;
+        border-radius: 8px;
+        color: #ffffff;
+        cursor: pointer;
+        display: inline-flex;
+        font-size: 0.95rem;
+        font-weight: 600;
+        gap: 8px;
+        justify-content: center;
+        min-height: 40px;
+        padding: 0 16px;
+        transition: background-color 0.2s ease, border-color 0.2s ease,
+          transform 0.2s ease;
+      }
+
+      .refresh-button:hover {
+        background: #2ea043;
+        border-color: #3fb950;
+        transform: translateY(-1px);
+      }
+
+      .refresh-button:disabled {
+        cursor: wait;
+        opacity: 0.7;
+        transform: none;
+      }
+
+      .system-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+
+      .status-dot,
+      .auto-dot {
+        background: #3fb950;
+        border-radius: 999px;
+        display: inline-block;
+        flex: 0 0 auto;
+        height: 10px;
+        width: 10px;
+      }
+
+      .status-dot.offline {
+        background: #f85149;
+      }
+
+      .auto-dot {
+        animation: pulse 1.8s ease-in-out infinite;
+      }
+
+      .auto-dot.refreshing {
+        animation-duration: 0.7s;
+      }
+
+      .agent-grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+
+      .agent-card {
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        color: inherit;
+        display: block;
+        min-height: 224px;
+        padding: 16px;
+        position: relative;
+        text-decoration: none;
+        transition: border-color 0.2s ease, transform 0.2s ease,
+          box-shadow 0.2s ease;
+        width: 100%;
+      }
+
+      .agent-card:hover {
+        border-color: #58a6ff;
+        box-shadow: 0 12px 30px rgba(1, 4, 9, 0.35);
+        transform: translateY(-2px);
+      }
+
+      .agent-card.is-disabled {
+        cursor: default;
+      }
+
+      .agent-card.is-disabled:hover {
+        border-color: #30363d;
+        box-shadow: none;
+        transform: none;
+      }
+
+      .agent-card-header {
+        align-items: center;
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+
+      .agent-identity {
+        align-items: center;
+        display: flex;
+        gap: 10px;
+      }
+
+      .agent-emoji {
+        font-size: 1.75rem;
+        line-height: 1;
+      }
+
+      .agent-name {
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
+
+      .task-title {
+        color: #e6edf3;
+        font-size: 1rem;
+        font-weight: 600;
+        line-height: 1.45;
+        margin: 0 0 14px;
+        min-height: 44px;
+      }
+
+      .status-badge {
+        border: 1px solid currentColor;
+        border-radius: 999px;
+        display: inline-flex;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        padding: 6px 10px;
+        text-transform: uppercase;
+      }
+
+      .status-doing {
+        color: #3fb950;
+      }
+
+      .status-review {
+        color: #d29922;
+      }
+
+      .status-done {
+        color: #58a6ff;
+      }
+
+      .status-blocked {
+        color: #f85149;
+      }
+
+      .card-details {
+        display: grid;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .detail-row {
+        align-items: center;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .detail-label {
+        color: #8b949e;
+        font-size: 0.88rem;
+      }
+
+      .detail-value {
+        color: #e6edf3;
+        font-size: 0.92rem;
+        font-weight: 600;
+        text-align: right;
+      }
+
+      .card-link-hint {
+        color: #8b949e;
+        font-size: 0.82rem;
+        margin-top: 14px;
+      }
+
+      .screen-reader-only {
+        border: 0;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        padding: 0;
+        position: absolute;
+        width: 1px;
+        white-space: nowrap;
+      }
+
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.45);
+          opacity: 0.85;
+        }
+        70% {
+          box-shadow: 0 0 0 8px rgba(63, 185, 80, 0);
+          opacity: 1;
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(63, 185, 80, 0);
+          opacity: 0.85;
+        }
+      }
+
+      @media (max-width: 720px) {
+        body {
+          padding: 16px;
+        }
+
+        .header-meta {
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="header-bar">
+        <div class="header-copy">
+          <h1>Enterprise Crew Status</h1>
+        </div>
+        <div class="header-meta">
+          <div class="meta-pill" aria-live="polite">
+            <span>Last refresh:</span>
+            <strong id="last-refresh">Never</strong>
+          </div>
+          <div class="meta-pill" aria-live="polite">
+            <span class="auto-dot" id="auto-refresh-dot"></span>
+            <span id="auto-refresh-label">Auto refresh in 60s</span>
+          </div>
+          <button class="refresh-button" id="refresh-button" type="button">
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <section class="system-strip" aria-label="System status">
+        <div class="system-pill" aria-live="polite">
+          <span class="status-dot" id="gateway-dot"></span>
+          <span>Gateway:</span>
+          <strong id="gateway-status">Checking…</strong>
+        </div>
+        <div class="system-pill" aria-live="polite">
+          <span>Active cron count:</span>
+          <strong id="cron-count">0</strong>
+        </div>
+      </section>
+
+      <main class="agent-grid" aria-label="Enterprise crew agents">
+        <a
+          class="agent-card is-disabled"
+          data-agent="ada"
+          href="#"
+          rel="noreferrer noopener"
+          target="_blank"
+        >
+          <div class="agent-card-header">
+            <div class="agent-identity">
+              <span class="agent-emoji" aria-hidden="true">🔮</span>
+              <span class="agent-name">Ada</span>
+            </div>
+            <span class="status-badge status-doing" data-role="status">DOING</span>
+          </div>
+          <p class="task-title" data-role="title">Waiting for live task data</p>
+          <div class="card-details">
+            <div class="detail-row">
+              <span class="detail-label">Time on task</span>
+              <span class="detail-value" data-role="time">--</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Last activity</span>
+              <span class="detail-value" data-role="activity">Waiting for refresh</span>
+            </div>
+          </div>
+          <div class="card-link-hint" data-role="hint">Task link available after refresh</div>
+        </a>
+
+        <a
+          class="agent-card is-disabled"
+          data-agent="spock"
+          href="#"
+          rel="noreferrer noopener"
+          target="_blank"
+        >
+          <div class="agent-card-header">
+            <div class="agent-identity">
+              <span class="agent-emoji" aria-hidden="true">🖥️</span>
+              <span class="agent-name">Spock</span>
+            </div>
+            <span class="status-badge status-doing" data-role="status">DOING</span>
+          </div>
+          <p class="task-title" data-role="title">Waiting for live task data</p>
+          <div class="card-details">
+            <div class="detail-row">
+              <span class="detail-label">Time on task</span>
+              <span class="detail-value" data-role="time">--</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Last activity</span>
+              <span class="detail-value" data-role="activity">Waiting for refresh</span>
+            </div>
+          </div>
+          <div class="card-link-hint" data-role="hint">Task link available after refresh</div>
+        </a>
+
+        <a
+          class="agent-card is-disabled"
+          data-agent="scotty"
+          href="#"
+          rel="noreferrer noopener"
+          target="_blank"
+        >
+          <div class="agent-card-header">
+            <div class="agent-identity">
+              <span class="agent-emoji" aria-hidden="true">🚀</span>
+              <span class="agent-name">Scotty</span>
+            </div>
+            <span class="status-badge status-doing" data-role="status">DOING</span>
+          </div>
+          <p class="task-title" data-role="title">Waiting for live task data</p>
+          <div class="card-details">
+            <div class="detail-row">
+              <span class="detail-label">Time on task</span>
+              <span class="detail-value" data-role="time">--</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Last activity</span>
+              <span class="detail-value" data-role="activity">Waiting for refresh</span>
+            </div>
+          </div>
+          <div class="card-link-hint" data-role="hint">Task link available after refresh</div>
+        </a>
+
+        <a
+          class="agent-card is-disabled"
+          data-agent="midas"
+          href="#"
+          rel="noreferrer noopener"
+          target="_blank"
+        >
+          <div class="agent-card-header">
+            <div class="agent-identity">
+              <span class="agent-emoji" aria-hidden="true">🏗️</span>
+              <span class="agent-name">Midas</span>
+            </div>
+            <span class="status-badge status-doing" data-role="status">DOING</span>
+          </div>
+          <p class="task-title" data-role="title">Waiting for live task data</p>
+          <div class="card-details">
+            <div class="detail-row">
+              <span class="detail-label">Time on task</span>
+              <span class="detail-value" data-role="time">--</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Last activity</span>
+              <span class="detail-value" data-role="activity">Waiting for refresh</span>
+            </div>
+          </div>
+          <div class="card-link-hint" data-role="hint">Task link available after refresh</div>
+        </a>
+
+        <a
+          class="agent-card is-disabled"
+          data-agent="zora"
+          href="#"
+          rel="noreferrer noopener"
+          target="_blank"
+        >
+          <div class="agent-card-header">
+            <div class="agent-identity">
+              <span class="agent-emoji" aria-hidden="true">⚡</span>
+              <span class="agent-name">Zora</span>
+            </div>
+            <span class="status-badge status-doing" data-role="status">DOING</span>
+          </div>
+          <p class="task-title" data-role="title">Waiting for live task data</p>
+          <div class="card-details">
+            <div class="detail-row">
+              <span class="detail-label">Time on task</span>
+              <span class="detail-value" data-role="time">--</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Last activity</span>
+              <span class="detail-value" data-role="activity">Waiting for refresh</span>
+            </div>
+          </div>
+          <div class="card-link-hint" data-role="hint">Task link available after refresh</div>
+        </a>
+      </main>
+    </div>
+
+    <script>
+      (function () {
+        var AGENTS = [
+          { id: 'ada', name: 'Ada', emoji: '🔮' },
+          { id: 'spock', name: 'Spock', emoji: '🖥️' },
+          { id: 'scotty', name: 'Scotty', emoji: '🚀' },
+          { id: 'midas', name: 'Midas', emoji: '🏗️' },
+          { id: 'zora', name: 'Zora', emoji: '⚡' }
+        ];
+        var API_ROOT = 'http://100.104.229.62:3000';
+        var MC_ROOT = 'http://100.104.229.62:3002';
+        var TASKS_ENDPOINT = API_ROOT + '/api/tasks';
+        var AUTO_REFRESH_MS = 60000;
+        var refreshButton = document.getElementById('refresh-button');
+        var lastRefreshElement = document.getElementById('last-refresh');
+        var autoRefreshLabel = document.getElementById('auto-refresh-label');
+        var autoRefreshDot = document.getElementById('auto-refresh-dot');
+        var gatewayDot = document.getElementById('gateway-dot');
+        var gatewayStatus = document.getElementById('gateway-status');
+        var cronCount = document.getElementById('cron-count');
+        var countdown = AUTO_REFRESH_MS / 1000;
+        var refreshTimer = null;
+        var countdownTimer = null;
+        var isRefreshing = false;
+
+        function formatClock(dateValue) {
+          if (!(dateValue instanceof Date) || isNaN(dateValue.getTime())) {
+            return 'Never';
+          }
+
+          return dateValue.toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+        }
+
+        function formatRelativeTime(value) {
+          if (typeof value === 'string' && value.trim()) {
+            var trimmedValue = value.trim();
+            if (/ago$/i.test(trimmedValue) || /^just now$/i.test(trimmedValue)) {
+              return trimmedValue;
+            }
+          }
+
+          var date = parseDateValue(value);
+
+          if (!date) {
+            return 'Unknown';
+          }
+
+          var seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+
+          if (seconds < 60) {
+            return 'Just now';
+          }
+
+          if (seconds < 3600) {
+            return Math.floor(seconds / 60) + 'm ago';
+          }
+
+          if (seconds < 86400) {
+            var hours = Math.floor(seconds / 3600);
+            var minutes = Math.floor((seconds % 3600) / 60);
+            return minutes > 0 ? hours + 'h ' + minutes + 'm ago' : hours + 'h ago';
+          }
+
+          var days = Math.floor(seconds / 86400);
+          return days + 'd ago';
+        }
+
+        function formatDuration(value, fallbackStart) {
+          if (typeof value === 'string' && value.trim() && value.trim() !== '0') {
+            return value.trim();
+          }
+
+          if (typeof value === 'number' && isFinite(value) && value > 0) {
+            var seconds = value > 100000 ? Math.floor(value / 1000) : Math.floor(value);
+            return durationFromSeconds(seconds);
+          }
+
+          var startDate = parseDateValue(fallbackStart);
+          if (startDate) {
+            var elapsedSeconds = Math.max(0, Math.floor((Date.now() - startDate.getTime()) / 1000));
+            return durationFromSeconds(elapsedSeconds);
+          }
+
+          return '--';
+        }
+
+        function durationFromSeconds(totalSeconds) {
+          if (!isFinite(totalSeconds) || totalSeconds <= 0) {
+            return '--';
+          }
+
+          var hours = Math.floor(totalSeconds / 3600);
+          var minutes = Math.floor((totalSeconds % 3600) / 60);
+
+          if (hours > 0) {
+            return hours + 'h ' + minutes + 'm';
+          }
+
+          if (minutes > 0) {
+            return minutes + 'm';
+          }
+
+          return totalSeconds + 's';
+        }
+
+        function parseDateValue(value) {
+          if (!value && value !== 0) {
+            return null;
+          }
+
+          if (value instanceof Date) {
+            return isNaN(value.getTime()) ? null : value;
+          }
+
+          if (typeof value === 'number') {
+            var timestamp = value < 1000000000000 ? value * 1000 : value;
+            var dateFromNumber = new Date(timestamp);
+            return isNaN(dateFromNumber.getTime()) ? null : dateFromNumber;
+          }
+
+          var dateFromString = new Date(value);
+          return isNaN(dateFromString.getTime()) ? null : dateFromString;
+        }
+
+        function setAutoRefreshLabel() {
+          autoRefreshLabel.textContent = isRefreshing
+            ? 'Refreshing now…'
+            : 'Auto refresh in ' + countdown + 's';
+        }
+
+        function updateGatewayStatus(isOnline) {
+          gatewayDot.classList.toggle('offline', !isOnline);
+          gatewayStatus.textContent = isOnline ? 'Online' : 'Offline';
+        }
+
+        function normalizeStatus(taskOrStatus) {
+          var statusValue = taskOrStatus;
+
+          if (taskOrStatus && typeof taskOrStatus === 'object') {
+            if (taskOrStatus.blocked) {
+              return 'blocked';
+            }
+
+            statusValue =
+              taskOrStatus.status ||
+              taskOrStatus.column ||
+              taskOrStatus.progressStatus ||
+              taskOrStatus.progress_status ||
+              'doing';
+          }
+
+          var normalized = String(statusValue || 'doing').trim().toLowerCase();
+
+          if (normalized === 'in_review') {
+            normalized = 'review';
+          }
+
+          if (normalized === 'complete' || normalized === 'completed') {
+            normalized = 'done';
+          }
+
+          if (normalized === 'in_progress' || normalized === 'active' || normalized === 'backlog') {
+            normalized = 'doing';
+          }
+
+          if (['doing', 'review', 'done', 'blocked'].indexOf(normalized) === -1) {
+            normalized = 'doing';
+          }
+
+          return normalized;
+        }
+
+        function matchesAgent(task, agentId) {
+          var assignee = task && task.assignee;
+
+          if (!assignee) {
+            return false;
+          }
+
+          return String(assignee).trim().toLowerCase() === String(agentId).trim().toLowerCase();
+        }
+
+        function taskActivityDate(task) {
+          return parseDateValue(
+            task.updatedAt ||
+              task.updated_at ||
+              task.activityAt ||
+              task.activity_at ||
+              task.timestamp ||
+              task.createdAt ||
+              task.created_at
+          );
+        }
+
+        function statusPriority(task) {
+          var normalized = normalizeStatus(task);
+
+          if (normalized === 'doing') {
+            return 0;
+          }
+
+          if (normalized === 'review') {
+            return 1;
+          }
+
+          if (normalized === 'blocked') {
+            return 2;
+          }
+
+          return 3;
+        }
+
+        function selectTaskForAgent(tasks, agentId) {
+          var matchingTasks = tasks.filter(function (task) {
+            return matchesAgent(task, agentId);
+          });
+
+          if (!matchingTasks.length) {
+            return null;
+          }
+
+          matchingTasks.sort(function (left, right) {
+            var priorityDelta = statusPriority(left) - statusPriority(right);
+            if (priorityDelta !== 0) {
+              return priorityDelta;
+            }
+
+            var leftTime = taskActivityDate(left);
+            var rightTime = taskActivityDate(right);
+            var leftValue = leftTime ? leftTime.getTime() : 0;
+            var rightValue = rightTime ? rightTime.getTime() : 0;
+            return rightValue - leftValue;
+          });
+
+          return matchingTasks[0];
+        }
+
+        function buildTaskUrl(task) {
+          var directUrl =
+            task.mcUrl ||
+            task.mc_url ||
+            task.missionControlUrl ||
+            task.mission_control_url ||
+            task.url ||
+            task.html_url ||
+            task.link;
+
+          if (directUrl) {
+            return directUrl;
+          }
+
+          var taskId = task.id || task.taskId || task.task_id;
+          if (taskId) {
+            return MC_ROOT + '/tasks/' + encodeURIComponent(taskId);
+          }
+
+          return '';
+        }
+
+        function normalizeTaskPayload(payload, agentId) {
+          if (!payload) {
+            return null;
+          }
+
+          if (Array.isArray(payload)) {
+            return selectTaskForAgent(payload, agentId);
+          }
+
+          if (Array.isArray(payload.tasks)) {
+            return selectTaskForAgent(payload.tasks, agentId);
+          }
+
+          if (Array.isArray(payload.data)) {
+            return selectTaskForAgent(payload.data, agentId);
+          }
+
+          if (payload.task && typeof payload.task === 'object') {
+            return matchesAgent(payload.task, agentId) ? payload.task : null;
+          }
+
+          if (
+            payload.title ||
+            payload.name ||
+            payload.task ||
+            payload.summary ||
+            payload.status
+          ) {
+            if (!payload.assignee) {
+              return payload;
+            }
+
+            return matchesAgent(payload, agentId) ? payload : null;
+          }
+
+          return null;
+        }
+
+        function updateCard(agentId, task, options) {
+          var card = document.querySelector('[data-agent="' + agentId + '"]');
+          if (!card) {
+            return;
+          }
+
+          var statusElement = card.querySelector('[data-role="status"]');
+          var titleElement = card.querySelector('[data-role="title"]');
+          var timeElement = card.querySelector('[data-role="time"]');
+          var activityElement = card.querySelector('[data-role="activity"]');
+          var hintElement = card.querySelector('[data-role="hint"]');
+
+          if (!task) {
+            card.classList.add('is-disabled');
+            card.setAttribute('href', '#');
+            card.removeAttribute('aria-label');
+            card.removeAttribute('title');
+            titleElement.textContent = options.isOffline
+              ? 'Gateway unavailable — retrying automatically'
+              : 'No active task found';
+            statusElement.className = options.isOffline
+              ? 'status-badge status-blocked'
+              : 'status-badge status-done';
+            statusElement.textContent = options.isOffline ? 'BLOCKED' : 'DONE';
+            timeElement.textContent = '--';
+            activityElement.textContent = options.isOffline ? 'Gateway offline' : 'No recent activity';
+            hintElement.textContent = options.isOffline
+              ? 'Mission Control link unavailable while offline'
+              : 'No Mission Control task link available';
+            return;
+          }
+
+          var normalizedStatus = normalizeStatus(task);
+          var taskTitle =
+            task.title || task.taskTitle || task.task_title || task.task || task.name || task.summary || 'Untitled task';
+          var lastActivity =
+            task.lastActivity ||
+            task.last_activity ||
+            task.updatedAt ||
+            task.updated_at ||
+            task.activityAt ||
+            task.activity_at ||
+            task.timestamp;
+          var timeOnTask =
+            task.timeOnTask ||
+            task.time_on_task ||
+            task.timeSpent ||
+            task.time_spent ||
+            task.duration ||
+            task.elapsed ||
+            task.elapsedSeconds ||
+            task.elapsed_seconds;
+          var startedAt = task.startedAt || task.started_at || task.createdAt || task.created_at;
+          var taskUrl = buildTaskUrl(task);
+
+          statusElement.className = 'status-badge status-' + normalizedStatus;
+          statusElement.textContent = normalizedStatus.toUpperCase();
+          titleElement.textContent = taskTitle;
+          timeElement.textContent = formatDuration(timeOnTask, startedAt);
+          activityElement.textContent = formatRelativeTime(lastActivity);
+          hintElement.textContent = taskUrl
+            ? 'Open in Mission Control'
+            : 'Mission Control link unavailable';
+
+          if (taskUrl) {
+            card.classList.remove('is-disabled');
+            card.setAttribute('href', taskUrl);
+            card.setAttribute('aria-label', 'Open ' + taskTitle + ' in Mission Control');
+            card.setAttribute('title', taskTitle);
+          } else {
+            card.classList.add('is-disabled');
+            card.setAttribute('href', '#');
+            card.removeAttribute('aria-label');
+            card.removeAttribute('title');
+          }
+        }
+
+        function fetchAgentTask(agentId) {
+          var url = TASKS_ENDPOINT + '?assignee=' + encodeURIComponent(agentId) + '&status=doing';
+
+          return fetch(url, { cache: 'no-store' })
+            .then(function (response) {
+              if (!response.ok) {
+                throw new Error('Request failed with status ' + response.status);
+              }
+
+              return response.text().then(function (body) {
+                if (!body.trim()) {
+                  return null;
+                }
+
+                return JSON.parse(body);
+              });
+            })
+            .then(function (payload) {
+              var task = normalizeTaskPayload(payload, agentId);
+              if (!task) {
+                return { agentId: agentId, ok: true, task: null };
+              }
+
+              return {
+                agentId: agentId,
+                ok: true,
+                task: {
+                  id: task.id || task.taskId || task.task_id,
+                  title: task.title || task.taskTitle || task.task_title || task.task || task.name || task.summary,
+                  status: normalizeStatus(task),
+                  lastActivity:
+                    task.lastActivity ||
+                    task.last_activity ||
+                    task.updatedAt ||
+                    task.updated_at ||
+                    task.activityAt ||
+                    task.activity_at ||
+                    task.timestamp,
+                  timeOnTask:
+                    task.timeOnTask ||
+                    task.time_on_task ||
+                    task.timeSpent ||
+                    task.time_spent ||
+                    task.duration ||
+                    task.elapsed ||
+                    task.elapsedSeconds ||
+                    task.elapsed_seconds,
+                  startedAt: task.startedAt || task.started_at || task.createdAt || task.created_at,
+                  mcUrl:
+                    task.mcUrl ||
+                    task.mc_url ||
+                    task.missionControlUrl ||
+                    task.mission_control_url ||
+                    task.url ||
+                    task.html_url ||
+                    task.link
+                }
+              };
+            })
+            .catch(function () {
+              return { agentId: agentId, ok: false, task: null };
+            });
+        }
+
+        function beginRefreshing() {
+          isRefreshing = true;
+          refreshButton.disabled = true;
+          autoRefreshDot.classList.add('refreshing');
+          setAutoRefreshLabel();
+        }
+
+        function finishRefreshing() {
+          isRefreshing = false;
+          refreshButton.disabled = false;
+          autoRefreshDot.classList.remove('refreshing');
+          countdown = AUTO_REFRESH_MS / 1000;
+          setAutoRefreshLabel();
+        }
+
+        function refreshData() {
+          if (isRefreshing) {
+            return;
+          }
+
+          beginRefreshing();
+
+          Promise.all(
+            AGENTS.map(function (agent) {
+              return fetchAgentTask(agent.id);
+            })
+          )
+            .then(function (results) {
+              var onlineCount = 0;
+              var activeTaskCount = 0;
+
+              results.forEach(function (result) {
+                if (result.ok) {
+                  onlineCount += 1;
+                }
+
+                if (result.task) {
+                  activeTaskCount += 1;
+                }
+
+                updateCard(result.agentId, result.task, {
+                  isOffline: !result.ok
+                });
+              });
+
+              updateGatewayStatus(onlineCount > 0);
+              cronCount.textContent = String(activeTaskCount);
+              lastRefreshElement.textContent = formatClock(new Date());
+            })
+            .catch(function () {
+              updateGatewayStatus(false);
+              cronCount.textContent = '0';
+              lastRefreshElement.textContent = formatClock(new Date());
+              AGENTS.forEach(function (agent) {
+                updateCard(agent.id, null, { isOffline: true });
+              });
+            })
+            .finally(function () {
+              finishRefreshing();
+            });
+        }
+
+        document.addEventListener('click', function (event) {
+          var card = event.target.closest('.agent-card.is-disabled');
+          if (card) {
+            event.preventDefault();
+          }
+        });
+
+        refreshButton.addEventListener('click', function () {
+          refreshData();
+        });
+
+        countdownTimer = window.setInterval(function () {
+          if (isRefreshing) {
+            return;
+          }
+
+          countdown -= 1;
+          if (countdown <= 0) {
+            countdown = AUTO_REFRESH_MS / 1000;
+          }
+          setAutoRefreshLabel();
+        }, 1000);
+
+        refreshTimer = window.setInterval(function () {
+          refreshData();
+        }, AUTO_REFRESH_MS);
+
+        setAutoRefreshLabel();
+        refreshData();
+      })();
+    </script>
+  </body>
+</html>

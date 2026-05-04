@@ -1,0 +1,32 @@
+{
+  "id": "entity-services",
+  "name": "Entity Services",
+  "version": "0.1.0",
+  "kind": "integration",
+  "description": "Operational services registry for Entity, Enterprise tooling, and adjacent runtime services.",
+  "capabilities": [
+    "api.routes.register",
+    "ui.top-level.register",
+    "admin.settings.register"
+  ],
+  "hooks": [],
+  "entrypoints": {
+    "ui": "./packages/app/src/components/EntityServicesBoard.tsx"
+  },
+  "ui": {
+    "mountPoint": { "type": "top-level-tab" },
+    "component": "EntityServicesBoard",
+    "label": "Services",
+    "icon": "🛰️"
+  },
+  "routes": [
+    { "basePath": "/api/entity-services", "entry": "./routes.ts" }
+  ],
+  "settings": {
+    "requestTimeoutMs": 3500,
+    "entityBaseUrl": "http://100.106.69.9:3000",
+    "enterpriseAdminUrl": "http://100.104.229.62:3000",
+    "n8nBaseUrl": "http://100.106.69.9:5678",
+    "vaultwardenBaseUrl": "http://100.106.69.9:8222"
+  }
+}

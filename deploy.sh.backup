@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Entity Safe Deploy Script
+# Builds on Mac, deploys to production WITHOUT touching the DB
+# Usage: ./deploy.sh [--server-only | --frontend-only | --all]
+set -euo pipefail
+
+PROD_HOST="henrymascot@100.106.69.9"
+MAC_HOST="henrymascot@100.86.150.96"
+ENTITY_DIR="/home/henrymascot/Code/entity"
+MAC_ENTITY_DIR="/Users/henrymascot/Code/entity"
+PROD_DB="${ENTITY_DIR}/packages/db/entity-tasks.db"
+SERVER_DIST="${ENTITY_DIR}/packages/server/dist"
+FRONTEND_DIST="${SERVER_DIST}/app/dist"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log() { echo -e "${GREEN}[DEPLOY]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+MODE="${1:---all}"
+
+# ============================================================
+# STEP 0: Pre-flight checks
+# ============================================================
+log "Pre-flight: checking production DB..."
+TASK_COUNT=$(node -e "
+const Database = require('better-sqlite3');
+const db = new Database('${PROD_DB}', {readonly: true});
+console.log(db.prepare('SELECT count(*) as c FROM tasks').get().c);
+db.close();
+" 2>/dev/null || echo "0")
+log "Production DB has ${TASK_COUNT} tasks"
+
+if [ "$TASK_COUNT" -lt 10 ]; then
+  error "Production DB looks wrong (only ${TASK_COUNT} tasks). Aborting."
+fi
+
+# ============================================================
+# STEP 1: Backup production DB (always, before any deploy)
+# ============================================================
+BACKUP_TS=$(date +%Y%m%d_%H%M%S)
+BACKUP_PATH="${PROD_DB}.backup.${BACKUP_TS}"
+cp "${PROD_DB}" "${BACKUP_PATH}"
+# Also checkpoint WAL into main DB file
+node -e "
+const Database = require('better-sqlite3');
+const db = new Database('${PROD_DB}');
+db.pragma('wal_checkpoint(TRUNCATE)');
+db.close();
+" 2>/dev/null
+cp "${PROD_DB}" "${BACKUP_PATH}.post-checkpoint"
+log "Backed up DB to ${BACKUP_PATH} (${TASK_COUNT} tasks)"
+
+# ============================================================
+# STEP 2: Build on Mac
+# ============================================================
+if [[ "$MODE" == "--all" || "$MODE" == "--server-only" ]]; then
+  log "Building DB + Server on Mac..."
+  ssh ${MAC_HOST} "cd ${MAC_ENTITY_DIR} && npm --prefix packages/db run build && npm --prefix packages/server run build" || error "Mac build failed"
+fi
+
+if [[ "$MODE" == "--all" || "$MODE" == "--frontend-only" ]]; then
+  log "Building Frontend on Mac..."
+  ssh ${MAC_HOST} "cd ${MAC_ENTITY_DIR} && npm --prefix packages/app run build" || error "Mac frontend build failed"
+fi
+
+# ============================================================
+# STEP 3: Sync from Mac (EXCLUDING all .db files)
+# ============================================================
+log "Syncing built files from Mac (DB files EXCLUDED)..."
+
+if [[ "$MODE" == "--all" || "$MODE" == "--server-only" ]]; then
+  # Sync DB package dist (JS only, no .db)
+  rsync -avz --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' \
+    ${MAC_HOST}:${MAC_ENTITY_DIR}/packages/db/dist/ \
+    ${ENTITY_DIR}/packages/db/dist/
+
+  # Sync server dist (exclude entire db folder to protect symlink + production DB)
+  rsync -avz --exclude='db/' --exclude='app/' \
+    ${MAC_HOST}:${MAC_ENTITY_DIR}/packages/server/dist/ \
+    ${SERVER_DIST}/
+
+  # Copy DB JS files into server's expected location
+  cp ${ENTITY_DIR}/packages/db/dist/*.js ${SERVER_DIST}/db/src/
+  log "Server synced (DB JS copied to server dist)"
+fi
+
+if [[ "$MODE" == "--all" || "$MODE" == "--frontend-only" ]]; then
+  # Sync frontend assets only (never the whole app/dist which Mac might have)
+  rsync -avz --exclude='*.db' \
+    ${MAC_HOST}:${MAC_ENTITY_DIR}/packages/app/dist/ \
+    ${FRONTEND_DIST}/
+  log "Frontend synced"
+fi
+
+# Sync MC-SOURCE.html
+rsync -avz ${MAC_HOST}:${MAC_ENTITY_DIR}/MC-SOURCE.html ${ENTITY_DIR}/MC-SOURCE.html
+
+# ============================================================
+# STEP 4: Verify symlink is intact
+# ============================================================
+SYMLINK_TARGET=$(readlink -f "${SERVER_DIST}/db/entity-tasks.db" 2>/dev/null || echo "NOT_A_SYMLINK")
+if [ "$SYMLINK_TARGET" != "${PROD_DB}" ]; then
+  warn "DB symlink was broken! Fixing..."
+  rm -f "${SERVER_DIST}/db/entity-tasks.db"
+  ln -s "${PROD_DB}" "${SERVER_DIST}/db/entity-tasks.db"
+  log "Symlink restored: ${SERVER_DIST}/db/entity-tasks.db -> ${PROD_DB}"
+fi
+
+# ============================================================
+# STEP 5: Restart server
+# ============================================================
+log "Restarting Entity server..."
+lsof -i :3000 -t 2>/dev/null | xargs kill -9 2>/dev/null || true
+sleep 2
+cd ${ENTITY_DIR} && PORT=3000 WORKSPACE=/home/henrymascot/clawd nohup node packages/server/dist/server/src/index.js > /tmp/entity-server.log 2>&1 &
+sleep 4
+
+# ============================================================
+# STEP 6: Post-deploy verification
+# ============================================================
+NEW_COUNT=$(curl -s http://100.106.69.9:3000/api/tasks | python3 -c "
+import sys, json
+d = json.loads(sys.stdin.read())
+tasks = d.get('tasks', [])
+print(len(tasks))
+" 2>/dev/null || echo "0")
+
+log "Post-deploy: ${NEW_COUNT} tasks (was ${TASK_COUNT})"
+
+if [ "$NEW_COUNT" -lt "$TASK_COUNT" ]; then
+  error "TASK COUNT DROPPED from ${TASK_COUNT} to ${NEW_COUNT}! Check server logs."
+fi
+
+log "✅ Deploy complete! ${NEW_COUNT} tasks, server running on :3000"

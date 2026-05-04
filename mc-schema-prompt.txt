@@ -1,0 +1,46 @@
+## Task: Extend task schema for MC parity
+
+### Files to modify:
+1. packages/db/src/index.ts
+2. packages/server/src/index.ts
+
+### What to do:
+
+**Step 1: Add MC fields to TaskRecord interface (~line 10)**
+Add these fields after blocker_reason:
+- due_date: string | null
+- priority: string | null  
+- estimate_hours: number | null
+- time_spent: number | null
+- output: string | null
+- progress_status: string | null
+- recurring: boolean
+- recurring_config: string | null
+
+**Step 2: Add same fields to CreateTaskInput and UpdateTaskInput interfaces (~line 23, 33)**
+All optional (with ?).
+
+**Step 3: Add DB columns in bootstrap() function**
+After the existing CREATE TABLE IF NOT EXISTS tasks block, use the existing hasColumn() function to add columns if missing:
+- due_date TEXT
+- priority TEXT DEFAULT 'P2'
+- estimate_hours REAL
+- time_spent REAL DEFAULT 0
+- output TEXT
+- progress_status TEXT DEFAULT 'backlog'
+- recurring INTEGER DEFAULT 0
+- recurring_config TEXT
+
+**Step 4: Update mapTaskRow() (~line 548)**
+Add mappings for all new fields after metadata line.
+
+**Step 5: Update createTask() in createTaskRepository()**
+Add new fields to INSERT statement and parameters.
+
+**Step 6: Update updateTask() in createTaskRepository()**
+Add field update handlers for all new fields (same pattern as existing handlers).
+
+**Step 7: Update handleUpdateTask in packages/server/src/index.ts (~line 565)**
+Destructure the new fields from req.body and pass them to taskSyncLayer.updateTask().
+
+DO NOT change any other functionality. Only add the new fields.

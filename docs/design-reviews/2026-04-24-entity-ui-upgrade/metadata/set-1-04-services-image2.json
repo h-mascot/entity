@@ -1,0 +1,15 @@
+{
+  "model": "gpt-image-2",
+  "endpoint": "https://api.openai.com/v1/images/edits",
+  "set": "set-1",
+  "view": "04-services",
+  "viewName": "Services",
+  "size": "1536x1024",
+  "quality": "medium",
+  "startedAt": "2026-04-24T06:07:51.593Z",
+  "completedAt": "2026-04-24T06:08:47.586Z",
+  "status": 200,
+  "ok": true,
+  "requestId": "req_2195bda367ac4e1287d51c55d78432ec",
+  "outputPath": "set-1/04-services.png"
+}

@@ -1,0 +1,343 @@
+{
+  "branchName": "ralph/mc-file-system-improvement",
+  "userStories": [
+    {
+      "id": "1",
+      "ticket": "FS-001",
+      "title": "App Feature Flag for Multi-Source FS",
+      "description": "Add VITE_ENTITY_FS_MULTISOURCE and runtime.fsMultiSourceEnabled, and gate file sidebar rendering without breaking current file workflows.",
+      "acceptanceCriteria": [
+        "runtime.fsMultiSourceEnabled is exposed",
+        "Default behavior keeps existing FileTree path",
+        "App build passes"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "2",
+      "ticket": "FS-002",
+      "title": "Server Feature Gate and FS Module Skeleton",
+      "description": "Add ENTITY_FS_MULTISOURCE gate and mount /api/fs routes from dedicated server module only when enabled.",
+      "acceptanceCriteria": [
+        "Dedicated fs module exists",
+        "Legacy routes unaffected when disabled",
+        "Server build passes"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "3",
+      "ticket": "FS-010",
+      "title": "DB Schema for Sources and Indexing Runs",
+      "description": "Add bootstrap tables and indexes for file_sources, file_index, and file_sync_runs.",
+      "acceptanceCriteria": [
+        "Tables are created idempotently",
+        "Indexes for source/type/index timestamps exist",
+        "DB build passes"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "4",
+      "ticket": "FS-011",
+      "title": "File Source Repository",
+      "description": "Implement typed repository CRUD for file sources including enable/disable and input validation.",
+      "acceptanceCriteria": [
+        "Repository supports create/list/get/update/delete/setEnabled",
+        "Type/auth validation is enforced",
+        "DB build passes"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "5",
+      "ticket": "FS-012",
+      "title": "Source CRUD Endpoints",
+      "description": "Implement GET/POST/PUT/PATCH enabled/DELETE endpoints for /api/sources using the repository.",
+      "acceptanceCriteria": [
+        "All CRUD endpoints return stable JSON",
+        "Validation errors return HTTP 400",
+        "Endpoint smoke tests pass"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "6",
+      "ticket": "FS-013",
+      "title": "Source Connection Test Endpoint",
+      "description": "Implement POST /api/sources/:id/test using adapter validate() and normalized health response.",
+      "acceptanceCriteria": [
+        "Returns health and message",
+        "Does not mutate source state",
+        "Handles invalid source IDs"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "7",
+      "ticket": "FS-020",
+      "title": "Adapter Interface and Registry",
+      "description": "Define source adapter contracts and registry mapping source types to adapter factories.",
+      "acceptanceCriteria": [
+        "Adapter interface types exist",
+        "All known source types map in registry",
+        "Unsupported source types fail fast"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "8",
+      "ticket": "FS-021",
+      "title": "Local Source Adapter",
+      "description": "Implement local filesystem adapter list/read with strict root-boundary checks.",
+      "acceptanceCriteria": [
+        "List/read under basePath works",
+        "Traversal attempts are blocked",
+        "Adapter unit smoke checks pass"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "9",
+      "ticket": "FS-022",
+      "title": "Docsify Source Adapter",
+      "description": "Implement docsify adapter for source listing and markdown reads into unified source node shape.",
+      "acceptanceCriteria": [
+        "Docsify structures map to SourceNode[]",
+        "Markdown read returns content payload",
+        "Endpoint errors are normalized"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "10",
+      "ticket": "FS-023",
+      "title": "HTTP Markdown Adapter",
+      "description": "Implement HTTP markdown adapter for file reads and safe handling of unsupported listings.",
+      "acceptanceCriteria": [
+        "Reads markdown URLs",
+        "Unsupported list mode fails gracefully",
+        "Adapter is selectable via registry"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "11",
+      "ticket": "FS-024",
+      "title": "Source-Aware FS Tree/File Endpoints",
+      "description": "Implement GET /api/fs/tree and GET /api/fs/file using source adapters.",
+      "acceptanceCriteria": [
+        "Requires valid sourceId",
+        "Returns unified tree/file payload",
+        "Rejects disabled/unknown sources"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "12",
+      "ticket": "FS-025",
+      "title": "FS Security Controls",
+      "description": "Add allowlisting/path normalization/auth redaction/audit guardrails for source access.",
+      "acceptanceCriteria": [
+        "Unsafe paths/hosts are blocked",
+        "Credential values are never logged",
+        "Security checks run before adapter calls"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "13",
+      "ticket": "FS-030",
+      "title": "Frontend Source FS Types and Hooks",
+      "description": "Add typed client models and hooks for source list/tree/file/search API calls.",
+      "acceptanceCriteria": [
+        "Typed filesystem models exist",
+        "Data hooks compile and return typed payloads",
+        "App build passes"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "14",
+      "ticket": "FS-031",
+      "title": "File Sources Settings UI",
+      "description": "Build admin/settings UI for source CRUD and source test action.",
+      "acceptanceCriteria": [
+        "Users can add/edit/enable/disable/delete sources",
+        "Validation and health state are visible",
+        "CRUD actions persist correctly"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "15",
+      "ticket": "FS-032",
+      "title": "Multi-Source Sidebar Tree",
+      "description": "Create multi-root sidebar tree component for enabled sources and nested browsing.",
+      "acceptanceCriteria": [
+        "Enabled sources render as roots",
+        "Nested expand/fetch works",
+        "File click returns sourceId + path"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "16",
+      "ticket": "FS-033",
+      "title": "Source-Aware File Selection State",
+      "description": "Evolve file selection state from path-only to sourceId+path while keeping local editing stable.",
+      "acceptanceCriteria": [
+        "File identity includes sourceId",
+        "Local source edit mode still works",
+        "Docsify read flow works"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "17",
+      "ticket": "FS-034",
+      "title": "Reader Metadata Header",
+      "description": "Add metadata header to reader with source/path/updated/type/agent values.",
+      "acceptanceCriteria": [
+        "Header renders for source-aware files",
+        "Graceful fallback when metadata is missing",
+        "No markdown regression"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "18",
+      "ticket": "FS-035",
+      "title": "Unified File Dashboard",
+      "description": "Implement no-selection dashboard with filters and result actions.",
+      "acceptanceCriteria": [
+        "Search and filter controls render",
+        "Results include preview and open actions",
+        "Empty/error states handled"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "19",
+      "ticket": "FS-036",
+      "title": "QuickSwitcher Unified Search",
+      "description": "Migrate QuickSwitcher to unified /api/fs/search and display source-aware labels.",
+      "acceptanceCriteria": [
+        "QuickSwitcher calls unified search",
+        "Keyboard controls remain unchanged",
+        "Source labels appear in results"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "20",
+      "ticket": "FS-040",
+      "title": "Index Repository Layer",
+      "description": "Implement DB repository for file_index upserts/queries and file_sync_runs records.",
+      "acceptanceCriteria": [
+        "Upsert by sourceId+path works",
+        "Sync run state is queryable",
+        "DB build passes"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "21",
+      "ticket": "FS-041",
+      "title": "Background Index Runner",
+      "description": "Add bounded-concurrency source indexing scheduler and refresh loop.",
+      "acceptanceCriteria": [
+        "Disabled sources are skipped",
+        "Per-source errors do not crash runner",
+        "Sync timestamps update"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "22",
+      "ticket": "FS-042",
+      "title": "Metadata Classification Heuristics",
+      "description": "Classify indexed entries for type, agent, and recurring pattern.",
+      "acceptanceCriteria": [
+        "Daily/weekly/monthly recurring patterns detected",
+        "Unknown entries fall back safely",
+        "Classification logic is testable"
+      ],
+      "priority": 3,
+      "passes": true
+    },
+    {
+      "id": "23",
+      "ticket": "FS-043",
+      "title": "Unified Search Endpoint",
+      "description": "Implement /api/fs/search with structured filters and index fallback behavior.",
+      "acceptanceCriteria": [
+        "Search supports source/type/agent/date filters",
+        "Response includes source metadata and preview",
+        "Fallback path works when index is stale"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "24",
+      "ticket": "FS-050",
+      "title": "FS Observability",
+      "description": "Track source health, latency, index freshness, and error rates for multi-source operations.",
+      "acceptanceCriteria": [
+        "Per-source health status is updated",
+        "Latency/error signals are logged or emitted",
+        "Operational visibility is documented"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "25",
+      "ticket": "FS-051",
+      "title": "Regression and Acceptance Test Pass",
+      "description": "Execute and document regression and acceptance tests for R1 and R2 behaviors.",
+      "acceptanceCriteria": [
+        "Legacy file workflows still pass",
+        "Multi-source browse/read/search smoke tests pass",
+        "Test plan document is complete"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "26",
+      "ticket": "FS-052",
+      "title": "Rollout and Rollback Playbook",
+      "description": "Create launch sequence and rollback procedures for feature-flagged rollout.",
+      "acceptanceCriteria": [
+        "Stage-based rollout plan exists",
+        "Rollback trigger conditions are documented",
+        "Docs link from project references"
+      ],
+      "priority": 2,
+      "passes": true
+    }
+  ]
+}

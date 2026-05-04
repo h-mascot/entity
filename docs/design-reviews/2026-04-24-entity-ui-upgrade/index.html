@@ -1,0 +1,818 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Entity UI Upgrade Gallery</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07080a;
+        --panel: #101216;
+        --panel-2: #151922;
+        --border: #272d38;
+        --border-strong: #3a4352;
+        --text: #f5f7fb;
+        --muted: #9aa4b2;
+        --soft: #c9d1dc;
+        --accent: #38a8ff;
+        --accent-2: #6ee7b7;
+        --warn: #fbbf24;
+        --shadow: 0 18px 60px rgb(0 0 0 / 0.42);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      button,
+      select,
+      input {
+        font: inherit;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .shell {
+        min-height: 100vh;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 1px solid var(--border);
+        background: rgb(7 8 10 / 0.92);
+        backdrop-filter: blur(14px);
+      }
+
+      .topbar-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 14px 18px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 260px;
+      }
+
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: #0d1117;
+        color: var(--accent);
+        font-size: 18px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 17px;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .control,
+      .btn {
+        min-height: 34px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--soft);
+        padding: 7px 10px;
+      }
+
+      .btn {
+        cursor: pointer;
+      }
+
+      .btn:hover,
+      .control:focus {
+        border-color: var(--border-strong);
+        color: var(--text);
+      }
+
+      .btn.active,
+      .btn.primary {
+        border-color: var(--accent);
+        background: rgb(56 168 255 / 0.14);
+        color: var(--text);
+      }
+
+      .btn.good {
+        border-color: rgb(110 231 183 / 0.6);
+        background: rgb(110 231 183 / 0.12);
+        color: var(--text);
+      }
+
+      main {
+        padding: 18px;
+      }
+
+      .summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      .summary-card {
+        min-height: 80px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 12px;
+      }
+
+      .summary-card .label {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+
+      .summary-card .value {
+        margin-top: 8px;
+        font-size: 22px;
+        font-weight: 700;
+      }
+
+      .summary-card .hint {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .selection-panel {
+        display: none;
+        margin-bottom: 16px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 12px;
+      }
+
+      .selection-panel.visible {
+        display: block;
+      }
+
+      .selection-panel h2 {
+        margin: 0 0 10px;
+        font-size: 14px;
+      }
+
+      .selection-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .selection-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .selection-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 8px;
+      }
+
+      .selection-item {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #0b0d11;
+        padding: 9px;
+        color: var(--soft);
+        font-size: 12px;
+      }
+
+      .selection-json {
+        width: 100%;
+        min-height: 92px;
+        margin: 10px 0 0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #080a0d;
+        color: var(--soft);
+        padding: 10px;
+        overflow: auto;
+        font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        white-space: pre-wrap;
+      }
+
+      .view-stack {
+        display: grid;
+        gap: 22px;
+      }
+
+      .view-section {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .view-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border-bottom: 1px solid var(--border);
+        padding: 12px;
+      }
+
+      .view-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .view-index {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #0b0d11;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .view-name {
+        margin: 0;
+        font-size: 15px;
+      }
+
+      .view-level {
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: capitalize;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0;
+      }
+
+      .shot-card {
+        min-width: 0;
+        border-right: 1px solid var(--border);
+        background: #080a0d;
+      }
+
+      .shot-card:last-child {
+        border-right: 0;
+      }
+
+      .shot-card.selected {
+        box-shadow: inset 0 0 0 2px var(--accent-2);
+      }
+
+      .shot-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        border-bottom: 1px solid var(--border);
+        padding: 10px;
+        background: var(--panel-2);
+      }
+
+      .shot-title {
+        min-width: 0;
+      }
+
+      .shot-title strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .shot-title span {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .shot-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .mini-btn {
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: #0b0d11;
+        color: var(--soft);
+        padding: 5px 7px;
+        font-size: 11px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .mini-btn:hover {
+        border-color: var(--border-strong);
+        color: var(--text);
+      }
+
+      .mini-btn.pick {
+        border-color: rgb(110 231 183 / 0.5);
+      }
+
+      .image-wrap {
+        position: relative;
+        aspect-ratio: 16 / 10.66;
+        background: #020305;
+        overflow: hidden;
+      }
+
+      .image-wrap img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+      }
+
+      .note {
+        min-height: 58px;
+        border-top: 1px solid var(--border);
+        padding: 10px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        background: rgb(0 0 0 / 0.9);
+      }
+
+      .modal.visible {
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      .modal-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border-bottom: 1px solid var(--border);
+        background: #080a0d;
+        padding: 12px 14px;
+      }
+
+      .modal-title {
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .modal-body {
+        display: grid;
+        place-items: center;
+        min-height: 0;
+        padding: 16px;
+      }
+
+      .modal-body img {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #000;
+      }
+
+      @media (max-width: 1180px) {
+        .summary {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .cards {
+          grid-template-columns: 1fr;
+        }
+
+        .shot-card {
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+        }
+
+        .shot-card:last-child {
+          border-bottom: 0;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .topbar-inner {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .brand {
+          min-width: 0;
+        }
+
+        .summary {
+          grid-template-columns: 1fr;
+        }
+
+        main {
+          padding: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="topbar-inner">
+          <div class="brand">
+            <div class="mark" aria-hidden="true">⚡</div>
+            <div>
+              <h1>Entity UI Upgrade Gallery</h1>
+              <div class="subtitle">Compare actual screenshots against two Image 2.0 directions and mark picks for implementation.</div>
+            </div>
+          </div>
+          <div class="controls" aria-label="Gallery controls">
+            <select id="levelFilter" class="control" aria-label="Filter by level">
+              <option value="all">All levels</option>
+              <option value="first">First level</option>
+              <option value="second">Second level</option>
+            </select>
+            <select id="viewFilter" class="control" aria-label="Filter by view">
+              <option value="all">All views</option>
+            </select>
+            <button id="showAll" class="btn active" type="button">All columns</button>
+            <button id="showConcepts" class="btn" type="button">Concepts only</button>
+            <button id="clearPicks" class="btn" type="button">Clear picks</button>
+            <a class="btn" href="report.md">Report</a>
+            <a class="btn" href="manifest.json">Manifest</a>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="summary" aria-label="Artifact summary">
+          <div class="summary-card">
+            <div class="label">Actual</div>
+            <div class="value">9</div>
+            <div class="hint">Current UI captures, 1440x1000</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Set 1</div>
+            <div class="value">9</div>
+            <div class="hint">Polished Evolution, gpt-image-2</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Set 2</div>
+            <div class="value">9</div>
+            <div class="hint">Alternate IA Direction, gpt-image-2</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Validation</div>
+            <div class="value">27 / 27</div>
+            <div class="hint">PNG artifacts passed visual validation</div>
+          </div>
+        </section>
+
+        <section id="selectionPanel" class="selection-panel" aria-live="polite">
+          <div class="selection-head">
+            <h2>Current Picks</h2>
+            <div class="selection-actions">
+              <button id="copyPicks" class="btn good" type="button">Copy build picks</button>
+              <button id="downloadPicks" class="btn" type="button">Download JSON</button>
+            </div>
+          </div>
+          <div id="selectionGrid" class="selection-grid"></div>
+          <pre id="selectionJson" class="selection-json"></pre>
+        </section>
+
+        <section id="gallery" class="view-stack" aria-label="Image comparison gallery"></section>
+      </main>
+    </div>
+
+    <div id="modal" class="modal" role="dialog" aria-modal="true" aria-label="Image preview">
+      <div class="modal-top">
+        <div id="modalTitle" class="modal-title"></div>
+        <button id="modalClose" class="btn" type="button">Close</button>
+      </div>
+      <div class="modal-body">
+        <img id="modalImage" alt="" />
+      </div>
+    </div>
+
+    <script>
+      const views = [
+        { id: "01-files", name: "Files", level: "first" },
+        { id: "02-agents", name: "Agents", level: "first" },
+        { id: "03-tasks", name: "Tasks", level: "first" },
+        { id: "04-services", name: "Services", level: "first" },
+        { id: "05-chat", name: "Chat", level: "first" },
+        { id: "06-admin", name: "Admin", level: "first" },
+        { id: "07-docs-view", name: "Docs View", level: "second" },
+        { id: "08-agent-detail", name: "Agent Detail View", level: "second" },
+        { id: "09-task-detail", name: "Task Detail View", level: "second" },
+      ];
+
+      const columns = [
+        {
+          id: "actual",
+          title: "Actual",
+          subtitle: "Current captured UI",
+          folder: "actual",
+          note: "Use as source-of-truth for current behavior and layout constraints.",
+          pickable: false,
+        },
+        {
+          id: "set-1",
+          title: "Set 1",
+          subtitle: "Polished Evolution",
+          folder: "set-1",
+          note: "Recommended baseline direction: preserve workflows, clean up hierarchy and density.",
+          pickable: true,
+        },
+        {
+          id: "set-2",
+          title: "Set 2",
+          subtitle: "Alternate IA Direction",
+          folder: "set-2",
+          note: "Use for stronger shell/navigation ideas and larger structural choices.",
+          pickable: true,
+        },
+      ];
+
+      const notes = {
+        "01-files": "Set 1 is the strongest direct implementation reference. Watch for over-visible editor controls before file selection.",
+        "02-agents": "Actual is mostly loading state. Pick the concept that best proves loaded crew, focus, health, output, and queue.",
+        "03-tasks": "Preserve kanban density. Choose the option that improves filter/search hierarchy without losing task evidence.",
+        "04-services": "Prioritize health severity, discovery state, last checked, and clear Plugin/Crew Admin action ownership.",
+        "05-chat": "Actual is loading-only. Pick the concept with real channel/thread/composer and local/cloud/offline state.",
+        "06-admin": "Pick the option with one clear settings IA and explicit security/session/source/plugin states.",
+        "07-docs-view": "Preserve readable markdown. Favor breadcrumbs, outline, compact Listen/Share, and safe dock placement.",
+        "08-agent-detail": "Choose the option that makes selected-agent health, output, activity, and queue immediately legible.",
+        "09-task-detail": "Favor a scannable task state bar, evidence/docs links, local activity/comments, and unclipped title/actions.",
+      };
+
+      const state = {
+        level: "all",
+        view: "all",
+        mode: "all",
+        picks: JSON.parse(localStorage.getItem("entity-ui-gallery-picks") || "{}"),
+      };
+
+      const gallery = document.getElementById("gallery");
+      const levelFilter = document.getElementById("levelFilter");
+      const viewFilter = document.getElementById("viewFilter");
+      const selectionPanel = document.getElementById("selectionPanel");
+      const selectionGrid = document.getElementById("selectionGrid");
+      const selectionJson = document.getElementById("selectionJson");
+      const modal = document.getElementById("modal");
+      const modalTitle = document.getElementById("modalTitle");
+      const modalImage = document.getElementById("modalImage");
+
+      for (const view of views) {
+        const option = document.createElement("option");
+        option.value = view.id;
+        option.textContent = view.name;
+        viewFilter.append(option);
+      }
+
+      function imagePath(column, view) {
+        return `${column.folder}/${view.id}.png`;
+      }
+
+      function visibleViews() {
+        return views.filter((view) => {
+          if (state.level !== "all" && view.level !== state.level) return false;
+          if (state.view !== "all" && view.id !== state.view) return false;
+          return true;
+        });
+      }
+
+      function visibleColumns() {
+        if (state.mode === "concepts") return columns.filter((column) => column.id !== "actual");
+        return columns;
+      }
+
+      function setPick(viewId, setId) {
+        state.picks[viewId] = setId;
+        localStorage.setItem("entity-ui-gallery-picks", JSON.stringify(state.picks));
+        render();
+      }
+
+      function clearPicks() {
+        state.picks = {};
+        localStorage.removeItem("entity-ui-gallery-picks");
+        render();
+      }
+
+      function openModal(title, src) {
+        modalTitle.textContent = title;
+        modalImage.src = src;
+        modalImage.alt = title;
+        modal.classList.add("visible");
+      }
+
+      function closeModal() {
+        modal.classList.remove("visible");
+        modalImage.src = "";
+      }
+
+      function selectedPayload() {
+        return Object.entries(state.picks)
+          .map(([viewId, setId]) => {
+            const view = views.find((item) => item.id === viewId);
+            const column = columns.find((item) => item.id === setId);
+            if (!view || !column) return null;
+            return {
+              viewId,
+              view: view.name,
+              level: view.level,
+              selectedSet: setId,
+              selectedDirection: column.subtitle,
+              sourceImage: imagePath(column, view),
+              reviewNote: `agent-notes/${view.id}-review.md`,
+            };
+          })
+          .filter(Boolean);
+      }
+
+      function renderSelections() {
+        const payload = selectedPayload();
+        selectionGrid.innerHTML = "";
+        selectionPanel.classList.toggle("visible", payload.length > 0);
+        selectionJson.textContent = JSON.stringify({ pickedAt: new Date().toISOString(), picks: payload }, null, 2);
+        for (const pick of payload) {
+          const item = document.createElement("div");
+          item.className = "selection-item";
+          item.textContent = `${pick.view}: ${pick.selectedSet === "set-1" ? "Set 1" : "Set 2"} (${pick.selectedDirection})`;
+          selectionGrid.append(item);
+        }
+      }
+
+      async function copyPicks() {
+        const text = selectionJson.textContent;
+        if (!text) return;
+        await navigator.clipboard.writeText(text);
+        document.getElementById("copyPicks").textContent = "Copied";
+        window.setTimeout(() => {
+          document.getElementById("copyPicks").textContent = "Copy build picks";
+        }, 1200);
+      }
+
+      function downloadPicks() {
+        const blob = new Blob([selectionJson.textContent], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "entity-ui-build-picks.json";
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+
+      function render() {
+        renderSelections();
+        gallery.innerHTML = "";
+        for (const view of visibleViews()) {
+          const section = document.createElement("article");
+          section.className = "view-section";
+          section.id = view.id;
+
+          const header = document.createElement("div");
+          header.className = "view-header";
+          header.innerHTML = `
+            <div class="view-title">
+              <div class="view-index">${view.id.slice(0, 2)}</div>
+              <div>
+                <h2 class="view-name">${view.name}</h2>
+                <div class="view-level">${view.level} level</div>
+              </div>
+            </div>
+            <div class="controls">
+              <a class="mini-btn" href="agent-notes/${view.id}-review.md">Review note</a>
+            </div>
+          `;
+          section.append(header);
+
+          const cards = document.createElement("div");
+          cards.className = "cards";
+          for (const column of visibleColumns()) {
+            const src = imagePath(column, view);
+            const selected = state.picks[view.id] === column.id;
+            const card = document.createElement("div");
+            card.className = `shot-card ${selected ? "selected" : ""}`;
+            card.innerHTML = `
+              <div class="shot-top">
+                <div class="shot-title">
+                  <strong>${column.title}</strong>
+                  <span>${column.subtitle}</span>
+                </div>
+                <div class="shot-actions">
+                  ${column.pickable ? `<button class="mini-btn pick" type="button" data-pick="${column.id}" data-view="${view.id}">${selected ? "Picked" : "Pick"}</button>` : ""}
+                  <button class="mini-btn" type="button" data-open="${src}" data-title="${view.name} - ${column.title}">Open</button>
+                  <a class="mini-btn" href="${src}" target="_blank" rel="noreferrer">New tab</a>
+                </div>
+              </div>
+              <button class="image-wrap" type="button" data-open="${src}" data-title="${view.name} - ${column.title}" aria-label="Open ${view.name} ${column.title}">
+                <img src="${src}" alt="${view.name} ${column.title}" loading="lazy" />
+              </button>
+              <div class="note">${column.note}<br><br>${notes[view.id]}</div>
+            `;
+            cards.append(card);
+          }
+          section.append(cards);
+          gallery.append(section);
+        }
+
+        document.querySelectorAll("[data-pick]").forEach((button) => {
+          button.addEventListener("click", () => setPick(button.dataset.view, button.dataset.pick));
+        });
+        document.querySelectorAll("[data-open]").forEach((button) => {
+          button.addEventListener("click", () => openModal(button.dataset.title, button.dataset.open));
+        });
+      }
+
+      levelFilter.addEventListener("change", () => {
+        state.level = levelFilter.value;
+        render();
+      });
+
+      viewFilter.addEventListener("change", () => {
+        state.view = viewFilter.value;
+        render();
+      });
+
+      document.getElementById("showAll").addEventListener("click", () => {
+        state.mode = "all";
+        document.getElementById("showAll").classList.add("active");
+        document.getElementById("showConcepts").classList.remove("active");
+        render();
+      });
+
+      document.getElementById("showConcepts").addEventListener("click", () => {
+        state.mode = "concepts";
+        document.getElementById("showConcepts").classList.add("active");
+        document.getElementById("showAll").classList.remove("active");
+        render();
+      });
+
+      document.getElementById("clearPicks").addEventListener("click", clearPicks);
+      document.getElementById("copyPicks").addEventListener("click", copyPicks);
+      document.getElementById("downloadPicks").addEventListener("click", downloadPicks);
+      document.getElementById("modalClose").addEventListener("click", closeModal);
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) closeModal();
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeModal();
+      });
+
+      render();
+    </script>
+  </body>
+</html>

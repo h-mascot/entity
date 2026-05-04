@@ -1,0 +1,24 @@
+{
+  "id": "entity-linker",
+  "name": "Entity Linker",
+  "version": "0.1.0",
+  "kind": "behavior",
+  "description": "Entity-native runtime plugin that tracks linkable task activity and exposes linker status.",
+  "capabilities": [
+    "api.routes.register",
+    "tasks.events.observe",
+    "admin.settings.register"
+  ],
+  "hooks": ["task:created", "task:updated", "task:moved"],
+  "entrypoints": {
+    "server": "./index.ts"
+  },
+  "routes": [
+    { "basePath": "/api/entity-linker", "entry": "./routes.ts" }
+  ],
+  "settings": {
+    "entityBaseUrl": "http://100.106.69.9:3000",
+    "rewriteAbsolutePaths": true,
+    "maxRecentEvents": 25
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "model": "gpt-image-2",
+  "endpoint": "https://api.openai.com/v1/images/edits",
+  "set": "set-2",
+  "view": "08-agent-detail",
+  "viewName": "Agent Detail View",
+  "size": "1536x1024",
+  "quality": "medium",
+  "startedAt": "2026-04-24T06:23:55.850Z",
+  "completedAt": "2026-04-24T06:25:26.931Z",
+  "status": 200,
+  "ok": true,
+  "requestId": "req_fb029ab544ac4069b3ca2946137a6683",
+  "outputPath": "set-2/08-agent-detail.png"
+}

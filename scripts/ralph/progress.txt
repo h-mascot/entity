@@ -1,0 +1,116 @@
+Story 1 completed: Agent Activity Stream - Data Model & Hook.
+
+What I learned:
+- A Zustand-backed stream store is a clean fit for shared live activity state across panels/components.
+- Hook-level pause/resume is easiest to enforce at the store write boundary (`addActivity`) so both mock and WebSocket sources obey it.
+- Mock generation with randomized 2-5s intervals creates believable agent activity without coupling UI development to backend readiness.
+- Keeping the ActivityEntry contract explicit early made App integration straightforward and reduced runtime conditionals.
+- The app builds successfully after integrating `useActivityStream` into `App.tsx`.
+
+Story 2 completed: Agent Activity Stream - UI Panel.
+
+What I learned:
+- Rendering the stream in chronological order (`activities.reverse()`) makes auto-scroll behavior intuitive because newest entries stay at the bottom.
+- Auto-scroll should be controlled separately from data ingestion; pausing scrolling while continuing to collect events avoids losing activity context.
+- A simple per-agent style mapping is enough to clearly differentiate Ada (purple), Spock (blue), and Scotty (orange) without adding UI complexity.
+- Relative timestamps need a lightweight timer tick (1s) so labels like `2s ago` remain accurate in real time.
+- Wiring file-path entries directly into the existing `handleFileSelect` path keeps navigation behavior consistent across FileTree and Activity Stream.
+
+Story 3 completed: Watch Mode Toggle - State & UI.
+
+What I learned:
+- Keeping `watchMode` and `followingAgent` in `App.tsx` state is sufficient for this phase and keeps future auto-follow logic easy to layer on.
+- CodeMirror read-only mode should be enforced in the editor via `EditorState.readOnly` and `EditorView.editable`, not just UI button disabling.
+- A persistent top toolbar for mode controls makes watch/interact context clear even when no file is selected.
+- In watch mode, reusing agent sidebar clicks to set `followingAgent` provides a simple control surface without adding new UI.
+- Disabling save shortcuts/actions while watching prevents accidental write flows and keeps mode behavior consistent.
+
+Story 1 completed: Port Mission Control Task Board.
+
+What I learned:
+- A shared Zustand store for tasks keeps the sidebar and kanban board in sync without prop-drilling.
+- Registering both `/tasks` and `/api/tasks` endpoints keeps compatibility while matching the PRD acceptance contract.
+- Seeding Entity's SQLite task table from `~/Code/mission-control/tasks.db` is straightforward when run only if the destination table is empty.
+- `@dnd-kit/core` with column-level droppables is enough for reliable cross-column kanban movement without sortable abstractions.
+- Optimistic drag updates with rollback in the hook makes the board feel responsive while still handling API failures safely.
+
+Story 2 completed: Task API + SQLite Backend.
+
+What I learned:
+- Keeping the task schema minimal (`id`, `name`, `description`, `column`, `assignee`, `created_at`, `updated_at`, `metadata`) made Mission Control data import stable without overfitting to MC-only fields.
+- Seeding from `~/Code/mission-control/tasks.db` is safest when guarded by an empty-target check to avoid duplicate imports on restart.
+- Registering task routes under both `/tasks` and `/api/tasks` preserves compatibility while the frontend migrates endpoint-by-endpoint.
+- Full CRUD needed explicit `GET /tasks/:id` and `DELETE /tasks/:id` in addition to board-specific move/update endpoints.
+- Repository-level smoke tests against a temp SQLite file are a reliable fallback when sandbox constraints block binding local server ports.
+
+Story 3 completed: Unified Activity Log.
+
+What I learned:
+- A shared SQLite `activities` table lets task and agent events coexist without coupling UI state to volatile WebSocket payload formats.
+- Logging activities at server mutation points (task create/move/update/delete and file operations) is the most reliable way to guarantee timeline completeness.
+- Exposing both `/activities` and `/api/activities` keeps endpoint compatibility during migration while satisfying strict PRD route requirements.
+- Activity type-based styling communicates event meaning faster than agent-based coloring once task + agent streams are merged.
+- Navigation from activity rows needs explicit task/file context handling; task clicks should switch the app to the board view while file clicks should return to editor view.
+
+Story 4 completed: MC Color Scheme Applied Globally.
+
+What I learned:
+- Defining semantic Tailwind tokens (`mc.bg.*`, `mc.text.*`, `mc.border.*`) backed by CSS variables keeps component styling consistent while still allowing fast iteration.
+- The fastest way to enforce a global palette is to audit classes across all UI panels and remove framework color shortcuts (`gray-*`, `blue-*`, etc.) in favor of shared variables.
+- Activity/timeline color-coding can stay expressive while remaining on-brand by mapping types to accent/success/error/muted surface tokens instead of unrelated hue families.
+- CodeMirror theming needs explicit gutter/editor overrides to avoid visual drift from the app's root theme.
+- A post-change grep for hardcoded hex plus a production build is an effective quality gate for theme-wide refactors.
+
+Story 5 completed: Electron Desktop App.
+
+What I learned:
+- Keeping Electron in a top-level `electron/` package aligns better with the integration PRD than the earlier `packages/desktop` location.
+- Setting `ENTITY_TASK_DB_PATH` from Electron's `app.getPath('userData')` is the cleanest handoff point for local SQLite placement on desktop installs.
+- Native app menus are easiest to keep cross-platform by combining Electron `role` entries with a minimal custom `File`/`Help` layer.
+- A dedicated `build:renderer` step that copies Vite output into `electron/renderer` keeps packaging predictable and decoupled from dev-server mode.
+- Root scripts (`npm run electron`, `npm run electron:build`) make desktop workflows discoverable without requiring contributors to remember package-local commands.
+
+Story 6 completed: Expo Mobile App.
+
+What I learned:
+- Mobile support is cleaner when handled in two layers: Expo WebView for native shell concerns and responsive React panel routing for in-app UX.
+- A dedicated mobile bottom nav (`Files`, `Agents`, `Tasks`, `Activity`) is easiest to maintain when represented as explicit app state instead of inferred from sidebar conditions.
+- `ActivityStream` needed a fill-height mode so the activity tab can behave like a primary mobile panel rather than a fixed-height desktop drawer.
+- `@dnd-kit/core` touch behavior is more reliable in mobile WebViews when `TouchSensor` is registered explicitly and drag handles use `touch-none`.
+- Hard-coded LAN IPs in Expo wrappers are fragile; using `EXPO_PUBLIC_ENTITY_URL` with platform defaults makes local iOS/Android workflows much more portable.
+
+Story 7 completed: agent-browser E2E Tests.
+
+What I learned:
+- `agent-browser` can drive this app end-to-end without adding a separate browser test framework, which keeps setup lightweight for this integration branch.
+- The most reliable test flow here is: open app, switch to Tasks panel, create a uniquely named task, drag it to `Doing`, then poll until Activity Stream reflects the same task title.
+- Wrapping server/app startup directly in the test script makes `npm test` self-contained while still allowing a `E2E_USE_EXISTING_SERVERS=1` mode for already-running dev sessions.
+- Poll-based condition checks around Activity Stream are necessary because the UI intentionally fetches activities on an interval, so assertions need eventual-consistency handling.
+- Automatic teardown (closing agent-browser session + killing child dev processes) is critical to avoid leftover background processes after failed E2E runs.
+
+Story 8 completed: DB Sync Layer (Local ↔ Cloud).
+
+What I learned:
+- A thin adapter contract keeps task CRUD logic stable while swapping between SQLite and cloud REST backends.
+- Runtime mode resolution works best when layered: explicit override, env mode (`LOCAL`/`CLOUD`), then platform/cloud-availability fallback.
+- Local and cloud adapters can share one task shape by normalizing response payloads in the cloud adapter boundary.
+- Wiring the server task routes to a sync layer preserves existing API endpoints while making backend mode changes transparent to the app.
+- Adding lightweight mode introspection/switch endpoints enables mode changes without restarting the running server process.
+
+Story 9 completed: Responsive Layout.
+
+What I learned:
+- Keeping breakpoints aligned to Tailwind defaults (`md` 768px, `lg` 1024px) made the desktop/tablet/mobile split straightforward and testable.
+- Tablet works best with a toggleable overlay sidebar while desktop keeps a persistent sidebar; this preserves panel density without forcing cramped layouts.
+- Reusing one shared sidebar renderer across desktop and tablet avoids divergent behavior between panel tabs and file/task navigation.
+- The task board can keep horizontal drag lanes for smaller screens while switching to a 5-column grid at `lg` to eliminate desktop horizontal scrolling.
+- Running a production build right after responsive refactors catches layout-related type/JSX regressions early before updating PRD status.
+
+Story 10 completed: Offline Mode Indicator.
+
+What I learned:
+- A dedicated sync-status hook with Zustand keeps cloud/local connection state reusable across desktop, tablet, and mobile headers without prop-drilling.
+- Polling `/api/db-mode` with a `/db-mode` fallback mirrors the existing API migration pattern and keeps the badge resilient to route prefix differences.
+- Persisting the latest sync snapshot in `localStorage` gives stable status across refreshes while still allowing immediate correction after the first post-reload health check.
+- Combining browser `online/offline` events with server checks prevents stale "online" UI when connectivity drops between poll intervals.
+- A compact badge variant is useful for small headers so the same component can satisfy mobile space constraints and desktop readability.

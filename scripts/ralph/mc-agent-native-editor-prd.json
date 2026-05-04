@@ -1,0 +1,284 @@
+{
+  "branchName": "ralph/mc-agent-native-editor",
+  "userStories": [
+    {
+      "id": "ANE-001",
+      "ticket": "ANE-001",
+      "title": "Editor feature flags and runtime wiring",
+      "description": "Add ENTITY_AGENT_NATIVE_EDITOR and VITE_ENTITY_AGENT_NATIVE_EDITOR gates and route all new editor-native behavior behind flags without regressing existing file edit/preview flows.",
+      "acceptanceCriteria": [
+        "Runtime exposes agent-native editor flag on server and app",
+        "Legacy editor behavior remains unchanged when flags are false",
+        "npm --prefix packages/app run build passes",
+        "npm --prefix packages/server run build passes"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "ANE-002",
+      "ticket": "ANE-002",
+      "title": "SQLite schema for collaboration metadata",
+      "description": "Add additive DB tables/indexes for document sessions, authorship ranges/history, presence, comments/replies, suggestions, review runs, and agent token records.",
+      "acceptanceCriteria": [
+        "Schema bootstrap is idempotent",
+        "Indexes for doc_id and updated_at exist on collaboration tables",
+        "No regression to existing tasks/activities/file_sources tables",
+        "npm --prefix packages/db run build passes"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "ANE-003",
+      "ticket": "ANE-003",
+      "title": "DB repositories for collaboration + token auth",
+      "description": "Implement typed repositories in db package for collaboration entities and token lookup/scope validation helpers.",
+      "acceptanceCriteria": [
+        "New repositories expose CRUD/upsert methods used by server module",
+        "Token repository supports agent and service token lookups by hash",
+        "TypeScript strict compile passes for db package",
+        "npm --prefix packages/db run build passes"
+      ],
+      "priority": 3,
+      "passes": true
+    },
+    {
+      "id": "ANE-004",
+      "ticket": "ANE-004",
+      "title": "Server editor module skeleton and route mounting",
+      "description": "Create packages/server/src/editor module with route registration, service composition, and websocket broadcaster helpers; mount routes from index.ts under feature gate.",
+      "acceptanceCriteria": [
+        "Editor route module exists and mounts cleanly when flag is enabled",
+        "No change to existing legacy API behavior when flag is disabled",
+        "Server build passes",
+        "npm --prefix packages/server run build passes"
+      ],
+      "priority": 4,
+      "passes": true
+    },
+    {
+      "id": "ANE-005",
+      "ticket": "ANE-005",
+      "title": "Dual-token authentication middleware",
+      "description": "Implement auth middleware supporting per-agent bearer tokens and service tokens with strict X-Entity-Actor mapping to known actors.",
+      "acceptanceCriteria": [
+        "Agent bearer token requests resolve actor identity from token",
+        "Service token requests require X-Entity-Actor and reject unknown actors",
+        "Raw token values are never logged or persisted",
+        "Server build passes"
+      ],
+      "priority": 5,
+      "passes": true
+    },
+    {
+      "id": "ANE-006",
+      "ticket": "ANE-006",
+      "title": "Document state and cursor/presence APIs",
+      "description": "Implement GET /api/documents/:docId/state and POST /api/documents/:docId/cursor with repository-backed presence updates and websocket broadcast.",
+      "acceptanceCriteria": [
+        "State endpoint returns canonical collab snapshot shape",
+        "Cursor endpoint upserts presence/heartbeat and emits websocket event",
+        "API rejects unauthorized requests",
+        "Server build passes"
+      ],
+      "priority": 6,
+      "passes": true
+    },
+    {
+      "id": "ANE-007",
+      "ticket": "ANE-007",
+      "title": "Writable-capability guardrails on edit mutations",
+      "description": "Implement POST /api/documents/:docId/edit and capability checks via source adapters so read-only sources return SOURCE_READ_ONLY while writable sources can mutate content.",
+      "acceptanceCriteria": [
+        "Writable sources accept edit mutations and bump document version",
+        "Read-only sources return 403 with SOURCE_READ_ONLY code",
+        "Edit events broadcast via websocket",
+        "Server build passes"
+      ],
+      "priority": 7,
+      "passes": true
+    },
+    {
+      "id": "ANE-008",
+      "ticket": "ANE-008",
+      "title": "Authorship tracking and manual attribution API",
+      "description": "Implement authorship range storage, stats aggregation, and POST /api/documents/:docId/authorship for manual attribution toggles.",
+      "acceptanceCriteria": [
+        "Authorship ranges persist and are returned in state payload",
+        "Manual attribution endpoint validates ranges and actor values",
+        "Authorship stats include human/ada/spock/scotty percentages",
+        "Server + db build pass"
+      ],
+      "priority": 8,
+      "passes": true
+    },
+    {
+      "id": "ANE-009",
+      "ticket": "ANE-009",
+      "title": "Frontend collaboration types and API client",
+      "description": "Add shared frontend types for collaboration entities and a typed client layer for new /api/documents endpoints.",
+      "acceptanceCriteria": [
+        "Type definitions exist for authorship/presence/comments/suggestions/review",
+        "Client helper functions map request/response payloads without any",
+        "App build passes"
+      ],
+      "priority": 9,
+      "passes": true
+    },
+    {
+      "id": "ANE-010",
+      "ticket": "ANE-010",
+      "title": "CodeMirror authorship decorations + stats panel",
+      "description": "Extend CodeMirrorEditor with authorship range decorations (Human/Ada/Spock/Scotty colors) and render an authorship stats panel in the app shell.",
+      "acceptanceCriteria": [
+        "Authorship colors render per configured agent palette",
+        "Stats panel shows author percentages and reviewed percent",
+        "Manual attribution shortcut Cmd/Ctrl+Shift+A is wired",
+        "App build passes"
+      ],
+      "priority": 10,
+      "passes": true
+    },
+    {
+      "id": "ANE-011",
+      "ticket": "ANE-011",
+      "title": "Follow mode hook with remote cursor auto-scroll",
+      "description": "Implement useFollowMode and editor integration to follow selected agent cursor with smooth scroll, detach on click or Escape, and 100ms debounced updates.",
+      "acceptanceCriteria": [
+        "Follow toggle per agent updates followed target",
+        "Editor auto-scrolls to followed cursor and detaches on click/Escape",
+        "No follow auto-scroll in regular interaction mode",
+        "App build passes"
+      ],
+      "priority": 11,
+      "passes": true
+    },
+    {
+      "id": "ANE-012",
+      "ticket": "ANE-012",
+      "title": "Follow glow visuals with typing pulse",
+      "description": "Add follow glow classes for Ada/Spock/Scotty and pulse animation when followed agent is actively typing.",
+      "acceptanceCriteria": [
+        "Ada/Spock/Scotty each have distinct glow color",
+        "Typing pulse triggers for active followed agent",
+        "Glow degrades to idle state when not typing",
+        "App build passes"
+      ],
+      "priority": 12,
+      "passes": true
+    },
+    {
+      "id": "ANE-013",
+      "ticket": "ANE-013",
+      "title": "Comments APIs and threaded UI",
+      "description": "Implement comments/replies/resolve endpoints and frontend comment thread panel with selection anchoring and mention-ready structure.",
+      "acceptanceCriteria": [
+        "Can create comment from selection and render thread",
+        "Can reply and resolve comments",
+        "Comments work on read-only and writable sources",
+        "Server + app build pass"
+      ],
+      "priority": 13,
+      "passes": true
+    },
+    {
+      "id": "ANE-014",
+      "ticket": "ANE-014",
+      "title": "Suggestion APIs and track-changes rendering",
+      "description": "Implement suggestion creation/update endpoints and inline track-changes visuals (insert/replace/delete) with accept/reject controls.",
+      "acceptanceCriteria": [
+        "Suggestions can be created and listed per document",
+        "Accept/reject updates status correctly",
+        "Accept mutates text only on writable sources",
+        "App + server build pass"
+      ],
+      "priority": 14,
+      "passes": true
+    },
+    {
+      "id": "ANE-015",
+      "ticket": "ANE-015",
+      "title": "Agent presence chips and status aging",
+      "description": "Render document presence indicators for agents with active/idle/disconnected states, including cursor labels and join/leave toasts.",
+      "acceptanceCriteria": [
+        "Presence chips render in editor header",
+        "Status transitions active->idle->disconnected by inactivity windows",
+        "Join/leave toasts display for agent presence changes",
+        "App build passes"
+      ],
+      "priority": 15,
+      "passes": true
+    },
+    {
+      "id": "ANE-016",
+      "ticket": "ANE-016",
+      "title": "OpenClaw-backed review run pipeline",
+      "description": "Implement review endpoints and OpenClaw integration for style/grammar/technical/security review runs with structured finding storage.",
+      "acceptanceCriteria": [
+        "Review request endpoint creates run and dispatches OpenClaw job",
+        "Review result endpoint returns persisted findings",
+        "Findings include enough structure for inline apply controls",
+        "Server build passes"
+      ],
+      "priority": 16,
+      "passes": false
+    },
+    {
+      "id": "ANE-017",
+      "ticket": "ANE-017",
+      "title": "Review panel and apply/reject interaction",
+      "description": "Add review panel UI with mode selection, run status, result summaries, and apply/reject interactions for returned findings.",
+      "acceptanceCriteria": [
+        "Review panel supports all four review modes",
+        "Run status is visible and updates in UI",
+        "Apply/reject controls function and honor read-only guardrails",
+        "App build passes"
+      ],
+      "priority": 17,
+      "passes": false
+    },
+    {
+      "id": "ANE-018",
+      "ticket": "ANE-018",
+      "title": "Parity endpoints and granular agent tool semantics",
+      "description": "Finalize parity API semantics for edit/comment/suggest/review/cursor operations and document tool mappings used by native Enterprise agents.",
+      "acceptanceCriteria": [
+        "Each UI action has a corresponding API contract",
+        "Tool semantics documented in server code comments/types",
+        "Auth scopes enforce least privilege by endpoint",
+        "Server build passes"
+      ],
+      "priority": 18,
+      "passes": false
+    },
+    {
+      "id": "ANE-019",
+      "ticket": "ANE-019",
+      "title": "Regression smoke script for agent-native editor",
+      "description": "Add a smoke validation script covering token auth paths, writable vs read-only mutation behavior, comments/suggestions flow, and review lifecycle endpoints.",
+      "acceptanceCriteria": [
+        "Smoke script executes against local server and reports pass/fail clearly",
+        "Includes service-token actor-header validation checks",
+        "Includes SOURCE_READ_ONLY mutation rejection checks",
+        "Script runs without mutating unrelated repo files"
+      ],
+      "priority": 19,
+      "passes": false
+    },
+    {
+      "id": "ANE-020",
+      "ticket": "ANE-020",
+      "title": "Final integration validation and docs sync",
+      "description": "Run full build gates, execute smoke script, and update context docs (codemap/context/decisions/timeline/todo/sessions) for shipped agent-native editor status.",
+      "acceptanceCriteria": [
+        "db/server/app builds all pass",
+        "Agent-native smoke script passes",
+        "Docs are updated with completed scope, risks, and rollout notes",
+        "No regressions in existing Mission Control and file workflows"
+      ],
+      "priority": 20,
+      "passes": false
+    }
+  ]
+}

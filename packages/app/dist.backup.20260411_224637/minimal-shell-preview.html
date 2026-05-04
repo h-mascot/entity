@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Entity Minimal Shell Preview</title>
+    <style>
+      :root {
+        --bg-primary: #000;
+        --bg-secondary: #111;
+        --bg-tertiary: #1a1a1a;
+        --border-primary: #222;
+        --border-secondary: #333;
+        --text-primary: #fff;
+        --text-secondary: #e0e0e0;
+        --text-muted: #7c7c7c;
+        --accent: #0af;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top right, #0b131a, #000 38%);
+        color: var(--text-secondary);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .frame {
+        width: min(1280px, 94vw);
+        height: min(760px, 90vh);
+        margin: 3vh auto;
+        border: 1px solid var(--border-primary);
+        border-radius: 14px;
+        overflow: hidden;
+        background: var(--bg-primary);
+        display: grid;
+        grid-template-rows: 56px 48px 1fr 44px;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--border-primary);
+        background: var(--bg-secondary);
+        padding: 0 14px;
+      }
+
+      .group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .brand {
+        color: var(--text-primary);
+        font-weight: 600;
+        letter-spacing: 0.2px;
+      }
+
+      .chip {
+        border: 1px solid var(--border-primary);
+        border-radius: 999px;
+        padding: 6px 10px;
+        color: #999;
+        font-size: 12px;
+        line-height: 1;
+      }
+
+      .chip.active {
+        border-color: var(--border-secondary);
+        color: var(--text-primary);
+        background: var(--bg-tertiary);
+      }
+
+      .chip.live {
+        color: var(--accent);
+        border-color: #0a4b66;
+        background: #07212e;
+      }
+
+      .layout {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 208px 1fr;
+      }
+
+      .rail {
+        border-right: 1px solid var(--border-primary);
+        background: #060606;
+        padding: 12px;
+      }
+
+      .rail .item {
+        border: 1px solid var(--border-primary);
+        border-radius: 10px;
+        padding: 10px;
+        margin-bottom: 8px;
+        font-size: 12px;
+        color: #999;
+      }
+
+      .rail .item.active {
+        color: var(--text-primary);
+        border-color: var(--border-secondary);
+        background: #111;
+      }
+
+      .canvas {
+        min-width: 0;
+        padding: 12px;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 10px;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .card {
+        border: 1px solid var(--border-primary);
+        border-radius: 10px;
+        background: var(--bg-secondary);
+        padding: 10px 12px;
+      }
+
+      .card h4 {
+        margin: 0 0 6px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--text-muted);
+      }
+
+      .card p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+
+      .work {
+        border: 1px solid var(--border-primary);
+        border-radius: 12px;
+        background: #050505;
+        padding: 14px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .work .column {
+        border: 1px solid var(--border-primary);
+        border-radius: 10px;
+        background: #101010;
+        min-height: 250px;
+        padding: 10px;
+      }
+
+      .work .column h5 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        color: #b0b0b0;
+      }
+
+      .work .task {
+        border: 1px solid #2a2a2a;
+        border-radius: 8px;
+        background: #171717;
+        padding: 8px;
+        margin-bottom: 8px;
+        font-size: 12px;
+      }
+
+      .activity {
+        border-top: 1px solid var(--border-primary);
+        background: var(--bg-secondary);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 14px;
+      }
+
+      .activity .title {
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <header class="row">
+        <div class="group">
+          <div class="brand">⚡ Entity</div>
+          <div class="chip active">Files</div>
+          <div class="chip">Agents</div>
+          <div class="chip">Tasks</div>
+        </div>
+        <div class="group">
+          <div class="chip live">● Live</div>
+          <div class="chip">Sync: Online</div>
+          <div class="chip">⚙ Settings</div>
+        </div>
+      </header>
+
+      <section class="row">
+        <div class="group">
+          <div class="chip active">Ops</div>
+          <div class="chip">Strategic</div>
+          <div class="chip">Agents</div>
+        </div>
+        <div class="group">
+          <div class="chip">Assignee: All</div>
+          <div class="chip">Project: All</div>
+          <div class="chip">+ New Task</div>
+        </div>
+      </section>
+
+      <main class="layout">
+        <aside class="rail">
+          <div class="item active">Active Context</div>
+          <div class="item">Pinned Files</div>
+          <div class="item">Quick Actions</div>
+        </aside>
+        <section class="canvas">
+          <div class="stats">
+            <div class="card">
+              <h4>Assigned</h4>
+              <p>8 open</p>
+            </div>
+            <div class="card">
+              <h4>Due Today</h4>
+              <p>2 tasks</p>
+            </div>
+            <div class="card">
+              <h4>Overdue</h4>
+              <p>0 tasks</p>
+            </div>
+            <div class="card">
+              <h4>Capacity</h4>
+              <p>Healthy</p>
+            </div>
+          </div>
+          <div class="work">
+            <div class="column">
+              <h5>Backlog</h5>
+              <div class="task">UI shell simplification</div>
+              <div class="task">Agent timeline polish</div>
+            </div>
+            <div class="column">
+              <h5>Doing</h5>
+              <div class="task">Context bar consolidation</div>
+            </div>
+            <div class="column">
+              <h5>Done</h5>
+              <div class="task">Global login gate</div>
+              <div class="task">Settings modal</div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="activity">
+        <div class="title">Activity Stream</div>
+        <div class="chip">Show</div>
+      </footer>
+    </div>
+  </body>
+</html>

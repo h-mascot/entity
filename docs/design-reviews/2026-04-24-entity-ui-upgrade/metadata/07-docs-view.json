@@ -1,0 +1,54 @@
+{
+  "spec": {
+    "id": "07-docs-view",
+    "label": "Docs View",
+    "tab": null,
+    "url": "/docs/memory/entity-mc-context.md"
+  },
+  "url": "http://127.0.0.1:5173/docs/memory/entity-mc-context.md",
+  "title": "Entity",
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "headings": [
+    "Entity MC Context",
+    "Purpose",
+    "Why it exists",
+    "Architecture",
+    "Shared runtime bundle",
+    "Skill files",
+    "Manifest model",
+    "Install behavior",
+    "Cron behavior",
+    "Verification and rollback",
+    "Verify",
+    "Rollback",
+    "Rollout strategy",
+    "Prior working deployment context",
+    "Runtime update rule",
+    "Current status",
+    "DONE",
+    "NOT DONE",
+    "Live rollout state (as of v12)",
+    "Version history",
+    "Current cron schedule",
+    "Execution behavior (v12)",
+    "Per-agent binary paths",
+    "Known resolved issues",
+    "Known open issues",
+    "Usage",
+    "Source plan",
+    "v20 changes (2026-03-23)",
+    "Live rollout state (as of v20)"
+  ],
+  "controls": [
+    "Add to Dock",
+    "×",
+    "← Entity Home",
+    "🔗 Share",
+    "Listen",
+    "memory/rules/user-model/skill/project"
+  ],
+  "text": "Add to Dock × ← Entity Home entity-mc-context.md memory / entity-mc-context.md /docs/memory/entity-mc-context.md 🔗 Share Listen Generate TTS for this document. HTML Entity MC Context Purpose entity-mc is the standard bootstrap skill for deploying Entity Mission Control helper tooling to crew agents without manual script copying. It packages the working Mission Control helper runtime into one reusable, versioned bundle with a thin installer layer and per-agent manifests. Why it exists Previous deployments relied on copying scripts by hand into agent homes, especially on Mac-hosted agents like Zora. That worked, but created drift risk, weak rollback, and awkward onboarding. entity-mc is the replacement direction: one canonical runtime one thin bootstrap/install skill tiny per-agent manifests idempotent install/update verification and rollback built in Architecture Shared runtime bundle Canonical scripts packaged from skills/entity-mc/source-scripts/: mc.sh mc-auto-pull.sh mc-assign-model.sh mc-build-context.sh mc-stall-check.sh Note: source-scripts/ is the safe staging source (not workspace scripts/ which may contain wrapper stubs after install). Skill files Located at: skills/entity-mc/SKILL.md skills/entity-mc/VERSION skills/entity-mc/lib.sh skills/entity-mc/install.sh skills/entity-mc/verify.sh skills/entity-mc/rollback.sh Manifest model Per-agent manifests live under: skills/entity-mc/manifests/ Current manifests: ada.env scotty.env spock.env book.env zora.env Manifest fields include: agent name target home target scripts dir state dir install mode (copy or symlink) cron enable flags cron cadence profile name extra notes Install behavior Install stages a versioned release under the target agent state dir, updates a current pointer, then installs wrappers or symlinks into the target scripts/ directory. State layout under the target home: .entity-mc/releases/<version>/ .entity-mc/runtime/ .entity-mc/current .entity-mc/current-version .entity-mc/previous-release-path Cron behavior Cron is managed only inside a tagged marker block: # BEGIN ENTITY_MC:<AgentName> # END ENTITY_MC:<AgentName> Current schedules: auto-pull: every 10 minutes stall-check: every 2 hours Safety property: reruns replace only the managed block instead of appending duplicate cron lines Verification and rollback Verify verify.sh checks: state dir exists runtime dir exists current version matches packaged scripts are present and executable wrappers/symlinks exist in target scripts dir cron marker block exists exactly once when cron install is enabled Rollback rollback.sh restores the previous release recorded in: .entity-mc/previous-release-path Rollout strategy Council-backed rollout order: Scotty Spock Book Canary first, then widen. Prior working deployment context Zora’s manual deployment was the source bundle to extract from. Known prior state referenced during packaging: copied scripts under a Zora-specific scripts directory cron jobs every 30 min for auto-pull and every 2h for stall-check stale plugin cleanup had already been done on the Mac profile mc-auto-pull was verified working for Zora and had pulled task #134 task #134 was assigned model zai/glm-5-turbo because of inventory constraints This matters because entity-mc is supposed to preserve working behavior first, then standardize install and recovery. Runtime update rule If any packaged Mission Control runtime script changes after rollout — especially mc.sh, mc-auto-pull.sh, mc-assign-model.sh, mc-build-context.sh, or mc-stall-check.sh — Ada must treat that as an entity-mc release event: This also applies when Mission Control operating behavior changes through installer logic, verifier behavior, task-context conventions, or workflow rules that affect how MC tasks are created or handled. If the behavior changed, the installer bundle must be updated and rolled out. bump skills/entity-mc/VERSION redeploy to Scotty, Spock, Book, and Zora run verify.sh on each target update MC evidence/context without waiting for Henry to ask This avoids silent drift between Ada's local runtime and the installed agent bundles. Current status DONE entity-mc skill implemented in ~/clawd/skills/entity-mc/ shared runtime packaged manifests created for Scotty/Spock/Book/Zora install/verify/rollback scripts implemented local smoke test for install + verify passed local synthetic rollback test passed NOT DONE any follow-up profile/plugin patch automation beyond the packaged runtime path Live rollout state (as of v12) Ada: installed and verified on ada-gateway — v12 Scotty: installed and verified on castlemascot-r1 — v12 Spock: installed and verified on spock-gateway — v12 Book: installed and verified on MascotM3 — v12 Zora: installed and verified on MascotM3 — v12 Version history v1: initial packaging v2: hardened mc.sh review validation (TinyClaw-style rejection) v3: fixed malformed cron (two entries on one line) v4: Mac Bash 3 fix (explicit /opt/homebrew/bin/bash) v5: source-scripts staging fix (install"
+}
