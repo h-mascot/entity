@@ -113,9 +113,10 @@ export default function KanbanColumn({
   const hasMoreTasks = column === 'backlog' && visibleTasks.length < tasks.length;
 
   return (
-    <div
-      className="column"
-      onDragEnter={handleDragEnter}
+	    <div
+	      className={`column column-${column} ${isDropTarget ? 'column-drop-target' : ''}`}
+	      data-column={column}
+	      onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}

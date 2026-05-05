@@ -109,13 +109,14 @@ interface AgentCapability {
 
 interface Agent {
   id: string;
+  slug?: string;
   name: string;
   emoji: string;
   avatarUrl?: string;
   description?: string;
   focusFile?: string;
   model: string;
-  gateway: string;
+  runtime: string;
   status: 'online' | 'offline';
   rawStatus?: string;
   adapterType?: string;
@@ -388,21 +389,21 @@ function buildFallbackAgentCapabilities(agent: (typeof BUILT_IN_AGENTS)[number])
 
   return {
     status: agent.status,
-    ownerLabel: agent.gateway === 'MascotM3' ? 'Local' : 'Entity',
-    verificationLabel: 'Built-in fallback',
+    verificationLabel: 'Local fallback',
     capabilityLabels,
     permissionLabels,
-    runtimeLabel: `${agent.gateway} · ${agent.status}`,
+    runtimeLabel: `fallback · ${agent.status}`,
     moduleCount: agent.modules.length,
   };
 }
 const FALLBACK_AGENTS: Agent[] = BUILT_IN_AGENTS.map((agent) => ({
   id: agent.id,
+  slug: agent.slug,
   name: agent.name,
   emoji: agent.emoji,
   avatarUrl: agent.avatarUrl,
-  model: agent.model,
-  gateway: agent.gateway,
+  model: '',
+  runtime: 'built-in fallback',
   status: agent.status,
   rawStatus: agent.status,
   capabilities: buildFallbackAgentCapabilities(agent),
@@ -427,7 +428,84 @@ function parseJsonRecord(value: unknown): Record<string, unknown> | null {
 
 function normalizeAgentStatus(value: unknown): 'online' | 'offline' {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  return normalized === 'online' ? 'online' : 'offline';
+  return ['online', 'active', 'running', 'ready'].includes(normalized) ? 'online' : 'offline';
+}
+
+function normalizeLabelPart(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function formatAgentRuntime(adapterType: unknown, runtimeType: unknown): string {
+  const parts = [adapterType, runtimeType].map(normalizeLabelPart).filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : 'registry';
+}
+
+function prettifyModelId(modelId: string): string {
+  const raw = modelId.split('/').slice(1).join('/') || modelId;
+  return raw
+    .replace(/:latest$/, '')
+    .split(/[-_:.\/]/)
+    .filter(Boolean)
+    .map((part) => {
+      const upper = part.toUpperCase();
+      return ['GPT', 'GLM', 'AI', 'API', 'MLX'].includes(upper)
+        ? upper
+        : part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(' ');
+}
+
+function normalizeAgentModelLabel(modelId: unknown, models: unknown): string {
+  const id = normalizeLabelPart(modelId);
+  if (!id) {
+    return '';
+  }
+
+  if (Array.isArray(models)) {
+    const match = models.find((entry) => {
+      if (!entry || typeof entry !== 'object') return false;
+      return normalizeLabelPart((entry as Record<string, unknown>).id) === id;
+    }) as Record<string, unknown> | undefined;
+    const name = normalizeLabelPart(match?.name);
+    if (name) {
+      return name;
+    }
+  }
+
+  return prettifyModelId(id);
+}
+
+function modelRegistryAgentKey(agent: Pick<Agent, 'id' | 'slug' | 'name'>): string {
+  const slug = normalizeLabelPart(agent.slug).toLowerCase();
+  if (slug) {
+    return slug;
+  }
+  if (agent.id === 'main') {
+    return 'ada';
+  }
+  return normalizeLabelPart(agent.id || agent.name).toLowerCase();
+}
+
+async function loadAgentDefaultModelLabels(agents: Agent[]): Promise<Record<string, string>> {
+  const agentKeys = Array.from(new Set(agents.map(modelRegistryAgentKey).filter(Boolean)));
+  if (agentKeys.length === 0) {
+    return {};
+  }
+
+  const response = await fetch(`/api/chat/models?agents=${encodeURIComponent(agentKeys.join(','))}`);
+  if (!response.ok) {
+    return {};
+  }
+
+  const data = await response.json() as { agents?: Record<string, { defaultModel?: unknown; models?: unknown[] }> };
+  const labels: Record<string, string> = {};
+  for (const [agentKey, modelSet] of Object.entries(data.agents ?? {})) {
+    const label = normalizeAgentModelLabel(modelSet.defaultModel, modelSet.models);
+    if (label) {
+      labels[agentKey] = label;
+    }
+  }
+  return labels;
 }
 
 function normalizeAgentFromApi(entry: any, userDisplayName?: string): Agent | null {
@@ -444,9 +522,14 @@ function normalizeAgentFromApi(entry: any, userDisplayName?: string): Agent | nu
     String(entry?.status ?? '').toLowerCase() === 'template';
   if (isPlaceholder) return null;
 
-  const adapterType = entry?.adapterType || entry?.adapter_type || entry?.capabilities?.adapterType;
+  const adapterType =
+    entry?.agentRuntime ||
+    entry?.agent_runtime ||
+    entry?.adapterType ||
+    entry?.adapter_type ||
+    entry?.capabilities?.agentRuntime ||
+    entry?.capabilities?.adapterType;
   const runtimeType = entry?.runtimeType || entry?.runtime_type || entry?.capabilities?.runtimeType;
-  const runtimeLabel = entry?.capabilities?.runtimeLabel;
   const rawStatus = String(entry?.status ?? entry?.rawStatus ?? entry?.capabilities?.status ?? '').trim();
   const capabilities = entry?.capabilities
     ? {
@@ -460,11 +543,12 @@ function normalizeAgentFromApi(entry: any, userDisplayName?: string): Agent | nu
 
   return {
     id,
+    slug,
     name: entry?.name || entry?.displayName || registryRecord?.name || id,
     emoji: entry?.emoji || registryRecord?.emoji || '🤖',
     description: entry?.description || undefined,
-    model: entry?.model || entry?.model_name || runtimeLabel || adapterType || 'registry',
-    gateway: entry?.gateway || entry?.gateway_name || runtimeType || 'registry',
+    model: entry?.model || entry?.model_name || normalizeLabelPart(metadata?.model) || '',
+    runtime: formatAgentRuntime(adapterType, runtimeType),
     status: normalizeAgentStatus(entry?.status),
     rawStatus: rawStatus || undefined,
     adapterType: adapterType || undefined,
@@ -929,7 +1013,7 @@ function normalizeTheme(value: string | null): AppTheme {
     return 'kitz';
   }
 
-  if (value === 'light' || value === 'kitz' || value === 'dark' || value === 'nebula' || value === 'aurora' || value === 'paper') {
+  if (value === 'light' || value === 'kitz' || value === 'nebula' || value === 'aurora' || value === 'paper' || value === 'dark') {
     return value;
   }
   return 'dark';
@@ -2130,33 +2214,46 @@ export default function App() {
     }, [currentDocId, pushToast]),
   });
 
-  // Fetch agents from OpenClaw Gateway
+  // Fetch agents through Entity so registry config is merged before UI display.
   useEffect(() => {
+    let cancelled = false;
     setAgentsLoading(true);
     setAgentsError(null);
     setAgentsErrorDismissed(false);
 
-    // Fetch agents from same origin if openclawBase is not set
-    const agentsUrl = runtime.openclawBase
-      ? `${runtime.openclawBase}/api/agents`
-      : '/api/agents';
-
-    fetch(agentsUrl)
+    fetch('/api/agents')
       .then(r => r.json())
-      .then(data => {
+      .then(async data => {
+        if (cancelled) return;
         const agentList = data.list || data.agents || [];
-        setAgents(agentList
+        const normalizedAgents = agentList
           .map((entry: any) => normalizeAgentFromApi(entry, userProfile.displayName))
-          .filter((agent: Agent | null): agent is Agent => Boolean(agent)));
+          .filter((agent: Agent | null): agent is Agent => Boolean(agent));
+        setAgents(normalizedAgents);
         setAgentsLoading(false);
+        try {
+          const modelLabels = await loadAgentDefaultModelLabels(normalizedAgents);
+          if (!cancelled && Object.keys(modelLabels).length > 0) {
+            setAgents((currentAgents) => currentAgents.map((agent) => ({
+              ...agent,
+              model: modelLabels[modelRegistryAgentKey(agent)] || agent.model,
+            })));
+          }
+        } catch {
+          // Model labels are additive; registry agents still render if model lookup is unavailable.
+        }
       })
       .catch((error) => {
+        if (cancelled) return;
         const message = error instanceof Error ? error.message : 'Unable to reach OpenClaw';
         setAgentsError(message);
         setAgentsErrorDismissed(false);
         setAgents(FALLBACK_AGENTS);
         setAgentsLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, [userProfile.displayName])
   // Poll agent status (online/offline) every 30s
   useEffect(() => {
@@ -3757,11 +3854,11 @@ export default function App() {
                     {([
                       { value: 'dark', label: 'Dark', hint: 'Classic black shell' },
                       { value: 'light', label: 'Light', hint: 'Clean white workspace' },
-                      { value: 'kitz', label: 'Kitz', hint: 'Enterprise gradient dark' },
-                      { value: 'nebula', label: 'Nebula', hint: 'Glassy blue violet' },
-                      { value: 'aurora', label: 'Aurora', hint: 'Mint peach glass' },
-                      { value: 'paper', label: 'Paper', hint: 'Tactile notebook workspace' },
-                    ] as const).map((option) => (
+	                      { value: 'kitz', label: 'Kitz', hint: 'Enterprise gradient dark' },
+	                      { value: 'nebula', label: 'Nebula', hint: 'Glassy blue violet' },
+	                      { value: 'aurora', label: 'Aurora', hint: 'Mint peach glass' },
+	                      { value: 'paper', label: 'Paper', hint: 'Notebook desk board' },
+	                    ] as const).map((option) => (
                       <button
                         key={option.value}
                         type="button"
@@ -4196,11 +4293,16 @@ export default function App() {
               onRegistryChanged={() => {
                 fetch('/api/agents')
                   .then((res) => res.json())
-                  .then((data) => {
+                  .then(async (data) => {
                     const agentList = data.list || data.agents || [];
-                    setAgents(agentList
+                    const normalizedAgents = agentList
                       .map((entry: any) => normalizeAgentFromApi(entry, userProfile.displayName))
-                      .filter((agent: Agent | null): agent is Agent => Boolean(agent)));
+                      .filter((agent: Agent | null): agent is Agent => Boolean(agent));
+                    const modelLabels = await loadAgentDefaultModelLabels(normalizedAgents);
+                    setAgents(normalizedAgents.map((agent: Agent) => ({
+                      ...agent,
+                      model: modelLabels[modelRegistryAgentKey(agent)] || agent.model,
+                    })));
                   })
                   .catch(() => undefined);
               }}
@@ -4419,7 +4521,7 @@ export default function App() {
                 key={board}
                 type="button"
                 onClick={() => setMcBoardTab(board)}
-                className={`mc-shell-btn px-3 py-1 text-xs font-medium capitalize ${
+	                className={`mc-shell-btn entity-context-tab px-3 py-1 text-xs font-medium capitalize ${
                   mcBoardTab === board ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
                 }`}
               >
@@ -4431,7 +4533,7 @@ export default function App() {
                 key={plugin.id}
                 type="button"
                 onClick={() => setMcBoardTab(plugin.id)}
-                className={`mc-shell-btn px-3 py-1 text-xs font-medium ${
+	                className={`mc-shell-btn entity-context-tab px-3 py-1 text-xs font-medium ${
                   mcBoardTab === plugin.id ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
                 }`}
               >
@@ -4805,7 +4907,7 @@ export default function App() {
 
   const renderShellTopRows = () => (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4">
+      <div className="entity-top-row flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4">
         <div className="flex min-w-[320px] flex-1 items-center gap-2">
           {sidebarTab !== 'chat' && (
             <button
@@ -4825,7 +4927,7 @@ export default function App() {
               key={tab}
               type="button"
               onClick={() => handleSidebarTabChange(tab)}
-              className={`mc-shell-btn px-2 py-1 text-xs capitalize ${
+	              className={`mc-shell-btn entity-top-tab px-2 py-1 text-xs capitalize ${
                 sidebarTab === tab ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
               }`}
             >
@@ -4876,7 +4978,7 @@ export default function App() {
           </span>
         </div>
       </div>
-      <div className="flex items-center border-b border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2 lg:px-4">
+      <div className="entity-context-row flex items-center border-b border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2 lg:px-4">
         {renderContextBar()}
       </div>
     </>
@@ -5005,9 +5107,9 @@ export default function App() {
     );
   };
 
-  const renderSidebar = (showCloseButton: boolean, allowCollapse = false) => (
+  const renderSidebar = (showCloseButton: boolean, allowCollapse = false, forceCollapsed = false) => (
     <div className="flex h-full min-h-0 flex-col">
-      {allowCollapse && sidebarCollapsed ? (
+      {allowCollapse && (sidebarCollapsed || forceCollapsed) ? (
         <div className="flex min-h-0 flex-1 flex-col items-center py-2">
           <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pb-2">
             {renderCollapsedContextMiniPanel()}
@@ -5016,7 +5118,7 @@ export default function App() {
       ) : (
         renderContextRail(showCloseButton)
       )}
-      {allowCollapse && (
+      {allowCollapse && !forceCollapsed && (
         <div className="border-t border-[var(--border-primary)] px-2 py-2">
           <button
             type="button"
@@ -5719,9 +5821,13 @@ export default function App() {
   }
 
   const showLeftSidebar = sidebarTab !== 'chat';
+  const paperTaskRail = appTheme === 'paper' && sidebarTab === 'tasks';
 
   return (
-    <div className="entity-shell flex h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-secondary)]">
+    <div
+      className="entity-shell flex h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-secondary)]"
+      data-workspace-tab={sidebarTab}
+    >
       {renderInstallCta('bottom-24 md:bottom-8')}
       <QuickSwitcher
         isOpen={quickSwitcherOpen}
@@ -5797,11 +5903,11 @@ export default function App() {
         <div className="flex min-h-0 flex-1 bg-[var(--bg-primary)]">
           {showLeftSidebar && (
             <aside
-              className={`hidden shrink-0 flex-col border-r border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 lg:flex ${
-                sidebarCollapsed ? 'w-14' : 'w-64'
+              className={`entity-left-rail hidden shrink-0 flex-col border-r border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 lg:flex ${
+                paperTaskRail ? 'w-[5.25rem]' : sidebarCollapsed ? 'w-14' : 'w-64'
               }`}
             >
-              {renderSidebar(false, true)}
+              {renderSidebar(false, true, paperTaskRail)}
             </aside>
           )}
           <div className="hidden min-w-0 flex-1 flex-col lg:flex">{renderDesktopWorkspace('desktop')}</div>
@@ -6027,7 +6133,7 @@ export default function App() {
                       name: selectedAgent,
                       emoji: '🤖',
                       model: '',
-                      gateway: '',
+                      runtime: '',
                       status: 'offline',
                     }
                   }
@@ -6168,12 +6274,12 @@ export default function App() {
 
       {agentsError && !agentsErrorDismissed && (
         <div className="fixed right-3 top-16 z-[75] flex items-center gap-2 rounded-md border border-[var(--error)] bg-[var(--bg-secondary)]/95 px-3 py-1 text-xs text-[var(--error)] md:top-20">
-          <span>Agent gateway offline. Using fallback agents.</span>
+          <span>Agent registry unavailable. Using local agent identities.</span>
           <button
             type="button"
             onClick={() => setAgentsErrorDismissed(true)}
             className="mc-shell-btn px-2 py-0.5 text-[10px] text-[var(--error)]"
-            aria-label="Dismiss gateway error"
+            aria-label="Dismiss agent registry error"
           >
             ×
           </button>

@@ -100,20 +100,24 @@ function createTerminalTheme() {
   }
 
   const styles = window.getComputedStyle(document.documentElement);
+  const terminalBackground =
+    styles.getPropertyValue('--terminal-bg').trim()
+    || styles.getPropertyValue('--bg-primary').trim()
+    || '#050505';
   return {
-    background: styles.getPropertyValue('--bg-primary').trim() || '#000000',
+    background: terminalBackground,
     foreground: styles.getPropertyValue('--text-secondary').trim() || '#d4d4d4',
     cursor: styles.getPropertyValue('--text-primary').trim() || '#ffffff',
-    cursorAccent: styles.getPropertyValue('--bg-primary').trim() || '#000000',
+    cursorAccent: terminalBackground,
     selectionBackground: styles.getPropertyValue('--surface-accent').trim() || 'rgba(0, 170, 255, 0.16)',
-    black: '#050505',
+    black: styles.getPropertyValue('--bg-primary').trim() || '#050505',
     brightBlack: styles.getPropertyValue('--text-muted').trim() || '#7c7c7c',
     red: styles.getPropertyValue('--error').trim() || '#ff6666',
-    green: '#4ade80',
-    yellow: '#fbbf24',
+    green: styles.getPropertyValue('--success').trim() || '#4ade80',
+    yellow: styles.getPropertyValue('--review-warning').trim() || '#fbbf24',
     blue: styles.getPropertyValue('--accent').trim() || '#00aaff',
-    magenta: '#c084fc',
-    cyan: '#22d3ee',
+    magenta: styles.getPropertyValue('--comment-marker').trim() || '#c084fc',
+    cyan: styles.getPropertyValue('--accent-dim').trim() || '#22d3ee',
     white: styles.getPropertyValue('--text-primary').trim() || '#ffffff',
     brightWhite: styles.getPropertyValue('--text-primary').trim() || '#ffffff',
   };
@@ -154,7 +158,6 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
     if (!terminal) {
       return;
     }
-    terminal.writeln('');
     terminal.writeln(`\x1b[38;5;45m${message}\x1b[0m`);
   }, []);
 
@@ -228,9 +231,10 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
       convertEol: true,
       cursorBlink: true,
       cursorStyle: 'bar',
-      fontFamily: '"JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace',
-      fontSize: 12,
-      lineHeight: 1.05,
+      fontFamily: '"MesloLGS NF", "MesloLGM Nerd Font Mono", "MesloLGS Nerd Font Mono", "Meslo LG S DZ for Powerline", "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace',
+      fontSize: 11,
+      lineHeight: 1,
+      letterSpacing: 0,
       scrollback: 5000,
       theme: createTerminalTheme(),
     });
@@ -273,24 +277,23 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
   }, [fitTerminal, isOpen, writeBanner]);
 
   useEffect(() => {
-    if (typeof MutationObserver === 'undefined') {
+    if (typeof document === 'undefined') {
       return;
     }
 
-    const updateTheme = () => {
+    const root = document.documentElement;
+    const syncTheme = () => {
       const terminal = terminalRef.current;
-      if (!terminal) {
-        return;
+      if (terminal) {
+        terminal.options.theme = createTerminalTheme();
       }
-      terminal.options.theme = createTerminalTheme();
-      fitTerminal();
     };
+    syncTheme();
 
-    updateTheme();
-    const observer = new MutationObserver(updateTheme);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
     return () => observer.disconnect();
-  }, [fitTerminal]);
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -491,6 +494,15 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
     [selectedTarget, targetOptions],
   );
 
+  const handleClear = useCallback(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+
+    terminal.clear();
+  }, []);
+
   const statusToneClass =
     status === 'running'
       ? 'entity-terminal-chip-success'
@@ -502,78 +514,88 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
       <button
         type="button"
         onClick={onToggleOpen}
-        className="flex w-full items-center justify-between px-4 py-2 text-xs text-[var(--text-muted)] transition hover:bg-[var(--bg-tertiary)]"
+        className="entity-terminal-toggle flex w-full items-center justify-between px-4 py-1.5 text-xs text-[var(--text-muted)] transition hover:bg-[var(--bg-tertiary)]"
       >
         <span>Terminal</span>
         <span>{isOpen ? 'Hide' : 'Show'}</span>
       </button>
 
       <div className={isOpen ? 'border-t border-[var(--border-primary)]' : 'hidden'}>
-        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-xs">
-          <span className={`entity-terminal-chip ${socketConnected ? 'entity-terminal-chip-live' : 'entity-terminal-chip-muted'}`}>
-            <span
-              className={`entity-terminal-dot ${socketConnected ? 'bg-emerald-400' : 'bg-[var(--text-muted)]'}`}
-              aria-hidden="true"
-            />
-            {socketConnected ? 'WS connected' : 'WS reconnecting'}
-          </span>
-          <span className={`entity-terminal-chip ${statusToneClass}`}>{status}</span>
-          <label className="entity-terminal-select-wrap">
-            <span className="shrink-0 text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">Target</span>
-            <select
-              value={selectedTarget}
-              onChange={(event) => setSelectedTarget(event.target.value as TerminalTargetId)}
-              className="mc-shell-input rounded-md px-2 py-1 text-xs text-[var(--text-primary)]"
-            >
-              {targetOptions.map((target) => (
-                <option key={target.id} value={target.id}>
-                  {target.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={() => {
-              void startSession(selectedTarget);
-            }}
-            className="mc-shell-btn entity-terminal-action px-2.5 py-1 text-xs text-[var(--text-primary)]"
-            disabled={isStarting}
-          >
-            {session ? 'Reconnect' : 'Start'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setIsFullscreen((value) => !value);
-              window.setTimeout(fitTerminal, 0);
-            }}
-            className="mc-shell-btn entity-terminal-action px-2.5 py-1 text-xs text-[var(--text-primary)]"
-            aria-pressed={isFullscreen}
-          >
-            {isFullscreen ? 'Dock' : 'Full'}
-          </button>
-          <div className="entity-terminal-description min-w-0 flex-1 truncate text-[11px] text-[var(--text-muted)]">
-            {currentTargetMeta?.description ?? 'Embedded shell'}
+        <div className="entity-terminal-shell">
+          <div className="entity-terminal-inline-bar">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="entity-terminal-title">Terminal</span>
+              <span className={`entity-terminal-chip ${socketConnected ? 'entity-terminal-chip-live' : 'entity-terminal-chip-muted'}`}>
+                <span
+                  className={`entity-terminal-dot ${socketConnected ? 'bg-emerald-400' : 'bg-[var(--text-muted)]'}`}
+                  aria-hidden="true"
+                />
+                {socketConnected ? 'Connected' : 'Reconnecting'}
+              </span>
+              <span className={`entity-terminal-chip ${statusToneClass}`}>{status}</span>
+              <span className="entity-terminal-branch-chip">{currentTargetMeta?.transport ?? 'local'}</span>
+            </div>
+            <div className="flex min-w-0 items-center gap-2">
+              <label className="entity-terminal-select-wrap">
+                <span className="sr-only">Target</span>
+                <select
+                  value={selectedTarget}
+                  onChange={(event) => setSelectedTarget(event.target.value as TerminalTargetId)}
+                  className="mc-shell-input entity-terminal-select rounded-md px-2 py-1 text-xs text-[var(--text-primary)]"
+                >
+                  {targetOptions.map((target) => (
+                    <option key={target.id} value={target.id}>
+                      {target.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  void startSession(selectedTarget);
+                }}
+                className="mc-shell-btn entity-terminal-action px-2.5 py-1 text-xs text-[var(--text-primary)]"
+                disabled={isStarting}
+              >
+                {session ? 'Reconnect' : 'Start'}
+              </button>
+              <button
+                type="button"
+                onClick={handleClear}
+                className="mc-shell-btn entity-terminal-action px-2.5 py-1 text-xs text-[var(--text-primary)]"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFullscreen((value) => !value);
+                  window.setTimeout(fitTerminal, 0);
+                }}
+                className="mc-shell-btn entity-terminal-action px-2.5 py-1 text-xs text-[var(--text-primary)]"
+                aria-pressed={isFullscreen}
+              >
+                {isFullscreen ? 'Dock' : 'Full'}
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div className="entity-terminal-panel px-3 py-2">
-          <div className="entity-terminal-meta flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">
-            <span className="truncate">
-              {session ? `${session.targetLabel} · ${session.transport}` : 'Session not started'}
-            </span>
-            <span className="truncate">{currentTargetMeta?.defaultDirectory ?? ''}</span>
-          </div>
+          <div className="entity-terminal-panel">
           {error ? (
             <div className="entity-terminal-inline-error mt-2 text-[11px] text-[var(--error)]">
               {error}
             </div>
           ) : null}
-          <div
-            ref={containerRef}
-            className="entity-terminal-surface mt-2 min-h-[15rem] rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)]"
-          />
+            <div
+              ref={containerRef}
+              className="entity-terminal-surface min-h-[15rem] border border-[var(--border-primary)] bg-[var(--bg-primary)]"
+            />
+          </div>
+          <div className="entity-terminal-footer">
+            <span className="truncate">{currentTargetMeta?.description ?? 'Embedded shell'}</span>
+            <span className="truncate">{currentTargetMeta?.defaultDirectory ?? ''}</span>
+          </div>
         </div>
       </div>
     </div>

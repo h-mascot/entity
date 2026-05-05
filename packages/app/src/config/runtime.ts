@@ -4,6 +4,7 @@ const DEFAULT_OPENCLAW_BASE = '';
 const DEFAULT_WS_PORT = 3000;
 const DEFAULT_FS_MULTISOURCE_ENABLED = true;
 const DEFAULT_AGENT_NATIVE_EDITOR_ENABLED = true;
+const DEFAULT_WS_PATH = '/ws';
 
 function normalizeBaseUrl(value: string | undefined, fallback: string): string {
   if (!value) {
@@ -50,16 +51,20 @@ function toBoolean(value: string | undefined, fallback: boolean): boolean {
 
 function resolveWsUrl(defaultPort: number, hasExplicitPort: boolean): string {
   if (typeof window === 'undefined') {
-    return `ws://localhost:${defaultPort}`;
+    return `ws://localhost:${defaultPort}${DEFAULT_WS_PATH}`;
   }
 
-  const { protocol, host, hostname } = window.location;
+  const { protocol, host, hostname, port } = window.location;
   const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
-  if (!hasExplicitPort) {
-    return `${wsProtocol}//${host}`;
+  if (hasExplicitPort) {
+    return `${wsProtocol}//${hostname}:${defaultPort}${DEFAULT_WS_PATH}`;
   }
 
-  return `${wsProtocol}//${hostname}:${defaultPort}`;
+  if (port === '5173' || port === '4173') {
+    return `${wsProtocol}//${hostname}:${defaultPort}${DEFAULT_WS_PATH}`;
+  }
+
+  return `${wsProtocol}//${host}${DEFAULT_WS_PATH}`;
 }
 
 const apiBase = normalizeBaseUrl(import.meta.env.VITE_ENTITY_API_BASE, DEFAULT_API_BASE);

@@ -18,7 +18,7 @@ interface SidebarAgent {
   emoji: string;
   avatarUrl?: string;
   model: string;
-  gateway: string;
+  runtime: string;
   status: SidebarAgentStatus;
   rawStatus?: string;
 }
@@ -84,7 +84,7 @@ interface CrewCardAgent {
   emoji: string;
   avatarUrl?: string;
   model: string;
-  gateway: string;
+  runtime: string;
   status: AgentRuntimeStatus;
   currentTask: AgentTaskSummary | null;
   tasks: number;
@@ -555,8 +555,11 @@ function parseAgents(payload: unknown): SidebarAgent[] {
         return null;
       }
 
-      const model = normalizeText(record.model) || normalizeText(record.adapter_type) || normalizeText(record.adapterType) || 'unknown';
-      const gateway = normalizeText(record.gateway) || normalizeText(record.runtime_type) || normalizeText(record.runtimeType) || 'unknown';
+      const model = normalizeText(record.model);
+      const runtime = [record.adapter_type, record.runtime_type]
+        .map(normalizeText)
+        .filter(Boolean)
+        .join(' · ') || normalizeText(record.runtime) || 'registry';
       const emoji = normalizeText(record.emoji) || '🤖';
       const avatarUrl = normalizeText(record.avatarUrl) || normalizeText(record.avatar_url) || normalizeText(record.avatar) || undefined;
 
@@ -566,7 +569,7 @@ function parseAgents(payload: unknown): SidebarAgent[] {
         emoji,
         avatarUrl,
         model,
-        gateway,
+        runtime,
         status: normalizeOnlineStatus(record.status),
         rawStatus: normalizeText(record.status) || undefined,
       } as SidebarAgent;
@@ -861,6 +864,7 @@ function LoadingShell() {
 }
 
 export default function AgentDashboardV2({
+  agents,
   selectedAgentId,
   onSelectAgent,
   wsConnected,
@@ -963,7 +967,8 @@ export default function AgentDashboardV2({
       return;
     }
 
-    const exists = liveAgents.some((agent) => {
+    const sourceAgents = agents.length > 0 ? agents : liveAgents;
+    const exists = sourceAgents.some((agent) => {
       const keys = buildIdentityKeys(agent.id, agent.name);
       return keys.includes(selectedIdentity);
     });
@@ -971,10 +976,11 @@ export default function AgentDashboardV2({
     if (!exists) {
       onSelectAgent(null);
     }
-  }, [liveAgents, onSelectAgent, selectedAgentId]);
+  }, [agents, liveAgents, onSelectAgent, selectedAgentId]);
 
   const crewAgents = useMemo<CrewCardAgent[]>(() => {
-    return liveAgents.map((agent) => {
+    const sourceAgents = agents.length > 0 ? agents : liveAgents;
+    return sourceAgents.map((agent) => {
       const identityKeys = buildIdentityKeys(agent.id, agent.name);
       const assignedTasks = liveTasks
         .filter((task) => matchesIdentity(identityKeys, task.assignee))
@@ -1000,7 +1006,7 @@ export default function AgentDashboardV2({
         name: agent.name,
         emoji: agent.emoji,
         model: agent.model,
-        gateway: agent.gateway,
+        runtime: agent.runtime,
         status: resolveRuntimeStatus(agent, doingTasks.length > 0, hasRecentActivity),
         currentTask:
           doingTasks[0] === undefined
@@ -1029,7 +1035,7 @@ export default function AgentDashboardV2({
         },
       };
     });
-  }, [liveActivities, liveAgents, liveTasks, metrics]);
+  }, [agents, liveActivities, liveAgents, liveTasks, metrics]);
 
   const selectedAgent = useMemo<CrewCardAgent | null>(() => {
     if (!selectedAgentId) {
@@ -1154,7 +1160,7 @@ export default function AgentDashboardV2({
     return `Unable to load ${failedSources.join(', ')}.`;
   }, [activitiesError, agentsError, tasksError]);
 
-  if (initialLoading && liveAgents.length === 0) {
+  if (initialLoading && liveAgents.length === 0 && agents.length === 0) {
     return <LoadingShell />;
   }
 
@@ -1220,7 +1226,9 @@ export default function AgentDashboardV2({
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-[var(--text-primary)]">{agent.name}</div>
                               <div className="truncate text-xs text-[var(--text-secondary)]">
-                                {agent.model} · {agent.gateway}
+                                Runtime · {agent.runtime || 'registry'}
+                                <span className="mx-1 text-[var(--text-muted)]">·</span>
+                                Model · {agent.model || 'default resolving'}
                               </div>
                             </div>
                           </div>
@@ -1359,10 +1367,11 @@ export default function AgentDashboardV2({
                   />
                 </div>
                 <div className="mt-0.5 truncate text-xs text-[var(--text-secondary)]">
-                  {selectedAgent.model} · {selectedAgent.gateway}
+                  Runtime · {selectedAgent.runtime || 'registry'}
+                  <span className="mx-1 text-[var(--text-muted)]">·</span>
+                  Model · {selectedAgent.model || 'default resolving'}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  <span className="entity-ops-chip">runtime {selectedAgent.gateway}</span>
                   <span className="entity-ops-chip">last {formatRelative(selectedAgent.lastActionAt)}</span>
                   <span className={`entity-ops-chip ${selectedAgent.errors > 0 ? 'entity-ops-chip-red' : 'entity-ops-chip-green'}`}>
                     {selectedAgent.errors} warnings
@@ -1398,15 +1407,11 @@ export default function AgentDashboardV2({
           </div>
 
           <div className="mb-3 flex flex-wrap items-center gap-3 border-b border-[var(--border-primary)] pb-3 text-xs">
-            <span className="entity-ops-section-title">Caps</span>
-            {(['Chat', 'Docs', 'Files', 'Plugins', '+2'] as const).map((cap) => (
-              <span key={cap} className="entity-ops-chip">{cap}</span>
-            ))}
-            <span className="ml-2 entity-ops-section-title">Scope</span>
-            {(['Read', 'Post', 'Mention', 'Admin'] as const).map((scope) => (
-              <span key={scope} className="entity-ops-chip">{scope}</span>
-            ))}
-            <span className="ml-auto text-[var(--text-muted)]">Runtime {selectedAgent.gateway} · Remote · {statusMeta.label}</span>
+            <span className="text-[var(--text-muted)]">Runtime</span>
+            <span className="text-[var(--text-secondary)]">{selectedAgent.runtime || 'registry'}</span>
+            <span className="text-[var(--text-muted)]">Model</span>
+            <span className="text-[var(--text-secondary)]">{selectedAgent.model || 'default resolving'}</span>
+            <span className="ml-auto text-[var(--text-muted)]">{statusMeta.label}</span>
           </div>
 
           <div className="mb-3 grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
@@ -1562,7 +1567,7 @@ export default function AgentDashboardV2({
                   <dt className="text-[var(--text-muted)]">Model</dt>
                   <dd className="truncate">{selectedAgent.model}</dd>
                   <dt className="text-[var(--text-muted)]">Runtime</dt>
-                  <dd className="truncate">{selectedAgent.gateway}</dd>
+                  <dd className="truncate">{selectedAgent.runtime}</dd>
                   <dt className="text-[var(--text-muted)]">Status</dt>
                   <dd style={{ color: statusMeta.badgeText }}>{statusMeta.label}</dd>
                   <dt className="text-[var(--text-muted)]">Tasks</dt>

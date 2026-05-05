@@ -63,6 +63,7 @@ import {
   type AgentTriggerEvent,
 } from "./agent";
 import { buildAgentCapabilityCard } from "./agent/agent-capability-card";
+import { mergeRegistryAgentDisplay } from "./agent/agent-display";
 import {
   buildTaskPaginationMeta,
   paginateTasks,
@@ -1631,11 +1632,9 @@ app.get("/api/agents", async (_req, res) => {
         const grantsInfo = registryAgent
           ? allGrantsByAgentId.get(registryAgent.id)
           : undefined;
-        return {
-          ...entry,
-          description:
-            entry.description || registryAgent?.description || undefined,
-          avatarUrl: entry.avatarUrl || entry.avatar_url || undefined,
+        return mergeRegistryAgentDisplay({
+          entry,
+          registryAgent,
           capabilities: grantsInfo?.capabilities ?? {
             adapterType: entry.adapter_type,
             runtimeType: entry.runtime_type,
@@ -1644,7 +1643,7 @@ app.get("/api/agents", async (_req, res) => {
             capabilityLabels: [],
             permissionLabels: [],
           },
-        };
+        });
       });
     res.json({ ...data, list });
   } catch {

@@ -23,7 +23,7 @@ interface SidebarAgent {
   description?: string;
   focusFile?: string;
   model: string;
-  gateway: string;
+  runtime: string;
   status: 'online' | 'offline';
   rawStatus?: string;
   adapterType?: string;
@@ -117,17 +117,6 @@ function matchesAgentIdentity(agent: Pick<SidebarAgent, 'id' | 'name'>, candidat
 const ACTIVE_WRITING_WINDOW_MS = 10_000;
 const IDLE_WINDOW_MS = 60_000;
 
-function CapabilityChip({ children, title }: { children: string | number | Array<string | number>; title?: string }) {
-  return (
-    <span
-      className="entity-ops-chip px-1.5 py-0.5 text-[10px]"
-      title={title}
-    >
-      {children}
-    </span>
-  );
-}
-
 function AgentAvatar({ agent }: { agent: SidebarAgent }) {
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => {
@@ -164,8 +153,6 @@ export default function AgentsSidebarTab({
   onSelectAgent,
   onFollowAgent,
   onSetFollowDetached,
-  onOpenFile,
-  tasks = [],
 }: AgentsSidebarTabProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -224,42 +211,6 @@ export default function AgentsSidebarTab({
     return map;
   }, [activities, agents]);
 
-  // Build current task per agent from MC tasks
-  const taskByAgent = useMemo(() => {
-    const map = new Map<string, { name: string; priority: string }>();
-    for (const task of tasks) {
-      if (task.column === 'doing' && task.assignee) {
-        const key = task.assignee.toLowerCase();
-        if (!map.has(key)) {
-          map.set(key, { name: task.name, priority: task.priority || 'P2' });
-        }
-      }
-    }
-    return map;
-  }, [tasks]);
-
-  // Build recent activity per agent
-  const recentByAgent = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const entry of activities) {
-      const name = entry.agentName?.toLowerCase();
-      if (name && !map.has(name) && entry.description) {
-        map.set(name, entry.description.length > 50 ? entry.description.slice(0, 47) + '...' : entry.description);
-      }
-      // Also check metadata assignee
-      if (entry.metadata) {
-        try {
-          const meta = JSON.parse(entry.metadata);
-          const assignee = meta.assignee?.toLowerCase();
-          if (assignee && !map.has(assignee) && entry.description) {
-            map.set(assignee, entry.description.length > 50 ? entry.description.slice(0, 47) + '...' : entry.description);
-          }
-        } catch {}
-      }
-    }
-    return map;
-  }, [activities]);
-
   const onlineCount = agents.filter((agent) => agent.status === 'online').length;
 
   return (
@@ -292,11 +243,7 @@ export default function AgentsSidebarTab({
           const isSelected = selectedAgentId === agent.id;
           const isFollowing = watchMode && followingAgentId === agent.id;
           const focus = focusByAgentId.get(agent.id) ?? null;
-          const hasRecentEdit = focus ? nowMs - focus.lastEditMs <= IDLE_WINDOW_MS : false;
           const isWriting = focus ? nowMs - focus.lastEditMs <= ACTIVE_WRITING_WINDOW_MS : false;
-          const showFocus = isOnline && hasRecentEdit;
-          const currentTask = taskByAgent.get(agent.name.toLowerCase()) ?? null;
-          const recentActivity = recentByAgent.get(agent.name.toLowerCase()) ?? null;
           const statusLabel = isOnline ? (isWriting ? 'writing' : 'online') : 'offline';
 
           return (
@@ -333,112 +280,16 @@ export default function AgentsSidebarTab({
                       {statusLabel}
                     </span>
                   </div>
-                  <div className="mt-0.5 truncate text-[11px] text-[var(--text-muted)]">
-                    {agent.model} · {agent.gateway}
+                  <div className="mt-1 space-y-0.5 text-[11px] text-[var(--text-muted)]">
+                    <div className="truncate">
+                      <span className="text-[var(--text-secondary)]">Runtime</span> · {agent.runtime || 'registry'}
+                    </div>
+                    <div className="truncate">
+                      <span className="text-[var(--text-secondary)]">Model</span> · {agent.model || 'default resolving'}
+                    </div>
                   </div>
                 </div>
               </div>
-
-              {agent.capabilities && (
-                <div className="mt-2 space-y-1.5 rounded border border-[var(--border-primary)] bg-[var(--bg-secondary)]/70 px-2 py-2">
-                  {(agent.capabilities.ownerLabel || agent.capabilities.verificationLabel) && (
-                    <div className="flex flex-wrap gap-1">
-                      {agent.capabilities.ownerLabel && (
-                        <CapabilityChip title="Owner">Owner: {agent.capabilities.ownerLabel}</CapabilityChip>
-                      )}
-                      {agent.capabilities.verificationLabel && (
-                        <CapabilityChip title="Verification">{agent.capabilities.verificationLabel}</CapabilityChip>
-                      )}
-                    </div>
-                  )}
-
-                  {agent.capabilities.identityLabel && (
-                    <div className="text-[10px] text-[var(--text-muted)]">
-                      {agent.capabilities.identityLabel}
-                    </div>
-                  )}
-
-                  {agent.capabilities.capabilityLabels && agent.capabilities.capabilityLabels.length > 0 && (
-                    <div className="flex items-start gap-1">
-                      <span className="mt-0.5 shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                        Caps
-                      </span>
-                      <div className="flex flex-wrap gap-1">
-                        {agent.capabilities.capabilityLabels.map((label) => (
-                          <CapabilityChip key={label} title="Enabled capability">
-                            {label}
-                          </CapabilityChip>
-                        ))}
-                        {typeof agent.capabilities.moduleCount === 'number' &&
-                          agent.capabilities.moduleCount > agent.capabilities.capabilityLabels.length && (
-                            <CapabilityChip title="Enabled modules">
-                              +{agent.capabilities.moduleCount - agent.capabilities.capabilityLabels.length}
-                            </CapabilityChip>
-                          )}
-                      </div>
-                    </div>
-                  )}
-
-                  {agent.capabilities.permissionLabels && agent.capabilities.permissionLabels.length > 0 && (
-                    <div className="flex items-start gap-1">
-                      <span className="mt-0.5 shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                        Scope
-                      </span>
-                      <div className="flex flex-wrap gap-1">
-                        {agent.capabilities.permissionLabels.map((label) => (
-                          <CapabilityChip key={label} title="Permission or tool scope">
-                            {label}
-                          </CapabilityChip>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {(agent.capabilities.runtimeLabel ||
-                    agent.capabilities.adapterType ||
-                    agent.capabilities.runtimeType) && (
-                    <div className="text-[10px] text-[var(--text-muted)]">
-                      Runtime:{' '}
-                      {agent.capabilities.runtimeLabel ||
-                        [agent.capabilities.adapterType, agent.capabilities.runtimeType]
-                          .filter(Boolean)
-                          .join(' · ')}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {showFocus && focus ? (
-                <div className="mt-2 flex items-center gap-1.5 rounded border border-[var(--border-primary)] bg-[var(--bg-primary)]/45 px-2 py-1.5 text-xs text-[var(--text-secondary)]">
-                  <span aria-hidden="true" className="text-[var(--accent)]">●</span>
-                  <span className="shrink-0 text-[var(--text-muted)]">Editing</span>
-                  <span
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onOpenFile(focus.filePath);
-                    }}
-                    className="min-w-0 cursor-pointer truncate text-[var(--accent)] hover:underline"
-                    title={focus.filePath}
-                  >
-                    {focus.fileName}
-                  </span>
-                </div>
-              ) : currentTask ? (
-                <div className="mt-2 flex items-center gap-1.5 rounded border border-[var(--border-primary)] bg-[var(--bg-primary)]/45 px-2 py-1.5 text-xs text-[var(--text-secondary)]">
-                  <span aria-hidden="true" className="text-[var(--review-warning)]">●</span>
-                  <span className="shrink-0 text-[var(--text-muted)]">Task</span>
-                  <span className="min-w-0 truncate text-[var(--text-primary)]" title={currentTask.name}>
-                    {currentTask.name}
-                  </span>
-                </div>
-              ) : recentActivity ? (
-                <div className="mt-2 flex items-center gap-1.5 rounded border border-[var(--border-primary)] bg-[var(--bg-primary)]/45 px-2 py-1.5 text-xs text-[var(--text-secondary)]">
-                  <span aria-hidden="true" className="text-[var(--text-muted)]">●</span>
-                  <span className="shrink-0 text-[var(--text-muted)]">Recent</span>
-                  <span className="min-w-0 truncate text-[var(--text-secondary)]">{recentActivity}</span>
-                </div>
-              ) : null}
 
               {isFollowing && (
                 <div className="mt-2 text-[11px] font-medium uppercase tracking-wide text-[var(--accent)]">

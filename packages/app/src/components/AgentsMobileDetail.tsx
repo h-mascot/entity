@@ -8,7 +8,7 @@ interface AgentsMobileDetailProps {
     emoji: string;
     avatarUrl?: string;
     model: string;
-    gateway: string;
+    runtime: string;
     status: 'online' | 'offline';
   };
   activities: ActivityEntry[];
@@ -195,9 +195,12 @@ export default function AgentsMobileDetail({ agent, activities, tasks, onBack }:
               />
             </div>
             <div className="mt-1 text-xs text-[var(--text-secondary)]">
-              <span className="truncate">{agent.model || '—'}</span>
-              <span className="mx-1 text-[var(--text-muted)]">·</span>
-              <span className="truncate">{agent.gateway || '—'}</span>
+              <div className="truncate">
+                <span className="text-[var(--text-muted)]">Runtime</span> · {agent.runtime || 'registry'}
+              </div>
+              <div className="truncate">
+                <span className="text-[var(--text-muted)]">Model</span> · {agent.model || 'default resolving'}
+              </div>
             </div>
           </div>
         </div>

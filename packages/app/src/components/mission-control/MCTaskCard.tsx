@@ -50,15 +50,17 @@ export default function MCTaskCard({
   const blockedReason = task.blocked && task.blocker_reason ? formatBlockerReason(task.blocker_reason) : null;
   const blockerIcon = blockedReason && isTransientBlocker(task.blocker_reason) ? '⚠️' : '❌';
 
-  const cardClassName = [
-    'task',
-    task.blocked ? 'blocked' : '',
-    isDragging ? 'dragging' : '',
-    isWorking ? 'working' : '',
-    isHighlighted ? 'task-highlighted' : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+	  const cardClassName = [
+	    'task',
+	    task.blocked ? 'blocked' : '',
+	    isDragging ? 'dragging' : '',
+	    isWorking ? 'working' : '',
+	    isHighlighted ? 'task-highlighted' : '',
+	  ]
+	    .filter(Boolean)
+	    .join(' ');
+	  const taskState = task.blocked ? 'error' : isWorking ? 'active' : task.column === 'done' ? 'success' : 'idle';
+	  const statefulCardClassName = `${cardClassName} task-state-${taskState}`;
 
   useEffect(() => {
     if (isHighlighted) {
@@ -138,7 +140,8 @@ export default function MCTaskCard({
   return (
     <div
       ref={cardRef}
-      className={cardClassName}
+	      className={statefulCardClassName}
+	      data-state={taskState}
       draggable
       onClick={() => onOpenTask?.(task.id)}
       onDragEnd={onDragEnd}

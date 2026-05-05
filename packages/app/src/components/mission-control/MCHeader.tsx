@@ -36,21 +36,22 @@ export default function MCHeader({
           </h1>
         </div>
 
-        <div
-          className="ml-auto flex items-center gap-1 rounded-lg border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-1"
-          role="tablist"
-          aria-label="Mission Control views"
-        >
+	        <div
+	          className="mc-sliding-tabs ml-auto flex items-center gap-1 rounded-lg border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-1"
+	          data-active={activeTab}
+	          role="tablist"
+	          aria-label="Mission Control views"
+	        >
           <button
             type="button"
             onClick={() => onTabChange("kanban")}
             role="tab"
             aria-selected={activeTab === "kanban"}
-            className={`rounded-md border px-3 py-1.5 text-sm font-medium transition ${
-              activeTab === "kanban"
-                ? "border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)]"
-                : "border-[var(--border-primary)] text-[var(--text-muted)] hover:border-[var(--border-secondary)] hover:text-[var(--text-secondary)]"
-            }`}
+	            className={`mc-segmented-tab rounded-md border px-3 py-1.5 text-sm font-medium transition ${
+	              activeTab === "kanban"
+	                ? "mc-segmented-tab-active border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)]"
+	                : "border-[var(--border-primary)] text-[var(--text-muted)] hover:border-[var(--border-secondary)] hover:text-[var(--text-secondary)]"
+	            }`}
           >
             Kanban
           </button>
@@ -59,11 +60,11 @@ export default function MCHeader({
             onClick={() => onTabChange("insights")}
             role="tab"
             aria-selected={activeTab === "insights"}
-            className={`rounded-md border px-3 py-1.5 text-sm font-medium transition ${
-              activeTab === "insights"
-                ? "border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)]"
-                : "border-[var(--border-primary)] text-[var(--text-muted)] hover:border-[var(--border-secondary)] hover:text-[var(--text-secondary)]"
-            }`}
+	            className={`mc-segmented-tab rounded-md border px-3 py-1.5 text-sm font-medium transition ${
+	              activeTab === "insights"
+	                ? "mc-segmented-tab-active border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)]"
+	                : "border-[var(--border-primary)] text-[var(--text-muted)] hover:border-[var(--border-secondary)] hover:text-[var(--text-secondary)]"
+	            }`}
           >
             Insights
           </button>
@@ -86,10 +87,10 @@ export default function MCHeader({
           />
         </label>
 
-        <div
-          className="flex flex-wrap items-center gap-1 rounded-lg border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-1"
-          aria-label="Review filters"
-        >
+	        <div
+	          className="mc-filter-tabs flex flex-wrap items-center gap-1 rounded-lg border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-1"
+	          aria-label="Review filters"
+	        >
           {[
             ["all", "All"],
             ["henry", userProfile.displayName],
@@ -102,11 +103,11 @@ export default function MCHeader({
               key={value}
               type="button"
               onClick={() => onReviewFilterChange?.(value)}
-              className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
-                reviewFilter === value
-                  ? "border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)]"
-                  : "border-transparent text-[var(--text-muted)] hover:border-[var(--border-secondary)] hover:text-[var(--text-secondary)]"
-              }`}
+	              className={`mc-filter-tab rounded-md border px-2 py-1 text-xs font-medium transition ${
+	                reviewFilter === value
+	                  ? "mc-filter-tab-active border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)]"
+	                  : "border-transparent text-[var(--text-muted)] hover:border-[var(--border-secondary)] hover:text-[var(--text-secondary)]"
+	              }`}
             >
               {label}
             </button>

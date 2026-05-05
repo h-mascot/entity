@@ -36,7 +36,14 @@ try {
   const storedTheme = window.localStorage.getItem(THEME_KEY);
   if (storedTheme === 'crew') {
     initialTheme = 'kitz';
-  } else if (storedTheme === 'light' || storedTheme === 'kitz' || storedTheme === 'dark') {
+  } else if (
+    storedTheme === 'light' ||
+    storedTheme === 'kitz' ||
+    storedTheme === 'nebula' ||
+    storedTheme === 'aurora' ||
+    storedTheme === 'paper' ||
+    storedTheme === 'dark'
+  ) {
     initialTheme = storedTheme;
   }
 } catch {

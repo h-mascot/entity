@@ -77,6 +77,7 @@ export default function MCOpsView({
   const activeTasksCount = filteredTasks.filter((task) => task.column === 'doing').length;
   const blockedTasksCount = filteredTasks.filter((task) => task.blocked && task.column !== 'done').length;
   const reviewTasksCount = filteredTasks.filter((task) => task.column === 'review').length;
+  const summaryStateClass = blockedTasksCount > 0 ? 'state-error' : activeTasksCount > 0 ? 'state-active' : 'state-idle';
   const tasksByColumn: Record<TaskColumn, TaskBoardTask[]> = {
     backlog: [],
     todo: [],
@@ -158,14 +159,14 @@ export default function MCOpsView({
   return (
     <div>
       {error ? (
-        <div className="px-[30px] pb-0 pt-5 text-sm text-[#fca5a5]">{error}</div>
+        <div className="entity-state-notice entity-state-error mx-4 mt-5 text-sm md:mx-5">{error}</div>
       ) : null}
       <div className={activeTab === 'insights' && shouldShowInsights ? 'entity-insights-body' : 'hidden'}>
         <MCInsightsDashboard tasks={filteredTasks} onOpenTask={handleOpenTask} />
       </div>
       <div className={activeTab === 'insights' && shouldShowInsights ? 'hidden' : ''}>
         <div className="px-4 pb-3 pt-4 md:px-5">
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)]/80 p-2 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
+	          <div className={`entity-state-bar ${summaryStateClass} flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)]/80 p-2 shadow-[0_10px_28px_rgba(0,0,0,0.22)]`}>
             <span className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)]">
               {filteredTasks.length} tasks
             </span>

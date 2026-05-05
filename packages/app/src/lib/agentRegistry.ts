@@ -4,21 +4,19 @@ export interface BuiltInAgentRecord {
   name: string;
   emoji: string;
   avatarUrl?: string;
-  model: string;
-  gateway: string;
   status: 'online' | 'offline';
   modules: string[];
 }
 
 export const BUILT_IN_AGENTS: readonly BuiltInAgentRecord[] = [
-  { id: 'main', slug: 'ada', name: 'Ada', emoji: '🔮', avatarUrl: '/agent-avatars/ada.jpg', model: 'Opus 4.6', gateway: 'ada-gateway', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'swarm', 'plugins'] },
-  { id: 'spock', slug: 'spock', name: 'Spock', emoji: '🖖', avatarUrl: '/agent-avatars/spock.jpg', model: 'Kimi', gateway: 'ada-gateway', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
-  { id: 'scotty', slug: 'scotty', name: 'Scotty', emoji: '🔧', avatarUrl: '/agent-avatars/scotty.jpg', model: 'Sonnet', gateway: 'Pi', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'swarm'] },
-  { id: 'geordi', slug: 'geordi', name: 'Geordi', emoji: '👷', avatarUrl: '/agent-avatars/geordi.png', model: 'GPT-5.3 Codex', gateway: 'MascotM3', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'swarm', 'plugins'] },
-  { id: 'zora', slug: 'zora', name: 'Zora', emoji: '🌌', avatarUrl: '/agent-avatars/zora.jpg', model: 'Gemini Flash', gateway: 'MascotM3', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
-  { id: 'midas', slug: 'midas', name: 'Midas', emoji: '✨', model: 'GPT-5.3 Codex', gateway: 'ada-gateway', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'plugins'] },
-  { id: 'uhura', slug: 'uhura', name: 'Uhura', emoji: '📡', model: 'Gemini Flash', gateway: 'ada-gateway', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
-  { id: 'book', slug: 'book', name: 'Book', emoji: '📚', model: 'Gemini Flash', gateway: 'ada-gateway', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
+  { id: 'main', slug: 'ada', name: 'Ada', emoji: '🔮', avatarUrl: '/agent-avatars/ada.jpg', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'swarm', 'plugins'] },
+  { id: 'spock', slug: 'spock', name: 'Spock', emoji: '🖖', avatarUrl: '/agent-avatars/spock.jpg', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
+  { id: 'scotty', slug: 'scotty', name: 'Scotty', emoji: '🔧', avatarUrl: '/agent-avatars/scotty.jpg', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'swarm'] },
+  { id: 'geordi', slug: 'geordi', name: 'Geordi', emoji: '👷', avatarUrl: '/agent-avatars/geordi.png', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'swarm', 'plugins'] },
+  { id: 'zora', slug: 'zora', name: 'Zora', emoji: '🌌', avatarUrl: '/agent-avatars/zora.jpg', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
+  { id: 'midas', slug: 'midas', name: 'Midas', emoji: '✨', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'plugins'] },
+  { id: 'uhura', slug: 'uhura', name: 'Uhura', emoji: '📡', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
+  { id: 'book', slug: 'book', name: 'Book', emoji: '📚', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
 ];
 
 export const BUILT_IN_AGENT_AVATARS: Record<string, string> = BUILT_IN_AGENTS.reduce((acc, agent) => {
