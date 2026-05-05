@@ -25,18 +25,22 @@ jobs:
     name: Deploy to Production
     needs: ctrl-gate
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.repository == 'h-mascot/entity'
     steps:
       - name: Trigger Webhook Deploy
         env:
           DEPLOY_URL: ${{ secrets.WEBHOOK_DEPLOY_URL }}
           DEPLOY_TOKEN: ${{ secrets.WEBHOOK_DEPLOY_TOKEN }}
         run: |
-          echo "Triggering deploy to $DEPLOY_URL"
+          if [ -z "$DEPLOY_URL" ] || [ -z "$DEPLOY_TOKEN" ]; then
+            echo "::error::Public repo deploy secrets are not configured. Add WEBHOOK_DEPLOY_URL and WEBHOOK_DEPLOY_TOKEN to h-mascot/entity."
+            exit 1
+          fi
+          echo "Triggering public Entity deploy"
           DEPLOY_BODY=$(cat <<EOF
           {
             "action": "approve",
-            "repo": "${{ github.repository }}",
+            "repo": "h-mascot/entity",
             "sha": "${{ github.sha }}",
             "ref": "${{ github.ref_name }}",
             "runId": "${{ github.run_id }}",
