@@ -2,9 +2,9 @@
 
 # ⚡ Entity
 
-**An AI-native workspace for humans and agents working side by side.**
+**An AI-native workspace where humans can see, steer, and review agent work.**
 
-Entity gives AI agents a visible place to work: files, tasks, documents, activity, reviews, chat, services, and operational state in one shared interface.
+Entity gives agents a real operating surface: tasks, files, documents, chat, activity, services, plugins, and review state in one shared UI.
 
 ![Entity Mission Control](docs/screenshots/hero.png)
 
@@ -12,84 +12,72 @@ Entity gives AI agents a visible place to work: files, tasks, documents, activit
 
 ---
 
+## TL;DR
+
+```bash
+git clone https://github.com/h-mascot/entity.git
+cd entity
+npm install
+npm run build
+PORT=3000 npm --prefix packages/server run dev
+```
+
+Open `http://localhost:3000`.
+
+Entity is currently a real internal workspace moving into public form. It is useful now if you are comfortable running from source; a smoother first-run/demo path is on the roadmap.
+
+---
+
 ## Why Entity Exists
 
-AI agents are usually trapped in chat windows. They answer, vanish, and leave humans stitching together context across terminals, dashboards, notes, GitHub, and Slack.
+Most AI agent work disappears into chat transcripts, terminal scrollback, or one-off task runners. Humans then have to reconstruct what happened: which files changed, which task moved, what evidence exists, who reviewed it, and what is still blocked.
 
 Entity is the workspace layer for agent-native work:
 
-- agents can see tasks, files, and project state
-- humans can inspect what agents are doing
-- work can move from idea → task → document → review without losing context
-- operational systems become visible instead of buried in logs
+- agents get a visible desk instead of a hidden process
+- humans can inspect active work, handoffs, evidence, and review state
+- files, tasks, chat, documents, and operational state stay connected
+- local-first projects can grow into multi-agent operations without losing receipts
 
 The short version: **agents should not just talk. They should have a desk.**
 
 ---
 
+## Highlights
+
+| Surface | What it gives you |
+|---|---|
+| **Mission Control** | Kanban-style execution lanes, task detail panels, assignment, priority, stale-work signals, notes, links, comments, activity, and review routing. |
+| **Agent Fleet** | Live-ish agent registry/status, model/runtime metadata, current focus, handoff context, activity, and health signals. |
+| **Files / DocHub** | Multi-source file browsing, markdown preview, editing, search, share/deep links, file history, and source management. |
+| **Agent-native editor** | Collaboration foundations for comments, suggestions, reviews, presence, authorship, and shared document state. |
+| **Chat surfaces** | Thread/channel chat UI with routing and model-selection plumbing. |
+| **Services + plugins** | Admin surfaces for Entity services, plugin registry, Entity Linker, Swarm/dispatch providers, and operational integrations. |
+| **Desktop + mobile shells** | Electron desktop wrapper and Expo mobile WebView shell for running the same workspace outside a browser tab. |
+
+---
+
 ## Screenshots
 
-### Mission Control
+| Mission Control | Agent Fleet |
+| :---: | :---: |
+| ![Mission Control task board](docs/screenshots/tasks.png) | ![Agent dashboard](docs/screenshots/agents.png) |
 
-Kanban and ops views for shared human/agent execution: assignment, priority, review flow, activity, and stale-work visibility.
-
-![Entity Mission Control](docs/screenshots/tasks.png)
-
-### Agent Fleet
-
-A live agent dashboard for crew status, models, current focus, activity, and handoff context.
-
-![Entity Agent Dashboard](docs/screenshots/agents.png)
-
-### Files and Documents
-
-Unified file/document workspace with source browsing, markdown preview, deep links, comments, suggestions, and agent-native review primitives.
-
-![Entity Document Workspace](docs/screenshots/editor.png)
+| Files and Documents | Workspace Shell |
+| :---: | :---: |
+| ![Document workspace](docs/screenshots/editor.png) | ![Entity workspace hero](docs/screenshots/hero.png) |
 
 ---
 
-## What Entity Does Today
+## Quick Start Paths
 
-- **Mission Control** — shared kanban board for humans and agents, with assignees, priorities, filters, review routing, task detail panels, notes, comments, links, stale-work signals, and activity history.
-- **Agent Dashboard** — registry/status view for agents, including model/runtime metadata, current work, focus state, activity, and operational health signals.
-- **Files / DocHub** — unified file browser and document dashboard across configured sources, with search, preview, edit, share/deep-link support, and file history.
-- **Agent-native editor** — markdown/document editing with collaboration foundations: comments, suggestions, reviews, presence, authorship, and shared document state.
-- **Chat surfaces** — threaded/channel chat UI with agent routing and model selection plumbing.
-- **Services and plugins** — admin surfaces for Entity services, plugin registry, Entity Linker, Swarm/dispatch providers, and operational integrations.
-- **Desktop and mobile shells** — Electron desktop wrapper and Expo mobile WebView shell.
-
-Entity is currently built for real internal use by the Enterprise Crew, not as a toy demo. Public polish is in progress; sharp edges are documented below.
-
----
-
-## Architecture
-
-```text
-entity/
-├── packages/
-│   ├── app/       # Vite + React frontend
-│   ├── server/    # Express/WebSocket API server
-│   ├── db/        # SQLite repositories and DB connection
-│   ├── mobile/    # Expo mobile shell
-│   └── desktop/   # desktop package wrapper
-├── electron/      # canonical Electron app/build config
-├── docs/          # product docs, plans, context, specs, reports
-└── package.json   # npm workspaces root
-```
-
-### Stack
-
-- **Frontend:** React 18, TypeScript, Vite 5, Tailwind CSS, CodeMirror 6, Tiptap, Zustand
-- **Backend:** Express 4, WebSocket (`ws`), TypeScript, Vitest
-- **Database:** SQLite via `better-sqlite3`
-- **AI/runtime plumbing:** Vercel AI SDK, Google Gemini adapter, OpenClaw-compatible agent/runtime integrations
-- **Desktop:** Electron 34
-- **Mobile:** Expo SDK 52 / React Native WebView
-
----
-
-## Quick Start
+| Path | Best for | Status |
+|---|---|---|
+| **Run from source** | Developers and operators evaluating Entity locally | Works today |
+| **Frontend + API dev loop** | UI work with Vite hot reload | Works today |
+| **Desktop shell** | Electron wrapper around the Entity workspace | Works today, developer-oriented |
+| **Mobile shell** | Expo/WebView experiments | Present, not the polished public install path yet |
+| **Hosted / one-click deploy** | Public demo and non-dev users | Roadmap |
 
 ### Prerequisites
 
@@ -103,11 +91,12 @@ entity/
 git clone https://github.com/h-mascot/entity.git
 cd entity
 npm install
+cp .env.example .env
 ```
 
 ### Run the full app locally
 
-Build the frontend once, then start the API/server. The server serves the built app from `packages/app/dist` on port `3000`.
+The server serves the built frontend from `packages/app/dist` on port `3000`.
 
 ```bash
 npm run build
@@ -122,7 +111,7 @@ http://localhost:3000
 
 ### Frontend-only development
 
-For fast UI work, run Vite separately and point it at the API server:
+Run the API server and Vite separately:
 
 ```bash
 # terminal 1
@@ -140,6 +129,18 @@ Open Vite at:
 http://localhost:5173
 ```
 
+### Desktop shell
+
+```bash
+npm run electron
+```
+
+For packaged desktop builds:
+
+```bash
+npm run electron:build
+```
+
 ---
 
 ## Commands
@@ -150,11 +151,11 @@ http://localhost:5173
 | `npm run build` | Build frontend, DB package, and server |
 | `npm --prefix packages/app run build` | Build the Vite frontend only |
 | `npm --prefix packages/server run build` | Build the server only |
-| `npm --prefix packages/server run test` | Run server Vitest suite |
-| `npm run test:e2e` | Run browser E2E smoke test script |
-| `npm run electron` | Start the Electron desktop app |
+| `npm --prefix packages/server run test` | Run the server Vitest suite |
+| `npm run test:e2e` | Run the browser E2E smoke script |
+| `npm run electron` | Start the Electron desktop shell |
 | `npm run electron:build` | Build packaged desktop app |
-| `npm run ctrl:full` | Run project release gates configured for this repo |
+| `npm run ctrl:full` | Run this repo's release/check gates |
 | `npm run scan:private-defaults` | Scan for private defaults before public/release work |
 
 ---
@@ -168,25 +169,67 @@ Common environment variables:
 | Variable | Purpose |
 |---|---|
 | `PORT` | Entity server port, default `3000` |
-| `VITE_ENTITY_API_BASE` | Frontend API base URL when using Vite dev server |
-| `VITE_ENTITY_WS_URL` | Frontend WebSocket URL when using Vite dev server |
+| `ENTITY_DB_MODE` | Database mode; local development defaults to SQLite |
+| `ENTITY_CLOUD_API_BASE` | Base URL for Entity's own API when a deployment needs an explicit origin |
+| `VITE_ENTITY_API_BASE` | Frontend API base URL when using the Vite dev server |
+| `VITE_ENTITY_WS_URL` | Frontend WebSocket URL when using the Vite dev server |
+| `VITE_ENTITY_WS_PORT` | WebSocket port override used by the frontend runtime config |
 | `VITE_MC_ORIGIN` | Mission Control API origin override |
-| `VITE_OPENCLAW_BASE` | OpenClaw-compatible gateway URL |
+| `VITE_OPENCLAW_BASE` | OpenClaw-compatible gateway URL for agent/runtime integrations |
+| `ENTITY_FS_MULTISOURCE` | Enable multi-source file workspace behavior |
+| `ENTITY_FS_INDEXER_ENABLED` | Enable or disable file indexing |
+| `SENTRY_DSN` / `VITE_SENTRY_DSN` | Optional backend/frontend Sentry reporting |
 
-Private deployments may have additional local `.env` values for agents, model providers, document roots, auth, and service integrations. Do not commit secrets.
+Private deployments may have additional `.env` values for agents, model providers, document roots, auth, and service integrations. Do not commit secrets.
 
 ---
 
-## Public-Release Notes
+## Architecture
 
-Entity is moving from internal workspace to public project. Before deploying or publishing a fork, review:
+```text
+entity/
+├── packages/
+│   ├── app/       # Vite + React frontend
+│   ├── server/    # Express/WebSocket API server
+│   ├── db/        # SQLite repositories and DB connection
+│   ├── mobile/    # Expo mobile shell
+│   └── desktop/   # desktop package wrapper
+├── electron/      # canonical Electron app/build config
+├── docs/          # product docs, plans, context, specs, reports
+├── e2e/           # browser smoke tests
+└── package.json   # npm workspaces root
+```
 
-- `docs/config/private-default-scan.md`
-- `docs/config/entity-config.md`
-- `docs/specs/settings-backed-portability-spec.md`
-- `docs/reports/private-default-scan-baseline.md`
+### Stack
 
-Recommended public-readiness gate:
+- **Frontend:** React 18, TypeScript, Vite 5, Tailwind CSS, CodeMirror 6, Tiptap, Zustand
+- **Backend:** Express 4, WebSocket (`ws`), TypeScript, Vitest
+- **Database:** SQLite via `better-sqlite3`
+- **AI/runtime plumbing:** Vercel AI SDK, Google Gemini adapter, OpenClaw-compatible agent/runtime integrations
+- **Desktop:** Electron 34
+- **Mobile:** Expo SDK 52 / React Native WebView
+
+### Design principles
+
+- **Agent-native:** agents are first-class workspace users, not invisible background jobs.
+- **Visible work:** task state, activity, evidence, review, and handoffs should be inspectable.
+- **Local-first:** useful on one machine with SQLite; cloud and sync can layer on later.
+- **Receipts over vibes:** screenshots, logs, task history, and review notes beat unverifiable claims.
+- **Dark-first and keyboard-friendly:** built for long-running operational work, not a marketing dashboard pretending to be ops.
+
+---
+
+## Security and Public-Readiness Notes
+
+Entity is transitioning from an internal workspace to a public project. Before deploying a fork or exposing it beyond localhost:
+
+1. Copy `.env.example` to `.env` and keep real secrets out of git.
+2. Run the private-default scan.
+3. Review configured file roots and document sources before exposing the UI on a LAN/VPN/public host.
+4. Treat the SQLite DB as local state; do not overwrite production DB files during deploys.
+5. Put authentication/reverse-proxy controls in front of remote deployments until a hardened public auth path is documented.
+
+Recommended gate:
 
 ```bash
 npm run scan:private-defaults
@@ -194,48 +237,99 @@ npm run build
 npm --prefix packages/server run test
 ```
 
-If you are deploying Henry's production instance, use the established deployment pipeline rather than manually editing the runtime checkout.
+Useful public-readiness docs:
+
+- `docs/config/private-default-scan.md`
+- `docs/config/entity-config.md`
+- `docs/specs/settings-backed-portability-spec.md`
+- `docs/reports/private-default-scan-baseline.md`
 
 ---
 
-## Design Principles
+## Operator Quick Refs
 
-- **Agent-native** — agents are first-class workspace users, not invisible background jobs.
-- **Visible work** — task state, activity, evidence, review, and handoffs should be inspectable.
-- **Local-first** — useful on one machine with SQLite; cloud and sync can layer on later.
-- **Dark-first** — built for long-running operational work.
-- **Keyboard-friendly** — fast navigation and command surfaces matter.
-- **Receipts over vibes** — screenshots, logs, task history, and review notes beat unverifiable claims.
+| Goal | Start here |
+|---|---|
+| Understand the product and architecture | `docs/context/entity-context.md` |
+| Configure Entity | `docs/config/entity-config.md` |
+| Check public/private defaults | `docs/config/private-default-scan.md` |
+| Build plugins | `docs/ENTITY-PLUGIN-BUILD-GUIDE.md` |
+| Understand plugin architecture | `docs/PLUGIN-ARCHITECTURE-SPEC.md` |
+| Prepare a public/release pass | `npm run scan:private-defaults && npm run build` |
+
+---
+
+## Troubleshooting
+
+### Workspace loads but data looks empty
+
+- Confirm the API server is running on the port your frontend expects.
+- If using Vite, set `VITE_ENTITY_API_BASE=http://localhost:3000`.
+- Check browser devtools for failed `/api/*` or WebSocket requests.
+
+### WebSocket connection fails in Vite dev mode
+
+Set either a full URL or port override:
+
+```bash
+VITE_ENTITY_WS_URL=ws://localhost:3000 npm --prefix packages/app run dev
+# or
+VITE_ENTITY_WS_PORT=3000 npm --prefix packages/app run dev
+```
+
+### Build succeeds but the server serves an old UI
+
+Rebuild the frontend before starting the server:
+
+```bash
+npm --prefix packages/app run build
+PORT=3000 npm --prefix packages/server run dev
+```
+
+### Remote/LAN access fails
+
+- Bind the server to a reachable interface if your environment requires it.
+- Use the machine's LAN/VPN hostname in `VITE_ENTITY_API_BASE` and `VITE_ENTITY_WS_URL`.
+- Put auth/reverse-proxy controls in front of anything exposed beyond your own machine.
 
 ---
 
 ## Roadmap
 
-- [x] Shared file/document workspace
-- [x] Mission Control kanban/task board
-- [x] Agent dashboard and activity stream
-- [x] Agent-native editor foundations: comments, suggestions, presence, reviews
-- [x] Plugin/service registry foundations
-- [x] Chat and agent-routing surfaces
-- [x] Desktop shell
-- [x] Mobile shell
-- [ ] Public demo/default configuration
-- [ ] Portable first-run setup wizard
-- [ ] Browser pane / computer-use agent surface
-- [ ] Hardening pass for third-party installs
-- [ ] Hosted/public deployment guide
+### Shipped / present today
+
+| Feature | Status |
+|---|---|
+| Files / DocHub | Multi-source file browser, preview, edit, search, links, history |
+| Mission Control | Kanban/task board, task detail panels, notes, comments, activity, review routing |
+| Agent Dashboard | Agent registry/status, focus, activity, model/runtime metadata |
+| Agent-native editor foundations | Comments, suggestions, presence, reviews, shared state primitives |
+| Plugin/service registry | Entity services, plugins, Linker, Swarm/dispatch admin surfaces |
+| Chat surfaces | Thread/channel UI with routing and model-selection plumbing |
+| Desktop shell | Electron wrapper |
+| Mobile shell | Expo WebView shell |
+
+### In progress / next
+
+| Feature | Status |
+|---|---|
+| Public demo/default configuration | Needed for low-friction evaluation |
+| Portable first-run setup wizard | Planned |
+| Browser pane / computer-use surface | Planned |
+| Third-party install hardening | In progress |
+| Hosted/public deployment guide | Planned |
 
 ---
 
-## Documentation
+## Contributing
 
-Useful starting points:
+This repo is early public software, so small, proof-backed changes are best:
 
-- `docs/context/entity-context.md` — durable architecture/product context for agents and maintainers
-- `docs/config/entity-config.md` — configuration model
-- `docs/specs/settings-backed-portability-spec.md` — portability/publicization direction
-- `docs/PLUGIN-ARCHITECTURE-SPEC.md` — plugin architecture
-- `docs/ENTITY-PLUGIN-BUILD-GUIDE.md` — plugin build guide
+1. Keep changes focused and atomic.
+2. Run the relevant build/test gate before opening a PR.
+3. Do not commit local DBs, `.env` files, screenshots with private data, logs, or agent scratch artifacts.
+4. Include reproduction/verification notes for bug fixes.
+5. Update docs when behavior, setup, or configuration changes.
 
 ---
 
