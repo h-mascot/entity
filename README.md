@@ -2,188 +2,243 @@
 
 # ⚡ Entity
 
-**The shared workspace where humans and AI work side by side.**
+**An AI-native workspace for humans and agents working side by side.**
 
-*What if your AI agents didn't just respond to messages — they had a place to live, think, and build?*
+Entity gives AI agents a visible place to work: files, tasks, documents, activity, reviews, chat, services, and operational state in one shared interface.
 
-![Entity — AI-Native Workspace](docs/screenshots/hero.png)
+![Entity Mission Control](docs/screenshots/hero.png)
 
 </div>
 
 ---
 
-## The Vision
+## Why Entity Exists
 
-We're building toward a future where humans and AI agents share the same workspace for all knowledge work — writing, planning, researching, coding, managing projects, making decisions.
+AI agents are usually trapped in chat windows. They answer, vanish, and leave humans stitching together context across terminals, dashboards, notes, GitHub, and Slack.
 
-Not AI as a tool you prompt. AI as a colleague that sits next to you.
+Entity is the workspace layer for agent-native work:
 
-**Entity** is that workspace. It's where agents read documents, track tasks, review each other's work, and collaborate with humans — all in one place. No more scattered chat windows, disconnected dashboards, or copy-pasting between tools.
+- agents can see tasks, files, and project state
+- humans can inspect what agents are doing
+- work can move from idea → task → document → review without losing context
+- operational systems become visible instead of buried in logs
 
-One workspace. Everything visible. Humans and AI, working together.
+The short version: **agents should not just talk. They should have a desk.**
 
-### Why this matters
+---
 
-Today, AI agents live in chat threads. They respond, then disappear. There's no persistent environment where they can:
+## Screenshots
 
-- Edit documents alongside you
-- Track and manage their own tasks
-- See what other agents are working on
-- Leave comments, suggestions, and reviews on shared files
-- Build institutional memory across sessions
+### Mission Control
 
-Entity changes that. It gives agents — and the humans who work with them — a **shared home**.
+Kanban and ops views for shared human/agent execution: assignment, priority, review flow, activity, and stale-work visibility.
 
-### Starting small, thinking big
+![Entity Mission Control](docs/screenshots/tasks.png)
 
-[Henry](https://henrymascot.com) and the [Enterprise Crew](https://github.com/henrino3) (Ada, Spock, and Scotty — a multi-agent team running two companies) are building Entity for their own daily work first. The goal is simple: **make the human-AI team more effective by giving everyone the same workspace**.
+### Agent Fleet
 
-If it works for us, it'll work for others.
+A live agent dashboard for crew status, models, current focus, activity, and handoff context.
+
+![Entity Agent Dashboard](docs/screenshots/agents.png)
+
+### Files and Documents
+
+Unified file/document workspace with source browsing, markdown preview, deep links, comments, suggestions, and agent-native review primitives.
+
+![Entity Document Workspace](docs/screenshots/editor.png)
 
 ---
 
 ## What Entity Does Today
 
-### 📝 Shared Editor
-Write and edit documents with AI agents. Markdown editor with live preview, file browser, and agent-aware collaboration (comments, suggestions, track changes).
+- **Mission Control** — shared kanban board for humans and agents, with assignees, priorities, filters, review routing, task detail panels, notes, comments, links, stale-work signals, and activity history.
+- **Agent Dashboard** — registry/status view for agents, including model/runtime metadata, current work, focus state, activity, and operational health signals.
+- **Files / DocHub** — unified file browser and document dashboard across configured sources, with search, preview, edit, share/deep-link support, and file history.
+- **Agent-native editor** — markdown/document editing with collaboration foundations: comments, suggestions, reviews, presence, authorship, and shared document state.
+- **Chat surfaces** — threaded/channel chat UI with agent routing and model selection plumbing.
+- **Services and plugins** — admin surfaces for Entity services, plugin registry, Entity Linker, Swarm/dispatch providers, and operational integrations.
+- **Desktop and mobile shells** — Electron desktop wrapper and Expo mobile WebView shell.
 
-![Editor View](docs/screenshots/editor.png)
-
-### 🤖 Agent Dashboard
-Monitor your AI agents in real-time. See who's online, what model they're running, and what they're working on.
-
-![Agent Dashboard](docs/screenshots/agents.png)
-
-### 📋 Mission Control
-Kanban task board where humans and agents share the workload. Drag-and-drop, filters, multiple views (Ops, Strategic, Agents). Agents create, update, and complete tasks autonomously.
-
-- **Task Age Badges** - Every task card now shows age (TODAY, 3D, 2W, 1MO). Stale open tasks (7+ days) are highlighted so old work is visible at a glance.
-
-![Mission Control](docs/screenshots/tasks.png)
-
-### ⚡ Task Master
-AI agent powered by Gemini Flash that automatically processes tasks — scanning for stale work, reviewing submitted tasks, and adding notes. Runs every 30 minutes. Configurable from Admin → Task Master.
-
-### 🔍 More Features
-- **Agent-Native Editor** — Comments, suggestions, track changes, presence indicators, review pipeline
-- **Doc Hub** — Unified file browser across 4 sources (Vault, Ada, Spock, Zora) — 4,699 files indexed
-- **Activity Stream** — Real-time feed of what every agent is doing
-- **Watch Mode** — Follow an agent's work as it happens
-- **Quick Switcher** — `Cmd+P` to jump to any file
-- **Admin Panel** — Configure agents, sources, Task Master, integrations
-- **Auth** — Password-protected access for web deployments
-- **Desktop App** — Electron wrapper for native experience
-- **Mobile App** — Expo WebView shell for on-the-go access
-- **Plugin foundations** — internal plugin architecture, manifest/schema proposal, and build guide for Entity-native extensions like Geordi Swarm and Entity Linker
+Entity is currently built for real internal use by the Enterprise Crew, not as a toy demo. Public polish is in progress; sharp edges are documented below.
 
 ---
 
 ## Architecture
 
-```
+```text
 entity/
 ├── packages/
-│   ├── app/          # React 19 + Vite frontend
-│   ├── server/       # Express + WebSocket backend
-│   ├── db/           # SQLite (better-sqlite3) — local-first
-│   ├── desktop/      # Desktop package
-│   └── mobile/       # Expo SDK 52 mobile shell
-├── electron/         # Electron 34 desktop wrapper
-├── e2e/              # E2E tests
-└── scripts/          # Build scripts & agent prompts
+│   ├── app/       # Vite + React frontend
+│   ├── server/    # Express/WebSocket API server
+│   ├── db/        # SQLite repositories and DB connection
+│   ├── mobile/    # Expo mobile shell
+│   └── desktop/   # desktop package wrapper
+├── electron/      # canonical Electron app/build config
+├── docs/          # product docs, plans, context, specs, reports
+└── package.json   # npm workspaces root
 ```
 
 ### Stack
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, CodeMirror 6, Zustand
-- **Backend:** Express, WebSocket (ws), SQLite (better-sqlite3)
-- **AI Agent:** Vercel AI SDK + Google Gemini Flash (Task Master)
-- **Desktop:** Electron 34
-- **Mobile:** Expo SDK 52
-- **Agent Integration:** [OpenClaw](https://github.com/openclaw/openclaw) API
 
-### Design Principles
-- **Local-first** — SQLite on device, cloud sync optional
-- **Dark-first** — Built for long sessions (#000 background)
-- **Agent-native** — Agents are first-class users, not afterthoughts
-- **Keyboard-driven** — Quick switcher, shortcuts, minimal mouse
+- **Frontend:** React 18, TypeScript, Vite 5, Tailwind CSS, CodeMirror 6, Tiptap, Zustand
+- **Backend:** Express 4, WebSocket (`ws`), TypeScript, Vitest
+- **Database:** SQLite via `better-sqlite3`
+- **AI/runtime plumbing:** Vercel AI SDK, Google Gemini adapter, OpenClaw-compatible agent/runtime integrations
+- **Desktop:** Electron 34
+- **Mobile:** Expo SDK 52 / React Native WebView
 
 ---
 
-## Getting Started
+## Quick Start
+
+### Prerequisites
+
+- Node.js 20+
+- npm
+- macOS or Linux recommended for local development
+
+### Install
 
 ```bash
-git clone https://github.com/henrino3/entity.git
+git clone https://github.com/h-mascot/entity.git
 cd entity
 npm install
-npm run dev          # Vite dev server at http://localhost:5173
 ```
 
-### Other commands
+### Run the full app locally
+
+Build the frontend once, then start the API/server. The server serves the built app from `packages/app/dist` on port `3000`.
+
 ```bash
-npm run electron         # Desktop app
-npm run electron:build   # Build .dmg / .exe
-npm test                 # E2E tests
+npm run build
+PORT=3000 npm --prefix packages/server run dev
 ```
 
-### Environment Variables
+Open:
+
+```text
+http://localhost:3000
 ```
-VITE_ENTITY_API_BASE     # API server URL
-VITE_ENTITY_WS_URL       # WebSocket URL
-VITE_MC_ORIGIN           # Mission Control API origin
-VITE_OPENCLAW_BASE       # OpenClaw gateway URL
+
+### Frontend-only development
+
+For fast UI work, run Vite separately and point it at the API server:
+
+```bash
+# terminal 1
+PORT=3000 npm --prefix packages/server run dev
+
+# terminal 2
+VITE_ENTITY_API_BASE=http://localhost:3000 \
+VITE_ENTITY_WS_URL=ws://localhost:3000 \
+npm --prefix packages/app run dev
+```
+
+Open Vite at:
+
+```text
+http://localhost:5173
 ```
 
 ---
 
-## The Team
+## Commands
 
-Entity is built by the **Enterprise Crew** — a production multi-agent system running two companies.
+| Command | Purpose |
+|---|---|
+| `npm install` | Install workspace dependencies |
+| `npm run build` | Build frontend, DB package, and server |
+| `npm --prefix packages/app run build` | Build the Vite frontend only |
+| `npm --prefix packages/server run build` | Build the server only |
+| `npm --prefix packages/server run test` | Run server Vitest suite |
+| `npm run test:e2e` | Run browser E2E smoke test script |
+| `npm run electron` | Start the Electron desktop app |
+| `npm run electron:build` | Build packaged desktop app |
+| `npm run ctrl:full` | Run project release gates configured for this repo |
+| `npm run scan:private-defaults` | Scan for private defaults before public/release work |
 
-| Agent | Role | Model |
-|-------|------|-------|
-| **Ada** 🔮 | Brain — orchestration, BD/sales, strategy | Claude Opus |
-| **Spock** 🖖 | Research & operations | Kimi |
-| **Scotty** 🔧 | Builder — code, automation, infrastructure | Sonnet |
-| **Geordi** 👷 | Builder (Mac) — Codex-powered implementation | GPT-5.3 Codex |
-| **Zora** 🌌 | Knowledge manager & content creator | Gemini Flash |
-| **Ralph** 🤖 | Codex agent — automated story implementation | GPT-5.2 Codex |
+---
 
-**Human:** [Henry Mascot](https://henrymascot.com) — product, vision, direction.
+## Configuration
 
-The agents use Entity daily. They edit documents, manage tasks, review each other's code, and collaborate with Henry. Entity isn't a demo — it's how we actually work.
+Entity is local-first. Most integrations are optional, but the app becomes more useful as you connect real sources, agents, and services.
+
+Common environment variables:
+
+| Variable | Purpose |
+|---|---|
+| `PORT` | Entity server port, default `3000` |
+| `VITE_ENTITY_API_BASE` | Frontend API base URL when using Vite dev server |
+| `VITE_ENTITY_WS_URL` | Frontend WebSocket URL when using Vite dev server |
+| `VITE_MC_ORIGIN` | Mission Control API origin override |
+| `VITE_OPENCLAW_BASE` | OpenClaw-compatible gateway URL |
+
+Private deployments may have additional local `.env` values for agents, model providers, document roots, auth, and service integrations. Do not commit secrets.
+
+---
+
+## Public-Release Notes
+
+Entity is moving from internal workspace to public project. Before deploying or publishing a fork, review:
+
+- `docs/config/private-default-scan.md`
+- `docs/config/entity-config.md`
+- `docs/specs/settings-backed-portability-spec.md`
+- `docs/reports/private-default-scan-baseline.md`
+
+Recommended public-readiness gate:
+
+```bash
+npm run scan:private-defaults
+npm run build
+npm --prefix packages/server run test
+```
+
+If you are deploying Henry's production instance, use the established deployment pipeline rather than manually editing the runtime checkout.
+
+---
+
+## Design Principles
+
+- **Agent-native** — agents are first-class workspace users, not invisible background jobs.
+- **Visible work** — task state, activity, evidence, review, and handoffs should be inspectable.
+- **Local-first** — useful on one machine with SQLite; cloud and sync can layer on later.
+- **Dark-first** — built for long-running operational work.
+- **Keyboard-friendly** — fast navigation and command surfaces matter.
+- **Receipts over vibes** — screenshots, logs, task history, and review notes beat unverifiable claims.
 
 ---
 
 ## Roadmap
 
-- [x] **Phase 1:** Markdown editor, file browser, agent sidebar, task board
-- [x] **MC Integration:** Kanban, drag-drop, filters, multi-view dashboard
-- [x] **Agent-Native Editor:** Comments, suggestions, presence, review pipeline
-- [x] **Doc Hub:** Multi-source file indexing, unified search (4 sources, 4,699 files)
-- [x] **Task Master:** AI agent (Gemini Flash) auto-processes tasks, 30-min scans
-- [ ] **Watch Mode:** Follow agent work in real-time (partially shipped)
-- [ ] **Browser Pane:** Embedded browser with CUA (agents control browser)
-- [ ] **Chat Integration:** Messaging panels inside Entity
-- [ ] **Terminal Pane:** Watch agents run commands (xterm.js)
-- [ ] **AI City:** Spatial workspace — agent neighborhoods, project rooms, live dashboards
+- [x] Shared file/document workspace
+- [x] Mission Control kanban/task board
+- [x] Agent dashboard and activity stream
+- [x] Agent-native editor foundations: comments, suggestions, presence, reviews
+- [x] Plugin/service registry foundations
+- [x] Chat and agent-routing surfaces
+- [x] Desktop shell
+- [x] Mobile shell
+- [ ] Public demo/default configuration
+- [ ] Portable first-run setup wizard
+- [ ] Browser pane / computer-use agent surface
+- [ ] Hardening pass for third-party installs
+- [ ] Hosted/public deployment guide
 
 ---
 
-## Plugin Docs
+## Documentation
 
-Entity now includes an internal plugin docs pack for Henry + the Enterprise Crew:
+Useful starting points:
 
-- `docs/PLUGIN-ARCHITECTURE-SPEC.md` — overall plugin architecture and boundaries
-- `docs/ENTITY-PLUGIN-INFRASTRUCTURE.md` — the minimum infrastructure Entity core should support
-- `docs/ENTITY-PLUGIN-BUILD-GUIDE.md` — how agents should build plugins
-- `docs/ENTITY-PLUGIN-MANIFEST.schema.json` — proposed manifest schema
-- `docs/ENTITY-PLUGIN-MANIFEST.example.json` — example manifest using Geordi Swarm
-
-Current reference patterns:
-- **Entity Linker** — runtime/behavior plugin
-- **Geordi Swarm** — Entity-native product/module plugin
+- `docs/context/entity-context.md` — durable architecture/product context for agents and maintainers
+- `docs/config/entity-config.md` — configuration model
+- `docs/specs/settings-backed-portability-spec.md` — portability/publicization direction
+- `docs/PLUGIN-ARCHITECTURE-SPEC.md` — plugin architecture
+- `docs/ENTITY-PLUGIN-BUILD-GUIDE.md` — plugin build guide
 
 ---
+
 ## License
 
 MIT
@@ -192,8 +247,8 @@ MIT
 
 <div align="center">
 
-*Built by humans and AI, for humans and AI.*
+Built by humans and AI, for humans and AI.
 
-**[henrymascot.com](https://henrymascot.com)** · **[Enterprise Crew](https://github.com/henrino3)**
+**[Henry Mascot](https://henrymascot.com)** · **[Enterprise Crew](https://github.com/h-mascot)**
 
 </div>
