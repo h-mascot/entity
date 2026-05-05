@@ -14,7 +14,7 @@ ENTITY_DIR="${ENTITY_PROD_DIR:-/Users/enterprise/Services/entity}"
 MAC_ENTITY_DIR="${ENTITY_SOURCE_DIR:-${SCRIPT_DIR}}"
 RELEASE_CHECK_SCRIPT="${SCRIPT_DIR}/scripts/entity-release-check.sh"
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
-PROD_DB="${ENTITY_DIR}/packages/db/entity-tasks.db"
+PROD_DB="${ENTITY_PROD_DB:-${ENTITY_DIR}/packages/db/entity-tasks.db}"
 SERVER_DIST="${ENTITY_DIR}/packages/server/dist"
 FRONTEND_DIST="${ENTITY_DIR}/packages/app/dist"
 
@@ -129,7 +129,7 @@ fi
 # ============================================================
 # STEP 4: Verify symlink is intact on gateway
 # ============================================================
-SYMLINK_TARGET=$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "readlink -f '${SERVER_DIST}/db/entity-tasks.db' 2>/dev/null || echo NOT_A_SYMLINK")
+SYMLINK_TARGET=$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' '${SERVER_DIST}/db/entity-tasks.db' 2>/dev/null || echo NOT_A_SYMLINK")
 if [ "$SYMLINK_TARGET" != "${PROD_DB}" ]; then
   warn "DB symlink was broken on gateway. Fixing..."
   ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "rm -f '${SERVER_DIST}/db/entity-tasks.db' && ln -s '${PROD_DB}' '${SERVER_DIST}/db/entity-tasks.db'"

@@ -7,7 +7,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 PROD_HOST="${ENTITY_PROD_HOST:-enterprise@100.104.229.62}"
 PROD_HTTP_HOST="${ENTITY_PROD_HTTP_HOST:-100.104.229.62}"
 ENTITY_DIR="${ENTITY_PROD_DIR:-/Users/enterprise/Services/entity}"
-PROD_DB="${ENTITY_DIR}/packages/db/entity-tasks.db"
+PROD_DB="${ENTITY_PROD_DB:-${ENTITY_DIR}/packages/db/entity-tasks.db}"
 SERVER_DIST="${ENTITY_DIR}/packages/server/dist"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
 MIN_TASKS="${CTRL_DEPLOY_MIN_TASKS:-10}"
@@ -31,8 +31,8 @@ if (( REMOTE_COUNT < MIN_TASKS )); then
   fail "production DB has only ${REMOTE_COUNT} task(s), expected at least ${MIN_TASKS}"
 fi
 
-EXPECTED_DB_REALPATH="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "readlink -f '${PROD_DB}' 2>/dev/null || true")"
-SYMLINK_TARGET="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "readlink -f '${SERVER_DIST}/db/entity-tasks.db' 2>/dev/null || true")"
+EXPECTED_DB_REALPATH="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' '${PROD_DB}' 2>/dev/null || true")"
+SYMLINK_TARGET="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' '${SERVER_DIST}/db/entity-tasks.db' 2>/dev/null || true")"
 if [[ -z "${EXPECTED_DB_REALPATH}" ]]; then
   fail "could not resolve production DB realpath for ${PROD_DB}"
 fi

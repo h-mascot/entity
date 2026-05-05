@@ -28,20 +28,16 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.repository == 'h-mascot/entity'
     steps:
       - name: Check deploy secrets
-        id: deploy-secrets
         env:
           DEPLOY_URL: ${{ secrets.WEBHOOK_DEPLOY_URL }}
           DEPLOY_TOKEN: ${{ secrets.WEBHOOK_DEPLOY_TOKEN }}
         run: |
           if [ -z "$DEPLOY_URL" ] || [ -z "$DEPLOY_TOKEN" ]; then
-            echo "::warning::Public repo deploy secrets are not configured. Add WEBHOOK_DEPLOY_URL and WEBHOOK_DEPLOY_TOKEN to h-mascot/entity to enable production deploys."
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Public repo deploy webhook secrets are not configured. Add WEBHOOK_DEPLOY_URL and WEBHOOK_DEPLOY_TOKEN to h-mascot/entity."
+            exit 1
           fi
-          echo "configured=true" >> "$GITHUB_OUTPUT"
 
       - name: Trigger Webhook Deploy
-        if: steps.deploy-secrets.outputs.configured == 'true'
         env:
           DEPLOY_URL: ${{ secrets.WEBHOOK_DEPLOY_URL }}
           DEPLOY_TOKEN: ${{ secrets.WEBHOOK_DEPLOY_TOKEN }}
@@ -57,7 +53,6 @@ jobs:
             "docId": "entity-deploy-${{ github.run_id }}"
           }
           EOF)
-          echo "Deploy body: $DEPLOY_BODY"
           RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST "$DEPLOY_URL" \
             -H "Authorization: Bearer $DEPLOY_TOKEN" \
             -H "Content-Type: application/json" \
