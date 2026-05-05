@@ -1,24 +1,65 @@
+# Dependencies and build outputs
 node_modules/
 .venv/
 dist/
 .vite/
+renderer/
+packages/app/dist_backup/
+packages/server/dist_backup/
+
+# Packaged artifacts
 *.dmg
 *.blockmap
+
+# Local OS/editor/runtime files
 .DS_Store
-renderer/
-node_modules/
 .env
 .env.*
 !.env.example
 !.env.sample
-codedb.snapshot
+*.log
+*.pid
+*.backup
+*.bak
 *.patch
-packages/app/dist_backup/
-packages/server/dist_backup/
-packages/db/entity-tasks.db
-entity.db
+codedb.snapshot
+
+# Local agent/runtime clutter - do not publish
+.claude/
+artifacts/
+memory/
+output/
+test-results/
+
+# Local planning/proof/spec scratch files from agent runs
+/ADA_SWARM_PROOF*.md
+/CODEX-TASK.md
+/COLLAB-SPEC.md
+/CONTEXT.md
+/*PRD*.md
+/*SPEC*.md
+/SPEC-*.md
+/TASK_*.md
+/TESTING.md
+/TODO.md
+/task_plan.md
+/notes.md
+/*-prompt*.txt
+/*-prompt*.md
+
+# Temporary local scripts used for patching/proof runs
+/add-docs-code.py
+/add-moderators-script.js
+/commit-context*.sh
+/entity-share-shot.mjs
+/patch*.js
+/run-*.sh
+/MC-SERVER-REFERENCE.js
+/copilot-instructions.md
 
 # Database files - NEVER track these
+packages/db/entity-tasks.db
+entity.db
 *.db
 *.db-shm
 *.db-wal
