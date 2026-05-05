@@ -317,7 +317,7 @@ const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   enterprise: 'Openclaw',
   taskMaster: 'Task Master',
 };
-type AppTheme = 'dark' | 'light' | 'kitz';
+type AppTheme = 'dark' | 'light' | 'kitz' | 'nebula' | 'aurora' | 'paper';
 type EditorCollaborationMode = 'editing' | 'suggesting' | 'viewing';
 type DocsTtsProvider = DocsTtsSettings['provider'];
 type DocsTtsProviderOption = {
@@ -929,7 +929,7 @@ function normalizeTheme(value: string | null): AppTheme {
     return 'kitz';
   }
 
-  if (value === 'light' || value === 'kitz' || value === 'dark') {
+  if (value === 'light' || value === 'kitz' || value === 'dark' || value === 'nebula' || value === 'aurora' || value === 'paper') {
     return value;
   }
   return 'dark';
@@ -3758,6 +3758,9 @@ export default function App() {
                       { value: 'dark', label: 'Dark', hint: 'Classic black shell' },
                       { value: 'light', label: 'Light', hint: 'Clean white workspace' },
                       { value: 'kitz', label: 'Kitz', hint: 'Enterprise gradient dark' },
+                      { value: 'nebula', label: 'Nebula', hint: 'Glassy blue violet' },
+                      { value: 'aurora', label: 'Aurora', hint: 'Mint peach glass' },
+                      { value: 'paper', label: 'Paper', hint: 'Tactile notebook workspace' },
                     ] as const).map((option) => (
                       <button
                         key={option.value}

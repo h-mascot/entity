@@ -143,6 +143,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [isLoadingTargets, setIsLoadingTargets] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   sessionRef.current = session;
 
@@ -270,6 +271,26 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
       fitAddonRef.current = null;
     };
   }, [fitTerminal, isOpen, writeBanner]);
+
+  useEffect(() => {
+    if (typeof MutationObserver === 'undefined') {
+      return;
+    }
+
+    const updateTheme = () => {
+      const terminal = terminalRef.current;
+      if (!terminal) {
+        return;
+      }
+      terminal.options.theme = createTerminalTheme();
+      fitTerminal();
+    };
+
+    updateTheme();
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, [fitTerminal]);
 
   useEffect(() => {
     let disposed = false;
@@ -463,7 +484,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
       return;
     }
     fitTerminal();
-  }, [fitTerminal, isOpen]);
+  }, [fitTerminal, isFullscreen, isOpen]);
 
   const currentTargetMeta = useMemo(
     () => targetOptions.find((target) => target.id === selectedTarget) ?? targetOptions[0] ?? FALLBACK_TARGETS[0],
@@ -477,7 +498,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
         ? 'entity-terminal-chip-error'
         : 'entity-terminal-chip-muted';
   return (
-    <div className="border-t border-[var(--border-primary)] bg-[var(--bg-primary)]">
+    <div className={`entity-terminal-root border-t border-[var(--border-primary)] bg-[var(--bg-primary)] ${isFullscreen ? 'entity-terminal-fullscreen' : ''}`}>
       <button
         type="button"
         onClick={onToggleOpen}
@@ -520,6 +541,17 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
             disabled={isStarting}
           >
             {session ? 'Reconnect' : 'Start'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsFullscreen((value) => !value);
+              window.setTimeout(fitTerminal, 0);
+            }}
+            className="mc-shell-btn entity-terminal-action px-2.5 py-1 text-xs text-[var(--text-primary)]"
+            aria-pressed={isFullscreen}
+          >
+            {isFullscreen ? 'Dock' : 'Full'}
           </button>
           <div className="entity-terminal-description min-w-0 flex-1 truncate text-[11px] text-[var(--text-muted)]">
             {currentTargetMeta?.description ?? 'Embedded shell'}
