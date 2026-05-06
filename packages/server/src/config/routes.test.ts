@@ -1,9 +1,13 @@
 import Database from 'better-sqlite3';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { registerConfigRoutes } from './routes';
+import { registerConfigRoutes, resolveEntityMcBundlePath } from './routes';
 
 const db = new Database(':memory:');
+const tmpDirs: string[] = [];
 
 vi.mock('../../../db/src/entity-db', () => ({
   getEntityDatabase: (initializer?: (database: Database.Database) => void) => {
@@ -37,6 +41,9 @@ describe('config routes', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    for (const dir of tmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('returns effective config with source metadata', async () => {
@@ -104,7 +111,7 @@ describe('config routes', () => {
       const res = await fetch(`${server.baseUrl}/api/config/effective`);
       expect(res.status).toBe(200);
       const body = await res.json() as any;
-      expect(body.settings.agents).toEqual([
+      expect(body.settings.agents).toEqual(expect.arrayContaining([
         expect.objectContaining({
           id: 'agent-alpha',
           name: 'Agent Alpha',
@@ -112,9 +119,11 @@ describe('config routes', () => {
           enabled: true,
           gateway: expect.objectContaining({ type: 'local', tokenRef: '[REDACTED]' }),
         }),
-      ]);
+      ]));
+      expect(body.settings.agents).toHaveLength(2);
       expect(body.sources['agents'].source).toBe('database');
-      expect(body.sources['agents[0].name'].source).toBe('database');
+      const agentNameSource = body.sources['agents[1].name'] ?? body.sources['agents[0].name'];
+      expect(agentNameSource.source).toBe('database');
     } finally {
       await server.close();
     }
@@ -245,8 +254,8 @@ describe('config routes', () => {
       const manifest = await manifestRes.json() as any;
       expect(manifest.entityMc.name).toBe('entity-mc');
       expect(manifest.entityMc.bundlePath).toBeUndefined();
-      expect(manifest.entityMc.bundleUrl).toBe(`/api/onboarding/agent-session/${created.token}/bundle`);
-      expect(manifest.entityMc.progressUrl).toBe(`/api/onboarding/agent-session/${created.token}/progress`);
+      expect(manifest.entityMc.bundleUrl).toBe(`${server.baseUrl}/api/onboarding/agent-session/${created.token}/bundle`);
+      expect(manifest.entityMc.progressUrl).toBe(`${server.baseUrl}/api/onboarding/agent-session/${created.token}/progress`);
       expect(manifest.checklist).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'skill', label: 'Entity MC skill installed' }),
       ]));
@@ -280,4 +289,17 @@ describe('config routes', () => {
       await server.close();
     }
   });
+
+  it('resolves the Entity MC bundle from the repo root in built-server layouts', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-mc-root-'));
+    tmpDirs.push(repo);
+    const bundle = path.join(repo, 'skills/entity-mc');
+    fs.mkdirSync(bundle, { recursive: true });
+    fs.writeFileSync(path.join(bundle, 'SKILL.md'), '# Entity MC\n');
+
+    const distDirname = path.join(repo, 'packages/server/dist/server/src/config');
+
+    expect(resolveEntityMcBundlePath(repo, distDirname)).toBe(bundle);
+  });
+
 });

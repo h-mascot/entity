@@ -46,18 +46,18 @@ export function deepMerge(base: unknown, override: unknown): unknown {
 
 function assignSource(sources: Record<string, SourceMetadata>, value: unknown, source: ConfigSource, prefix = ''): void {
   if (Array.isArray(value)) {
-    sources[prefix] = metadataFor(prefix, source);
+    setSourceMetadata(sources, prefix, source);
     value.forEach((item, index) => assignSource(sources, item, source, `${prefix}[${index}]`));
     return;
   }
   if (isPlainObject(value)) {
-    if (prefix) sources[prefix] = metadataFor(prefix, source);
+    if (prefix) setSourceMetadata(sources, prefix, source);
     for (const [key, child] of Object.entries(value)) {
       assignSource(sources, child, source, prefix ? `${prefix}.${key}` : key);
     }
     return;
   }
-  if (prefix) sources[prefix] = metadataFor(prefix, source);
+  if (prefix) setSourceMetadata(sources, prefix, source);
 }
 
 function metadataFor(path: string, source: ConfigSource): SourceMetadata {
@@ -73,6 +73,11 @@ function metadataFor(path: string, source: ConfigSource): SourceMetadata {
     requiresRestart: bootstrap,
     overriddenBy: null,
   };
+}
+
+function setSourceMetadata(sources: Record<string, SourceMetadata>, path: string, source: ConfigSource): void {
+  const previousSource = sources[path]?.source ?? null;
+  sources[path] = { ...metadataFor(path, source), overriddenBy: previousSource };
 }
 
 
@@ -194,7 +199,7 @@ export function buildEffectiveConfig(options: { db?: Database.Database; cwd?: st
     const dbAgents = loadDbAgents(options.db);
     if (dbAgents.length > 0) {
       const agentValue = { agents: dbAgents };
-      merged = { ...(isPlainObject(merged) ? merged : {}), ...agentValue };
+      merged = deepMerge(merged, agentValue);
       assignSource(sources, agentValue, 'database');
     }
 

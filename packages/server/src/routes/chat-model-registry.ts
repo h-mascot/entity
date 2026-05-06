@@ -74,6 +74,7 @@ const OPENCLAW_LOCAL_PROVIDERS = new Set([
 
 const FALLBACK_AGENT_MODELS: Record<string, Array<Omit<ChatModelOption, 'allowed' | 'available' | 'source'>>> = {
   ada: [
+    { id: 'openai-codex/gpt-5.5', name: 'GPT-5.5 Instant', provider: 'openai-codex', isLocal: false },
     { id: 'anthropic/claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', isLocal: false },
     { id: 'openai-codex/gpt-5.3-codex', name: 'GPT-5.3 Codex', provider: 'openai-codex', isLocal: false },
     { id: 'zai/glm-5', name: 'GLM 5', provider: 'zai', isLocal: false },

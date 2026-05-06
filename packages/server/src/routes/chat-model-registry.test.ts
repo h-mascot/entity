@@ -62,6 +62,25 @@ describe('chat model registry', () => {
     expect(book.local.map((model) => model.id)).toEqual([]);
   });
 
+  it('uses GPT-5.5 Instant as the fallback OpenClaw default for Entity cron and builder sessions', async () => {
+    const registry = new ChatModelRegistry({
+      env: { OPENCLAW_HOME: '/tmp/no-openclaw-home', OPENCLAW_CLI: '/no/such/openclaw' },
+      localInventory: async () => [],
+      fetchImpl: (async () => new Response('not found', { status: 404 })) as typeof fetch,
+      now: () => new Date('2026-05-06T08:00:00.000Z'),
+    });
+
+    const ada = await registry.buildResponse(['ada']);
+    expect(ada.source).toBe('fallback');
+    expect(ada.defaultModel).toBe('openai-codex/gpt-5.5');
+    expect(ada.models?.[0]).toMatchObject({
+      id: 'openai-codex/gpt-5.5',
+      name: 'GPT-5.5 Instant',
+      provider: 'openai-codex',
+      isLocal: false,
+    });
+  });
+
   it('loads OpenClaw models through the gateway env and auth token before using fallback models', async () => {
     const seen: Array<{ url: string; auth?: string }> = [];
     const dir = await mkdtemp(path.join(tmpdir(), 'openclaw-empty-home-'));

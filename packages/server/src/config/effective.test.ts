@@ -80,4 +80,35 @@ describe('settings-backed effective config', () => {
     expect(JSON.parse(row.value_json).profile.displayName).toBe('Migrated');
     expect(row.updated_by).toBe('test');
   });
+
+  it('tracks previous config layer when a setting is overridden', () => {
+    vi.stubEnv('ENTITY_PUBLIC_BASE_URL', 'https://env.example.test');
+    const result = buildEffectiveConfig({
+      loaded: {
+        defaults: EntityConfigSchema.parse({}),
+        profile: { server: { publicBaseUrl: 'https://profile.example.test' } } as any,
+        config: { server: { publicBaseUrl: 'https://config.example.test' } } as any,
+        configPath: '/tmp/entity.config.yaml',
+        profilePath: '/tmp/profile.yaml',
+        warnings: [],
+      },
+    });
+
+    expect((result.settings as any).server.publicBaseUrl).toBe('https://env.example.test');
+    expect(result.sources['server.publicBaseUrl']).toMatchObject({
+      source: 'env',
+      overriddenBy: 'config',
+    });
+    vi.unstubAllEnvs();
+  });
+
+  it('preserves configured agents when runtime agents add new ids', () => {
+    const merged = deepMerge(
+      { agents: [{ id: 'assistant', name: 'Assistant', role: 'general' }] },
+      { agents: [{ id: 'runtime-agent', name: 'Runtime Agent', role: 'ops' }] },
+    ) as any;
+
+    expect(merged.agents.map((agent: { id: string }) => agent.id)).toEqual(['assistant', 'runtime-agent']);
+  });
+
 });

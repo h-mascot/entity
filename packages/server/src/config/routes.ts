@@ -10,7 +10,22 @@ import { ensureAppSettingsTable, getSettingJson, setSettingJson } from './settin
 const ONBOARDING_STATE_KEY = 'onboarding.state';
 const ONBOARDING_AGENT_SESSION_PREFIX = 'onboarding.agentSession.';
 const AGENT_SESSION_TTL_MS = 30 * 60 * 1000;
-const ENTITY_MC_BUNDLE_PATH = path.resolve(__dirname, '../../../../skills/entity-mc');
+export function resolveEntityMcBundlePath(cwd = process.cwd(), dirname = __dirname): string {
+  const candidates = [
+    path.resolve(cwd, 'skills/entity-mc'),
+    path.resolve(dirname, '../../../../skills/entity-mc'),
+    path.resolve(dirname, '../../../../../skills/entity-mc'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, 'SKILL.md'))) ?? candidates[0];
+}
+
+function absoluteRequestUrl(req: express.Request, routePath: string): string {
+  const configuredBase = process.env.ENTITY_PUBLIC_BASE_URL?.trim().replace(/\/$/, '');
+  const fallbackBase = `${req.protocol}://${req.get('host') ?? 'localhost:3000'}`;
+  return `${configuredBase || fallbackBase}${routePath}`;
+}
+
+const ENTITY_MC_BUNDLE_PATH = resolveEntityMcBundlePath();
 const ENTITY_MC_ALLOWED_FILES = [
   'SKILL.md',
   'VERSION',
@@ -71,7 +86,11 @@ function buildDefaultProgress() {
   ];
 }
 
-function buildAgentManifest(session: OnboardingAgentSession) {
+function buildAgentManifest(session: OnboardingAgentSession, req: express.Request) {
+  const encodedToken = encodeURIComponent(session.token);
+  const skillPath = `/api/onboarding/agent-session/${encodedToken}/skill`;
+  const bundlePath = `/api/onboarding/agent-session/${encodedToken}/bundle`;
+  const progressPath = `/api/onboarding/agent-session/${encodedToken}/progress`;
   return {
     version: 1,
     token: session.token,
@@ -81,9 +100,14 @@ function buildAgentManifest(session: OnboardingAgentSession) {
     onboarding: session.state,
     entityMc: {
       name: 'entity-mc',
-      skillUrl: `/api/onboarding/agent-session/${encodeURIComponent(session.token)}/skill`,
-      bundleUrl: `/api/onboarding/agent-session/${encodeURIComponent(session.token)}/bundle`,
-      progressUrl: `/api/onboarding/agent-session/${encodeURIComponent(session.token)}/progress`,
+      skillUrl: absoluteRequestUrl(req, skillPath),
+      bundleUrl: absoluteRequestUrl(req, bundlePath),
+      progressUrl: absoluteRequestUrl(req, progressPath),
+      paths: {
+        skill: skillPath,
+        bundle: bundlePath,
+        progress: progressPath,
+      },
       install: 'Run install.sh from the entity-mc bundle with --entity-url and --token, then run verify.sh.',
       verify: 'verify.sh must print VERIFY_OK before setup is marked complete.',
     },
@@ -218,7 +242,7 @@ export function registerConfigRoutes(app: express.Express): void {
       if (opened !== session) {
         setSettingJson(db, `${ONBOARDING_AGENT_SESSION_PREFIX}${session.token}`, opened, 'onboarding-agent');
       }
-      res.json(buildAgentManifest(opened));
+      res.json(buildAgentManifest(opened, req));
     } catch (error) {
       res.status(400).json({
         error: 'Failed to load agent setup manifest',

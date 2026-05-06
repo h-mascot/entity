@@ -457,7 +457,7 @@ export default function OnboardingFlow({
     avatarUrl: userProfile.avatarUrl,
     workspaceName: 'Entity Workspace',
     publicUrl: typeof window === 'undefined' ? 'http://localhost:3000' : window.location.origin,
-    sourcePath: '/Users/henrymascot/Code/entity',
+    sourcePath: '',
     githubUrl: '',
   });
 
@@ -653,9 +653,11 @@ export default function OnboardingFlow({
         setSourceStatus('ok');
         return;
       }
+      const sourceValue = state.firstSourceMode === 'github' ? profileDraft.githubUrl.trim() : profileDraft.sourcePath.trim();
+      if (!sourceValue) throw new Error('source path required');
       const payload = state.firstSourceMode === 'github'
         ? { displayName: 'GitHub source', type: 'github', baseUrl: profileDraft.githubUrl, icon: '⚡' }
-        : { displayName: 'Entity source', type: 'local', basePath: profileDraft.sourcePath, icon: '⚡' };
+        : { displayName: 'Workspace source', type: 'local', basePath: sourceValue, icon: '⚡' };
       const res = await fetch(apiPath(apiBase, '/api/sources'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -675,6 +677,8 @@ export default function OnboardingFlow({
   const skillUrl = activeToken ? absoluteUrl(apiPath(apiBase, `/api/onboarding/agent-session/${encodeURIComponent(activeToken)}/skill`)) : '';
   const progressUrl = activeToken ? absoluteUrl(apiPath(apiBase, `/api/onboarding/agent-session/${encodeURIComponent(activeToken)}/progress`)) : '';
   const entityOrigin = typeof window === 'undefined' ? profileDraft.publicUrl : window.location.origin;
+  const firstSourceValue = state.firstSourceMode === 'github' ? profileDraft.githubUrl.trim() : profileDraft.sourcePath.trim();
+  const canTestSource = state.firstSourceMode === 'skip' || firstSourceValue.length > 0;
   const agentPrompt = activeToken ? [
     'You are setting up Entity for this user. Complete only the onboarding setup described below.',
     '',
@@ -1226,9 +1230,10 @@ export default function OnboardingFlow({
                             />
                           </span>
                         )}
-                        <button type="button" onClick={() => void testSource()} className="onboarding-action-secondary mt-2 justify-center px-4 py-2">
+                        <button type="button" onClick={() => void testSource()} disabled={!canTestSource || sourceStatus === 'testing'} className="onboarding-action-secondary mt-2 justify-center px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50">
                           {sourceStatus === 'testing' ? 'Testing...' : 'Test source'}
                         </button>
+                        {!canTestSource && <StatusChip tone="neutral">Enter a source path or choose skip</StatusChip>}
                         {sourceStatus === 'ok' && <StatusChip tone="success">Reachable</StatusChip>}
                         {sourceStatus === 'error' && <StatusChip tone="warning">Needs Admin follow-up</StatusChip>}
                       </div>
