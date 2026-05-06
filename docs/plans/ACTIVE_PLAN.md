@@ -19,7 +19,7 @@ Package Helm/Entity-facing Helm surface for external onboarding: reconcile sourc
   - Verify: server/app tests and build.
 - [x] Browser-click onboarding/config flow proof.
   - Verify: browser navigation + screenshot/console/API evidence.
-- [ ] Commit cleanly and produce MC review evidence.
+- [x] Commit cleanly and produce MC review evidence.
   - Verify: clean branch/commits, build/test pass; deploy proof only if approved/safe.
 
 ## Progress log
