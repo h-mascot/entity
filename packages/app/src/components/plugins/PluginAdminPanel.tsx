@@ -101,6 +101,170 @@ function ProviderStatusBadge({ provider }: { provider: SwarmProviderUIEntry }) {
   );
 }
 
+
+interface NodeOperationMetric {
+  count: number;
+  success: number;
+  error: number;
+  avgDurationMs?: number;
+  errorRate?: number;
+  lastAt?: string | null;
+}
+
+interface NodeOperationStatus {
+  id: string;
+  label: string;
+  method: string;
+  path: string;
+  enabled: boolean;
+  description: string;
+  metric?: NodeOperationMetric | null;
+}
+
+interface NodeOperationSourceStatus {
+  id: string;
+  displayName: string;
+  type: string;
+  enabled: boolean;
+  health: string;
+  lastSyncedAt?: string | null;
+  lastError?: string | null;
+}
+
+interface WebhookIngressStatus {
+  id: string;
+  label: string;
+  method: string;
+  path: string;
+  enabled: boolean;
+  auth: string;
+  env?: string;
+  description: string;
+}
+
+interface NodeOperationsStatusResponse {
+  generatedAt: string;
+  fileTransfer: {
+    enabled: boolean;
+    operations: NodeOperationStatus[];
+    sources: NodeOperationSourceStatus[];
+  };
+  webhooks: {
+    routes: WebhookIngressStatus[];
+  };
+}
+
+function compactNumber(value: number | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '0';
+  return value > 999 ? value.toLocaleString() : String(value);
+}
+
+function NodeOperationsStatusPanel({ apiBase = '' }: { apiBase?: string }) {
+  const [status, setStatus] = useState<NodeOperationsStatusResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const base = apiBase.replace(/\/$/, '');
+
+  const loadStatus = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${base}/api/node-operations`);
+      if (!res.ok) throw new Error(`Node operations status failed: ${res.status}`);
+      setStatus((await res.json()) as NodeOperationsStatusResponse);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load node operations status.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadStatus();
+  }, [apiBase]);
+
+  const activeTransferOps = status?.fileTransfer.operations.filter((operation) => operation.enabled).length ?? 0;
+  const webhookRoutes = status?.webhooks.routes ?? [];
+  const configuredWebhooks = webhookRoutes.filter((route) => route.enabled).length;
+
+  return (
+    <section className="rounded-xl border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-[var(--text-primary)]">Node operations</div>
+          <div className="text-xs text-[var(--text-muted)]">
+            OpenClaw 2026.5.3 file transfer and webhook ingress status surfaced from server capabilities.
+          </div>
+        </div>
+        <button type="button" onClick={() => void loadStatus()} className="mc-shell-btn px-3 py-1 text-xs" disabled={loading}>
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && <div className="mb-3 rounded border border-[var(--error)]/40 bg-[var(--error)]/10 p-2 text-xs text-[var(--error)]">{error}</div>}
+
+      {status ? (
+        <div className="grid gap-3 lg:grid-cols-3">
+          <div className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] p-3">
+            <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">File transfer</div>
+            <div className="mt-2 text-sm text-[var(--text-primary)]">
+              {activeTransferOps}/{status.fileTransfer.operations.length} operations available
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {status.fileTransfer.operations.map((operation) => (
+                <span
+                  key={operation.id}
+                  title={`${operation.method} ${operation.path} — ${operation.description}`}
+                  className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                    operation.enabled
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                      : 'border-[var(--border-primary)] bg-[var(--bg-tertiary)] text-[var(--text-muted)]'
+                  }`}
+                >
+                  {operation.id} · {compactNumber(operation.metric?.count)}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] p-3">
+            <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">Sources</div>
+            <div className="mt-2 text-sm text-[var(--text-primary)]">
+              {status.fileTransfer.sources.filter((source) => source.enabled).length}/{status.fileTransfer.sources.length} enabled
+            </div>
+            <div className="mt-2 space-y-1 text-xs text-[var(--text-muted)]">
+              {status.fileTransfer.sources.slice(0, 4).map((source) => (
+                <div key={source.id} className="flex justify-between gap-2">
+                  <span className="truncate">{source.displayName}</span>
+                  <span className={source.health === 'ok' ? 'text-emerald-300' : 'text-amber-300'}>{source.health}</span>
+                </div>
+              ))}
+              {status.fileTransfer.sources.length === 0 && <span>No sources configured.</span>}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] p-3">
+            <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">Webhook ingress</div>
+            <div className="mt-2 text-sm text-[var(--text-primary)]">
+              {configuredWebhooks}/{webhookRoutes.length} routes configured
+            </div>
+            <div className="mt-2 space-y-1 text-xs text-[var(--text-muted)]">
+              {webhookRoutes.map((route) => (
+                <div key={route.id} title={route.description} className="flex justify-between gap-2">
+                  <span className="truncate">{route.method} {route.path}</span>
+                  <span className={route.enabled ? 'text-emerald-300' : 'text-amber-300'}>{route.auth}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : !loading ? (
+        <div className="text-xs text-[var(--text-muted)]">Node operations status has not loaded yet.</div>
+      ) : null}
+    </section>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string }) {
@@ -192,6 +356,8 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
 
   return (
     <div className="space-y-4">
+      <NodeOperationsStatusPanel apiBase={apiBase} />
+
       {/* Tab header */}
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-primary)] pb-3">
         <div className="flex gap-1 rounded-lg border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-1">

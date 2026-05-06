@@ -1,4 +1,4 @@
-type OperationBucket = {
+export type OperationBucket = {
   count: number;
   success: number;
   error: number;
@@ -7,7 +7,7 @@ type OperationBucket = {
   lastAt: string | null;
 };
 
-type SourceMetricBucket = {
+export type SourceMetricBucket = {
   sourceId: string;
   operations: Record<string, OperationBucket>;
   lastError: string | null;
@@ -94,6 +94,15 @@ function withDerived(bucket: OperationBucket) {
     avgDurationMs: bucket.count > 0 ? Math.round((bucket.totalDurationMs / bucket.count) * 100) / 100 : 0,
     errorRate: bucket.count > 0 ? Math.round((bucket.error / bucket.count) * 10000) / 100 : 0,
   };
+}
+
+export function resetFsMetricsForTests(): void {
+  for (const key of Object.keys(operationTotals)) {
+    delete operationTotals[key];
+  }
+  for (const key of Object.keys(perSource)) {
+    delete perSource[key];
+  }
 }
 
 export function getFsMetricsSnapshot() {

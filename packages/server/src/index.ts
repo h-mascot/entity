@@ -103,6 +103,7 @@ import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
 import { normalizeTaskOutputLinks } from "./task-output-links";
 import { collectAgentMetrics } from "./agent-metrics";
+import { registerNodeOperationsRoutes } from "./node-operations";
 import {
   resolveFrontendDist,
   sendIndexNoCache,
@@ -5448,6 +5449,7 @@ registerPluginManagementRoutes({
   app,
   registry: pluginRegistry,
 });
+registerNodeOperationsRoutes(app);
 
 // Chat routes
 registerChatRoutes({ app, openClawBaseUrl: OPENCLAW });
