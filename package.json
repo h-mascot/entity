@@ -14,7 +14,10 @@
     "test:docker": "npm run test:deploy",
     "ctrl:gate": "bash scripts/ctrl-gate-runner.sh",
     "ctrl:full": "npm run ctrl:gate && npm run test:live && npm run test:deploy",
-    "scan:private-defaults": "node scripts/scan-private-defaults.mjs"
+    "scan:private-defaults": "node scripts/scan-private-defaults.mjs",
+    "setup": "node scripts/setup.mjs",
+    "dev": "bash dev.sh",
+    "doctor": "node scripts/doctor.mjs"
   },
   "workspaces": [
     "packages/*",
@@ -26,6 +29,7 @@
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
+    "yaml": "^2.8.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {

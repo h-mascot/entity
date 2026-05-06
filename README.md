@@ -18,13 +18,14 @@ Entity gives agents a real operating surface: tasks, files, documents, chat, act
 git clone https://github.com/h-mascot/entity.git
 cd entity
 npm install
-npm run build
-PORT=3000 npm --prefix packages/server run dev
+npm run setup
+npm run doctor
+npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000` for the API-served app or `http://localhost:5173` for the Vite dev UI.
 
-Entity is currently a real internal workspace moving into public form. It is useful now if you are comfortable running from source; a smoother first-run/demo path is on the roadmap.
+Entity is currently a real workspace moving into public form. Fresh installs use localhost-only defaults, one generic Assistant agent, and no private service catalog until you configure one.
 
 ---
 
@@ -91,8 +92,11 @@ The short version: **agents should not just talk. They should have a desk.**
 git clone https://github.com/h-mascot/entity.git
 cd entity
 npm install
-cp .env.example .env
+npm run setup
+npm run doctor
 ```
+
+`npm run setup` creates `entity.config.yaml`, `.env`, and local workspace/data/log directories from safe public examples. Edit `entity.config.yaml` to add your own agents, file sources, services, providers, or deploy profile.
 
 ### Run the full app locally
 
@@ -100,14 +104,16 @@ The server serves the built frontend from `packages/app/dist` on port `3000`.
 
 ```bash
 npm run build
-PORT=3000 npm --prefix packages/server run dev
+npm run dev
 ```
 
 Open:
 
 ```text
-http://localhost:3000
+http://localhost:5173
 ```
+
+The API server still serves the built frontend from `packages/app/dist` on port `3000`; the dev script also starts Vite for frontend iteration.
 
 ### Frontend-only development
 
@@ -148,6 +154,9 @@ npm run electron:build
 | Command | Purpose |
 |---|---|
 | `npm install` | Install workspace dependencies |
+| `npm run setup` | Create local `entity.config.yaml`, `.env`, and workspace/data/log directories from safe public defaults |
+| `npm run dev` | Start the local API server and Vite app using `entity.config.yaml` / `.env` |
+| `npm run doctor` | Validate local setup, config safety, required files, and port availability |
 | `npm run build` | Build frontend, DB package, and server |
 | `npm --prefix packages/app run build` | Build the Vite frontend only |
 | `npm --prefix packages/server run build` | Build the server only |
@@ -163,6 +172,16 @@ npm run electron:build
 ## Configuration
 
 Entity is local-first. Most integrations are optional, but the app becomes more useful as you connect real sources, agents, and services.
+
+Configuration lives in:
+
+- `entity.config.yaml` — durable non-secret workspace, agent, file-source, service, provider, terminal, and deploy settings.
+- `.env` — local process overrides and secret references only.
+- Admin/runtime settings — values written by the app and exposed through `GET /api/config/effective`.
+
+Public defaults are intentionally boring: localhost URLs, local SQLite paths, one generic `assistant` agent, no terminal targets, and no private services. Deployment is local/dry-run by default; SSH deployment requires explicit `deploy.mode: ssh` plus `deploy.sshTarget`, `deploy.httpHost`, and `deploy.remoteDir` or equivalent environment variables.
+
+See `docs/config/entity-config.md` and `docs/config/entity.config.example.yaml`. Private operator profiles belong outside public defaults; the historical internal profile is documented under `docs/internal/`.
 
 Common environment variables:
 
@@ -342,7 +361,5 @@ MIT
 <div align="center">
 
 Built by humans and AI, for humans and AI.
-
-**[Henry Mascot](https://henrymascot.com)** · **[Enterprise Crew](https://github.com/h-mascot)**
 
 </div>

@@ -1,21 +1,41 @@
-#!/bin/bash
-# Entity dev server - connects to Mission Control DB on ada-gateway
-export ENTITY_DB_MODE=CLOUD
-export ENTITY_CLOUD_API_BASE=http://100.106.69.9:3000
+#!/usr/bin/env bash
+# Entity local dev server. Public-safe by default; reads entity.config.yaml/.env.
+set -euo pipefail
 
-# Feature flags - enable all new features
-export ENTITY_FS_MULTISOURCE=true
-export ENTITY_AGENT_NATIVE_EDITOR=true
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+cd "${ROOT_DIR}"
 
-# Start server + app in parallel
-cd "."
-echo "Entity dev server (DB: CLOUD -> $ENTITY_CLOUD_API_BASE)"
-echo "File System: enabled"
-echo "Agent-Native Editor: enabled"
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
+export ENTITY_DB_MODE="${ENTITY_DB_MODE:-LOCAL}"
+export ENTITY_CLOUD_API_BASE="${ENTITY_CLOUD_API_BASE:-http://localhost:3000}"
+export ENTITY_FS_MULTISOURCE="${ENTITY_FS_MULTISOURCE:-true}"
+export ENTITY_AGENT_NATIVE_EDITOR="${ENTITY_AGENT_NATIVE_EDITOR:-true}"
+export VITE_ENTITY_FS_MULTISOURCE="${VITE_ENTITY_FS_MULTISOURCE:-${ENTITY_FS_MULTISOURCE}}"
+export VITE_ENTITY_AGENT_NATIVE_EDITOR="${VITE_ENTITY_AGENT_NATIVE_EDITOR:-${ENTITY_AGENT_NATIVE_EDITOR}}"
+
+if [[ ! -f entity.config.yaml ]]; then
+  echo "[dev] entity.config.yaml not found; running setup first"
+  npm run setup
+else
+  npm run setup -- --check
+fi
+
+echo "[dev] Entity server DB mode: ${ENTITY_DB_MODE}"
+echo "[dev] API base: ${ENTITY_CLOUD_API_BASE}"
+
 npx ts-node packages/server/src/index.ts &
 SERVER_PID=$!
-cd packages/app && VITE_ENTITY_FS_MULTISOURCE=true VITE_ENTITY_AGENT_NATIVE_EDITOR=true npx vite &
+(
+  cd packages/app
+  npx vite
+) &
 APP_PID=$!
 
-trap "kill $SERVER_PID $APP_PID 2>/dev/null" EXIT
+trap 'kill ${SERVER_PID} ${APP_PID} 2>/dev/null || true' EXIT
 wait

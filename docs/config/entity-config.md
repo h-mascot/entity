@@ -24,8 +24,11 @@ Use `/api/config/effective` to inspect the final value and source for a field be
 Create `entity.config.yaml` in the Entity working directory:
 
 ```bash
-cp docs/config/entity.config.example.yaml entity.config.yaml
+npm run setup
+npm run doctor
 ```
+
+`npm run setup` copies the maintained example config and `.env.example` into local working files, then creates the configured workspace/data/log directories. `npm run doctor` verifies required files, safe public config values, and port availability before first run.
 
 Then edit installation-specific values:
 

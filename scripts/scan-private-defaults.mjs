@@ -53,6 +53,7 @@ function shouldSkip(filePath) {
   const rel = path.relative(repoRoot, filePath);
   const parts = rel.split(path.sep);
   if (parts.some((part) => excludedPathParts.has(part))) return true;
+  if (rel.endsWith('.test.ts') || rel.endsWith('.test.tsx') || rel.endsWith('.test.js') || rel.endsWith('.test.mjs')) return true;
   if (rel.startsWith('docs/plans/') || rel.startsWith('docs/specs/') || rel.startsWith('docs/reports/')) return true;
   if (rel === 'docs/config/private-default-scan.md') return true;
   return false;

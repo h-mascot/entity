@@ -22,45 +22,9 @@ export function registerFileSystemRoutes(app: Express, options: FileSystemRouteO
   const sourceRepo = createFileSourceRepository();
   const indexRepo = createFileIndexRepository();
 
-  // Auto-initialize/default-correct workspace sources
-  const fs = require('fs');
-  const homeDir = process.env.HOME || require('os').homedir();
-  const DEFAULT_SOURCES: Array<{ id: string; display_name: string; base_path: string; icon?: string }> = [
-    { id: 'vault', display_name: 'Vault', base_path: `${homeDir}/obsidian-vault`, icon: '📓' },
-    { id: 'ada', display_name: 'Ada', base_path: `${homeDir}/clawd`, icon: '🔮' },
-    { id: 'spock', display_name: 'Spock', base_path: `${homeDir}/clawd-spock`, icon: '🖖' },
-    { id: 'zora', display_name: 'Zora', base_path: `${homeDir}/clawd-zora`, icon: '🌌' },
-  ];
-
-  for (const src of DEFAULT_SOURCES) {
-    try {
-      const existing = sourceRepo.getSource(src.id);
-      if (!existing) {
-        if (fs.existsSync(src.base_path)) {
-          sourceRepo.createSource({
-            id: src.id,
-            display_name: src.display_name,
-            type: 'local',
-            base_path: src.base_path,
-            icon: src.icon,
-            enabled: true,
-          });
-          console.log(`[FS] Auto-initialized source: ${src.display_name} (${src.base_path})`);
-        }
-        continue;
-      }
-
-      const currentBasePath = existing.base_path?.trim() || '';
-      const looksLikeLegacyLinuxHome = currentBasePath.startsWith('/home/henrymascot/');
-      const expectedLegacyPath = `/home/henrymascot/${src.base_path.split('/').pop()}`;
-      const shouldRepair = (looksLikeLegacyLinuxHome || currentBasePath === expectedLegacyPath) && currentBasePath !== src.base_path;
-
-      if (shouldRepair && fs.existsSync(src.base_path)) {
-        sourceRepo.updateSource(src.id, { base_path: src.base_path, health: 'ok' });
-        console.log(`[FS] Repaired source path: ${src.display_name} (${currentBasePath} -> ${src.base_path})`);
-      }
-    } catch (_) { /* ignore duplicates */ }
-  }
+  // File sources are now user/config/admin-owned. Fresh installs start empty
+  // unless setup/onboarding creates an explicit workspace source; existing DB
+  // sources are preserved but no private workspace paths are auto-seeded here.
 
   router.get('/health', (_req: Request, res: Response) => {
     res.json({

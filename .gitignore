@@ -17,6 +17,10 @@ packages/server/dist_backup/
 .env.*
 !.env.example
 !.env.sample
+entity.config.yaml
+workspace/
+data/
+logs/
 *.log
 *.pid
 *.backup

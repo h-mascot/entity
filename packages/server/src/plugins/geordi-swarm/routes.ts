@@ -100,7 +100,8 @@ function dispatchToAcp(job: SwarmJobRow, db: PluginRouteContext['db']): string {
 
   // Dispatch via acpx on ada-gateway (global opts before subcommand)
   // Note: --cwd must be a local path (ada-gateway), not Mac path
-  const localRepo = job.repo.replace('~', process.env.HOME || '/home/henrymascot');
+  const runtimeHome = process.env.HOME || process.env.USERPROFILE || process.cwd();
+  const localRepo = job.repo.replace('~', runtimeHome);
   const child = spawn(ACPX_BIN, [
     '--cwd', localRepo,
     '--approve-all',
@@ -110,7 +111,7 @@ function dispatchToAcp(job: SwarmJobRow, db: PluginRouteContext['db']): string {
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
-    env: { ...process.env, HOME: process.env.HOME || '/home/henrymascot' },
+    env: { ...process.env, HOME: runtimeHome },
   });
 
   child.unref();
