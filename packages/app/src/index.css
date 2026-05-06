@@ -422,7 +422,20 @@
   --review-info: #2e5fa8;
   --card-bg: #fff6e6;
   --input-bg: #fff8eb;
-  --terminal-bg: #322719;
+  --terminal-bg: #fff8eb;
+  --terminal-foreground: #1c150d;
+  --terminal-cursor: #2e5fa8;
+  --terminal-selection: rgb(46 95 168 / 0.18);
+  --terminal-black: #1c150d;
+  --terminal-bright-black: #765f42;
+  --terminal-red: #b74331;
+  --terminal-green: #4d8f3f;
+  --terminal-yellow: #9b6818;
+  --terminal-blue: #2e5fa8;
+  --terminal-magenta: #87509a;
+  --terminal-cyan: #2f7e7e;
+  --terminal-white: #fff8eb;
+  --terminal-bright-white: #ffffff;
   --paper-ink: #1b140c;
   --paper-fiber: rgb(111 78 38 / 0.055);
   --paper-edge: rgb(139 101 55 / 0.36);
@@ -735,8 +748,9 @@
 
 :root[data-theme='paper'] .entity-terminal-surface {
   background:
-    radial-gradient(520px circle at 12% -10%, rgb(49 95 164 / 0.18), transparent 48%),
-    linear-gradient(145deg, #241b10, #3a2a18),
+    radial-gradient(520px circle at 12% -10%, rgb(49 95 164 / 0.14), transparent 48%),
+    repeating-linear-gradient(0deg, rgb(111 78 38 / 0.04) 0 1px, transparent 1px 32px),
+    linear-gradient(180deg, #fffaf0 0%, var(--terminal-bg) 100%),
     var(--terminal-bg) !important;
 }
 
@@ -958,6 +972,17 @@ textarea {
 	    border: 1px solid var(--border-soft, var(--border-primary));
 	    border-radius: 999px;
 	    color: var(--text-secondary);
+	  }
+
+	  .tts-paid-warning {
+	    border-color: color-mix(in srgb, var(--review-warning) 55%, transparent);
+	    background: color-mix(in srgb, var(--review-warning) 14%, var(--bg-secondary));
+	    color: var(--text-primary);
+	  }
+
+	  .tts-paid-warning code {
+	    color: var(--text-primary);
+	    font-weight: 600;
 	  }
 
 	  .mc-sliding-tabs {

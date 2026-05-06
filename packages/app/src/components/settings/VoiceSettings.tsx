@@ -245,9 +245,9 @@ export default function VoiceSettings({ apiBase }: { apiBase?: string }) {
 
       {/* Paid provider warning */}
       {showPaidWarning && (
-        <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-xs text-yellow-300">
+        <div className="tts-paid-warning rounded-lg border px-4 py-3 text-xs">
           ⚠️ <strong>{PROVIDER_LABELS[provider]}</strong> is a paid provider. Ensure the required API key is
-          configured in the server environment (e.g. <code className="text-yellow-200">{provider === 'openai' ? openaiApiKeyEnv : provider === 'deepgram' ? deepgramApiKeyEnv : elevenlabsApiKeyEnv}</code>).
+          configured in the server environment (e.g. <code>{provider === 'openai' ? openaiApiKeyEnv : provider === 'deepgram' ? deepgramApiKeyEnv : elevenlabsApiKeyEnv}</code>).
         </div>
       )}
 

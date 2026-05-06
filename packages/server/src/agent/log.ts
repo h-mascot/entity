@@ -5,12 +5,16 @@ import {
   type CreateAgentLogInput,
 } from '../../../db/src';
 import { AGENT_CONFIG } from './config';
+import { getTaskAgentSettings } from './settings';
 
 const agentLogRepository = createAgentLogRepository();
 
 export interface AgentStatus extends AgentLogStatus {
+  provider: string;
   model: string;
   enabled: boolean;
+  apiKeyConfigured: boolean;
+  apiKeySource: 'database' | 'env' | 'none';
 }
 
 export function writeAgentLog(input: CreateAgentLogInput): AgentLogRecord | null {
@@ -35,10 +39,13 @@ export function listAgentLogs(limit = 100): AgentLogRecord[] {
 
 export function getAgentStatus(): AgentStatus {
   const status = agentLogRepository.getStatus();
+  const settings = getTaskAgentSettings();
   return {
     ...status,
-    model: AGENT_CONFIG.model,
+    provider: settings.provider,
+    model: settings.model,
     enabled: AGENT_CONFIG.enabled,
+    apiKeyConfigured: settings.apiKeyConfigured,
+    apiKeySource: settings.apiKeySource,
   };
 }
-

@@ -3871,7 +3871,9 @@ export default function App() {
                         aria-pressed={appTheme === option.value}
                       >
                         <span className="text-sm font-medium">{option.label}</span>
-                        <span className="text-[11px] text-[var(--text-muted)]">{option.hint}</span>
+                        <span className={`text-[11px] ${appTheme === option.value ? 'text-white' : 'text-[var(--text-muted)]'}`}>
+                          {option.hint}
+                        </span>
                       </button>
                     ))}
                   </div>

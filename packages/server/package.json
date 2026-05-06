@@ -12,7 +12,11 @@
     "test:force": "npx vitest --run"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.75",
+    "@ai-sdk/gateway": "^3.0.46",
     "@ai-sdk/google": "^3.0.29",
+    "@ai-sdk/openai": "^3.0.61",
+    "@ai-sdk/xai": "^3.0.88",
     "@sentry/node": "^10.43.0",
     "ai": "^6.0.86",
     "chokidar": "^5.0.0",

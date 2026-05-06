@@ -1,6 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { randomUUID } from 'crypto';
+import { chmodSync, statSync } from 'fs';
+import { dirname, join } from 'path';
 import type { Express, Request, Response } from 'express';
+import { spawn as spawnPty, type IPty } from 'node-pty';
 import { WebSocket } from 'ws';
 
 export type TerminalTargetId = 'ada-gw' | 'spock' | 'scotty' | 'mac' | 'enterprise';
@@ -29,6 +31,8 @@ export interface TerminalLaunchSpec {
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv;
+  cwd: string;
+  initialInput?: string;
 }
 
 export interface CreateTerminalSessionInput {
@@ -55,14 +59,33 @@ export interface TerminalBridge {
 
 export interface CreateTerminalBridgeOptions {
   workspaceRoot: string;
-  spawnProcess?: typeof spawn;
+  spawnProcess?: TerminalSpawner;
   now?: () => Date;
   logger?: Pick<Console, 'warn' | 'error'>;
 }
 
+export type TerminalSpawner = (
+  command: string,
+  args: string[],
+  options: {
+    cols: number;
+    rows: number;
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+  },
+) => TerminalProcess;
+
+interface TerminalProcess {
+  onData(listener: (data: string) => void): { dispose: () => void };
+  onExit(listener: (event: { exitCode: number; signal?: number | string }) => void): { dispose: () => void };
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(signal?: string): void;
+}
+
 interface TerminalSession {
   summary: TerminalSessionSummary;
-  process: ChildProcessWithoutNullStreams;
+  process: TerminalProcess;
   history: string[];
   subscribers: Set<WebSocket>;
   owner: WebSocket | null;
@@ -155,8 +178,8 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function buildBootstrapCommand(target: TerminalTarget, workspaceRoot: string): string {
-  const directory = target.transport === 'local' ? workspaceRoot : target.defaultDirectory;
+function buildBootstrapCommand(target: TerminalTarget): string {
+  const directory = target.defaultDirectory;
   return `cd ${shellQuote(directory)} 2>/dev/null || cd ~; export TERM=xterm-256color COLORTERM=truecolor; exec /bin/zsh -f`;
 }
 
@@ -178,23 +201,80 @@ export function buildTerminalLaunchSpec(
     COLUMNS: String(toDimension(cols, DEFAULT_COLS)),
     LINES: String(toDimension(rows, DEFAULT_ROWS)),
   };
-  const bootstrap = buildBootstrapCommand(target, workspaceRoot);
 
   if (target.transport === 'local') {
     return {
       target,
-      command: '/usr/bin/script',
-      args: ['-q', '/dev/null', '/bin/zsh', '-fc', bootstrap],
+      command: '/bin/zsh',
+      args: ['-f'],
       env,
+      cwd: workspaceRoot,
     };
   }
 
+  const bootstrap = buildBootstrapCommand(target);
   return {
     target,
-    command: '/usr/bin/ssh',
-    args: ['-tt', target.host ?? target.id, bootstrap],
+    command: '/bin/zsh',
+    args: ['-f'],
     env,
+    cwd: workspaceRoot,
+    initialInput: `exec /usr/bin/ssh -tt ${shellQuote(target.host ?? target.id)} ${shellQuote(bootstrap)}\r`,
   };
+}
+
+function defaultSpawnProcess(command: string, args: string[], options: {
+  cols: number;
+  rows: number;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}): IPty {
+  ensureNodePtySpawnHelperExecutable();
+  return spawnPty(command, args, {
+    name: 'xterm-256color',
+    cols: options.cols,
+    rows: options.rows,
+    cwd: options.cwd,
+    env: options.env,
+    encoding: 'utf8',
+  });
+}
+
+export function getNodePtySpawnHelperPaths(
+  packageJsonPath: string,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string[] {
+  if (platform !== 'darwin') {
+    return [];
+  }
+
+  const packageDirectory = dirname(packageJsonPath);
+  const candidateArchitectures = Array.from(new Set([arch, 'arm64', 'x64']));
+  return candidateArchitectures.map((candidateArch) =>
+    join(packageDirectory, 'prebuilds', `darwin-${candidateArch}`, 'spawn-helper'),
+  );
+}
+
+function ensureNodePtySpawnHelperExecutable(): void {
+  if (process.platform !== 'darwin') {
+    return;
+  }
+
+  const packagePath = require.resolve('node-pty/package.json');
+  const helperPaths = getNodePtySpawnHelperPaths(packagePath);
+  for (const helperPath of helperPaths) {
+    try {
+      const stats = statSync(helperPath);
+      if ((stats.mode & 0o111) === 0) {
+        chmodSync(helperPath, stats.mode | 0o755);
+      }
+    } catch (error) {
+      if (helperPath.includes(`darwin-${process.arch}`)) {
+        throw error;
+      }
+    }
+  }
 }
 
 function serializeEvent<TPayload>(
@@ -230,7 +310,7 @@ function safeSend<TPayload>(
 }
 
 export function createTerminalBridge(options: CreateTerminalBridgeOptions): TerminalBridge {
-  const spawnProcess = options.spawnProcess ?? spawn;
+  const spawnProcess = options.spawnProcess ?? defaultSpawnProcess;
   const now = options.now ?? (() => new Date());
   const logger = options.logger ?? console;
   const sessions = new Map<string, TerminalSession>();
@@ -252,11 +332,6 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
 
     sessions.delete(sessionId);
     session.summary.status = 'closed';
-    try {
-      session.process.stdin.end();
-    } catch {
-      // No-op.
-    }
     try {
       session.process.kill('SIGTERM');
     } catch {
@@ -292,13 +367,11 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
     };
 
     const child = spawnProcess(launch.command, launch.args, {
-      cwd: options.workspaceRoot,
+      cwd: launch.cwd,
       env: launch.env,
-      stdio: 'pipe',
+      cols,
+      rows,
     });
-
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
 
     const session: TerminalSession = {
       summary,
@@ -322,29 +395,23 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
       fanout(session, 'output', { data, stream });
     };
 
-    child.on('spawn', () => {
-      session.summary.status = 'running';
-    });
+    recordOutput(`[terminal] starting ${launch.target.label} via ${launch.target.transport} pty\r\n`, 'history');
+    session.summary.status = 'running';
 
-    child.stdout.on('data', (chunk: string | Buffer) => {
+    if (launch.initialInput) {
+      child.write(launch.initialInput);
+    }
+
+    child.onData((chunk: string) => {
       recordOutput(String(chunk), 'stdout');
     });
 
-    child.stderr.on('data', (chunk: string | Buffer) => {
-      recordOutput(String(chunk), 'stderr');
-    });
-
-    child.on('error', (error) => {
-      session.summary.status = 'error';
-      fanout(session, 'error', { message: error.message });
-    });
-
-    child.on('close', (code, signal) => {
+    child.onExit(({ exitCode, signal }) => {
       if (!sessions.has(summary.id)) {
         return;
       }
       session.summary.status = 'closed';
-      fanout(session, 'exit', { code, signal });
+      fanout(session, 'exit', { code: exitCode, signal: signal ?? null });
     });
 
     return summary;
@@ -400,7 +467,7 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
         }
 
         try {
-          session.process.stdin.write(data);
+          session.process.write(data);
         } catch (error) {
           fanout(session, 'error', {
             message: error instanceof Error ? error.message : 'Failed to write terminal input.',
@@ -418,6 +485,13 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
 
         session.cols = toDimension(message.cols, session.cols);
         session.rows = toDimension(message.rows, session.rows);
+        try {
+          session.process.resize(session.cols, session.rows);
+        } catch (error) {
+          fanout(session, 'error', {
+            message: error instanceof Error ? error.message : 'Failed to resize terminal.',
+          });
+        }
         return;
       }
 

@@ -1,5 +1,4 @@
 import { generateText } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import type { ActivityRepository, AgentLogRecord, TaskCommentRepository, TaskRecord } from '../../../db/src';
 import type { TaskSyncLayer } from '../../../db/src/task-sync';
 import { AGENT_CONFIG } from './config';
@@ -16,6 +15,7 @@ import {
   type TaskAgentAction,
 } from './events';
 import { getAgentStatus, listAgentLogs, writeAgentLog } from './log';
+import { getTaskAgentLanguageModel, getTaskAgentSettings, updateTaskAgentSettings } from './settings';
 import { createTaskAgentTools, type TaskAgentToolDependencies } from './tools';
 import { hasAssignedOwner, isActiveTaskColumn, type ReviewAssessment } from './review-policy';
 
@@ -34,8 +34,11 @@ export interface TriggerAgentResult {
 export interface TaskAgentStatus {
   lastRun: string | null;
   totalActions: number;
+  provider: string;
   model: string;
   enabled: boolean;
+  apiKeyConfigured: boolean;
+  apiKeySource: 'database' | 'env' | 'none';
 }
 
 export interface TaskAgentLogEntry {
@@ -137,25 +140,23 @@ function summarizeTrigger(event: AgentTriggerEvent, actions: readonly TaskAgentA
 
 export class TaskAgent {
   private readonly tools;
-  private readonly googleProvider;
   private staleScanRunning = false;
   private reviewHygieneRunning = false;
   private ownershipCheckRunning = false;
 
   constructor(private readonly dependencies: TaskAgentDependencies) {
     this.tools = createTaskAgentTools(dependencies);
-    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim();
-    this.googleProvider = apiKey ? createGoogleGenerativeAI({ apiKey }) : null;
   }
 
   private async invokeModel(prompt: string): Promise<ModelInvocationResult | null> {
-    if (!this.googleProvider) {
+    const model = getTaskAgentLanguageModel();
+    if (!model) {
       return null;
     }
 
     try {
       const result = await generateText({
-        model: this.googleProvider(AGENT_CONFIG.model),
+        model,
         prompt,
         temperature: 0.2,
       });
@@ -178,12 +179,13 @@ export class TaskAgent {
 
   private recordActions(actions: readonly TaskAgentAction[]): void {
     for (const action of actions) {
+      const settings = getTaskAgentSettings();
       writeAgentLog({
         event: action.event,
         task_id: typeof action.taskId === 'number' ? action.taskId : null,
         action: action.action,
         result: action.result,
-        model: AGENT_CONFIG.model,
+        model: settings.model,
         tokens_used: action.tokensUsed,
       });
     }
@@ -248,11 +250,12 @@ export class TaskAgent {
     try {
       const tasks = await this.dependencies.taskSyncLayer.listTasks();
       const staleCandidates = collectStaleCandidates(tasks);
+      const maxActionsPerScan = getTaskAgentSettings().maxActionsPerScan;
       const actions: TaskAgentAction[] = [];
       let handled = 0;
 
       for (const candidate of staleCandidates) {
-        if (handled >= AGENT_CONFIG.maxActionsPerScan) {
+        if (handled >= maxActionsPerScan) {
           break;
         }
         handled += 1;
@@ -310,7 +313,8 @@ export class TaskAgent {
     this.reviewHygieneRunning = true;
     try {
       const tasks = await this.dependencies.taskSyncLayer.listTasks();
-      const reviewTasks = collectReviewHygieneCandidates(tasks).slice(0, AGENT_CONFIG.maxActionsPerScan);
+      const maxActionsPerScan = getTaskAgentSettings().maxActionsPerScan;
+      const reviewTasks = collectReviewHygieneCandidates(tasks).slice(0, maxActionsPerScan);
       const actions: TaskAgentAction[] = [];
 
       for (const task of reviewTasks) {
@@ -353,7 +357,8 @@ export class TaskAgent {
     this.ownershipCheckRunning = true;
     try {
       const tasks = await this.dependencies.taskSyncLayer.listTasks();
-      const ownerlessTasks = collectOwnerlessActiveTasks(tasks).slice(0, AGENT_CONFIG.maxActionsPerScan);
+      const maxActionsPerScan = getTaskAgentSettings().maxActionsPerScan;
+      const ownerlessTasks = collectOwnerlessActiveTasks(tasks).slice(0, maxActionsPerScan);
       const actions: TaskAgentAction[] = [];
 
       for (const task of ownerlessTasks) {
@@ -413,7 +418,8 @@ export class TaskAgent {
 
         const tasks = await this.dependencies.taskSyncLayer.listTasks();
         const reviewTasks = tasks.filter((task) => task.column === 'review');
-        const limitedReviewTasks = reviewTasks.slice(0, AGENT_CONFIG.maxActionsPerScan);
+        const maxActionsPerScan = getTaskAgentSettings().maxActionsPerScan;
+        const limitedReviewTasks = reviewTasks.slice(0, maxActionsPerScan);
         for (const task of limitedReviewTasks) {
           const nextActions = await this.handleTaskMovedToReview(task);
           actions.push(...nextActions);
@@ -468,6 +474,14 @@ export class TaskAgent {
     return getAgentStatus();
   }
 
+  getSettings() {
+    return getTaskAgentSettings();
+  }
+
+  updateSettings(input: Parameters<typeof updateTaskAgentSettings>[0]) {
+    return updateTaskAgentSettings(input);
+  }
+
   getLog(limit = 100): TaskAgentLogEntry[] {
     return listAgentLogs(limit).map(toLogEntry);
   }
@@ -477,3 +491,4 @@ export * from './config';
 export * from './events';
 export * from './review-policy';
 export * from './scheduler';
+export * from './settings';

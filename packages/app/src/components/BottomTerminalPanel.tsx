@@ -100,26 +100,35 @@ function createTerminalTheme() {
   }
 
   const styles = window.getComputedStyle(document.documentElement);
+  const themeValue = (name: string, fallback = '') => styles.getPropertyValue(name).trim() || fallback;
   const terminalBackground =
-    styles.getPropertyValue('--terminal-bg').trim()
-    || styles.getPropertyValue('--bg-primary').trim()
+    themeValue('--terminal-bg')
+    || themeValue('--bg-primary')
     || '#050505';
+  const terminalForeground =
+    themeValue('--terminal-foreground')
+    || themeValue('--text-secondary')
+    || '#d4d4d4';
+  const terminalCursor =
+    themeValue('--terminal-cursor')
+    || themeValue('--text-primary')
+    || terminalForeground;
   return {
     background: terminalBackground,
-    foreground: styles.getPropertyValue('--text-secondary').trim() || '#d4d4d4',
-    cursor: styles.getPropertyValue('--text-primary').trim() || '#ffffff',
+    foreground: terminalForeground,
+    cursor: terminalCursor,
     cursorAccent: terminalBackground,
-    selectionBackground: styles.getPropertyValue('--surface-accent').trim() || 'rgba(0, 170, 255, 0.16)',
-    black: styles.getPropertyValue('--bg-primary').trim() || '#050505',
-    brightBlack: styles.getPropertyValue('--text-muted').trim() || '#7c7c7c',
-    red: styles.getPropertyValue('--error').trim() || '#ff6666',
-    green: styles.getPropertyValue('--success').trim() || '#4ade80',
-    yellow: styles.getPropertyValue('--review-warning').trim() || '#fbbf24',
-    blue: styles.getPropertyValue('--accent').trim() || '#00aaff',
-    magenta: styles.getPropertyValue('--comment-marker').trim() || '#c084fc',
-    cyan: styles.getPropertyValue('--accent-dim').trim() || '#22d3ee',
-    white: styles.getPropertyValue('--text-primary').trim() || '#ffffff',
-    brightWhite: styles.getPropertyValue('--text-primary').trim() || '#ffffff',
+    selectionBackground: themeValue('--terminal-selection') || themeValue('--surface-accent') || 'rgba(0, 170, 255, 0.16)',
+    black: themeValue('--terminal-black') || '#050505',
+    brightBlack: themeValue('--terminal-bright-black') || themeValue('--text-muted') || '#7c7c7c',
+    red: themeValue('--terminal-red') || themeValue('--error') || '#ff6666',
+    green: themeValue('--terminal-green') || themeValue('--success') || '#4ade80',
+    yellow: themeValue('--terminal-yellow') || themeValue('--review-warning') || '#fbbf24',
+    blue: themeValue('--terminal-blue') || themeValue('--accent') || '#00aaff',
+    magenta: themeValue('--terminal-magenta') || themeValue('--comment-marker') || '#c084fc',
+    cyan: themeValue('--terminal-cyan') || themeValue('--accent-dim') || '#22d3ee',
+    white: themeValue('--terminal-white') || '#f8fafc',
+    brightWhite: themeValue('--terminal-bright-white') || '#ffffff',
   };
 }
 
@@ -136,6 +145,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
   const socketRef = useRef<WebSocket | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const attachWatchdogRef = useRef<number | null>(null);
   const sessionRef = useRef<TerminalSessionSummary | null>(null);
   const sessionStartAttemptedRef = useRef(false);
 
@@ -144,6 +154,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
   const [socketConnected, setSocketConnected] = useState(false);
   const [session, setSession] = useState<TerminalSessionSummary | null>(null);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'running' | 'closed' | 'error'>('idle');
+  const [statusDetail, setStatusDetail] = useState('Terminal is idle.');
   const [error, setError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [isLoadingTargets, setIsLoadingTargets] = useState(true);
@@ -160,6 +171,27 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
     }
     terminal.writeln(`\x1b[38;5;45m${message}\x1b[0m`);
   }, []);
+
+  const clearAttachWatchdog = useCallback(() => {
+    if (attachWatchdogRef.current !== null) {
+      window.clearTimeout(attachWatchdogRef.current);
+      attachWatchdogRef.current = null;
+    }
+  }, []);
+
+  const startAttachWatchdog = useCallback((target: TerminalTargetId) => {
+    clearAttachWatchdog();
+    attachWatchdogRef.current = window.setTimeout(() => {
+      if (status === 'running' || status === 'error') {
+        return;
+      }
+      const message = `No terminal stream arrived for ${target}. Check server terminal logs or reconnect.`;
+      setStatus('error');
+      setError(message);
+      setStatusDetail(message);
+      writeBanner(`[error] ${message}`);
+    }, 10000);
+  }, [clearAttachWatchdog, status, writeBanner]);
 
   const sendResize = useCallback(() => {
     const socket = socketRef.current;
@@ -316,8 +348,10 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
       socket.onopen = () => {
         setSocketConnected(true);
         setError(null);
+        setStatusDetail('WebSocket connected.');
         const currentSession = sessionRef.current;
         if (currentSession) {
+          setStatusDetail(`WebSocket connected; subscribing to ${currentSession.targetLabel}.`);
           socket.send(JSON.stringify({ type: 'terminal:subscribe', sessionId: currentSession.id }));
         }
       };
@@ -340,7 +374,11 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
 
         const payload = getPayloadRecord(message.payload);
         if (message.event === 'session') {
-          setStatus(currentSession.status === 'error' ? 'error' : 'running');
+          clearAttachWatchdog();
+          const payloadStatus = typeof payload?.status === 'string' ? payload.status : currentSession.status;
+          setStatus(payloadStatus === 'error' ? 'error' : 'running');
+          setStatusDetail(`PTY stream attached for ${currentSession.targetLabel}.`);
+          writeBanner(`[connected to ${currentSession.targetLabel}]`);
           fitTerminal();
           return;
         }
@@ -355,6 +393,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
 
         if (message.event === 'exit') {
           setStatus('closed');
+          setStatusDetail(`Session ended for ${currentSession.targetLabel}.`);
           sessionStartAttemptedRef.current = false;
           const exitCode = typeof payload?.code === 'number' ? String(payload.code) : 'closed';
           writeBanner(`[session ended: ${exitCode}]`);
@@ -365,12 +404,14 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
           const nextError = typeof payload?.message === 'string' ? payload.message : 'Terminal bridge error.';
           setStatus('error');
           setError(nextError);
+          setStatusDetail(nextError);
           writeBanner(`[error] ${nextError}`);
         }
       };
 
       socket.onclose = () => {
         setSocketConnected(false);
+        setStatusDetail('WebSocket disconnected; reconnecting.');
         if (socketRef.current === socket) {
           socketRef.current = null;
         }
@@ -380,7 +421,9 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
       };
 
       socket.onerror = () => {
-        setError('Terminal websocket connection failed.');
+        const message = 'Terminal websocket connection failed.';
+        setError(message);
+        setStatusDetail(message);
       };
     };
 
@@ -389,34 +432,37 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
     return () => {
       disposed = true;
       clearReconnectTimer();
+      clearAttachWatchdog();
       const socket = socketRef.current;
       socketRef.current = null;
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         socket.close();
       }
     };
-  }, [fitTerminal, writeBanner]);
+  }, [clearAttachWatchdog, fitTerminal, writeBanner]);
 
-  const subscribeToSession = useCallback((nextSession: TerminalSessionSummary) => {
+  const subscribeToSession = useCallback((nextSession: TerminalSessionSummary): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return;
+      setStatusDetail('Session created; waiting for WebSocket before subscribing.');
+      return false;
     }
 
     socket.send(JSON.stringify({
       type: 'terminal:subscribe',
       sessionId: nextSession.id,
     }));
+    setStatusDetail(`Subscribing to ${nextSession.targetLabel} terminal stream.`);
+    return true;
   }, []);
 
-  const closeSession = useCallback(async () => {
-    const currentSession = sessionRef.current;
-    if (!currentSession) {
+  const closeSessionById = useCallback(async (sessionId: string) => {
+    if (!sessionId) {
       return;
     }
 
     try {
-      await fetch(buildApiUrl(`/api/terminal/sessions/${currentSession.id}`), {
+      await fetch(buildApiUrl(`/api/terminal/sessions/${sessionId}`), {
         method: 'DELETE',
       });
     } catch {
@@ -431,6 +477,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
 
     setIsStarting(true);
     setStatus('connecting');
+    setStatusDetail(`Requesting ${target} terminal session.`);
     setError(null);
     sessionStartAttemptedRef.current = true;
 
@@ -439,12 +486,10 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
       terminal.clear();
       terminal.reset();
       writeBanner(`[connecting to ${target}]`);
+      writeBanner('[terminal] requesting session from server');
     }
 
-    if (sessionRef.current) {
-      await closeSession();
-      setSession(null);
-    }
+    const previousSession = sessionRef.current;
 
     try {
       const response = await fetch(buildApiUrl('/api/terminal/sessions'), {
@@ -461,18 +506,29 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
       }
 
       setSession(data.session);
-      subscribeToSession(data.session);
-      setStatus('running');
+      if (previousSession && previousSession.id !== data.session.id) {
+        void closeSessionById(previousSession.id);
+      }
+      const subscribed = subscribeToSession(data.session);
+      setStatus('connecting');
+      setStatusDetail(
+        subscribed
+          ? `Session created; waiting for ${data.session.targetLabel} PTY stream.`
+          : 'Session created; waiting for WebSocket reconnect.',
+      );
+      writeBanner(`[terminal] session ${data.session.id.slice(0, 8)} created`);
+      startAttachWatchdog(data.session.target);
       fitTerminal();
     } catch (startError) {
       const nextError = startError instanceof Error ? startError.message : 'Unable to start terminal session.';
       setError(nextError);
       setStatus('error');
+      setStatusDetail(nextError);
       writeBanner(`[error] ${nextError}`);
     } finally {
       setIsStarting(false);
     }
-  }, [closeSession, fitTerminal, isStarting, subscribeToSession, writeBanner]);
+  }, [closeSessionById, fitTerminal, isStarting, startAttachWatchdog, subscribeToSession, writeBanner]);
 
   useEffect(() => {
     if (!isOpen || sessionStartAttemptedRef.current || isLoadingTargets) {
@@ -502,6 +558,26 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
 
     terminal.clear();
   }, []);
+
+  const focusTerminal = useCallback(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      setStatusDetail('Terminal is not mounted yet.');
+      return;
+    }
+
+    terminal.focus();
+  }, []);
+
+  const handleTargetChange = useCallback((nextTarget: TerminalTargetId) => {
+    setSelectedTarget(nextTarget);
+    if (!isOpen) {
+      sessionStartAttemptedRef.current = false;
+      return;
+    }
+
+    void startSession(nextTarget);
+  }, [isOpen, startSession]);
 
   const statusToneClass =
     status === 'running'
@@ -540,8 +616,9 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
                 <span className="sr-only">Target</span>
                 <select
                   value={selectedTarget}
-                  onChange={(event) => setSelectedTarget(event.target.value as TerminalTargetId)}
+                  onChange={(event) => handleTargetChange(event.target.value as TerminalTargetId)}
                   className="mc-shell-input entity-terminal-select rounded-md px-2 py-1 text-xs text-[var(--text-primary)]"
+                  disabled={isStarting}
                 >
                   {targetOptions.map((target) => (
                     <option key={target.id} value={target.id}>
@@ -582,6 +659,9 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
           </div>
 
           <div className="entity-terminal-panel">
+          <div className="entity-terminal-progress mt-2 text-[11px] text-[var(--text-muted)]">
+            {statusDetail}
+          </div>
           {error ? (
             <div className="entity-terminal-inline-error mt-2 text-[11px] text-[var(--error)]">
               {error}
@@ -589,6 +669,18 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
           ) : null}
             <div
               ref={containerRef}
+              role="textbox"
+              aria-label="Interactive terminal"
+              tabIndex={0}
+              onClick={() => {
+                focusTerminal();
+                if (status === 'running') {
+                  setStatusDetail('Terminal focused. Type directly in the terminal.');
+                }
+              }}
+              onPointerDown={() => {
+                window.setTimeout(focusTerminal, 0);
+              }}
               className="entity-terminal-surface min-h-[15rem] border border-[var(--border-primary)] bg-[var(--bg-primary)]"
             />
           </div>

@@ -4,6 +4,7 @@ import { WebSocket } from 'ws';
 import {
   buildTerminalLaunchSpec,
   createTerminalBridge,
+  getNodePtySpawnHelperPaths,
   registerTerminalRoutes,
   type TerminalBridge,
   type TerminalSessionSummary,
@@ -14,13 +15,29 @@ class FakeStream extends EventEmitter {
 }
 
 class FakeProcess extends EventEmitter {
-  stdout = new FakeStream();
-  stderr = new FakeStream();
-  stdin = {
-    write: vi.fn(),
-    end: vi.fn(),
-  };
+  private dataListeners: Array<(data: string) => void> = [];
+  private exitListeners: Array<(event: { exitCode: number; signal?: number | string }) => void> = [];
+  write = vi.fn();
+  resize = vi.fn();
   kill = vi.fn();
+
+  onData(listener: (data: string) => void) {
+    this.dataListeners.push(listener);
+    return { dispose: vi.fn() };
+  }
+
+  onExit(listener: (event: { exitCode: number; signal?: number | string }) => void) {
+    this.exitListeners.push(listener);
+    return { dispose: vi.fn() };
+  }
+
+  emitData(data: string): void {
+    this.dataListeners.forEach((listener) => listener(data));
+  }
+
+  emitExit(event: { exitCode: number; signal?: number | string }): void {
+    this.exitListeners.forEach((listener) => listener(event));
+  }
 }
 
 class FakeSocket extends EventEmitter {
@@ -39,24 +56,35 @@ function createResponse() {
 describe('buildTerminalLaunchSpec', () => {
   it('creates a local script-backed launch for ada-gw', () => {
     const spec = buildTerminalLaunchSpec('ada-gw', '/tmp/entity', 160, 48);
-    expect(spec.command).toBe('/usr/bin/script');
-    expect(spec.args).toEqual([
-      '-q',
-      '/dev/null',
-      '/bin/zsh',
-      '-fc',
-      "cd '/tmp/entity' 2>/dev/null || cd ~; export TERM=xterm-256color COLORTERM=truecolor; exec /bin/zsh -f",
-    ]);
+    expect(spec.command).toBe('/bin/zsh');
+    expect(spec.args).toEqual(['-f']);
+    expect(spec.cwd).toBe('/tmp/entity');
     expect(spec.env.COLUMNS).toBe('160');
     expect(spec.env.LINES).toBe('48');
   });
 
   it('creates an ssh-backed launch for remote targets', () => {
     const spec = buildTerminalLaunchSpec('mac', '/tmp/entity');
-    expect(spec.command).toBe('/usr/bin/ssh');
-    expect(spec.args[0]).toBe('-tt');
-    expect(spec.args[1]).toBe('mac');
-    expect(spec.args[2]).toContain("cd '~/Code/entity'");
+    expect(spec.command).toBe('/bin/zsh');
+    expect(spec.args).toEqual(['-f']);
+    expect(spec.initialInput).toContain("exec /usr/bin/ssh -tt 'mac'");
+    expect(spec.initialInput).toContain('Code/entity');
+    expect(spec.cwd).toBe('/tmp/entity');
+  });
+});
+
+describe('getNodePtySpawnHelperPaths', () => {
+  it('includes both Darwin prebuild helpers so Rosetta and native Node can spawn PTYs', () => {
+    const paths = getNodePtySpawnHelperPaths('/repo/node_modules/node-pty/package.json', 'darwin', 'arm64');
+
+    expect(paths).toEqual([
+      '/repo/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper',
+      '/repo/node_modules/node-pty/prebuilds/darwin-x64/spawn-helper',
+    ]);
+  });
+
+  it('does not chmod helper paths on non-Darwin platforms', () => {
+    expect(getNodePtySpawnHelperPaths('/repo/node_modules/node-pty/package.json', 'linux', 'x64')).toEqual([]);
   });
 });
 
@@ -70,18 +98,53 @@ describe('createTerminalBridge', () => {
     });
 
     const session = bridge.createSession({ target: 'ada-gw', cols: 120, rows: 40 });
-    expect(spawnProcess).toHaveBeenCalledOnce();
+    expect(spawnProcess).toHaveBeenCalledWith('/bin/zsh', ['-f'], expect.objectContaining({
+      cols: 120,
+      rows: 40,
+      cwd: '/tmp/entity',
+    }));
 
     const socket = new FakeSocket();
     bridge.handleSocketConnection(socket as any);
     socket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
-    fakeProcess.emit('spawn');
-    fakeProcess.stdout.emit('data', 'hello');
+    fakeProcess.emitData('hello');
     socket.emit('message', JSON.stringify({ type: 'terminal:input', sessionId: session.id, data: 'ls\n' }));
 
     expect(socket.send).toHaveBeenCalledWith(expect.stringContaining('"event":"session"'));
     expect(socket.send).toHaveBeenCalledWith(expect.stringContaining('"data":"hello"'));
-    expect(fakeProcess.stdin.write).toHaveBeenCalledWith('ls\n');
+    expect(fakeProcess.write).toHaveBeenCalledWith('ls\n');
+  });
+
+  it('starts remote sessions by writing ssh into a normal shell pty', () => {
+    const fakeProcess = new FakeProcess();
+    const spawnProcess = vi.fn(() => fakeProcess as any);
+    const bridge = createTerminalBridge({
+      workspaceRoot: '/tmp/entity',
+      spawnProcess: spawnProcess as any,
+    });
+
+    bridge.createSession({ target: 'spock' });
+
+    expect(spawnProcess).toHaveBeenCalledWith('/bin/zsh', ['-f'], expect.objectContaining({
+      cwd: '/tmp/entity',
+    }));
+    expect(fakeProcess.write).toHaveBeenCalledWith(expect.stringContaining("exec /usr/bin/ssh -tt 'spock'"));
+  });
+
+  it('resizes the pty when a terminal resize message arrives', () => {
+    const fakeProcess = new FakeProcess();
+    const bridge = createTerminalBridge({
+      workspaceRoot: '/tmp/entity',
+      spawnProcess: vi.fn(() => fakeProcess as any),
+    });
+
+    const session = bridge.createSession({ target: 'ada-gw' });
+    const socket = new FakeSocket();
+    bridge.handleSocketConnection(socket as any);
+    socket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
+    socket.emit('message', JSON.stringify({ type: 'terminal:resize', sessionId: session.id, cols: 132, rows: 44 }));
+
+    expect(fakeProcess.resize).toHaveBeenCalledWith(132, 44);
   });
 
   it('sends an error for unknown sessions', () => {

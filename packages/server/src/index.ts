@@ -1771,14 +1771,50 @@ function registerAgentRoutes(prefix: "" | "/api") {
     }
   });
 
+  app.get(`${base}/settings`, (_req, res) => {
+    try {
+      return res.json(taskAgent.getSettings());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  app.patch(`${base}/settings`, (req, res) => {
+    const body = req.body ?? {};
+    try {
+      const settings = taskAgent.updateSettings({
+        provider: typeof body.provider === "string" ? body.provider : undefined,
+        model: typeof body.model === "string" ? body.model : undefined,
+        apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
+        clearApiKey: body.clearApiKey === true,
+        staleThresholdHours:
+          body.staleThresholdHours && typeof body.staleThresholdHours === "object"
+            ? {
+                doing: body.staleThresholdHours.doing,
+                review: body.staleThresholdHours.review,
+              }
+            : undefined,
+        maxActionsPerScan: body.maxActionsPerScan,
+      });
+      return res.json(settings);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      return res.status(400).json({ error: message });
+    }
+  });
+
   app.get(`${base}/status`, (_req, res) => {
     try {
       const status = taskAgent.getStatus();
       return res.json({
         lastRun: status.lastRun,
         totalActions: status.totalActions,
+        provider: status.provider,
         model: status.model,
         enabled: status.enabled,
+        apiKeyConfigured: status.apiKeyConfigured,
+        apiKeySource: status.apiKeySource,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";

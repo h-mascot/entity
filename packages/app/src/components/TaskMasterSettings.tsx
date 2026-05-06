@@ -3,8 +3,11 @@ import { useCallback, useEffect, useState } from 'react';
 interface AgentStatus {
   lastRun: string | null;
   totalActions: number;
+  provider: string;
   model: string;
   enabled: boolean;
+  apiKeyConfigured: boolean;
+  apiKeySource: 'database' | 'env' | 'none';
 }
 
 interface AgentLog {
@@ -21,6 +24,27 @@ interface AgentLog {
 
 interface TaskMasterSettingsProps {
   apiBase: string;
+}
+
+interface TaskAgentProviderOption {
+  id: string;
+  label: string;
+  keyLabel: string;
+  envKeys: string[];
+  models: Array<{ id: string; label: string }>;
+}
+
+interface TaskAgentSettings {
+  provider: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  apiKeySource: 'database' | 'env' | 'none';
+  staleThresholdHours: {
+    doing: number;
+    review: number;
+  };
+  maxActionsPerScan: number;
+  providers: TaskAgentProviderOption[];
 }
 
 function timeAgo(isoDate: string): string {
@@ -51,8 +75,16 @@ const ACTION_LABELS: Record<string, string> = {
 
 export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps) {
   const [status, setStatus] = useState<AgentStatus | null>(null);
+  const [settings, setSettings] = useState<TaskAgentSettings | null>(null);
+  const [draftProvider, setDraftProvider] = useState('');
+  const [draftModel, setDraftModel] = useState('');
+  const [draftApiKey, setDraftApiKey] = useState('');
+  const [draftDoingThreshold, setDraftDoingThreshold] = useState(24);
+  const [draftReviewThreshold, setDraftReviewThreshold] = useState(48);
+  const [draftMaxActions, setDraftMaxActions] = useState(10);
   const [logs, setLogs] = useState<AgentLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [triggerResult, setTriggerResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +96,23 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
       if (res.ok) setStatus(await res.json());
     } catch { /* ignore */ }
   }, [apiBase]);
+
+  const applySettings = useCallback((next: TaskAgentSettings) => {
+    setSettings(next);
+    setDraftProvider(next.provider);
+    setDraftModel(next.model);
+    setDraftApiKey('');
+    setDraftDoingThreshold(next.staleThresholdHours.doing);
+    setDraftReviewThreshold(next.staleThresholdHours.review);
+    setDraftMaxActions(next.maxActionsPerScan);
+  }, []);
+
+  const fetchSettings = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/agent/settings`);
+      if (res.ok) applySettings(await res.json());
+    } catch { /* ignore */ }
+  }, [apiBase, applySettings]);
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -77,8 +126,47 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([fetchStatus(), fetchLogs()]).finally(() => setLoading(false));
-  }, [fetchStatus, fetchLogs]);
+    Promise.all([fetchStatus(), fetchSettings(), fetchLogs()]).finally(() => setLoading(false));
+  }, [fetchStatus, fetchSettings, fetchLogs]);
+
+  const selectedProvider = settings?.providers.find((provider) => provider.id === draftProvider)
+    ?? settings?.providers[0]
+    ?? null;
+
+  const saveSettings = async (clearApiKey = false) => {
+    setSaving(true);
+    setTriggerResult(null);
+    setError(null);
+    try {
+      const res = await fetch(`${apiBase}/api/agent/settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: draftProvider,
+          model: draftModel,
+          apiKey: draftApiKey,
+          clearApiKey,
+          staleThresholdHours: {
+            doing: draftDoingThreshold,
+            review: draftReviewThreshold,
+          },
+          maxActionsPerScan: draftMaxActions,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        applySettings(data);
+        await fetchStatus();
+        setTriggerResult('Task Master settings saved.');
+      } else {
+        setError(data.error ?? 'Settings save failed');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const trigger = async (event: string) => {
     setTriggering(true);
@@ -123,6 +211,12 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
           <div>
+            <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Provider</div>
+            <div className="mt-1 text-sm text-[var(--text-primary)]">
+              {settings?.providers.find((provider) => provider.id === status?.provider)?.label ?? status?.provider ?? '—'}
+            </div>
+          </div>
+          <div>
             <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Model</div>
             <div className="mt-1 text-sm text-[var(--text-primary)]">{status?.model ?? '—'}</div>
           </div>
@@ -137,8 +231,20 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
             </div>
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Scan Interval</div>
-            <div className="mt-1 text-sm text-[var(--text-primary)]">30 min</div>
+            <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)]">API Key</div>
+            <div className="mt-1 text-sm text-[var(--text-primary)]">
+              {status?.apiKeyConfigured ? `Set (${status.apiKeySource})` : 'Missing'}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Stale Thresholds</div>
+            <div className="mt-1 text-sm text-[var(--text-primary)]">
+              {settings ? `${settings.staleThresholdHours.doing}h / ${settings.staleThresholdHours.review}h` : '—'}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Max Scan Actions</div>
+            <div className="mt-1 text-sm text-[var(--text-primary)]">{settings?.maxActionsPerScan ?? '—'}</div>
           </div>
         </div>
       </div>
@@ -170,15 +276,123 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
 
       {/* Configuration */}
       <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-        <h3 className="mb-3 text-sm font-medium text-[var(--text-primary)]">Configuration</h3>
-        <div className="space-y-2 text-xs text-[var(--text-secondary)]">
-          <div className="flex justify-between"><span>Stale threshold (doing)</span><span className="text-[var(--text-primary)]">24 hours</span></div>
-          <div className="flex justify-between"><span>Stale threshold (review)</span><span className="text-[var(--text-primary)]">48 hours</span></div>
-          <div className="flex justify-between"><span>Max actions per scan</span><span className="text-[var(--text-primary)]">10</span></div>
-          <div className="flex justify-between"><span>Provider</span><span className="text-[var(--text-primary)]">Google (Gemini)</span></div>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium text-[var(--text-primary)]">Model Provider</h3>
+          <span className="text-[11px] text-[var(--text-muted)]">
+            {settings?.apiKeyConfigured ? `Key set from ${settings.apiKeySource}` : 'No key configured'}
+          </span>
         </div>
-        <div className="mt-3 text-[11px] text-[var(--text-muted)]">
-          Configure via env vars: ENTITY_AGENT_ENABLED, ENTITY_AGENT_MODEL
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="block text-xs text-[var(--text-secondary)]">
+            <span className="mb-1 block text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Provider</span>
+            <select
+              value={draftProvider}
+              onChange={(event) => {
+                const nextProvider = event.target.value;
+                const provider = settings?.providers.find((item) => item.id === nextProvider);
+                setDraftProvider(nextProvider);
+                setDraftModel(provider?.models[0]?.id ?? '');
+              }}
+              className="mc-shell-input w-full px-3 py-2 text-sm text-[var(--text-primary)]"
+            >
+              {settings?.providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>{provider.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs text-[var(--text-secondary)]">
+            <span className="mb-1 block text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Model</span>
+            <select
+              value={draftModel}
+              onChange={(event) => setDraftModel(event.target.value)}
+              className="mc-shell-input w-full px-3 py-2 text-sm text-[var(--text-primary)]"
+            >
+              {selectedProvider && !selectedProvider.models.some((model) => model.id === draftModel) && draftModel && (
+                <option value={draftModel}>{draftModel}</option>
+              )}
+              {selectedProvider?.models.map((model) => (
+                <option key={model.id} value={model.id}>{model.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs text-[var(--text-secondary)] md:col-span-2">
+            <span className="mb-1 block text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Custom model ID</span>
+            <input
+              value={draftModel}
+              onChange={(event) => setDraftModel(event.target.value)}
+              className="mc-shell-input w-full px-3 py-2 text-sm text-[var(--text-primary)]"
+              placeholder="provider/model-id"
+            />
+          </label>
+          <label className="block text-xs text-[var(--text-secondary)] md:col-span-2">
+            <span className="mb-1 block text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
+              {selectedProvider?.keyLabel ?? 'API key'}
+            </span>
+            <input
+              type="password"
+              value={draftApiKey}
+              onChange={(event) => setDraftApiKey(event.target.value)}
+              className="mc-shell-input w-full px-3 py-2 text-sm text-[var(--text-primary)]"
+              placeholder={settings?.apiKeyConfigured ? 'Stored key is hidden. Enter a new key to replace it.' : 'Paste API key'}
+              autoComplete="off"
+            />
+          </label>
+          <label className="block text-xs text-[var(--text-secondary)]">
+            <span className="mb-1 block text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Stale threshold (doing)</span>
+            <input
+              type="number"
+              min={1}
+              max={720}
+              value={draftDoingThreshold}
+              onChange={(event) => setDraftDoingThreshold(Number(event.target.value))}
+              className="mc-shell-input w-full px-3 py-2 text-sm text-[var(--text-primary)]"
+            />
+          </label>
+          <label className="block text-xs text-[var(--text-secondary)]">
+            <span className="mb-1 block text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Stale threshold (review)</span>
+            <input
+              type="number"
+              min={1}
+              max={720}
+              value={draftReviewThreshold}
+              onChange={(event) => setDraftReviewThreshold(Number(event.target.value))}
+              className="mc-shell-input w-full px-3 py-2 text-sm text-[var(--text-primary)]"
+            />
+          </label>
+          <label className="block text-xs text-[var(--text-secondary)] md:col-span-2">
+            <span className="mb-1 block text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Max actions per scan</span>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={draftMaxActions}
+              onChange={(event) => setDraftMaxActions(Number(event.target.value))}
+              className="mc-shell-input w-full px-3 py-2 text-sm text-[var(--text-primary)]"
+            />
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[11px] text-[var(--text-muted)]">
+            Env fallback: {selectedProvider?.envKeys.join(', ') ?? 'none'}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => saveSettings(true)}
+              disabled={saving || settings?.apiKeySource !== 'database'}
+              className={`mc-shell-btn px-3 py-1.5 text-xs ${saving || settings?.apiKeySource !== 'database' ? 'opacity-50' : ''}`}
+            >
+              Clear saved key
+            </button>
+            <button
+              type="button"
+              onClick={() => saveSettings(false)}
+              disabled={saving || !draftProvider || !draftModel}
+              className={`mc-shell-btn px-3 py-1.5 text-xs font-medium ${saving || !draftProvider || !draftModel ? 'opacity-50' : ''}`}
+            >
+              {saving ? 'Saving...' : 'Save provider'}
+            </button>
+          </div>
         </div>
       </div>
 

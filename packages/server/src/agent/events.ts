@@ -1,5 +1,4 @@
 import type { TaskRecord } from '../../../db/src';
-import { AGENT_CONFIG } from './config';
 import {
   formatReviewAssessment,
   getPrimaryReviewReason,
@@ -7,6 +6,7 @@ import {
   hasSubstantiveReviewOutput,
   isActiveTaskColumn,
 } from './review-policy';
+import { getTaskAgentSettings } from './settings';
 import type { TaskAgentTools } from './tools';
 
 const RECENT_ACTIVITY_WINDOW_HOURS = 12;
@@ -332,14 +332,15 @@ export async function onTaskStale(
 
 export function collectStaleCandidates(tasks: readonly TaskRecord[]): Array<{ task: TaskRecord; hoursInColumn: number }> {
   const candidates: Array<{ task: TaskRecord; hoursInColumn: number }> = [];
+  const settings = getTaskAgentSettings();
   for (const task of tasks) {
     if (task.column !== 'doing' && task.column !== 'review') {
       continue;
     }
 
     const staleThreshold = task.column === 'doing'
-      ? AGENT_CONFIG.staleThresholdHours.doing
-      : AGENT_CONFIG.staleThresholdHours.review;
+      ? settings.staleThresholdHours.doing
+      : settings.staleThresholdHours.review;
     const hoursInColumn = toHoursSince(task.updated_at);
     if (hoursInColumn < staleThreshold) {
       continue;
