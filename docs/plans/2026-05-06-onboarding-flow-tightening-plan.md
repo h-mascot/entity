@@ -29,14 +29,14 @@ The current onboarding UI is visually close, but manual clicking can bounce back
 ## Checkpoints
 | Time | Step | Status | Notes |
 |------|------|--------|-------|
-| 13:05 | Context | done | Loaded onboarding component, CSS, existing model registry route, and prior plan |
+| 13:05 | Context | in progress | Loaded onboarding component, CSS, existing model registry route, and prior plan |
 | 14:16 | Backend | done | Fixed partial onboarding PATCH default reset and added regression coverage |
 | 14:45 | Browser | done | Browser click-through reached finish and entered workspace without resetting |
 | 14:50 | Gate | done with deploy note | App build and server tests pass; `ctrl:full` reaches deploy check and stops on existing remote DB symlink guardrail |
 
 ## Files Touched
 - `docs/plans/2026-05-06-onboarding-flow-tightening-plan.md` - created - compaction-safe implementation plan
-- `docs/plans/ACTIVE_PLAN.md` - updated - mirror current plan
+- `docs/plans/ACTIVE_PLAN.md` - update pending - mirror current plan
 - `packages/server/src/config/routes.ts` - modified - preserve explicit onboarding patch fields only
 - `packages/server/src/config/routes.test.ts` - modified - regression for model-only patches preserving current step
 - `packages/app/src/components/OnboardingFlow.tsx` - modified - simpler supported onboarding choices and backend model picker
@@ -58,4 +58,5 @@ The current onboarding UI is visually close, but manual clicking can bounce back
 ## Resume Instructions
 1. Re-read this file fully
 2. Run `git status` and `git diff` to see current state
-3. If follow-up work starts, create the next active plan before editing
+3. Find the first unchecked step above
+4. Continue from that step without redoing completed work

@@ -83,6 +83,41 @@ export const EntityConfigSchema = z.object({
 export type EntityConfig = z.infer<typeof EntityConfigSchema>;
 export type ConfigSource = 'default' | 'profile' | 'config' | 'database' | 'env';
 
+export const OnboardingStateSchema = z.object({
+  completed: z.boolean().default(false),
+  skipped: z.boolean().default(false),
+  completedAt: z.string().nullable().default(null),
+  mode: z.enum(['quick', 'agent', 'manual']).default('quick'),
+  currentStep: z.number().int().min(1).max(7).default(1),
+  workspaceMode: z.enum(['private', 'team', 'open-source']).default('private'),
+  selectedTheme: z.enum(['dark', 'light', 'kitz', 'nebula', 'aurora', 'paper']).default('aurora'),
+  defaultAiProvider: z.string().default('codex'),
+  defaultAiModel: z.string().default('GPT-5.5'),
+  starterPreset: z.enum(['solo', 'crew', 'open-source']).default('crew'),
+  firstAgentMode: z.enum(['assistant', 'invite', 'manual', 'skip']).default('assistant'),
+  firstSourceMode: z.enum(['current-folder', 'github', 'skip']).default('current-folder'),
+});
+
+const DEFAULT_ONBOARDING_STATE = OnboardingStateSchema.parse({});
+
+export const OnboardingAgentSessionSchema = z.object({
+  token: z.string().min(8),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+  status: z.enum(['created', 'opened', 'installing', 'configured', 'verified', 'expired']).default('created'),
+  state: OnboardingStateSchema.default(DEFAULT_ONBOARDING_STATE),
+  progress: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    status: z.enum(['pending', 'running', 'done', 'error']),
+    message: z.string().optional(),
+    updatedAt: z.string(),
+  })).default([]),
+});
+
+export type OnboardingState = z.infer<typeof OnboardingStateSchema>;
+export type OnboardingAgentSession = z.infer<typeof OnboardingAgentSessionSchema>;
+
 export interface SourceMetadata {
   source: ConfigSource;
   editableInUi: boolean;

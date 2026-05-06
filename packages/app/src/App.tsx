@@ -27,6 +27,7 @@ import ActivityStream from './components/ActivityStream';
 import MarkdownAudioControls, { type DocsTtsSettings } from './components/MarkdownAudioControls';
 import BottomTerminalPanel from './components/BottomTerminalPanel';
 import TaskBoard from './components/TaskBoard';
+import OnboardingFlow from './components/OnboardingFlow';
 import FileSourcesSettings from './components/settings/FileSourcesSettings';
 import EffectiveConfigSettings from './components/settings/EffectiveConfigSettings';
 import VoiceSettings from './components/settings/VoiceSettings';
@@ -1519,6 +1520,7 @@ export default function App() {
   const [enterpriseFrameReady, setEnterpriseFrameReady] = useState(false);
   const [enterpriseFrameTimedOut, setEnterpriseFrameTimedOut] = useState(false);
   const [appTheme, setAppTheme] = useState<AppTheme>(() => readThemePreference());
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState<boolean>(() => readRightSidebarCollapsed());
   const [isOffline, setIsOffline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? !navigator.onLine : false));
@@ -1598,6 +1600,19 @@ export default function App() {
       void fetchPlugins(runtime.apiBase);
     }
   }, [fetchPlugins, pluginsInitialized, pluginsLoading]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${runtime.apiBase}/api/onboarding/state`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`onboarding ${res.status}`))))
+      .then((state: { completed?: boolean }) => {
+        if (!cancelled) setOnboardingCompleted(Boolean(state.completed));
+      })
+      .catch(() => {
+        if (!cancelled) setOnboardingCompleted(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (sidebarTab !== 'tasks') {
@@ -5819,6 +5834,29 @@ export default function App() {
         </main>
         {renderOfflineSyncBar(false)}
       </div>
+    );
+  }
+
+  const onboardingToken = typeof window !== 'undefined' ? window.location.pathname.match(/^\/onboard\/agent\/([^/]+)$/)?.[1] ?? null : null;
+  const onboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === '/onboarding';
+  const shouldShowOnboarding = Boolean(onboardingToken) || onboardingRouteActive || onboardingCompleted === false;
+
+  if (shouldShowOnboarding) {
+    return (
+      <OnboardingFlow
+        apiBase={runtime.apiBase}
+        routeToken={onboardingToken}
+        userProfile={userProfile}
+        appTheme={appTheme}
+        onThemeChange={setAppTheme}
+        onProfileSave={saveUserProfile}
+        onComplete={() => {
+          setOnboardingCompleted(true);
+          if (typeof window !== 'undefined' && (window.location.pathname === '/onboarding' || onboardingToken)) {
+            window.history.replaceState(null, '', '/');
+          }
+        }}
+      />
     );
   }
 
