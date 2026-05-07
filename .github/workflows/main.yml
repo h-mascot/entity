@@ -39,6 +39,10 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if echo "$DEPLOY_URL" | grep -Eq '^https?://(10\.|100\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|localhost|0\.0\.0\.0)'; then
+            echo "::error::WEBHOOK_DEPLOY_URL points at a private/local address. Use the public bore/tunnel URL for GitHub-hosted runners."
+            exit 78
+          fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
 
       - name: Trigger Webhook Deploy
