@@ -343,10 +343,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, test, and PR expectations.
 
 ## License
 
-License selection is pending maintainer approval. Do not treat this repository as
-released under an open-source license until a root `LICENSE` file is added.
-
-See [docs/open-source-blockers.md](docs/open-source-blockers.md).
+Entity is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 
 ---
 
