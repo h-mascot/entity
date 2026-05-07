@@ -54,22 +54,13 @@ function createResponse() {
 }
 
 describe('buildTerminalLaunchSpec', () => {
-  it('creates a local script-backed launch for ada-gw', () => {
-    const spec = buildTerminalLaunchSpec('ada-gw', '/tmp/entity', 160, 48);
+  it('creates a local script-backed launch for the default local target', () => {
+    const spec = buildTerminalLaunchSpec('local', '/tmp/entity', 160, 48);
     expect(spec.command).toBe('/bin/zsh');
     expect(spec.args).toEqual(['-f']);
     expect(spec.cwd).toBe('/tmp/entity');
     expect(spec.env.COLUMNS).toBe('160');
     expect(spec.env.LINES).toBe('48');
-  });
-
-  it('creates an ssh-backed launch for remote targets', () => {
-    const spec = buildTerminalLaunchSpec('mac', '/tmp/entity');
-    expect(spec.command).toBe('/bin/zsh');
-    expect(spec.args).toEqual(['-f']);
-    expect(spec.initialInput).toContain("exec /usr/bin/ssh -tt 'mac'");
-    expect(spec.initialInput).toContain('Code/entity');
-    expect(spec.cwd).toBe('/tmp/entity');
   });
 });
 
@@ -97,7 +88,7 @@ describe('createTerminalBridge', () => {
       spawnProcess: spawnProcess as any,
     });
 
-    const session = bridge.createSession({ target: 'ada-gw', cols: 120, rows: 40 });
+    const session = bridge.createSession({ target: 'local', cols: 120, rows: 40 });
     expect(spawnProcess).toHaveBeenCalledWith('/bin/zsh', ['-f'], expect.objectContaining({
       cols: 120,
       rows: 40,
@@ -115,22 +106,6 @@ describe('createTerminalBridge', () => {
     expect(fakeProcess.write).toHaveBeenCalledWith('ls\n');
   });
 
-  it('starts remote sessions by writing ssh into a normal shell pty', () => {
-    const fakeProcess = new FakeProcess();
-    const spawnProcess = vi.fn(() => fakeProcess as any);
-    const bridge = createTerminalBridge({
-      workspaceRoot: '/tmp/entity',
-      spawnProcess: spawnProcess as any,
-    });
-
-    bridge.createSession({ target: 'spock' });
-
-    expect(spawnProcess).toHaveBeenCalledWith('/bin/zsh', ['-f'], expect.objectContaining({
-      cwd: '/tmp/entity',
-    }));
-    expect(fakeProcess.write).toHaveBeenCalledWith(expect.stringContaining("exec /usr/bin/ssh -tt 'spock'"));
-  });
-
   it('resizes the pty when a terminal resize message arrives', () => {
     const fakeProcess = new FakeProcess();
     const bridge = createTerminalBridge({
@@ -138,7 +113,7 @@ describe('createTerminalBridge', () => {
       spawnProcess: vi.fn(() => fakeProcess as any),
     });
 
-    const session = bridge.createSession({ target: 'ada-gw' });
+    const session = bridge.createSession({ target: 'local' });
     const socket = new FakeSocket();
     bridge.handleSocketConnection(socket as any);
     socket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
@@ -167,7 +142,7 @@ describe('createTerminalBridge', () => {
       spawnProcess: vi.fn(() => fakeProcess as any),
     });
 
-    const session = bridge.createSession({ target: 'ada-gw' });
+    const session = bridge.createSession({ target: 'local' });
     const socket = new FakeSocket();
     bridge.handleSocketConnection(socket as any);
     socket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
@@ -182,8 +157,8 @@ describe('registerTerminalRoutes', () => {
     const handlers: Record<string, (req: any, res: any) => any> = {};
     const sessionSummary: TerminalSessionSummary = {
       id: 'session-1',
-      target: 'ada-gw',
-      targetLabel: 'ada-gw',
+      target: 'local',
+      targetLabel: 'Local shell',
       transport: 'local',
       status: 'starting',
       createdAt: '2026-04-02T00:00:00.000Z',
@@ -192,7 +167,7 @@ describe('registerTerminalRoutes', () => {
       listTargets: () => [
         {
           id: 'ada-gw',
-          label: 'ada-gw',
+          label: 'Local shell',
           description: 'Local shell',
           transport: 'local',
           host: null,
@@ -225,7 +200,7 @@ describe('registerTerminalRoutes', () => {
       targets: [
         {
           id: 'ada-gw',
-          label: 'ada-gw',
+          label: 'Local shell',
           description: 'Local shell',
           transport: 'local',
           host: null,
@@ -238,7 +213,7 @@ describe('registerTerminalRoutes', () => {
     handlers['POST /api/terminal/sessions']({ body: { target: 'evil' } }, invalidResponse);
     expect(invalidResponse.status).toHaveBeenCalledWith(400);
     expect(invalidResponse.json).toHaveBeenCalledWith({
-      error: 'target must be one of: ada-gw, spock, scotty, mac, enterprise',
+      error: 'target must be one of: ada-gw',
     });
 
     const createResponseBody = createResponse();

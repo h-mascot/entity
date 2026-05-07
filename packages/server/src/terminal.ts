@@ -5,7 +5,7 @@ import type { Express, Request, Response } from 'express';
 import { spawn as spawnPty, type IPty } from 'node-pty';
 import { WebSocket } from 'ws';
 
-export type TerminalTargetId = 'ada-gw' | 'spock' | 'scotty' | 'mac' | 'enterprise';
+export type TerminalTargetId = string;
 export type TerminalTransport = 'local' | 'ssh';
 
 export interface TerminalTarget {
@@ -106,44 +106,12 @@ const MAX_HISTORY_CHUNKS = 200;
 
 export const TERMINAL_TARGETS: readonly TerminalTarget[] = [
   {
-    id: 'ada-gw',
-    label: 'ada-gw',
-    description: 'Local shell on the Entity host',
+    id: 'local',
+    label: 'Local shell',
+    description: 'Shell in the Entity workspace',
     transport: 'local',
     host: null,
     defaultDirectory: '.',
-  },
-  {
-    id: 'spock',
-    label: 'spock',
-    description: 'SSH session to the Spock host alias',
-    transport: 'ssh',
-    host: 'spock',
-    defaultDirectory: '~',
-  },
-  {
-    id: 'scotty',
-    label: 'scotty',
-    description: 'SSH session to the Scotty host alias',
-    transport: 'ssh',
-    host: 'scotty',
-    defaultDirectory: '~',
-  },
-  {
-    id: 'mac',
-    label: 'mac',
-    description: 'SSH session to the Mac source-of-truth host alias',
-    transport: 'ssh',
-    host: 'mac',
-    defaultDirectory: '~/Code/entity',
-  },
-  {
-    id: 'enterprise',
-    label: 'enterprise',
-    description: 'SSH session to the enterprise host alias',
-    transport: 'ssh',
-    host: 'enterprise',
-    defaultDirectory: '~',
   },
 ] as const;
 
@@ -158,6 +126,10 @@ function normalizeTargetId(value: unknown): TerminalTargetId | null {
 
   const normalized = value.trim() as TerminalTargetId;
   return TERMINAL_TARGETS.some((target) => target.id === normalized) ? normalized : null;
+}
+
+function terminalTargetIds(targets: readonly TerminalTarget[] = TERMINAL_TARGETS): string {
+  return targets.map((target) => target.id).join(', ');
 }
 
 function toDimension(value: unknown, fallback: number): number {
@@ -353,7 +325,10 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
   };
 
   const createSession = (input: CreateTerminalSessionInput = {}): TerminalSessionSummary => {
-    const targetId = normalizeTargetId(input.target) ?? 'ada-gw';
+    const targetId = normalizeTargetId(input.target) ?? TERMINAL_TARGETS[0]?.id;
+    if (!targetId) {
+      throw new Error('No terminal targets are configured.');
+    }
     const cols = toDimension(input.cols, DEFAULT_COLS);
     const rows = toDimension(input.rows, DEFAULT_ROWS);
     const launch = buildTerminalLaunchSpec(targetId, options.workspaceRoot, cols, rows);
@@ -435,8 +410,8 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
             socket,
             {
               id: sessionId || 'unknown',
-              target: 'ada-gw',
-              targetLabel: 'ada-gw',
+              target: TERMINAL_TARGETS[0]?.id ?? 'unknown',
+              targetLabel: TERMINAL_TARGETS[0]?.label ?? 'unknown',
               transport: 'local',
               status: 'error',
               createdAt: now().toISOString(),
@@ -536,9 +511,17 @@ export function registerTerminalRoutes(app: Express, bridge: TerminalBridge): vo
 
   app.post('/api/terminal/sessions', (req: Request, res: Response) => {
     const body = isRecord(req.body) ? (req.body as TerminalRequestBody) : {};
-    const target = typeof body.target === 'undefined' ? 'ada-gw' : body.target;
-    if (typeof target !== 'undefined' && target !== null && !normalizeTargetId(target)) {
-      res.status(400).json({ error: 'target must be one of: ada-gw, spock, scotty, mac, enterprise' });
+    const configuredTargets = bridge.listTargets();
+    const target = typeof body.target === 'undefined' ? undefined : body.target;
+    if (
+      typeof target !== 'undefined'
+      && target !== null
+      && (
+        typeof target !== 'string'
+        || !configuredTargets.some((configuredTarget) => configuredTarget.id === target.trim())
+      )
+    ) {
+      res.status(400).json({ error: `target must be one of: ${terminalTargetIds(configuredTargets) || '(none configured)'}` });
       return;
     }
 

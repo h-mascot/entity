@@ -190,10 +190,10 @@ function normalizeQmdBin(raw: string | undefined): string {
   return value;
 }
 
-function getQmdExecConfig(): { sshTarget: string; qmdBin: string; timeoutMs: number; maxBufferBytes: number } {
+function getQmdExecConfig(): { sshTarget: string | null; qmdBin: string; timeoutMs: number; maxBufferBytes: number } {
   const sshTargetEnv = process.env.ENTITY_QMD_SSH_TARGET;
   // Default to the current qmd host (per UNIVERSAL-SEARCH-PRD.md); allow explicitly setting empty string to disable SSH.
-  const sshTarget = typeof sshTargetEnv === 'string' ? sshTargetEnv.trim() : 'henrymascot@100.86.150.96';
+  const sshTarget = typeof sshTargetEnv === 'string' ? sshTargetEnv.trim() : null;
 
   // Default to the installed path on the qmd host; keep env override for portability.
   const qmdBin = normalizeQmdBin(process.env.ENTITY_QMD_BIN ?? '~/.local/bin/qmd');

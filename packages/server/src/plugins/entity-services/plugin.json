@@ -24,9 +24,9 @@
   ],
   "settings": {
     "requestTimeoutMs": 3500,
-    "entityBaseUrl": "http://100.106.69.9:3000",
-    "enterpriseAdminUrl": "http://100.104.229.62:3000",
-    "n8nBaseUrl": "http://100.106.69.9:5678",
-    "vaultwardenBaseUrl": "http://100.106.69.9:8222"
+    "discoverGatewayServices": true,
+    "discoverMacServices": true,
+    "macDiscoverySshTarget": null,
+    "macDiscoveryPublicHost": null
   }
 }

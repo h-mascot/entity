@@ -7,6 +7,7 @@ type WorkspaceMode = 'private' | 'team' | 'open-source';
 type StarterPreset = 'solo' | 'crew' | 'open-source';
 type FirstAgentMode = 'assistant' | 'invite' | 'manual' | 'skip';
 type FirstSourceMode = 'current-folder' | 'github' | 'skip';
+type AiProviderId = 'openai' | 'anthropic' | 'google' | 'custom';
 type IconName =
   | 'agent'
   | 'arrow'
@@ -66,6 +67,12 @@ interface ChatModelOption {
   source?: string;
 }
 
+interface ProviderDraft {
+  apiKey: string;
+  baseUrl: string;
+  customModel: string;
+}
+
 interface OnboardingFlowProps {
   apiBase?: string;
   routeToken?: string | null;
@@ -84,8 +91,8 @@ const DEFAULT_STATE: OnboardingState = {
   currentStep: 1,
   workspaceMode: 'private',
   selectedTheme: 'aurora',
-  defaultAiProvider: 'codex',
-  defaultAiModel: 'GPT-5.5',
+  defaultAiProvider: 'openai',
+  defaultAiModel: 'gpt-5.5',
   starterPreset: 'crew',
   firstAgentMode: 'assistant',
   firstSourceMode: 'current-folder',
@@ -124,13 +131,93 @@ const THEMES: Array<{ id: AppTheme; title: string; hint: string }> = [
   { id: 'paper', title: 'Paper', hint: 'Notebook desk board' },
 ];
 
-const PROVIDERS: Array<{ id: string; title: string; icon: IconName; tone: string }> = [
-  { id: 'claude-code', title: 'Claude Code', icon: 'spark', tone: 'orange' },
-  { id: 'codex', title: 'Codex', icon: 'code', tone: 'blue' },
-  { id: 'pi', title: 'Pi', icon: 'spark', tone: 'gold' },
-  { id: 'gemini', title: 'Gemini', icon: 'spark', tone: 'yellow' },
-  { id: 'opencode', title: 'OpenCode', icon: 'code', tone: 'green' },
+const AI_PROVIDERS: Array<{
+  id: AiProviderId;
+  title: string;
+  description: string;
+  icon: IconName;
+  tone: string;
+  apiKeyPlaceholder: string;
+  baseUrlPlaceholder: string;
+}> = [
+  {
+    id: 'openai',
+    title: 'OpenAI',
+    description: 'GPT-5.5, GPT-5.4, and GPT Codex models.',
+    icon: 'code',
+    tone: 'blue',
+    apiKeyPlaceholder: 'sk-...',
+    baseUrlPlaceholder: 'https://api.openai.com/v1',
+  },
+  {
+    id: 'anthropic',
+    title: 'Claude',
+    description: 'Claude Opus, Sonnet, and Haiku models.',
+    icon: 'spark',
+    tone: 'orange',
+    apiKeyPlaceholder: 'sk-ant-...',
+    baseUrlPlaceholder: 'https://api.anthropic.com',
+  },
+  {
+    id: 'google',
+    title: 'Gemini',
+    description: 'Gemini Pro and Flash models.',
+    icon: 'spark',
+    tone: 'yellow',
+    apiKeyPlaceholder: 'AIza...',
+    baseUrlPlaceholder: 'https://generativelanguage.googleapis.com',
+  },
+  {
+    id: 'custom',
+    title: 'Custom',
+    description: 'OpenAI-compatible endpoint for local or hosted models.',
+    icon: 'globe',
+    tone: 'green',
+    apiKeyPlaceholder: 'Optional token',
+    baseUrlPlaceholder: 'https://your-provider.example/v1',
+  },
 ];
+
+const CURATED_MODELS: Record<AiProviderId, ChatModelOption[]> = {
+  openai: [
+    { id: 'gpt-5.5', name: 'GPT-5.5', provider: 'openai', isLocal: false },
+    { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'openai', isLocal: false },
+    { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini', provider: 'openai', isLocal: false },
+    { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', provider: 'openai', isLocal: false },
+    { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark', provider: 'openai', isLocal: false },
+    { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex', provider: 'openai', isLocal: false },
+  ],
+  anthropic: [
+    { id: 'claude-opus-4.6', name: 'Claude Opus 4.6', provider: 'anthropic', isLocal: false },
+    { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', provider: 'anthropic', isLocal: false },
+    { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', provider: 'anthropic', isLocal: false },
+    { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', provider: 'anthropic', isLocal: false },
+    { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'anthropic', isLocal: false },
+  ],
+  google: [
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview', provider: 'google', isLocal: false },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', provider: 'google', isLocal: false },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'google', isLocal: false },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'google', isLocal: false },
+  ],
+  custom: [
+    { id: 'custom-model', name: 'Custom model', provider: 'custom', isLocal: false },
+  ],
+};
+
+const PROVIDER_DRAFT_DEFAULTS: Record<AiProviderId, ProviderDraft> = {
+  openai: { apiKey: '', baseUrl: '', customModel: '' },
+  anthropic: { apiKey: '', baseUrl: '', customModel: '' },
+  google: { apiKey: '', baseUrl: '', customModel: '' },
+  custom: { apiKey: '', baseUrl: '', customModel: 'custom-model' },
+};
+
+const PROVIDER_ALIASES: Record<AiProviderId, string[]> = {
+  openai: ['openai', 'codex', 'openai-codex', 'chatgpt'],
+  anthropic: ['anthropic', 'claude', 'claude-code'],
+  google: ['google', 'gemini', 'google-ai'],
+  custom: ['custom', 'openai-compatible', 'ollama', 'lmstudio', 'openrouter'],
+};
 
 const PRESETS: Array<{
   id: StarterPreset;
@@ -178,11 +265,52 @@ const WORKSPACE_MODES: Array<{
 ];
 
 function normalizeLoadedState(loaded: OnboardingState): OnboardingState {
+  const normalizedProvider = normalizeProviderId(loaded.defaultAiProvider, loaded.defaultAiModel);
   return {
     ...loaded,
     workspaceMode: loaded.workspaceMode === 'team' ? 'private' : loaded.workspaceMode,
     starterPreset: loaded.starterPreset === 'open-source' ? 'crew' : loaded.starterPreset,
+    defaultAiProvider: normalizedProvider,
+    defaultAiModel: loaded.defaultAiModel || defaultModelForProvider(normalizedProvider, []),
   };
+}
+
+function normalizeProviderId(provider: string | undefined, model?: string): AiProviderId {
+  const normalized = (provider ?? '').toLowerCase();
+  const modelText = (model ?? '').toLowerCase();
+  if (normalized.includes('anthropic') || normalized.includes('claude') || modelText.includes('claude')) return 'anthropic';
+  if (normalized.includes('google') || normalized.includes('gemini') || modelText.includes('gemini')) return 'google';
+  if (normalized.includes('custom') || normalized.includes('ollama') || normalized.includes('openrouter')) return 'custom';
+  return 'openai';
+}
+
+function modelMatchesProvider(model: ChatModelOption, providerId: AiProviderId): boolean {
+  const provider = model.provider.toLowerCase();
+  const searchable = `${model.id} ${model.name} ${provider}`.toLowerCase();
+  if (providerId === 'anthropic' && searchable.includes('claude')) return true;
+  if (providerId === 'google' && searchable.includes('gemini')) return true;
+  if (providerId === 'openai' && (searchable.includes('gpt') || searchable.includes('codex'))) return true;
+  return PROVIDER_ALIASES[providerId].some((alias) => provider.includes(alias) || searchable.includes(`${alias}/`));
+}
+
+function mergeModelOptions(dynamicModels: ChatModelOption[], providerId: AiProviderId): ChatModelOption[] {
+  const seen = new Set<string>();
+  return [...dynamicModels.filter((model) => modelMatchesProvider(model, providerId)), ...CURATED_MODELS[providerId]]
+    .filter((model) => {
+      const key = model.id.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function providerTitle(providerId: AiProviderId): string {
+  return AI_PROVIDERS.find((provider) => provider.id === providerId)?.title ?? 'OpenAI';
+}
+
+function defaultModelForProvider(providerId: AiProviderId, dynamicModels: ChatModelOption[]): string {
+  const models = mergeModelOptions(dynamicModels, providerId);
+  return models[0]?.id ?? CURATED_MODELS[providerId][0]?.id ?? 'gpt-5.5';
 }
 
 function normalizeModel(value: unknown): ChatModelOption | null {
@@ -450,14 +578,14 @@ export default function OnboardingFlow({
   const [sourceStatus, setSourceStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [providerDrafts, setProviderDrafts] = useState<Record<AiProviderId, ProviderDraft>>(PROVIDER_DRAFT_DEFAULTS);
   const [profileDraft, setProfileDraft] = useState({
     displayName: userProfile.displayName,
     handle: userProfile.handle,
     avatarUrl: userProfile.avatarUrl,
     workspaceName: 'Entity Workspace',
     publicUrl: typeof window === 'undefined' ? 'http://localhost:3000' : window.location.origin,
-    sourcePath: '/Users/henrymascot/Code/entity',
+    sourcePath: import.meta.env.VITE_SOURCE_PATH || '',
     githubUrl: '',
   });
 
@@ -563,26 +691,28 @@ export default function OnboardingFlow({
     [state.starterPreset],
   );
   const selectedPresetModules = selectedPreset.modules.map((module) => module.label);
+  const selectedProviderId = normalizeProviderId(state.defaultAiProvider, state.defaultAiModel);
+  const selectedProvider = AI_PROVIDERS.find((provider) => provider.id === selectedProviderId) ?? AI_PROVIDERS[0];
+  const selectedProviderDraft = providerDrafts[selectedProviderId];
+  const selectedProviderModels = useMemo(
+    () => mergeModelOptions(modelOptions, selectedProviderId),
+    [modelOptions, selectedProviderId],
+  );
   const selectedDefaultModel = useMemo(
     () => modelOptions.find((model) => model.id === state.defaultAiModel || model.name === state.defaultAiModel) ?? null,
     [modelOptions, state.defaultAiModel],
   );
-  const cloudModelOptions = useMemo(
-    () => modelOptions.filter((model) => !model.isLocal),
-    [modelOptions],
+  const selectedProviderModel = selectedProviderModels.find((model) => model.id === state.defaultAiModel || model.name === state.defaultAiModel) ?? selectedDefaultModel;
+  const defaultModelLabel = formatModelLabel(
+    selectedProviderId === 'custom' && selectedProviderDraft.customModel.trim()
+      ? selectedProviderDraft.customModel.trim()
+      : selectedProviderModel?.name ?? state.defaultAiModel,
   );
-  const localModelOptions = useMemo(
-    () => modelOptions.filter((model) => model.isLocal),
-    [modelOptions],
-  );
-  const defaultModelLabel = formatModelLabel(selectedDefaultModel?.name ?? state.defaultAiModel);
 
   useEffect(() => {
-    if (modelOptions.length === 0 || selectedDefaultModel) return;
-    const preferred = modelOptions.find((model) => model.id.includes('gpt-5.5') || model.name.toLowerCase().includes('gpt-5.5')) ?? modelOptions[0];
-    if (!preferred) return;
-    void patchState({ defaultAiProvider: 'codex', defaultAiModel: preferred.id });
-  }, [modelOptions, patchState, selectedDefaultModel]);
+    if (selectedProviderModels.some((model) => model.id === state.defaultAiModel || model.name === state.defaultAiModel)) return;
+    void patchState({ defaultAiProvider: selectedProviderId, defaultAiModel: defaultModelForProvider(selectedProviderId, modelOptions) });
+  }, [modelOptions, patchState, selectedProviderId, selectedProviderModels, state.defaultAiModel]);
 
   const continueNext = async () => {
     if (state.currentStep === 2) {
@@ -599,6 +729,33 @@ export default function OnboardingFlow({
           server: { publicBaseUrl: profileDraft.publicUrl },
         }),
       }).catch(() => undefined);
+    }
+
+    if (state.currentStep === 4) {
+      const modelToSave = selectedProviderId === 'custom' && selectedProviderDraft.customModel.trim()
+        ? selectedProviderDraft.customModel.trim()
+        : state.defaultAiModel;
+      const providerRuntime: Record<string, unknown> = {
+        defaultProvider: selectedProviderId,
+        defaultModel: modelToSave,
+        [selectedProviderId]: {
+          model: modelToSave,
+          baseUrl: selectedProviderDraft.baseUrl.trim() || undefined,
+          apiKey: selectedProviderDraft.apiKey.trim() || undefined,
+        },
+      };
+
+      await fetch(apiPath(apiBase, '/api/settings/config/runtime'), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providers: providerRuntime }),
+      }).catch(() => undefined);
+      await patchState({
+        defaultAiProvider: selectedProviderId,
+        defaultAiModel: modelToSave,
+        currentStep: Math.min(step + 1, 7),
+      });
+      return;
     }
 
     await patchState({ currentStep: Math.min(step + 1, 7) });
@@ -689,7 +846,7 @@ export default function OnboardingFlow({
     `- Workspace: ${profileDraft.workspaceName}`,
     `- Workspace mode: ${state.workspaceMode === 'private' ? 'Private local' : state.workspaceMode}`,
     `- Theme: ${state.selectedTheme}`,
-    `- Default AI: Codex / ${defaultModelLabel}`,
+    `- Default AI: ${providerTitle(selectedProviderId)} / ${defaultModelLabel}`,
     `- Starter preset: ${selectedPreset.title}`,
     `- First agent: ${state.firstAgentMode}`,
     `- First source: ${state.firstSourceMode}`,
@@ -901,7 +1058,7 @@ export default function OnboardingFlow({
                 <p className="mt-2 text-sm text-[var(--text-muted)]">We will configure these for you.</p>
                 <div className="mt-6 grid gap-4">
                   <IconListItem icon="palette" title="Aurora theme" detail="Clean, modern, and easy on the eyes." />
-                  <IconListItem icon="code" title="Codex default" detail="GPT-5.5 model selected." />
+                  <IconListItem icon="code" title="OpenAI default" detail="GPT-5.5 model selected." />
                   <IconListItem icon="users" title="Multi agents preset" detail="Good starting modules and permissions." />
                   <IconListItem icon="database" title="First source optional" detail="You can add data sources after setup." />
                 </div>
@@ -939,88 +1096,137 @@ export default function OnboardingFlow({
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
               <section className="onboarding-card p-8 md:p-10">
                 <h1 className="text-3xl font-semibold text-[var(--text-primary)]">Choose your default AI</h1>
-                <p className="mt-3 text-base text-[var(--text-muted)]">Entity uses this for setup help and recommended agent defaults. You can change it later.</p>
-                <div className="relative mt-8 grid gap-4">
-                  {PROVIDERS.map((provider) => {
-                    const selected = state.defaultAiProvider === provider.id;
-                    const disabled = provider.id !== 'codex';
+                <p className="mt-3 text-base text-[var(--text-muted)]">Entity uses this for setup help and recommended agent defaults. Add keys now or leave them for Admin.</p>
+                <div className="mt-8 grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]">
+                  <div className="grid content-start gap-3">
+                    {AI_PROVIDERS.map((provider) => {
+                    const selected = selectedProviderId === provider.id;
                     return (
                       <button
                         key={provider.id}
                         type="button"
-                        onClick={() => { if (!disabled) void patchState({ defaultAiProvider: provider.id }); }}
-                        disabled={disabled}
-                        className={`onboarding-provider-row ${selected ? 'onboarding-provider-row-selected' : ''} ${disabled ? 'onboarding-provider-row-disabled' : ''}`}
+                        onClick={() => void patchState({
+                          defaultAiProvider: provider.id,
+                          defaultAiModel: provider.id === 'custom'
+                            ? (providerDrafts.custom.customModel.trim() || 'custom-model')
+                            : defaultModelForProvider(provider.id, modelOptions),
+                        })}
+                        className={`onboarding-provider-row onboarding-provider-row-compact ${selected ? 'onboarding-provider-row-selected' : ''}`}
                       >
                         <span className={`onboarding-provider-icon onboarding-provider-icon-${provider.tone}`}>
-                          <Icon name={provider.icon} className="h-7 w-7" />
+                          <Icon name={provider.icon} className="h-6 w-6" />
                         </span>
                         <span className="flex-1 text-left">
-                          <span className="block text-xl font-semibold text-[var(--text-primary)]">{provider.title}</span>
-                          {disabled ? <span className="mt-1 block text-xs text-[var(--text-muted)]">Configure later in Admin</span> : null}
+                          <span className="block text-base font-semibold text-[var(--text-primary)]">{provider.title}</span>
+                          <span className="mt-1 block text-xs leading-5 text-[var(--text-muted)]">{provider.description}</span>
                         </span>
-                        {provider.id === 'codex' ? (
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            className="onboarding-model-select"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setModelMenuOpen((open) => !open);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                setModelMenuOpen((open) => !open);
-                              }
-                            }}
-                          >
-                            {modelsLoading ? 'Loading models' : defaultModelLabel}
-                            <span className="text-sm">{modelMenuOpen ? '⌃' : '⌄'}</span>
-                          </span>
-                        ) : null}
-                        <span className={`onboarding-radio ${selected ? 'onboarding-radio-selected' : ''}`}>{selected ? <span /> : null}</span>
+                        <span className={`onboarding-radio ${selected ? 'onboarding-radio-selected' : ''}`}>
+                          {selected ? <Icon name="check" className="h-4 w-4" /> : null}
+                        </span>
                       </button>
                     );
                   })}
-                  {state.defaultAiProvider === 'codex' && modelMenuOpen && (
-                    <div className="onboarding-model-menu">
-                      <div className="flex items-center gap-3 border-b border-[var(--border-secondary)] px-4 py-3 text-sm text-[var(--text-muted)]">
-                        <Icon name="search" className="h-4 w-4" />
-                        Models from the Entity model registry
+                  </div>
+                  <div className="onboarding-ai-config-panel">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-xl font-semibold text-[var(--text-primary)]">{selectedProvider.title} models</h2>
+                        <p className="mt-1 text-sm text-[var(--text-muted)]">
+                          {modelsLoading ? 'Checking the Entity model registry...' : 'Pick a default model for agents and setup helpers.'}
+                        </p>
                       </div>
-                      {modelsLoading && <div className="px-4 py-4 text-sm text-[var(--text-muted)]">Loading available models...</div>}
-                      {!modelsLoading && modelOptions.length === 0 && <div className="px-4 py-4 text-sm text-[var(--text-muted)]">No models returned yet. You can set this later in Admin.</div>}
-                      {[
-                        ['Cloud Models', cloudModelOptions],
-                        ['Local Models', localModelOptions],
-                      ].map(([label, models]) => (
-                        (models as ChatModelOption[]).length > 0 ? (
-                          <div key={label as string}>
-                            <div className="px-4 py-3 text-xs font-semibold text-[var(--text-muted)]">{label as string}</div>
-                            {(models as ChatModelOption[]).map((model) => (
-                              <button
-                                key={model.id}
-                                type="button"
-                                onClick={() => {
-                                  setModelMenuOpen(false);
-                                  void patchState({ defaultAiProvider: 'codex', defaultAiModel: model.id });
-                                }}
-                                className={`flex w-full items-center gap-3 rounded-lg px-4 py-2 text-left text-sm ${selectedDefaultModel?.id === model.id ? 'bg-blue-50 text-blue-700' : 'text-[var(--text-primary)] hover:bg-white/60'}`}
-                              >
-                                <span className="w-4">{selectedDefaultModel?.id === model.id ? '✓' : ''}</span>
-                                <span className="min-w-0">
-                                  <span className="block truncate font-medium">{formatModelLabel(model.name)}</span>
-                                  <span className="block truncate text-xs text-[var(--text-muted)]">{model.provider}{model.source ? ` · ${model.source}` : ''}</span>
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : null
-                      ))}
+                      <StatusChip tone="active">{defaultModelLabel}</StatusChip>
                     </div>
-                  )}
+
+                    <div className="mt-5 grid max-h-[300px] gap-2 overflow-auto pr-1">
+                      {selectedProviderModels.map((model) => {
+                        const selected = selectedProviderModel?.id === model.id;
+                        return (
+                          <button
+                            key={model.id}
+                            type="button"
+                            onClick={() => void patchState({ defaultAiProvider: selectedProviderId, defaultAiModel: model.id })}
+                            className={`onboarding-model-option ${selected ? 'onboarding-model-option-selected' : ''}`}
+                          >
+                            <span className={`onboarding-radio ${selected ? 'onboarding-radio-selected' : ''}`}>
+                              {selected ? <Icon name="check" className="h-4 w-4" /> : null}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-semibold text-[var(--text-primary)]">{formatModelLabel(model.name)}</span>
+                              <span className="mt-1 block truncate text-xs text-[var(--text-muted)]">
+                                {providerTitle(normalizeProviderId(model.provider, model.id))}
+                                {model.source ? ` · ${model.source}` : ''}
+                                {model.isLocal ? ' · local' : ''}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="onboarding-credential-panel mt-6 grid gap-4 p-4">
+                      <div className="flex items-center gap-3">
+                        <span className="onboarding-small-icon"><Icon name="key" className="h-5 w-5" /></span>
+                        <div>
+                          <div className="font-semibold text-[var(--text-primary)]">Provider credentials</div>
+                          <div className="text-xs text-[var(--text-muted)]">Saved only when you enter a value. You can also configure this later in Admin.</div>
+                        </div>
+                      </div>
+                      <label className="grid gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                        API key
+                        <span className="onboarding-input-wrap">
+                          <Icon name="key" className="h-5 w-5 text-[var(--text-muted)]" />
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            placeholder={selectedProvider.apiKeyPlaceholder}
+                            value={selectedProviderDraft.apiKey}
+                            onChange={(event) => setProviderDrafts((prev) => ({
+                              ...prev,
+                              [selectedProviderId]: { ...prev[selectedProviderId], apiKey: event.target.value },
+                            }))}
+                            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                          />
+                        </span>
+                      </label>
+                      <label className="grid gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                        Base URL
+                        <span className="onboarding-input-wrap">
+                          <Icon name="globe" className="h-5 w-5 text-[var(--text-muted)]" />
+                          <input
+                            placeholder={selectedProvider.baseUrlPlaceholder}
+                            value={selectedProviderDraft.baseUrl}
+                            onChange={(event) => setProviderDrafts((prev) => ({
+                              ...prev,
+                              [selectedProviderId]: { ...prev[selectedProviderId], baseUrl: event.target.value },
+                            }))}
+                            className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                          />
+                        </span>
+                      </label>
+                      {selectedProviderId === 'custom' ? (
+                        <label className="grid gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                          Model ID
+                          <span className="onboarding-input-wrap">
+                            <Icon name="code" className="h-5 w-5 text-[var(--text-muted)]" />
+                            <input
+                              placeholder="provider/model-name"
+                              value={selectedProviderDraft.customModel}
+                              onChange={(event) => {
+                                const customModel = event.target.value;
+                                setProviderDrafts((prev) => ({
+                                  ...prev,
+                                  custom: { ...prev.custom, customModel },
+                                }));
+                                void patchState({ defaultAiProvider: 'custom', defaultAiModel: customModel || 'custom-model' });
+                              }}
+                              className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                            />
+                          </span>
+                        </label>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
               </section>
               <aside className="onboarding-card p-8">
@@ -1028,8 +1234,8 @@ export default function OnboardingFlow({
                 <p className="mt-2 text-sm text-[var(--text-muted)]">We will check a few things before you continue.</p>
                 <div className="mt-8 divide-y divide-[var(--border-secondary)]">
                   {[
-                    ['Provider selected', 'Codex'],
-                    ['Model available', selectedDefaultModel ? `${selectedDefaultModel.name} is available` : 'Model registry connected'],
+                    ['Provider selected', selectedProvider.title],
+                    ['Model selected', defaultModelLabel],
                   ].map(([title, detail]) => (
                     <div key={title} className="flex gap-4 py-5 first:pt-0">
                       <span className="onboarding-success-icon"><Icon name="check" className="h-4 w-4" /></span>
@@ -1040,8 +1246,26 @@ export default function OnboardingFlow({
                     </div>
                   ))}
                   <div className="flex gap-4 py-5">
-                    <span className="onboarding-warning-icon"><Icon name="warning" className="h-4 w-4" /></span>
-                    <div className="text-sm text-[var(--text-muted)]">API keys and other providers can be configured later in Admin.</div>
+                    <span className={selectedProviderDraft.apiKey.trim() ? 'onboarding-success-icon' : 'onboarding-warning-icon'}>
+                      <Icon name={selectedProviderDraft.apiKey.trim() ? 'check' : 'warning'} className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <div className="font-semibold text-[var(--text-primary)]">API key</div>
+                      <div className="mt-1 text-sm text-[var(--text-muted)]">
+                        {selectedProviderDraft.apiKey.trim() ? 'Will be saved for this provider' : 'Optional now; add it later in Admin if needed'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-4 py-5">
+                    <span className={selectedProviderDraft.baseUrl.trim() || selectedProviderId !== 'custom' ? 'onboarding-success-icon' : 'onboarding-warning-icon'}>
+                      <Icon name={selectedProviderDraft.baseUrl.trim() || selectedProviderId !== 'custom' ? 'check' : 'warning'} className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <div className="font-semibold text-[var(--text-primary)]">Base URL</div>
+                      <div className="mt-1 text-sm text-[var(--text-muted)]">
+                        {selectedProviderDraft.baseUrl.trim() ? selectedProviderDraft.baseUrl.trim() : selectedProviderId === 'custom' ? 'Required for custom endpoints' : 'Using provider default'}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </aside>
@@ -1288,7 +1512,7 @@ export default function OnboardingFlow({
                 {[
                   ['Workspace saved', profileDraft.workspaceName, 'Private local', 'check' as IconName],
                   ['Aurora theme', 'Mint peach glass', 'Selected', 'palette' as IconName],
-                  ['Codex default AI', defaultModelLabel, selectedDefaultModel?.provider ?? 'Codex', 'code' as IconName],
+                  [`${providerTitle(selectedProviderId)} default AI`, defaultModelLabel, selectedProviderModel?.provider ?? providerTitle(selectedProviderId), 'code' as IconName],
                   ['Starter preset', selectedPreset.title, `${selectedPresetModules.length} modules enabled`, 'users' as IconName],
                   ['Source connected', 'Local documents', sourceStatus === 'ok' ? 'Healthy' : 'Optional', 'folder' as IconName],
                 ].map(([title, line1, line2, icon]) => (
@@ -1307,7 +1531,7 @@ export default function OnboardingFlow({
                     {[
                       ['Profile created', 'Workspace identity and access configured'],
                       ['Theme selected', `${state.selectedTheme} theme applied`],
-                      ['Default AI selected', `Codex (${defaultModelLabel}) set as default`],
+                      ['Default AI selected', `${providerTitle(selectedProviderId)} (${defaultModelLabel}) set as default`],
                       ['Starter modules enabled', 'Essential modules are ready'],
                       ['First agent/source optional', 'At least one agent and source configured'],
                     ].map(([title, detail]) => (

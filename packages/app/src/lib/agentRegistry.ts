@@ -8,27 +8,54 @@ export interface BuiltInAgentRecord {
   modules: string[];
 }
 
-export const BUILT_IN_AGENTS: readonly BuiltInAgentRecord[] = [
-  { id: 'main', slug: 'ada', name: 'Ada', emoji: '🔮', avatarUrl: '/agent-avatars/ada.jpg', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'swarm', 'plugins'] },
-  { id: 'spock', slug: 'spock', name: 'Spock', emoji: '🖖', avatarUrl: '/agent-avatars/spock.jpg', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
-  { id: 'scotty', slug: 'scotty', name: 'Scotty', emoji: '🔧', avatarUrl: '/agent-avatars/scotty.jpg', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'swarm'] },
-  { id: 'geordi', slug: 'geordi', name: 'Geordi', emoji: '👷', avatarUrl: '/agent-avatars/geordi.png', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'swarm', 'plugins'] },
-  { id: 'zora', slug: 'zora', name: 'Zora', emoji: '🌌', avatarUrl: '/agent-avatars/zora.jpg', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
-  { id: 'midas', slug: 'midas', name: 'Midas', emoji: '✨', status: 'online', modules: ['chat', 'tasks', 'files', 'docs', 'plugins'] },
-  { id: 'uhura', slug: 'uhura', name: 'Uhura', emoji: '📡', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
-  { id: 'book', slug: 'book', name: 'Book', emoji: '📚', status: 'online', modules: ['chat', 'tasks', 'files', 'docs'] },
+/**
+ * Fallback agents used when the API is unavailable or returns no agents.
+ * human is always included as an authorship identity.
+ */
+export const FALLBACK_AGENTS: BuiltInAgentRecord[] = [
+  {
+    id: 'human',
+    slug: 'human',
+    name: 'Human',
+    emoji: '👤',
+    status: 'online',
+    modules: ['chat', 'tasks', 'files', 'docs'],
+  },
+  {
+    id: 'assistant',
+    slug: 'assistant',
+    name: 'Assistant',
+    emoji: '🤖',
+    status: 'online',
+    modules: ['chat', 'tasks', 'files', 'docs'],
+  },
 ];
 
-export const BUILT_IN_AGENT_AVATARS: Record<string, string> = BUILT_IN_AGENTS.reduce((acc, agent) => {
-  if (agent.avatarUrl) {
-    acc[agent.id] = agent.avatarUrl;
-    acc[agent.slug] = agent.avatarUrl;
-    acc[agent.name.toLowerCase()] = agent.avatarUrl;
-  }
-  return acc;
-}, {} as Record<string, string>);
+/**
+ * Legacy export — use getCachedAgents() for runtime registry.
+ * Kept for TypeScript type inference (typeof BUILT_IN_AGENTS[number]).
+ */
+export const BUILT_IN_AGENTS: BuiltInAgentRecord[] = FALLBACK_AGENTS;
 
-export const BUILT_IN_AUTHORSHIP_ACTORS = ['human', ...BUILT_IN_AGENTS.map((agent) => agent.slug)] as const;
+/**
+ * Registry cache populated from /api/agents. Falls back to FALLBACK_AGENTS.
+ */
+let _cachedAgents: BuiltInAgentRecord[] | null = null;
+
+export function getCachedAgents(): BuiltInAgentRecord[] {
+  if (!_cachedAgents) {
+    return FALLBACK_AGENTS;
+  }
+  return _cachedAgents;
+}
+
+export function setCachedAgents(agents: BuiltInAgentRecord[]): void {
+  _cachedAgents = agents.length > 0 ? agents : FALLBACK_AGENTS;
+}
+
+export const BUILT_IN_AGENT_AVATARS: Record<string, string> = {};
+
+export const BUILT_IN_AUTHORSHIP_ACTORS = ['human', 'assistant'] as const;
 
 function normalizeAgentIdentity(value: string): string {
   return value.trim().toLowerCase().replace(/[\s_-]+/g, '');
@@ -40,7 +67,8 @@ export function getAgentRegistryRecord(identity: string | null | undefined): Bui
     return null;
   }
 
-  return BUILT_IN_AGENTS.find((agent) => {
+  const agents = getCachedAgents();
+  return agents.find((agent) => {
     return [agent.id, agent.slug, agent.name].some((candidate) => normalizeAgentIdentity(candidate) === normalized);
   }) ?? null;
 }
@@ -68,7 +96,7 @@ export function resolveAgentEmoji(identity: string | null | undefined): string {
 }
 
 export function getAgentsForModule(moduleId: string): BuiltInAgentRecord[] {
-  return BUILT_IN_AGENTS.filter((agent) => agent.modules.includes(moduleId));
+  return getCachedAgents().filter((agent) => agent.modules.includes(moduleId));
 }
 
 export function getChatAgentOptions() {
@@ -87,5 +115,5 @@ export function getFileAgentFilterOptions() {
 }
 
 export function getDocumentAuthorSlugs() {
-  return BUILT_IN_AGENTS.map((agent) => agent.slug);
+  return getCachedAgents().map((agent) => agent.slug);
 }

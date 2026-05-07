@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { runtime } from '../config/runtime';
 
-type TerminalTargetId = 'ada-gw' | 'spock' | 'scotty' | 'mac' | 'enterprise';
+type TerminalTargetId = string;
 
 interface TerminalTarget {
   id: TerminalTargetId;
@@ -47,48 +47,8 @@ interface TerminalEnvelope {
   emittedAt?: string;
 }
 
-const FALLBACK_TARGETS: TerminalTarget[] = [
-  {
-    id: 'ada-gw',
-    label: 'ada-gw',
-    description: 'Local shell on the Entity host',
-    transport: 'local',
-    host: null,
-    defaultDirectory: '.',
-  },
-  {
-    id: 'spock',
-    label: 'spock',
-    description: 'SSH session to the Spock host alias',
-    transport: 'ssh',
-    host: 'spock',
-    defaultDirectory: '~',
-  },
-  {
-    id: 'scotty',
-    label: 'scotty',
-    description: 'SSH session to the Scotty host alias',
-    transport: 'ssh',
-    host: 'scotty',
-    defaultDirectory: '~',
-  },
-  {
-    id: 'mac',
-    label: 'mac',
-    description: 'SSH session to the Mac source-of-truth host alias',
-    transport: 'ssh',
-    host: 'mac',
-    defaultDirectory: '~/Code/entity',
-  },
-  {
-    id: 'enterprise',
-    label: 'enterprise',
-    description: 'SSH session to the enterprise host alias',
-    transport: 'ssh',
-    host: 'enterprise',
-    defaultDirectory: '~',
-  },
-];
+// Loaded from config at runtime; empty array when no terminal.targets are configured.
+const FALLBACK_TARGETS: TerminalTarget[] = [];
 
 function buildApiUrl(pathname: string): string {
   return `${runtime.apiBase}${pathname}`;
@@ -150,7 +110,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
   const sessionStartAttemptedRef = useRef(false);
 
   const [targets, setTargets] = useState<TerminalTarget[]>(FALLBACK_TARGETS);
-  const [selectedTarget, setSelectedTarget] = useState<TerminalTargetId>('ada-gw');
+  const [selectedTarget, setSelectedTarget] = useState<TerminalTargetId>('local');
   const [socketConnected, setSocketConnected] = useState(false);
   const [session, setSession] = useState<TerminalSessionSummary | null>(null);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'running' | 'closed' | 'error'>('idle');

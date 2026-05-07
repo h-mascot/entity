@@ -184,7 +184,8 @@ function toConversationHistory(messages: ChatMessage[]): Array<{ role: 'user' | 
 
 async function resolveOllamaModel(): Promise<string> {
   try {
-    const response = await fetchWithTimeout('http://100.86.150.96:11434/api/tags', { method: 'GET' }, 3500);
+    const ollamaUrl = (import.meta.env.VITE_OLLAMA_BASE_URL as string | undefined) || 'http://localhost:11434';
+    const response = await fetchWithTimeout(`${ollamaUrl}/api/tags`, { method: 'GET' }, 3500);
     if (!response.ok) {
       return DEFAULT_LOCAL_MODEL;
     }
@@ -217,8 +218,9 @@ async function requestLocalAgentReply(params: {
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
 }): Promise<string> {
   const agent = findAgent(params.agentId);
+  const ollamaUrl = (import.meta.env.VITE_OLLAMA_BASE_URL as string | undefined) || 'http://localhost:11434';
   const response = await fetchWithTimeout(
-    'http://100.86.150.96:11434/v1/chat/completions',
+    `${ollamaUrl}/v1/chat/completions`,
     {
       method: 'POST',
       headers: {

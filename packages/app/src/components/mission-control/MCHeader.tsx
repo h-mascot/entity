@@ -9,6 +9,7 @@ interface MCHeaderProps {
   onGlobalSearchChange: (value: string) => void;
   reviewFilter?: string;
   onReviewFilterChange?: (value: string) => void;
+  onSettingsOpen?: () => void;
 }
 
 export default function MCHeader({
@@ -18,6 +19,7 @@ export default function MCHeader({
   onGlobalSearchChange,
   reviewFilter = "all",
   onReviewFilterChange,
+  onSettingsOpen,
 }: MCHeaderProps) {
   const [userProfile] = useUserProfile();
 
@@ -117,15 +119,11 @@ export default function MCHeader({
         <button
           type="button"
           className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-lg border border-[var(--border-secondary)] bg-[var(--bg-secondary)] text-sm text-[var(--text-muted)] transition hover:border-[var(--border-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-          onClick={() =>
-            (
-              window as typeof window & { toggleSettings?: () => void }
-            ).toggleSettings?.()
-          }
-          aria-label="Settings"
-          title="Settings"
+          onClick={onSettingsOpen}
+          aria-label="Mission Control settings"
+          title="Mission Control settings"
         >
-          ...
+          ⚙
         </button>
       </div>
     </header>

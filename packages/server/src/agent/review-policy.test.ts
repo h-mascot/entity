@@ -134,7 +134,7 @@ describe('assessReviewOutput', () => {
           status: reference === 'output/task-master-review.md' ? 'missing' : 'accessible',
           detail:
             reference === 'output/task-master-review.md'
-              ? 'File not found at /home/henrymascot/clawd/output/task-master-review.md.'
+              ? 'File not found at ~/workspace/output/task-master-review.md.'
               : `ok: ${reference}`,
           accessible: reference !== 'output/task-master-review.md',
           reviewable: reference !== 'output/task-master-review.md',

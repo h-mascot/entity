@@ -15,6 +15,7 @@ interface MCTaskCardProps {
   task: TaskBoardTask;
   isDragging?: boolean;
   isHighlighted?: boolean;
+  isArchiveColumn?: boolean;
   onDragStart: (taskId: number) => void;
   onDragEnd: () => void;
   onOpenTask?: (taskId: number) => void;
@@ -26,6 +27,7 @@ export default function MCTaskCard({
   task,
   isDragging = false,
   isHighlighted = false,
+  isArchiveColumn = false,
   onDragStart,
   onDragEnd,
   onOpenTask,
@@ -56,6 +58,7 @@ export default function MCTaskCard({
 	    isDragging ? 'dragging' : '',
 	    isWorking ? 'working' : '',
 	    isHighlighted ? 'task-highlighted' : '',
+	    isArchiveColumn ? 'task-archived' : '',
 	  ]
 	    .filter(Boolean)
 	    .join(' ');
@@ -155,6 +158,7 @@ export default function MCTaskCard({
     >
       {task.blocked ? <div className="blocked-indicator" aria-hidden="true">🚨</div> : null}
       {!task.blocked && isWorking ? <div className="working-indicator" aria-hidden="true" /> : null}
+      {isArchiveColumn ? <div className="archive-indicator" aria-hidden="true">Archived</div> : null}
 
       <div className="task-kicker">
         <span>Task #{task.id}</span>

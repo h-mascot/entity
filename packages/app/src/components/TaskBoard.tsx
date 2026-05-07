@@ -29,6 +29,8 @@ interface TaskBoardProps {
   highlightTaskId?: number | null;
   onOpenTask?: (taskId: number) => void;
   onCloseTask?: () => void;
+  showArchiveColumn?: boolean;
+  onArchiveColumnVisibilityChange?: (visible: boolean) => void;
 }
 
 function parseTaskMetadata(task: TaskBoardTask): Record<string, any> {
@@ -95,6 +97,8 @@ export default function TaskBoard({
   highlightTaskId = null,
   onOpenTask,
   onCloseTask,
+  showArchiveColumn = true,
+  onArchiveColumnVisibilityChange,
 }: TaskBoardProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
@@ -103,6 +107,7 @@ export default function TaskBoard({
   const [globalSearch, setGlobalSearch] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [reviewFilter, setReviewFilter] = useState("all");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const taskBoardState = useTaskBoard({ autoLoad: false });
   const tasks = tasksProp ?? taskBoardState.tasks;
   const loading = loadingProp ?? taskBoardState.loading;
@@ -218,8 +223,37 @@ export default function TaskBoard({
           onGlobalSearchChange={setGlobalSearch}
           reviewFilter={reviewFilter}
           onReviewFilterChange={setReviewFilter}
+          onSettingsOpen={() => setSettingsOpen(true)}
         />
       </div>
+      {settingsOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-labelledby="mc-settings-title">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--border-secondary)] bg-[var(--card-bg)] p-4 shadow-[0_24px_64px_rgba(0,0,0,0.45)]">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 id="mc-settings-title" className="text-base font-semibold text-[var(--text-primary)]">Mission Control settings</h2>
+                <p className="mt-1 text-xs text-[var(--text-muted)]">Board preferences are saved on this device.</p>
+              </div>
+              <button type="button" onClick={() => setSettingsOpen(false)} className="mc-shell-btn inline-flex h-8 w-8 items-center justify-center px-0 py-0 text-sm" aria-label="Close Mission Control settings">
+                ✕
+              </button>
+            </div>
+            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-3">
+              <span>
+                <span className="block text-sm font-medium text-[var(--text-primary)]">Archive column</span>
+                <span className="mt-1 block text-xs text-[var(--text-muted)]">Show archived tasks as a separate board column.</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={showArchiveColumn}
+                onChange={(event) => onArchiveColumnVisibilityChange?.(event.target.checked)}
+                aria-label="Show Archive column"
+                className="h-5 w-5 accent-[var(--accent)]"
+              />
+            </label>
+          </div>
+        </div>
+      ) : null}
       <MCOpsView
         apiBase={apiBase}
         compactShell={compactShell}
@@ -233,6 +267,7 @@ export default function TaskBoard({
         onOpenTask={onOpenTask}
         onCloseTask={onCloseTask}
         tasks={filteredTasks}
+        showArchiveColumn={showArchiveColumn}
       />
     </div>
   );
