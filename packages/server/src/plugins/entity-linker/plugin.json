@@ -17,7 +17,7 @@
     { "basePath": "/api/entity-linker", "entry": "./routes.ts" }
   ],
   "settings": {
-    "entityBaseUrl": "http://100.106.69.9:3000",
+    "entityBaseUrl": "http://localhost:3000",
     "rewriteAbsolutePaths": true,
     "maxRecentEvents": 25
   }

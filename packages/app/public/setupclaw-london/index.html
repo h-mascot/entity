@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SetupClaw London — OpenClaw Agent Setup in One Afternoon</title>
+  <meta name="description" content="Proof-first OpenClaw setup for London founders and operators. One channel, three useful tools, governed defaults, and a real completed task before handoff." />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a31;
+      --panel-2: #17213d;
+      --text: #f6f7fb;
+      --muted: #b8c0d9;
+      --line: rgba(255,255,255,.12);
+      --accent: #8ee6c8;
+      --accent-2: #f5c76b;
+      --danger: #ff8b8b;
+      --shadow: 0 22px 70px rgba(0,0,0,.35);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: radial-gradient(circle at top left, rgba(142,230,200,.18), transparent 34rem), radial-gradient(circle at top right, rgba(245,199,107,.13), transparent 26rem), var(--bg); color: var(--text); line-height: 1.55; }
+    a { color: inherit; }
+    .wrap { width: min(1120px, calc(100% - 40px)); margin: 0 auto; }
+    header { padding: 28px 0 0; }
+    .nav { display:flex; justify-content:space-between; align-items:center; gap:16px; color:var(--muted); font-size:14px; }
+    .brand { color:var(--text); font-weight:800; letter-spacing:-.03em; }
+    .pill { border:1px solid var(--line); border-radius:999px; padding:8px 12px; background:rgba(255,255,255,.04); }
+    .hero { padding: 90px 0 70px; display:grid; grid-template-columns: 1.12fr .88fr; gap:48px; align-items:center; }
+    h1 { font-size: clamp(46px, 7vw, 82px); line-height: .92; letter-spacing:-.07em; margin: 0 0 24px; }
+    h2 { font-size: clamp(30px, 4vw, 48px); line-height:1; letter-spacing:-.05em; margin:0 0 18px; }
+    h3 { font-size:22px; letter-spacing:-.03em; margin:0 0 10px; }
+    p { margin:0; color:var(--muted); font-size:18px; }
+    .subhead { font-size:22px; max-width: 680px; }
+    .cta-row { display:flex; flex-wrap:wrap; gap:14px; margin:32px 0 18px; }
+    .btn { text-decoration:none; border-radius:14px; padding:14px 18px; font-weight:800; display:inline-flex; align-items:center; justify-content:center; min-height:52px; }
+    .btn.primary { background:var(--accent); color:#06110d; }
+    .btn.secondary { border:1px solid var(--line); background:rgba(255,255,255,.05); color:var(--text); }
+    .trust { color:var(--accent-2); font-weight:700; font-size:15px; }
+    .card { background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.04)); border:1px solid var(--line); border-radius:28px; padding:28px; box-shadow:var(--shadow); }
+    .proof-card { transform: rotate(1deg); }
+    .proof-card ul { margin:20px 0 0; padding-left:20px; color:var(--muted); }
+    .proof-card li { margin:10px 0; }
+    section { padding: 54px 0; }
+    .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:18px; margin-top:28px; }
+    .tile { background:var(--panel); border:1px solid var(--line); border-radius:22px; padding:24px; min-height:190px; }
+    .tile p, .faq p, .package li { font-size:16px; }
+    .two { display:grid; grid-template-columns: .9fr 1.1fr; gap:24px; align-items:start; }
+    .fail-list { display:grid; gap:10px; margin:0; padding:0; list-style:none; }
+    .fail-list li { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:13px 16px; color:var(--muted); }
+    .line { color:var(--accent); font-weight:800; margin-top:18px; }
+    .package { background:linear-gradient(135deg, rgba(142,230,200,.15), rgba(245,199,107,.08)); }
+    .package ul { margin:16px 0 0; padding-left:20px; color:var(--muted); }
+    .numbered { counter-reset:item; display:grid; gap:12px; margin-top:22px; }
+    .numbered div { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:15px 16px; color:var(--muted); }
+    .numbered div::before { counter-increment:item; content: counter(item) ". "; color:var(--accent-2); font-weight:900; }
+    .faq { display:grid; grid-template-columns: repeat(2, 1fr); gap:16px; margin-top:24px; }
+    form { display:grid; grid-template-columns: repeat(2, 1fr); gap:14px; margin-top:24px; }
+    label { display:grid; gap:7px; color:var(--muted); font-weight:700; font-size:14px; }
+    input, textarea { width:100%; border:1px solid var(--line); border-radius:14px; background:rgba(255,255,255,.06); color:var(--text); padding:13px 14px; font:inherit; }
+    textarea { min-height:108px; resize:vertical; }
+    .full { grid-column:1 / -1; }
+    .confirmation { display:none; margin-top:18px; border:1px solid rgba(142,230,200,.35); background:rgba(142,230,200,.09); border-radius:18px; padding:16px; color:var(--text); }
+    .payload { display:none; margin-top:14px; white-space:pre-wrap; word-break:break-word; font-size:13px; color:var(--muted); background:#08101f; border:1px solid var(--line); border-radius:14px; padding:14px; }
+    .final { text-align:center; padding:80px 0 96px; }
+    .final h2 { max-width:760px; margin-left:auto; margin-right:auto; }
+    footer { border-top:1px solid var(--line); padding:24px 0 34px; color:var(--muted); font-size:14px; }
+    @media (max-width: 860px) {
+      .hero, .two { grid-template-columns: 1fr; }
+      .grid, .faq, form { grid-template-columns: 1fr; }
+      .hero { padding-top:58px; }
+      .proof-card { transform:none; }
+      .wrap { width:min(100% - 28px, 1120px); }
+      .btn { width:100%; }
+    }
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <nav class="nav" aria-label="Top navigation">
+      <div class="brand">SetupClaw London</div>
+      <div class="pill">Proof-first OpenClaw setup</div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero wrap">
+      <div>
+        <h1>Your first useful governed agent, live by this afternoon.</h1>
+        <p class="subhead">We set up OpenClaw for London founders and operators who want a working agent, not another infra hobby.</p>
+        <div class="cta-row">
+          <a class="btn primary" href="mailto:ada@agentmail.to?subject=SetupClaw%20London%20proof-first%20setup">Book a proof-first agent setup</a>
+          <a class="btn secondary" href="mailto:ada@agentmail.to?subject=Send%20me%20the%20SetupClaw%20checklist">Send me the setup checklist</a>
+        </div>
+        <div class="trust">One channel. Three useful tools. Safety defaults. Proof before handoff.</div>
+      </div>
+      <aside class="card proof-card" aria-label="Proof-first promise summary">
+        <h3>Handoff is not “it runs.”</h3>
+        <p>Handoff is a completed task with evidence.</p>
+        <ul>
+          <li>Route used</li>
+          <li>Workflow completed</li>
+          <li>Output produced</li>
+          <li>Evidence it worked</li>
+          <li>Rollback note if something breaks</li>
+        </ul>
+      </aside>
+    </section>
+
+    <section class="wrap">
+      <h2>What you get</h2>
+      <p>One useful slice, wired properly, with guardrails before the agent touches anything sensitive.</p>
+      <div class="grid">
+        <article class="tile"><h3>One channel connected</h3><p>Slack, Discord, Telegram, or email — whichever is where your work already happens.</p></article>
+        <article class="tile"><h3>Three useful tools wired</h3><p>Calendar, docs, web research, CRM, inbox, GitHub, or internal systems — picked for leverage, not demo glitter.</p></article>
+        <article class="tile"><h3>Memory and workspace defaults</h3><p>A clean working directory, durable notes, and enough context without turning the setup into a token bonfire.</p></article>
+        <article class="tile"><h3>Approval boundaries</h3><p>Sensitive sends, money movement, destructive actions, and external commitments stay behind explicit approval.</p></article>
+        <article class="tile"><h3>Proof task before handoff</h3><p>We hand over after the agent completes one real task with evidence — not because the server booted.</p></article>
+        <article class="tile"><h3>Rollback notes</h3><p>You leave with a clear path for what changed, where it runs, and how to unwind it if needed.</p></article>
+      </div>
+    </section>
+
+    <section class="wrap two">
+      <div>
+        <h2>Why not DIY?</h2>
+        <p>Agents rarely fail in dramatic sci-fi ways. They fail in boring places.</p>
+        <p class="line">SetupClaw sells the boring bits working.</p>
+      </div>
+      <ul class="fail-list">
+        <li>Auth tokens half-working</li>
+        <li>Slack routes silently broken</li>
+        <li>Permissions too wide or too narrow</li>
+        <li>Cron jobs waking up with no useful context</li>
+        <li>Missing proof after a task claims completion</li>
+        <li>Notification loops nobody trusts</li>
+      </ul>
+    </section>
+
+    <section class="wrap two">
+      <div class="card package">
+        <h2>Afternoon setup session</h2>
+        <p>A focused setup for one useful governed agent.</p>
+        <ul>
+          <li>one channel connection</li>
+          <li>three tool integrations</li>
+          <li>memory/workspace defaults</li>
+          <li>approval policy setup</li>
+          <li>one proof task completed live</li>
+          <li>handoff notes with rollback path</li>
+        </ul>
+      </div>
+      <div class="grid" style="grid-template-columns:1fr; margin-top:0;">
+        <article class="tile"><h3>30-day support window</h3><p>Routing fixes, tool glitches, prompt tightening, and small workflow adjustments after the first real use.</p></article>
+        <article class="tile"><h3>Optional follow-on</h3><p>Team rollout, secure agent concierge, or additional verified workflows once the first agent has proven useful.</p></article>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <h2>Proof-first promise</h2>
+      <p>If we cannot prove the first task worked, we are not done. Annoying standard. Correct standard.</p>
+      <div class="numbered">
+        <div>the route the agent used</div>
+        <div>the tool call or workflow it completed</div>
+        <div>the output it produced</div>
+        <div>the evidence that it worked</div>
+        <div>the rollback note if something breaks</div>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <h2>Book the first useful slice</h2>
+      <p>Tell us the first task that would make the agent useful. We will reply with a one-afternoon scope.</p>
+      <form id="lead-form" action="#setupclaw-confirmation">
+        <label>Name<input name="name" autocomplete="name" required /></label>
+        <label>Email<input name="email" type="email" autocomplete="email" required /></label>
+        <label>Company<input name="company" autocomplete="organization" required /></label>
+        <label>Preferred day<input name="preferred_day" placeholder="Friday afternoon" required /></label>
+        <label class="full">Current agent stack<textarea name="current_stack" required placeholder="Slack + Gmail + Google Drive"></textarea></label>
+        <label class="full">First useful task<textarea name="first_task" required placeholder="Summarise urgent client emails and draft a Slack handoff"></textarea></label>
+        <label class="full">Tools needed<textarea name="tools_needed" required placeholder="Gmail, Slack, Google Drive"></textarea></label>
+        <label class="full">Must-not-do-without-approval constraint<textarea name="approval_boundary" required placeholder="Do not send external email without approval"></textarea></label>
+        <div class="full cta-row" style="margin:6px 0 0;"><button class="btn primary" type="submit">Send setup request</button></div>
+      </form>
+      <div class="confirmation" id="setupclaw-confirmation">Thanks - we will reply with a one-afternoon setup scope. The first session focuses on one channel, three useful tools, safety defaults, and handoff notes. No production data access until explicitly scoped.</div>
+      <pre class="payload" id="notification-payload" aria-label="Generated notification payload"></pre>
+    </section>
+
+    <section class="wrap">
+      <h2>FAQ</h2>
+      <div class="faq">
+        <article class="tile"><h3>Is this for non-technical teams?</h3><p>Yes. Technical teams benefit too, because their time is usually better spent shipping product than wrestling OAuth goblins.</p></article>
+        <article class="tile"><h3>Is it secure?</h3><p>The default setup is governed. Sensitive sends, financial actions, destructive operations, and external commitments require approval.</p></article>
+        <article class="tile"><h3>Do I need a Mac Mini?</h3><p>Not necessarily. The right host depends on what you want the agent to do, what data it needs, and how much local control you want.</p></article>
+        <article class="tile"><h3>What happens in the afternoon?</h3><p>We choose the first useful workflow, connect one channel, wire three tools, set the guardrails, run a real task, and hand over the proof.</p></article>
+        <article class="tile"><h3>What if my workflow is more complex?</h3><p>Start with the first useful slice. Multi-week architecture diagrams before first proof are how agents go to die wearing a tiny consultant lanyard.</p></article>
+      </div>
+    </section>
+
+    <section class="final wrap">
+      <h2>Ready to stop poking YAML and get a useful agent working?</h2>
+      <div class="cta-row" style="justify-content:center;">
+        <a class="btn primary" href="mailto:ada@agentmail.to?subject=SetupClaw%20London%20proof-first%20setup">Book a proof-first agent setup</a>
+        <a class="btn secondary" href="mailto:ada@agentmail.to?subject=Send%20me%20the%20SetupClaw%20checklist">Send me the setup checklist</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap">SetupClaw London — first useful governed agent by the end of the afternoon.</footer>
+  <script>
+    const form = document.querySelector('#lead-form');
+    const confirmation = document.querySelector('#setupclaw-confirmation');
+    const payloadBox = document.querySelector('#notification-payload');
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(form).entries());
+      const source = new URLSearchParams(window.location.search).get('source') || 'static-form';
+      const payload = `SetupClaw London lead\nName: ${data.name}\nEmail: ${data.email}\nCompany: ${data.company}\nPreferred day: ${data.preferred_day}\nStack: ${data.current_stack}\nFirst task: ${data.first_task}\nTools: ${data.tools_needed}\nApproval boundary: ${data.approval_boundary}\nSource: ${source}`;
+      const subject = encodeURIComponent(`SetupClaw London request - ${data.company || data.name}`);
+      const body = encodeURIComponent(`${payload}
+
+Proof-first setup request captured from setupclaw-london-static.`);
+      const mailto = `mailto:ada@agentmail.to?subject=${subject}&body=${body}`;
+      confirmation.style.display = 'block';
+      payloadBox.textContent = `${payload}
+
+Notification draft: ${mailto}`;
+      payloadBox.style.display = 'block';
+      window.location.href = mailto;
+      confirmation.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  </script>
+</body>
+</html>

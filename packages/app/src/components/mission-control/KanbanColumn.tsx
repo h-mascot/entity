@@ -4,16 +4,17 @@ import MCTaskCard from './MCTaskCard';
 import type { ProjectOption } from './projectOptions';
 
 const BACKLOG_PAGE_SIZE = 50;
-const COLUMN_COLORS: Record<TaskColumn, string> = {
+const COLUMN_COLORS: Record<TaskColumn | 'archive', string> = {
   backlog: '#6b7280',
   todo: '#94a3b8',
   doing: 'var(--accent)',
   review: '#f59e0b',
   done: 'var(--success)',
+  archive: '#8b5cf6',
 };
 
 interface KanbanColumnProps {
-  column: TaskColumn;
+  column: TaskColumn | 'archive';
   title: string;
   tasks: TaskBoardTask[];
   draggedTaskId: number | null;
@@ -21,7 +22,7 @@ interface KanbanColumnProps {
   highlightTaskId: number | null;
   onDragStart: (taskId: number) => void;
   onDragEnd: () => void;
-  onMoveTask: (taskId: number, column: TaskColumn) => Promise<unknown>;
+  onMoveTask: (taskId: number, column: TaskColumn | 'archive') => Promise<unknown>;
   onOpenTask?: (taskId: number) => void;
   onUpdateTaskProjects: (taskId: number, projectIds: number[]) => Promise<unknown>;
   projectOptions: ProjectOption[];
@@ -98,7 +99,7 @@ export default function KanbanColumn({
     setIsDropTarget(false);
 
     const taskId = Number(event.dataTransfer.getData('text/plain'));
-    if (!Number.isInteger(taskId) || taskId === 0) {
+    if (!Number.isInteger(taskId) || taskId === 0 || column === 'archive') {
       return;
     }
 
@@ -152,6 +153,7 @@ export default function KanbanColumn({
               key={task.id}
               isDragging={draggedTaskId === task.id || movingTaskId === task.id}
               isHighlighted={highlightTaskId === task.id}
+              isArchiveColumn={column === 'archive'}
               onDragEnd={onDragEnd}
               onDragStart={onDragStart}
               onOpenTask={onOpenTask}

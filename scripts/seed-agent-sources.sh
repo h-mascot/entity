@@ -70,25 +70,7 @@ create_source() {
     -d "${payload}" >/dev/null
 }
 
-declare -a SOURCE_IDS=("ada" "spock" "scotty" "vault")
-declare -a SOURCE_NAMES=("Ada 🔮" "Spock 🖖" "Scotty 🔧" "Obsidian Vault")
-declare -a SOURCE_URLS=("http://100.106.69.9:8788" "http://100.106.69.9:8789" "http://100.68.207.75:8788" "http://100.86.150.96:8787")
-declare -a SOURCE_ICONS=("🔮" "🖖" "🔧" "📚")
 
-for i in "${!SOURCE_IDS[@]}"; do
-  id="${SOURCE_IDS[$i]}"
-  name="${SOURCE_NAMES[$i]}"
-  url="${SOURCE_URLS[$i]}"
-  icon="${SOURCE_ICONS[$i]}"
-
-  if source_exists "${id}" "${url}"; then
-    echo "Exists: ${id} (${url})"
-    continue
-  fi
-
-  echo "Creating: ${id} (${url})"
-  create_source "${id}" "${name}" "${url}" "${icon}"
-done
-
+# Default workspace seed - sources are configured via config-driven approach
+# Run the server and configure sources through the admin UI or API
 echo "Done."
-

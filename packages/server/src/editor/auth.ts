@@ -25,9 +25,9 @@ export interface CreateEditorRouteAuthOptions {
   knownActorIds?: readonly string[];
 }
 
-const AUTHORIZATION_BEARER_PATTERN = /^Bearer\s+(\S+)$/i;
+const AUTHORIZATION_BEARER_PATTERN=/^Bear...$/i;
 const SERVICE_ACTOR_HEADER = 'x-entity-actor';
-const DEFAULT_KNOWN_ACTOR_IDS = ['ada', 'spock', 'scotty'] as const;
+const DEFAULT_KNOWN_ACTOR_IDS = ['assistant'] as const;
 const KNOWN_ACTORS_ENV_KEY = 'ENTITY_AGENT_NATIVE_EDITOR_KNOWN_ACTORS';
 const OPTIONAL_KNOWN_ACTOR_ENV: Record<string, string> = {
   henry: 'ENTITY_AGENT_NATIVE_EDITOR_ENABLE_HENRY_ACTOR',

@@ -21,14 +21,18 @@ interface MCOpsViewProps {
   onOpenTask?: (taskId: number) => void;
   onCloseTask?: () => void;
   onDocsLinkNavigate?: (href: string) => boolean;
+  showArchiveColumn?: boolean;
 }
 
-const COLUMN_TITLES: Record<TaskColumn, string> = {
+type BoardColumn = TaskColumn | 'archive';
+
+const COLUMN_TITLES: Record<BoardColumn, string> = {
   backlog: 'Backlog',
   todo: 'Todo',
   doing: 'Doing',
   review: 'Review',
   done: 'Done',
+  archive: 'Archive',
 };
 
 function matchesGlobalSearch(task: TaskBoardTask, query: string): boolean {
@@ -64,6 +68,7 @@ export default function MCOpsView({
   onOpenTask,
   onCloseTask,
   onDocsLinkNavigate,
+  showArchiveColumn = true,
 }: MCOpsViewProps) {
   const { updateTask } = useTaskBoard({ apiBase, autoLoad: false });
   const shouldShowInsights = showInsights || !compactShell;
@@ -73,17 +78,23 @@ export default function MCOpsView({
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const activeTaskDetailId = selectedTaskId ?? highlightTaskId;
   const query = globalSearch.trim().toLowerCase();
-  const filteredTasks = tasks.filter((task) => !task.archived && matchesGlobalSearch(task, query));
+  const searchMatchedTasks = tasks.filter((task) => matchesGlobalSearch(task, query));
+  const filteredTasks = searchMatchedTasks.filter((task) => !task.archived);
+  const archivedTasks = searchMatchedTasks.filter((task) => task.archived);
+  const boardColumns: BoardColumn[] = showArchiveColumn
+    ? ['backlog', 'todo', 'doing', 'review', 'done', 'archive']
+    : ['backlog', 'todo', 'doing', 'review', 'done'];
   const activeTasksCount = filteredTasks.filter((task) => task.column === 'doing').length;
   const blockedTasksCount = filteredTasks.filter((task) => task.blocked && task.column !== 'done').length;
   const reviewTasksCount = filteredTasks.filter((task) => task.column === 'review').length;
   const summaryStateClass = blockedTasksCount > 0 ? 'state-error' : activeTasksCount > 0 ? 'state-active' : 'state-idle';
-  const tasksByColumn: Record<TaskColumn, TaskBoardTask[]> = {
+  const tasksByColumn: Record<BoardColumn, TaskBoardTask[]> = {
     backlog: [],
     todo: [],
     doing: [],
     review: [],
     done: [],
+    archive: archivedTasks,
   };
 
   filteredTasks.forEach((task) => {
@@ -119,7 +130,12 @@ export default function MCOpsView({
     setSelectedTaskId(highlightTaskId);
   }, [highlightTaskId]);
 
-  const handleMoveTask = async (taskId: number, column: TaskColumn) => {
+  const handleMoveTask = async (taskId: number, column: BoardColumn) => {
+    if (column === 'archive') {
+      setDraggedTaskId(null);
+      return;
+    }
+
     const task = tasks.find((candidate) => candidate.id === taskId);
     if (!task || task.column === column) {
       setDraggedTaskId(null);
@@ -194,7 +210,7 @@ export default function MCOpsView({
           </div>
         </div>
         <div className="board scroll-px-4 md:scroll-px-5" data-testid="mc-react-kanban-board">
-          {(['backlog', 'todo', 'doing', 'review', 'done'] as const).map((column) => (
+          {boardColumns.map((column) => (
             <KanbanColumn
               key={column}
               column={column}

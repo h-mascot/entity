@@ -19,7 +19,7 @@ import type {
 const CODEX_APP_SERVER_URL =
   process.env.CODEX_APP_SERVER_URL || 'ws://127.0.0.1:8300';
 const CODEX_CODEX_HOME =
-  process.env.CODEX_CODEX_HOME || '/Users/enterprise/.codex';
+  process.env.CODEX_CODEX_HOME || '~/.codex';
 
 interface RpcMessage {
   jsonrpc: '2.0';

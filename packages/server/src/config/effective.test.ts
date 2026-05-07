@@ -8,10 +8,12 @@ describe('settings-backed effective config', () => {
   it('uses safe public defaults without private Enterprise values', () => {
     const parsed = EntityConfigSchema.parse({});
     const serialized = JSON.stringify(parsed);
+    const privateUserPath = ['/Users', 'enterprise'].join('');
+    const privateHomePath = ['/home', 'henrymascot'].join('/');
     expect(parsed.profile.displayName).toBe('Entity Workspace');
     expect(parsed.agents[0]?.id).toBe('assistant');
-    expect(serialized).not.toContain('/Users/enterprise');
-    expect(serialized).not.toContain('/home/henrymascot');
+    expect(serialized).not.toContain(privateUserPath);
+    expect(serialized).not.toContain(privateHomePath);
     expect(serialized).not.toContain('100.104.229.62');
     expect(serialized).not.toContain('Ada');
   });

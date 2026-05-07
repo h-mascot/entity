@@ -1,8 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
-import os from 'os';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import path from 'path';
 import fs from 'fs';
-import { registerDocsRoute } from '../routes/docs';
+import os from 'os';
 
 function mockReq(params: Record<string, any> = {}): any {
   return { params };
@@ -21,6 +20,7 @@ function mockRes(): any {
 
 describe('Docs Route Handlers', () => {
   let handlers: Record<string, Function> = {};
+  let docsRoot: string;
 
   const fakeApp = {
     get: (route: string, handler: Function) => {
@@ -28,7 +28,20 @@ describe('Docs Route Handlers', () => {
     },
   };
 
-  registerDocsRoute(fakeApp);
+  beforeEach(async () => {
+    handlers = {};
+    docsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-docs-route-'));
+    process.env.DOCS_WORK_ROOT = docsRoot;
+    vi.resetModules();
+    const { registerDocsRoute } = await import('../routes/docs');
+    registerDocsRoute(fakeApp);
+  });
+
+  afterEach(() => {
+    delete process.env.DOCS_WORK_ROOT;
+    fs.rmSync(docsRoot, { recursive: true, force: true });
+    vi.resetModules();
+  });
 
   describe('GET /api/docs/:root/*', () => {
     const getHandler = () => handlers['/api/docs/:root/*'];
@@ -60,7 +73,7 @@ describe('Docs Route Handlers', () => {
     });
 
     it('should serve existing .txt evidence files', async () => {
-      const outputRoot = path.join(os.homedir(), 'clawd', 'output');
+      const outputRoot = path.join(docsRoot, 'output');
       const testFile = path.join(outputRoot, '_test_docs_route.txt');
 
       try {
@@ -87,7 +100,7 @@ describe('Docs Route Handlers', () => {
     });
 
     it('should serve existing .md file', async () => {
-      const outputRoot = path.join(os.homedir(), 'clawd', 'output');
+      const outputRoot = path.join(docsRoot, 'output');
       const testFile = path.join(outputRoot, '_test_docs_route.md');
 
       try {

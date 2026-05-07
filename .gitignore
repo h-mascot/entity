@@ -5,6 +5,8 @@ dist/
 .vite/
 renderer/
 packages/app/dist_backup/
+packages/app/dist.old/
+packages/app/dist.backup.*/
 packages/server/dist_backup/
 
 # Packaged artifacts
@@ -27,6 +29,7 @@ codedb.snapshot
 # Local agent/runtime clutter - do not publish
 .claude/
 artifacts/
+packages/app/artifacts/
 memory/
 output/
 test-results/
@@ -35,7 +38,6 @@ test-results/
 /ADA_SWARM_PROOF*.md
 /CODEX-TASK.md
 /COLLAB-SPEC.md
-/CONTEXT.md
 /*PRD*.md
 /*SPEC*.md
 /SPEC-*.md

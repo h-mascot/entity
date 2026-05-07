@@ -1234,6 +1234,12 @@ textarea {
 	    padding: 16px 22px;
 	  }
 
+	  .onboarding-provider-row-compact {
+	    min-height: 94px;
+	    padding: 14px 16px;
+	    gap: 14px;
+	  }
+
 	  .onboarding-choice-row {
 	    min-height: 54px;
 	    padding: 10px 14px;
@@ -1308,6 +1314,15 @@ textarea {
 	  .onboarding-avatar-check {
 	    right: -9px;
 	    top: -9px;
+	    width: 27px;
+	    height: 27px;
+	    border: 2px solid color-mix(in srgb, var(--bg-secondary) 80%, white);
+	  }
+
+	  .onboarding-stage-card .onboarding-card-check {
+	    right: -9px;
+	    top: -9px;
+	    z-index: 2;
 	    width: 27px;
 	    height: 27px;
 	    border: 2px solid color-mix(in srgb, var(--bg-secondary) 80%, white);
@@ -1513,6 +1528,157 @@ textarea {
 	      inset 0 1px 0 rgb(255 255 255 / 0.7);
 	    color: var(--text-primary);
 	    backdrop-filter: blur(22px);
+	  }
+
+	  .onboarding-ai-config-panel {
+	    border: 1px solid color-mix(in srgb, var(--border-secondary) 74%, rgb(255 255 255 / 0.45));
+	    border-radius: 16px;
+	    background:
+	      radial-gradient(520px circle at 80% 0%, rgb(20 184 166 / 0.11), transparent 44%),
+	      color-mix(in srgb, var(--bg-secondary) 58%, rgb(255 255 255 / 0.52));
+	    padding: 20px;
+	    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.48);
+	  }
+
+	  .onboarding-credential-panel {
+	    border: 1px solid color-mix(in srgb, var(--border-secondary) 72%, rgb(255 255 255 / 0.42));
+	    border-radius: 16px;
+	    background:
+	      linear-gradient(135deg, rgb(255 255 255 / 0.44), rgb(255 255 255 / 0.22)),
+	      color-mix(in srgb, var(--bg-secondary) 58%, transparent);
+	    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.48);
+	  }
+
+	  .onboarding-model-option {
+	    display: flex;
+	    min-height: 62px;
+	    align-items: center;
+	    gap: 12px;
+	    border: 1px solid color-mix(in srgb, var(--border-secondary) 70%, rgb(255 255 255 / 0.36));
+	    border-radius: 12px;
+	    background: color-mix(in srgb, var(--bg-secondary) 54%, rgb(255 255 255 / 0.5));
+	    padding: 10px 12px;
+	    text-align: left;
+	    transition:
+	      border-color 140ms ease,
+	      background 140ms ease,
+	      transform 140ms ease,
+	      box-shadow 140ms ease;
+	  }
+
+	  .onboarding-model-option:hover {
+	    transform: translateY(-1px);
+	    border-color: color-mix(in srgb, var(--accent) 42%, var(--border-secondary));
+	    box-shadow:
+	      0 12px 26px rgb(15 42 60 / 0.09),
+	      inset 0 1px 0 rgb(255 255 255 / 0.54);
+	  }
+
+	  .onboarding-model-option-selected {
+	    border-color: color-mix(in srgb, #1681ff 78%, white);
+	    background:
+	      radial-gradient(380px circle at 88% 0%, rgb(47 140 255 / 0.16), transparent 48%),
+	      color-mix(in srgb, var(--surface-accent) 54%, rgb(255 255 255 / 0.64));
+	  }
+
+	  :root[data-theme='dark'] .entity-onboarding-shell,
+	  :root[data-theme='kitz'] .entity-onboarding-shell,
+	  :root[data-theme='nebula'] .entity-onboarding-shell {
+	    --text-muted: #a9b5c3;
+	  }
+
+	  :root[data-theme='dark'] .onboarding-option-card,
+	  :root[data-theme='dark'] .onboarding-stage-card,
+	  :root[data-theme='dark'] .onboarding-theme-card,
+	  :root[data-theme='dark'] .onboarding-preset-card,
+	  :root[data-theme='dark'] .onboarding-provider-row,
+	  :root[data-theme='dark'] .onboarding-choice-row,
+	  :root[data-theme='dark'] .onboarding-link-card,
+	  :root[data-theme='dark'] .onboarding-ai-config-panel,
+	  :root[data-theme='dark'] .onboarding-model-option,
+	  :root[data-theme='dark'] .onboarding-credential-panel,
+	  :root[data-theme='kitz'] .onboarding-option-card,
+	  :root[data-theme='kitz'] .onboarding-stage-card,
+	  :root[data-theme='kitz'] .onboarding-theme-card,
+	  :root[data-theme='kitz'] .onboarding-preset-card,
+	  :root[data-theme='kitz'] .onboarding-provider-row,
+	  :root[data-theme='kitz'] .onboarding-choice-row,
+	  :root[data-theme='kitz'] .onboarding-link-card,
+	  :root[data-theme='kitz'] .onboarding-ai-config-panel,
+	  :root[data-theme='kitz'] .onboarding-model-option,
+	  :root[data-theme='kitz'] .onboarding-credential-panel,
+	  :root[data-theme='nebula'] .onboarding-option-card,
+	  :root[data-theme='nebula'] .onboarding-stage-card,
+	  :root[data-theme='nebula'] .onboarding-theme-card,
+	  :root[data-theme='nebula'] .onboarding-preset-card,
+	  :root[data-theme='nebula'] .onboarding-provider-row,
+	  :root[data-theme='nebula'] .onboarding-choice-row,
+	  :root[data-theme='nebula'] .onboarding-link-card,
+	  :root[data-theme='nebula'] .onboarding-ai-config-panel,
+	  :root[data-theme='nebula'] .onboarding-model-option,
+	  :root[data-theme='nebula'] .onboarding-credential-panel {
+	    background:
+	      linear-gradient(135deg, rgb(255 255 255 / 0.13), rgb(255 255 255 / 0.055)),
+	      color-mix(in srgb, var(--bg-secondary) 84%, transparent);
+	    color: #f8fafc;
+	  }
+
+	  :root[data-theme='dark'] .onboarding-option-card-selected,
+	  :root[data-theme='dark'] .onboarding-stage-card-selected,
+	  :root[data-theme='dark'] .onboarding-theme-card-selected,
+	  :root[data-theme='dark'] .onboarding-preset-card-selected,
+	  :root[data-theme='dark'] .onboarding-provider-row-selected,
+	  :root[data-theme='dark'] .onboarding-choice-row-selected,
+	  :root[data-theme='dark'] .onboarding-model-option-selected,
+	  :root[data-theme='kitz'] .onboarding-option-card-selected,
+	  :root[data-theme='kitz'] .onboarding-stage-card-selected,
+	  :root[data-theme='kitz'] .onboarding-theme-card-selected,
+	  :root[data-theme='kitz'] .onboarding-preset-card-selected,
+	  :root[data-theme='kitz'] .onboarding-provider-row-selected,
+	  :root[data-theme='kitz'] .onboarding-choice-row-selected,
+	  :root[data-theme='kitz'] .onboarding-model-option-selected,
+	  :root[data-theme='nebula'] .onboarding-option-card-selected,
+	  :root[data-theme='nebula'] .onboarding-stage-card-selected,
+	  :root[data-theme='nebula'] .onboarding-theme-card-selected,
+	  :root[data-theme='nebula'] .onboarding-preset-card-selected,
+	  :root[data-theme='nebula'] .onboarding-provider-row-selected,
+	  :root[data-theme='nebula'] .onboarding-choice-row-selected,
+	  :root[data-theme='nebula'] .onboarding-model-option-selected {
+	    background:
+	      radial-gradient(520px circle at 90% 0%, rgb(59 130 246 / 0.34), transparent 48%),
+	      linear-gradient(135deg, rgb(46 81 122 / 0.78), rgb(23 37 84 / 0.58));
+	    color: #f8fafc;
+	  }
+
+	  :root[data-theme='dark'] .onboarding-input-wrap,
+	  :root[data-theme='kitz'] .onboarding-input-wrap,
+	  :root[data-theme='nebula'] .onboarding-input-wrap {
+	    background: rgb(255 255 255 / 0.09);
+	    color: #f8fafc;
+	  }
+
+	  :root[data-theme='dark'] .onboarding-input-wrap input,
+	  :root[data-theme='kitz'] .onboarding-input-wrap input,
+	  :root[data-theme='nebula'] .onboarding-input-wrap input {
+	    color: #f8fafc;
+	  }
+
+	  :root[data-theme='dark'] .onboarding-input-wrap input::placeholder,
+	  :root[data-theme='kitz'] .onboarding-input-wrap input::placeholder,
+	  :root[data-theme='nebula'] .onboarding-input-wrap input::placeholder {
+	    color: #94a3b8;
+	  }
+
+	  :root[data-theme='dark'] .entity-onboarding-shell .bg-white\/45,
+	  :root[data-theme='dark'] .entity-onboarding-shell .bg-white\/50,
+	  :root[data-theme='dark'] .entity-onboarding-shell .bg-white\/60,
+	  :root[data-theme='kitz'] .entity-onboarding-shell .bg-white\/45,
+	  :root[data-theme='kitz'] .entity-onboarding-shell .bg-white\/50,
+	  :root[data-theme='kitz'] .entity-onboarding-shell .bg-white\/60,
+	  :root[data-theme='nebula'] .entity-onboarding-shell .bg-white\/45,
+	  :root[data-theme='nebula'] .entity-onboarding-shell .bg-white\/50,
+	  :root[data-theme='nebula'] .entity-onboarding-shell .bg-white\/60 {
+	    background-color: rgb(255 255 255 / 0.09);
 	  }
 
 	  .onboarding-module-chip {

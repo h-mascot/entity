@@ -60,43 +60,8 @@ describe('classifyFile', () => {
   });
 
   describe('agent detection', () => {
-    it('should detect ada', () => {
-      const result = classifyFile('ada/notes.md', 'Ada generated this');
-      expect(result.agent).toBe('ada');
-    });
-
-    it('should detect spock', () => {
-      const result = classifyFile('research/spock-analysis.md', 'Spock research');
-      expect(result.agent).toBe('spock');
-    });
-
-    it('should detect scotty', () => {
-      const result = classifyFile('builds/scotty-build.md', 'Scotty built this');
-      expect(result.agent).toBe('scotty');
-    });
-
-    it('should detect henry', () => {
-      const result = classifyFile('notes/henry-notes.md', 'Henry wrote this');
-      expect(result.agent).toBe('henry');
-    });
-
-    it('should detect zora', () => {
-      const result = classifyFile('notes/zora-log.md', 'Zora generated this');
-      expect(result.agent).toBe('zora');
-    });
-
-    it('should detect geordi', () => {
-      const result = classifyFile('notes/geordi-build.md', 'Geordi notes');
-      expect(result.agent).toBe('geordi');
-    });
-
-    it('should detect midas', () => {
-      const result = classifyFile('notes/midas-assistant.md', 'Midas run output');
-      expect(result.agent).toBe('midas');
-    });
-
-    it('should default to other for unknown agent', () => {
-      const result = classifyFile('notes/anonymous.md', 'Unknown author');
+    it('does not hardcode private agent names in public file classification', () => {
+      const result = classifyFile('agents/operator-notes.md', 'Assistant generated this');
       expect(result.agent).toBe('other');
     });
   });

@@ -102,7 +102,7 @@ describe('onTaskMovedToReview', () => {
     const assessment = makeAssessment({
       verdict: 'INVALID',
       score: 30,
-      reasons: ['File not found at /home/henrymascot/clawd/output/review-hygiene.md.'],
+      reasons: ['File not found at ~/workspace/output/review-hygiene.md.'],
       evidenceStatus: 'missing',
       recommendedAction: 'move_back_to_doing',
     });

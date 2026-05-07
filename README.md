@@ -94,14 +94,28 @@ npm install
 cp .env.example .env
 ```
 
+### First-run setup
+
+```bash
+npm run setup
+```
+
+This runs an interactive wizard that generates `entity.config.yaml` with your workspace settings. You can also manually create one from `entity.config.example.yaml`.
+
 ### Run the full app locally
 
-The server serves the built frontend from `packages/app/dist` on port `3000`.
+```bash
+npm run dev
+```
+
+Or build and run manually:
 
 ```bash
 npm run build
 PORT=3000 npm --prefix packages/server run dev
 ```
+
+The server serves the built frontend from `packages/app/dist` on port `3000`.
 
 Open:
 
@@ -323,19 +337,16 @@ PORT=3000 npm --prefix packages/server run dev
 
 ## Contributing
 
-This repo is early public software, so small, proof-backed changes are best:
-
-1. Keep changes focused and atomic.
-2. Run the relevant build/test gate before opening a PR.
-3. Do not commit local DBs, `.env` files, screenshots with private data, logs, or agent scratch artifacts.
-4. Include reproduction/verification notes for bug fixes.
-5. Update docs when behavior, setup, or configuration changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, test, and PR expectations.
 
 ---
 
 ## License
 
-MIT
+License selection is pending maintainer approval. Do not treat this repository as
+released under an open-source license until a root `LICENSE` file is added.
+
+See [docs/open-source-blockers.md](docs/open-source-blockers.md).
 
 ---
 
@@ -343,6 +354,6 @@ MIT
 
 Built by humans and AI, for humans and AI.
 
-**[Henry Mascot](https://henrymascot.com)** · **[Enterprise Crew](https://github.com/h-mascot)**
+**[Entity on GitHub](https://github.com/h-mascot/entity)**
 
 </div>

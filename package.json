@@ -3,6 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
+    "setup": "node scripts/entity-setup.js",
+    "dev": "node scripts/entity-dev.js",
+    "doctor": "node scripts/entity-doctor.js",
     "test": "node e2e/test-browser.js",
     "test:e2e": "node e2e/test-browser.js",
     "build": "npm --prefix packages/app run build && npm --prefix packages/db run build && npm --prefix packages/server run build",

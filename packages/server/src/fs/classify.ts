@@ -2,7 +2,7 @@ import crypto from 'crypto';
 
 export interface FileClassification {
   type: 'daily-review' | 'business-review' | 'blog' | 'prd' | 'project-doc' | 'script' | 'one-off';
-  agent: 'ada' | 'spock' | 'scotty' | 'henry' | 'zora' | 'geordi' | 'midas' | 'other';
+  agent: string;
   origin: 'task' | 'cron' | 'manual' | 'unknown';
   isRecurring: boolean;
   recurringPattern?: 'daily' | 'weekly' | 'monthly';
@@ -33,14 +33,9 @@ function detectType(text: string): FileClassification['type'] {
   return 'one-off';
 }
 
-function detectAgent(text: string): FileClassification['agent'] {
-  if (text.includes('ada')) return 'ada';
-  if (text.includes('spock')) return 'spock';
-  if (text.includes('scotty')) return 'scotty';
-  if (text.includes('henry')) return 'henry';
-  if (text.includes('zora')) return 'zora';
-  if (text.includes('geordi')) return 'geordi';
-  if (text.includes('midas')) return 'midas';
+function detectAgent(text: string): string {
+  // Generic agent detection - relies on API-driven registry for specific agents
+  // Falls back to 'other' for unknown agent names
   return 'other';
 }
 

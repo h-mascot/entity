@@ -5,8 +5,15 @@ if (process.env.CTRL_LIVE_SKIP === '1') {
   process.exit(0);
 }
 
-const prodHost = process.env.ENTITY_PROD_HTTP_HOST || '100.104.229.62';
-const baseUrl = process.env.CTRL_LIVE_BASE_URL || `http://${prodHost}:3000`;
+const configuredBaseUrl = process.env.CTRL_LIVE_BASE_URL || process.env.ENTITY_PROD_HTTP_URL || process.env.ENTITY_PROD_HTTP_HOST;
+if (!configuredBaseUrl) {
+  console.error('[ctrl-live] CTRL_LIVE_BASE_URL or ENTITY_PROD_HTTP_HOST is required; refusing to use a private default.');
+  process.exit(78);
+}
+
+const baseUrl = configuredBaseUrl.startsWith('http')
+  ? configuredBaseUrl.replace(/\/$/, '')
+  : `http://${configuredBaseUrl}:3000`;
 const tasksTarget = process.env.CTRL_LIVE_SMOKE_URL || `${baseUrl}/api/tasks`;
 const configTarget = process.env.CTRL_LIVE_CONFIG_URL || `${baseUrl}/api/config/effective`;
 const minimumTaskCount = Number(process.env.CTRL_LIVE_MIN_TASKS || 10);
