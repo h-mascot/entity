@@ -93,7 +93,7 @@ const RIGHT_SIDEBAR_COLLAPSED_KEY = 'entity.rightSidebar.collapsed.v1';
 const THEME_KEY = 'entity.theme.v1';
 const PWA_INSTALL_CTA_DISMISSED_KEY = 'entity.pwa.install-cta-dismissed.v1';
 const DEFAULT_LOGIN_PASSWORD = 'mission';
-const ENTERPRISE_ADMIN_URL = 'http://100.104.229.62:3000';
+const ENTERPRISE_ADMIN_URL = '';
 
 interface AgentCapability {
   adapterType?: string;
@@ -1281,7 +1281,7 @@ function ShowClawFeaturedPage() {
               <dl className="mt-5 space-y-4 text-sm">
                 {[
                   ['Request', 'Ship one ShowClaw featured page for Entity.'],
-                  ['Worker', 'Scotty lane · MascotM3 · ~/Code/entity'],
+                  ['Worker', 'Scotty lane · Mac · ~/Code/entity'],
                   ['Changed surface', '/showclaw/entity-featured'],
                   ['Proof', 'Build output + deployed URL + screenshot-ready page'],
                   ['Verifier', 'Operator acceptance contract, v0'],
@@ -3818,14 +3818,16 @@ export default function App() {
                   >
                     Retry
                   </button>
-                  <a
-                    href={ENTERPRISE_ADMIN_URL}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="mc-shell-btn px-3 py-1 text-xs"
-                  >
-                    Open in new tab
-                  </a>
+                  {ENTERPRISE_ADMIN_URL && (
+                    <a
+                      href={ENTERPRISE_ADMIN_URL}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="mc-shell-btn px-3 py-1 text-xs"
+                    >
+                      Open in new tab
+                    </a>
+                  )}
                 </div>
               </div>
             </div>
@@ -4381,14 +4383,16 @@ export default function App() {
       >
         Open plugin admin
       </button>
-      <a
-        href={ENTERPRISE_ADMIN_URL}
-        target="_blank"
-        rel="noreferrer noopener"
-        className="mc-shell-btn px-3 py-2 text-left text-xs"
-      >
-        Open Enterprise Crew Admin
-      </a>
+      {ENTERPRISE_ADMIN_URL && (
+        <a
+          href={ENTERPRISE_ADMIN_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="mc-shell-btn px-3 py-2 text-left text-xs"
+        >
+          Open Enterprise Crew Admin
+        </a>
+      )}
     </div>
   );
 
@@ -4486,7 +4490,7 @@ export default function App() {
             <button type="button" onClick={() => setAdminSection('enterprise')} className="mc-shell-btn px-2 py-1 text-xs">
               Openclaw
             </button>
-            {adminSection === 'enterprise' && (
+            {adminSection === 'enterprise' && ENTERPRISE_ADMIN_URL && (
               <a
                 href={ENTERPRISE_ADMIN_URL}
                 target="_blank"
@@ -4516,6 +4520,7 @@ export default function App() {
             >
               Plugin admin
             </button>
+            {ENTERPRISE_ADMIN_URL && (
             <a
               href={ENTERPRISE_ADMIN_URL}
               target="_blank"
@@ -4524,6 +4529,7 @@ export default function App() {
             >
               Crew Admin
             </a>
+            )}
           </div>
         </div>
       );
@@ -4675,6 +4681,18 @@ export default function App() {
                 </div>
               </>
             )}
+            <button
+              type="button"
+              onClick={() => {
+                setSidebarTab('admin');
+                setAdminSection('missionControl');
+              }}
+              className="mc-shell-btn inline-flex h-8 w-8 items-center justify-center px-0 py-0 text-sm"
+              aria-label="Mission Control settings"
+              title="Mission Control settings"
+            >
+              ⚙
+            </button>
             <button
               type="button"
               onClick={openMissionControlModal}
@@ -5314,6 +5332,8 @@ export default function App() {
               onOpenTask={handleTaskSelect}
               onCloseTask={handleCloseTaskDetail}
               searchQuery={taskSearchQuery}
+              showArchiveColumn={showArchiveColumn}
+              onArchiveColumnVisibilityChange={setShowArchiveColumn}
               tasks={filteredBoardTasks}
               loading={tasksLoading}
               error={tasksError}
@@ -6200,6 +6220,8 @@ export default function App() {
                 onOpenTask={handleTaskSelect}
                 onCloseTask={handleCloseTaskDetail}
                 searchQuery={taskSearchQuery}
+                showArchiveColumn={showArchiveColumn}
+                onArchiveColumnVisibilityChange={setShowArchiveColumn}
                 tasks={filteredBoardTasks}
                 loading={tasksLoading}
                 error={tasksError}

@@ -65,11 +65,45 @@ function updateJob(db: PluginRouteContext['db'], id: string, fields: Record<stri
 /* ── ACP Dispatch (acpx codex exec) ── */
 
 const ACPX_BIN = '/usr/bin/acpx';
-const MAC_HOST = '100.86.150.96';
-const CODEX_BIN = '/Applications/Codex.app/Contents/Resources/codex';
 
 // Track active dispatch processes
 const activeDispatches = new Map<string, { pid: number; startedAt: number }>();
+
+function resolveSshCodexHost(db: PluginRouteContext['db']): string | null {
+  try {
+    const row = db.prepare('SELECT settings_json FROM plugin_settings WHERE plugin_id = ? LIMIT 1').get('geordi-swarm') as
+      | { settings_json?: unknown }
+      | undefined;
+    const parsed = typeof row?.settings_json === 'string' ? (JSON.parse(row.settings_json) as Record<string, unknown>) : {};
+    return ((parsed.sshCodexHost as string | null) ?? process.env.GEORDI_SSH_CODEX_HOST ?? null);
+  } catch {
+    return process.env.GEORDI_SSH_CODEX_HOST ?? null;
+  }
+}
+
+function resolveMacHomePath(db: PluginRouteContext['db']): string {
+  try {
+    const row = db.prepare('SELECT settings_json FROM plugin_settings WHERE plugin_id = ? LIMIT 1').get('geordi-swarm') as
+      | { settings_json?: unknown }
+      | undefined;
+    const parsed = typeof row?.settings_json === 'string' ? (JSON.parse(row.settings_json) as Record<string, unknown>) : {};
+    return ((parsed.sshMacHomePath as string | null) ?? process.env.GEORDI_SSH_MAC_HOME_PATH ?? '');
+  } catch {
+    return process.env.GEORDI_SSH_MAC_HOME_PATH ?? '';
+  }
+}
+
+function resolveCodexBin(db: PluginRouteContext['db']): string {
+  try {
+    const row = db.prepare('SELECT settings_json FROM plugin_settings WHERE plugin_id = ? LIMIT 1').get('geordi-swarm') as
+      | { settings_json?: unknown }
+      | undefined;
+    const parsed = typeof row?.settings_json === 'string' ? (JSON.parse(row.settings_json) as Record<string, unknown>) : {};
+    return ((parsed.sshCodexBin as string | null) ?? process.env.GEORDI_CODEX_BIN ?? '/Applications/Codex.app/Contents/Resources/codex');
+  } catch {
+    return process.env.GEORDI_CODEX_BIN ?? '/Applications/Codex.app/Contents/Resources/codex';
+  }
+}
 
 function buildPrompt(job: SwarmJobRow): string {
   const parts = [
@@ -100,7 +134,7 @@ function dispatchToAcp(job: SwarmJobRow, db: PluginRouteContext['db']): string {
 
   // Dispatch via acpx on ada-gateway (global opts before subcommand)
   // Note: --cwd must be a local path (ada-gateway), not Mac path
-  const localRepo = job.repo.replace('~', process.env.HOME || '/home/henrymascot');
+  const localRepo = job.repo.replace('~', process.env.HOME || process.env.HOME_DIR || '');
   const child = spawn(ACPX_BIN, [
     '--cwd', localRepo,
     '--approve-all',
@@ -110,7 +144,7 @@ function dispatchToAcp(job: SwarmJobRow, db: PluginRouteContext['db']): string {
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
-    env: { ...process.env, HOME: process.env.HOME || '/home/henrymascot' },
+    env: { ...process.env, HOME: process.env.HOME || process.env.HOME_DIR || '' },
   });
 
   child.unref();
@@ -179,12 +213,21 @@ function dispatchToAcp(job: SwarmJobRow, db: PluginRouteContext['db']): string {
 function dispatchToSsh(job: SwarmJobRow, db: PluginRouteContext['db']): string {
   const prompt = buildPrompt(job);
   const runHandle = `ssh-${job.id}-${Date.now()}`;
-  const repoPath = job.repo.replace('~', '/Users/henrymascot');
+  const macHost = resolveSshCodexHost(db);
+  const macHome = resolveMacHomePath(db);
+  const codexBin = resolveCodexBin(db);
+
+  if (!macHost) {
+    throw new Error('SSH Codex host not configured. Set GEORDI_SSH_CODEX_HOST env var or configure sshCodexHost in geordi-swarm plugin settings.');
+  }
+
+  const repoPath = job.repo.replace('~', macHome || '/Users');
+  const safePrompt = prompt.replace(/'/g, "'\\''");
 
   // Dispatch Codex directly on Mac via SSH
   const child = spawn('ssh', [
-    MAC_HOST,
-    `cd ${repoPath} && ${CODEX_BIN} exec --approval-mode full-auto --quiet '${prompt.replace(/'/g, "'\\''")}'`,
+    macHost,
+    `cd ${repoPath} && ${codexBin} exec --approval-mode full-auto --quiet '${safePrompt}'`,
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,

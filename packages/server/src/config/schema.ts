@@ -78,6 +78,31 @@ export const EntityConfigSchema = z.object({
   voice: z.record(z.string(), z.unknown()).default({ defaultProvider: 'browser', providers: {} }),
   deploy: z.record(z.string(), z.unknown()).default({ mode: 'local', preserveDatabase: true, dryRunByDefault: true }),
   terminal: z.object({ targets: z.array(z.unknown()).default([]) }).default({ targets: [] }),
+  // ── External service discovery ────────────────────────────────────────────
+  discovery: z.object({
+    mac: z.object({
+      enabled: z.boolean().default(true),
+      /** SSH target in user@host form, e.g. 'user@192.168.1.100' */
+      sshTarget: NullableString.default(null),
+      /** HTTP base of the Mac's local Ollama server */
+      ollamaUrl: NullableString.default(null),
+      /** HTTP base of the Entity app running on Mac */
+      entityUrl: NullableString.default(null),
+    }).optional().default({ enabled: true, sshTarget: null, ollamaUrl: null, entityUrl: null }),
+    ollama: z.object({
+      baseUrl: NullableString.default(null),
+    }).optional().default({ baseUrl: null }),
+    geordiSwarm: z.object({
+      /** Hostname or IP of the Mac running Codex for dispatch */
+      codexHost: NullableString.default(null),
+      /** Path to the local home directory on the Mac (for tilde expansion) */
+      macHomePath: NullableString.default(null),
+    }).optional().default({ codexHost: null, macHomePath: null }),
+  }).optional().default({
+    mac: { enabled: true, sshTarget: null, ollamaUrl: null, entityUrl: null },
+    ollama: { baseUrl: null },
+    geordiSwarm: { codexHost: null, macHomePath: null },
+  }),
 });
 
 export type EntityConfig = z.infer<typeof EntityConfigSchema>;
