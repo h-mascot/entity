@@ -661,7 +661,7 @@ function prettifyOllamaName(name: string): string {
 
 async function fetchOllamaModels(): Promise<ChatModelOption[]> {
   try {
-    const ollamaBaseUrl = (process.env.ENTITY_OLLAMA_BASE_URL ?? process.env.OLLAMA_BASE_URL ?? 'http://100.86.150.96:11434').replace(/\/+$/, '');
+    const ollamaBaseUrl = (process.env.ENTITY_OLLAMA_BASE_URL ?? process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434').replace(/\/+$/, '');
     const response = await fetch(`${ollamaBaseUrl}/api/tags`, { signal: withTimeout(OLLAMA_MODEL_FETCH_TIMEOUT_MS) });
     if (!response.ok) return [];
     const data = await response.json() as { models?: Array<{ name: string; model: string; size: number }> };

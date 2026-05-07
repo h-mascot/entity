@@ -793,3 +793,23 @@
     min-width: 248px;
   }
 }
+
+.mc-root .task.task-archived {
+  border-style: dashed;
+  opacity: 0.78;
+}
+
+.mc-root .archive-indicator {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #8b5cf6 42%, var(--border-primary));
+  background: color-mix(in srgb, #8b5cf6 18%, var(--bg-primary));
+  color: #c4b5fd;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

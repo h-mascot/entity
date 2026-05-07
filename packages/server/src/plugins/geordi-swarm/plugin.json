@@ -26,7 +26,10 @@
   "settings": {
     "defaultProvider": "acp",
     "maxConcurrentJobs": 2,
-    "autoDispatch": false
+    "autoDispatch": false,
+    "sshCodexHost": null,
+    "sshMacHomePath": null,
+    "sshCodexBin": "/Applications/Codex.app/Contents/Resources/codex"
   },
   "storage": {
     "tables": ["swarm_jobs", "swarm_proofs"],

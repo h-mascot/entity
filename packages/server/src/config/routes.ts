@@ -10,7 +10,11 @@ import { ensureAppSettingsTable, getSettingJson, setSettingJson } from './settin
 const ONBOARDING_STATE_KEY = 'onboarding.state';
 const ONBOARDING_AGENT_SESSION_PREFIX = 'onboarding.agentSession.';
 const AGENT_SESSION_TTL_MS = 30 * 60 * 1000;
-const ENTITY_MC_BUNDLE_PATH = path.resolve(__dirname, '../../../../skills/entity-mc');
+const ENTITY_MC_BUNDLE_PATH = process.env.ENTITY_MC_SKILL_PATH
+  ? path.resolve(process.env.ENTITY_MC_SKILL_PATH)
+  : fs.existsSync(path.resolve(process.cwd(), 'skills/entity-mc'))
+    ? path.resolve(process.cwd(), 'skills/entity-mc')
+    : path.join(process.env.HOME || require('os').homedir(), '.hermes', 'skills', 'entity-mc');
 const ENTITY_MC_ALLOWED_FILES = [
   'SKILL.md',
   'VERSION',

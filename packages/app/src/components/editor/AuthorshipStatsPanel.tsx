@@ -12,33 +12,19 @@ const AUTHOR_ROWS: ReadonlyArray<{
   color: string;
 }> = [
   { id: 'human', label: 'Human', color: '#f3f4f6' },
-  { id: 'ada', label: 'Ada', color: '#a855f7' },
-  { id: 'spock', label: 'Spock', color: '#3b82f6' },
-  { id: 'scotty', label: 'Scotty', color: '#22c55e' },
+  { id: 'assistant', label: 'Assistant', color: '#a855f7' },
 ];
 
-function formatPercent(value: number): string {
-  if (!Number.isFinite(value)) {
-    return '0%';
-  }
-
-  const normalized = Math.max(0, value);
-  return `${normalized.toFixed(1).replace(/\.0$/, '')}%`;
+function getAuthorPercent(stats: DocumentAuthorshipStats, author: DocumentAuthorshipActor): number {
+  // Use dynamic lookup for agents, static for human
+  if (author === 'human') return stats.human;
+  const agentKey = author as keyof DocumentAuthorshipStats;
+  return typeof stats[agentKey] === 'number' ? (stats[agentKey] as number) : 0;
 }
 
-function getAuthorPercent(stats: DocumentAuthorshipStats, author: DocumentAuthorshipActor): number {
-  switch (author) {
-    case 'human':
-      return stats.human;
-    case 'ada':
-      return stats.ada;
-    case 'spock':
-      return stats.spock;
-    case 'scotty':
-      return stats.scotty;
-    default:
-      return 0;
-  }
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value)) return '0%';
+  return `${Math.max(0, value).toFixed(1).replace(/\.0$/, '')}%`;
 }
 
 export default function AuthorshipStatsPanel({ stats, selectedAuthor, onSelectAuthor }: AuthorshipStatsPanelProps) {

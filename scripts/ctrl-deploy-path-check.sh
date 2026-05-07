@@ -4,10 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 
-PROD_HOST="${ENTITY_PROD_HOST:-enterprise@100.104.229.62}"
-PROD_HTTP_HOST="${ENTITY_PROD_HTTP_HOST:-100.104.229.62}"
-ENTITY_DIR="${ENTITY_PROD_DIR:-/Users/enterprise/Services/entity}"
-PROD_DB="${ENTITY_PROD_DB:-${ENTITY_DIR}/packages/db/entity-tasks.db}"
+PROD_HOST="${ENTITY_PROD_HOST:-}"
+PROD_HTTP_HOST="${ENTITY_PROD_HTTP_HOST:-}"
+ENTITY_DIR="${ENTITY_PROD_DIR:-}"
+PROD_DB="${ENTITY_PROD_DB:-}"
 SERVER_DIST="${ENTITY_DIR}/packages/server/dist"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new)
 MIN_TASKS="${CTRL_DEPLOY_MIN_TASKS:-10}"
@@ -21,6 +21,21 @@ cd "${REPO_ROOT}"
 
 bash -n deploy.sh
 bash -n scripts/entity-release-check.sh
+
+missing=()
+[[ -n "${PROD_HOST}" ]] || missing+=("ENTITY_PROD_HOST")
+[[ -n "${PROD_HTTP_HOST}" ]] || missing+=("ENTITY_PROD_HTTP_HOST")
+[[ -n "${ENTITY_DIR}" ]] || missing+=("ENTITY_PROD_DIR")
+[[ -n "${PROD_DB}" ]] || missing+=("ENTITY_PROD_DB")
+if ((${#missing[@]} > 0)); then
+  fail "deploy path check is not configured. Set required environment variables: ${missing[*]}"
+fi
+
+if [[ "${PROD_HTTP_HOST}" == http://* || "${PROD_HTTP_HOST}" == https://* ]]; then
+  PROD_BASE_URL="${PROD_HTTP_HOST%/}"
+else
+  PROD_BASE_URL="http://${PROD_HTTP_HOST}:3000"
+fi
 
 REMOTE_COUNT="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; test -d '${ENTITY_DIR}'; test -f '${PROD_DB}'; sqlite3 '${PROD_DB}' 'select count(*) from tasks;'" 2>/dev/null || true)"
 REMOTE_COUNT="$(printf '%s' "${REMOTE_COUNT}" | tr -d '[:space:]')"
@@ -40,7 +55,7 @@ if [[ "${SYMLINK_TARGET}" != "${EXPECTED_DB_REALPATH}" ]]; then
   fail "server dist DB symlink resolves to ${SYMLINK_TARGET:-<missing>}, expected ${EXPECTED_DB_REALPATH}"
 fi
 
-HTTP_COUNT="$(curl -fsS "http://${PROD_HTTP_HOST}:3000/api/tasks" | python3 -c '
+HTTP_COUNT="$(curl -fsS "${PROD_BASE_URL}/api/tasks" | python3 -c '
 import json
 import sys
 

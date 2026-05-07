@@ -4,16 +4,17 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, appendFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
-const envPath = process.env.ENTITY_DEPLOY_WEBHOOK_ENV || "/Users/enterprise/Services/webhook-server/.env";
-loadEnvFile(envPath);
+// Load optional env file first so env vars can override defaults
+const _envPath = process.env.ENTITY_DEPLOY_WEBHOOK_ENV || '';
+if (_envPath) loadEnvFile(_envPath);
 
 const port = Number(process.env.PORT || process.env.WEBHOOK_PORT || 18788);
 const token = process.env.WEBHOOK_DEPLOY_TOKEN;
-const allowedRepo = process.env.WEBHOOK_DEPLOY_REPO || "h-mascot/entity";
-const sourceDir = process.env.ENTITY_DEPLOY_SOURCE_DIR || "/Users/enterprise/Services/entity-deploy-source";
-const prodHost = process.env.ENTITY_PROD_HOST || "enterprise@100.104.229.62";
-const prodHttpHost = process.env.ENTITY_PROD_HTTP_HOST || "127.0.0.1";
-const prodDir = process.env.ENTITY_PROD_DIR || "/Users/enterprise/Services/entity";
+const allowedRepo = process.env.WEBHOOK_DEPLOY_REPO || '';
+const sourceDir = process.env.ENTITY_DEPLOY_SOURCE_DIR || '';
+const prodHost = process.env.ENTITY_PROD_HOST || '';
+const prodHttpHost = process.env.ENTITY_PROD_HTTP_HOST || '127.0.0.1';
+const prodDir = process.env.ENTITY_PROD_DIR || '';
 const prodDb = process.env.ENTITY_PROD_DB || `${prodDir}/packages/db/entity-tasks.db`;
 const logPath = process.env.ENTITY_DEPLOY_LOG || "/tmp/entity-deploy-webhook.log";
 
@@ -21,6 +22,21 @@ let activeDeploy = null;
 
 if (!token) {
   console.error("WEBHOOK_DEPLOY_TOKEN is required");
+  process.exit(78);
+}
+
+if (!sourceDir) {
+  console.error("ENTITY_DEPLOY_SOURCE_DIR is required (set env or WEBHOOK_DEPLOY_SOURCE_DIR)");
+  process.exit(78);
+}
+
+if (!prodHost) {
+  console.error("ENTITY_PROD_HOST is required (set env or WEBHOOK_PROD_HOST)");
+  process.exit(78);
+}
+
+if (!prodDir) {
+  console.error("ENTITY_PROD_DIR is required (set env or WEBHOOK_PROD_DIR)");
   process.exit(78);
 }
 

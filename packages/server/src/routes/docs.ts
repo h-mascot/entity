@@ -8,19 +8,19 @@ import { createFileSourceRepository } from '../../../db/src/file-sources';
 import { createFileSourceAdapter } from '../fs/adapters/registry';
 
 const HOME_DIR = process.env.HOME?.trim() || os.homedir();
-const DEFAULT_CLAWD_ROOT = path.join(HOME_DIR, 'clawd');
+const DEFAULT_DOCS_ROOT = path.join(HOME_DIR, 'entity-workspace');
 const CLAWD_ROOT =
   process.env.DOCS_WORKSPACE_ROOT?.trim() ||
   process.env.WORKSPACE?.trim() ||
   process.env.DOCS_WORK_ROOT?.trim() ||
-  DEFAULT_CLAWD_ROOT;
+  DEFAULT_DOCS_ROOT;
 const FALLBACK_DOCS_ROOT = path.resolve(process.cwd(), 'packages/app/dist/docs');
 
 function parseDocsWorkspaceFallbacks(): string[] {
   const configured = process.env.DOCS_WORKSPACE_FALLBACKS?.trim();
   const defaults = [
     CLAWD_ROOT,
-    DEFAULT_CLAWD_ROOT,
+    DEFAULT_DOCS_ROOT,
     process.cwd(),
   ];
 
@@ -55,8 +55,7 @@ const ALLOWED_ROOTS: Record<string, string[]> = {
     path.join(FALLBACK_DOCS_ROOT, 'projects'),
   ],
   workspace: buildDocsRootCandidates('workspace', CLAWD_ROOT, WORKSPACE_FALLBACKS),
-  zora: [path.join(HOME_DIR, 'clawd-zora', 'output')],
-  spock: [path.join(HOME_DIR, 'clawd-spock', 'output')],
+
 };
 
 // Simple HTML template for docs viewer

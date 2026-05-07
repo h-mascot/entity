@@ -13,7 +13,7 @@ import type {
   ProviderHealth,
 } from './interface';
 
-const ACP_BASE = process.env.ACP_BASE_URL || 'http://100.86.150.96:8100';
+const ACP_BASE = process.env.ACP_BASE_URL || 'http://localhost:8100';
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
