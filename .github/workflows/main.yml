@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Trigger production deploy after CTRL gate passes'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   ctrl-gate:
@@ -26,7 +32,7 @@ jobs:
     name: Deploy to Production
     needs: ctrl-gate
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.repository == 'h-mascot/entity'
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy == true && github.ref == 'refs/heads/main' && github.repository == 'h-mascot/entity'
     steps:
       - name: Check deploy secrets
         id: deploy-config
