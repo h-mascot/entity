@@ -6,7 +6,7 @@ import "./sentry";
 import http from "http";
 import os from "os";
 import path from "path";
-import express, { type Response } from "express";
+import express, { type Request, type Response } from "express";
 import compression from "compression";
 import fs from "fs";
 import cors from "cors";
@@ -167,11 +167,75 @@ const DOCS_ROOTS: Record<string, string> = {
 };
 
 const wsClients = new Set<WebSocket>();
+
+const SETUPCLAW_LEADS_DIR = process.env.SETUPCLAW_LEADS_DIR || path.join(WORKSPACE, "output", "setupclaw-leads");
+
+function normalizeLeadField(value: unknown): string {
+  return typeof value === "string" ? value.trim().slice(0, 4000) : "";
+}
+
+function registerSetupClawLeadRoutes(app: express.Express) {
+  app.post("/api/setupclaw-london/leads", (req: Request, res: Response) => {
+    const now = new Date();
+    const lead = {
+      id: randomUUID(),
+      capturedAt: now.toISOString(),
+      name: normalizeLeadField(req.body?.name),
+      email: normalizeLeadField(req.body?.email),
+      company: normalizeLeadField(req.body?.company),
+      preferredDay: normalizeLeadField(req.body?.preferred_day),
+      currentStack: normalizeLeadField(req.body?.current_stack),
+      firstTask: normalizeLeadField(req.body?.first_task),
+      toolsNeeded: normalizeLeadField(req.body?.tools_needed),
+      approvalBoundary: normalizeLeadField(req.body?.approval_boundary),
+      source: normalizeLeadField(req.body?.source) || "setupclaw-london",
+      userAgent: normalizeLeadField(req.get("user-agent")),
+      ip: normalizeLeadField(req.ip),
+    };
+
+    const requiredFields = [
+      lead.name,
+      lead.email,
+      lead.company,
+      lead.preferredDay,
+      lead.currentStack,
+      lead.firstTask,
+      lead.toolsNeeded,
+      lead.approvalBoundary,
+    ];
+
+    if (requiredFields.some((field) => !field)) {
+      res.status(400).json({ ok: false, error: "missing_required_fields" });
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email)) {
+      res.status(400).json({ ok: false, error: "invalid_email" });
+      return;
+    }
+
+    try {
+      fs.mkdirSync(SETUPCLAW_LEADS_DIR, { recursive: true });
+      const dayFile = path.join(SETUPCLAW_LEADS_DIR, `${now.toISOString().slice(0, 10)}.jsonl`);
+      fs.appendFileSync(dayFile, `${JSON.stringify(lead)}\n`, "utf8");
+      res.status(201).json({
+        ok: true,
+        id: lead.id,
+        message: "Setup request saved. Ada will reply with a one-afternoon setup scope.",
+      });
+    } catch (err) {
+      console.error("[setupclaw] Failed to persist lead", err);
+      res.status(500).json({ ok: false, error: "lead_persist_failed" });
+    }
+  });
+}
+
 const terminalBridge = createTerminalBridge({
   workspaceRoot: WORKSPACE,
 });
 
 registerTerminalRoutes(app, terminalBridge);
+registerSetupClawLeadRoutes(app);
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
