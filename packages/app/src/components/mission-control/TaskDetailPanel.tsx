@@ -1,5 +1,3 @@
-import { isHtmlContent } from '../../lib/htmlDetect';
-import { HtmlOutputRenderer } from '../HtmlOutputRenderer';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
 import { useUserProfile } from '../../lib/userProfile';
@@ -17,7 +15,7 @@ import {
   type ProjectOption,
 } from './projectOptions';
 
-const AGENT_ASSIGNEE_OPTIONS = ['Assistant', 'Human'] as const;
+const AGENT_ASSIGNEE_OPTIONS = ['Ada', 'Spock', 'Scotty'] as const;
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
 
@@ -2177,12 +2175,8 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                  <>
 	                    <div className="mb-2 min-h-[56px] rounded-md bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-secondary)]">
 	                      {task.output.trim() ? (
-						isHtmlContent(task.output) ? (
-						  <HtmlOutputRenderer content={task.output} className="w-full" />
-						) : (
-						  <pre className="whitespace-pre-wrap break-words font-sans">{renderLinkedText(task.output, onDocsLinkNavigate)}</pre>
-						)
-					  ) : (
+	                        <pre className="whitespace-pre-wrap break-words font-sans">{renderLinkedText(task.output, onDocsLinkNavigate)}</pre>
+	                      ) : (
 	                        <div className="flex min-h-[36px] items-center text-sm text-[var(--text-muted)]">
 	                          No output yet.
 	                        </div>
