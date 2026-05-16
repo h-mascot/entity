@@ -1,0 +1,9 @@
+{
+  "name": "entity-agent-contracts-plugin",
+  "version": "0.1.0",
+  "description": "Entity plugin-style package for installable agent operating contracts.",
+  "type": "module",
+  "scripts": {
+    "validate": "node scripts/validate.mjs"
+  }
+}

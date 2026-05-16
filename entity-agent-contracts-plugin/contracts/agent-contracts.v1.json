@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "1.0",
+  "id": "entity-agent-contracts",
+  "description": "Machine-readable contracts that Entity-aware agents must load or install instead of depending on private crew memory.",
+  "contracts": [
+    {
+      "id": "document-link-delivery",
+      "priority": "required",
+      "summary": "Agents must send Entity FS docs links for workspace artifacts instead of raw local paths.",
+      "appliesTo": ["chat", "cron", "mission-control", "subagent", "report-delivery"],
+      "rules": [
+        "Before sending a local artifact path, map it to a configured Entity File Source.",
+        "Use the docs URL format {entityBaseUrl}/docs/source/{sourceId}/{relativePath} as the primary user-facing link.",
+        "When available, call scripts/entity-fs-link.sh <path> or an equivalent resolver before replying.",
+        "If no source can read the file, report [not exposed in Entity FS] and fix or request a source mapping instead of presenting a local filesystem path as the deliverable."
+      ],
+      "runtimeArtifacts": [
+        {
+          "path": "scripts/entity-fs-link.sh",
+          "kind": "cli",
+          "requiredFor": ["agent-runtime", "cron-runtime"]
+        }
+      ],
+      "verification": [
+        "The generated docs link returns HTTP 200.",
+        "The matching /api/fs/file?sourceId=...&path=... endpoint returns HTTP 200."
+      ]
+    },
+    {
+      "id": "source-registry",
+      "priority": "required",
+      "summary": "Entity-aware agents need a source registry that maps local roots to Entity File Source ids.",
+      "appliesTo": ["install", "verify", "document-link-delivery"],
+      "rules": [
+        "Installers must configure the local workspace and known crew workspaces as Entity File Sources where access is available.",
+        "Verification must check source health before claiming document delivery is ready.",
+        "Do not hard-code a single machine path as the Entity filesystem model."
+      ],
+      "sourceRegistry": "./source-registry.v1.json"
+    },
+    {
+      "id": "entity-source-of-truth",
+      "priority": "required-for-code-changes",
+      "summary": "Entity code changes happen in the canonical Mac repo and are deployed through the normal pipeline.",
+      "appliesTo": ["code-change", "deploy", "release"],
+      "rules": [
+        "Treat the Mac checkout at ~/Code/entity as the canonical Entity source of truth unless a newer project context overrides it.",
+        "Use a clean worktree for changes when the canonical checkout is dirty.",
+        "Push changes to Entity GitHub before reporting code delivery complete.",
+        "For live user-visible changes, verify the live Entity URL/API/browser path before claiming production state."
+      ]
+    },
+    {
+      "id": "mission-control-completion",
+      "priority": "required",
+      "summary": "Entity work must be tracked with plans, review state, and evidence.",
+      "appliesTo": ["mission-control", "agent-task", "long-running-work"],
+      "rules": [
+        "Tasks longer than a few minutes belong in Mission Control before substantial work starts.",
+        "Any task with more than two steps needs a dated plan and ACTIVE_PLAN pointer.",
+        "Finished work must move to review with an accessible output/evidence link before being reported complete.",
+        "Evidence links should use Entity FS docs links where possible."
+      ]
+    },
+    {
+      "id": "openclaw-config-safety",
+      "priority": "required-for-openclaw-config",
+      "summary": "OpenClaw config mutations must use schema-aware paths and first-class tooling.",
+      "appliesTo": ["openclaw-config", "gateway", "plugins", "channels"],
+      "rules": [
+        "Use config.schema.lookup before config changes when available.",
+        "Use config.patch or a first-class command/tool instead of hand-editing OpenClaw runtime config files.",
+        "After gateway/plugin changes, verify restart/load state and inspect startup errors before reporting success."
+      ]
+    }
+  ]
+}

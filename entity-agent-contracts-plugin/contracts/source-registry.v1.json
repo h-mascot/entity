@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "1.0",
+  "id": "entity-source-registry",
+  "entityBaseUrl": "http://100.104.229.62:3000",
+  "docsUrlTemplate": "{entityBaseUrl}/docs/source/{sourceId}/{relativePath}",
+  "sources": [
+    {
+      "sourceId": "ada-gateway",
+      "localRoots": ["/home/henrymascot/clawd"],
+      "purpose": "Ada gateway workspace and generated artifacts"
+    },
+    {
+      "sourceId": "ada",
+      "localRoots": ["/Users/enterprise/clawd"],
+      "purpose": "Enterprise Ada workspace"
+    },
+    {
+      "sourceId": "vault",
+      "localRoots": ["/Users/enterprise/obsidian-vault"],
+      "purpose": "Enterprise Obsidian vault"
+    },
+    {
+      "sourceId": "spock",
+      "localRoots": ["/home/henrymascot/clawd-spock"],
+      "purpose": "Spock workspace"
+    },
+    {
+      "sourceId": "midas",
+      "localRoots": ["/home/henrymascot/clawd-midas"],
+      "purpose": "Midas workspace"
+    },
+    {
+      "sourceId": "scotty",
+      "localRoots": ["/home/jamify/clawd-scotty"],
+      "purpose": "Scotty workspace"
+    },
+    {
+      "sourceId": "zora",
+      "localRoots": ["/Users/henrymascot/.openclaw-zora"],
+      "purpose": "Zora OpenClaw workspace"
+    },
+    {
+      "sourceId": "book",
+      "localRoots": ["/Users/henrymascot/.hermes"],
+      "purpose": "Book/Hermes workspace"
+    },
+    {
+      "sourceId": "geordi",
+      "localRoots": ["/Users/henrymascot/Code/entity"],
+      "purpose": "Canonical Entity source repo"
+    }
+  ],
+  "verification": {
+    "fileEndpoint": "{entityBaseUrl}/api/fs/file?sourceId={sourceId}&path={relativePath}",
+    "docsEndpoint": "{entityBaseUrl}/api/docs/source/{sourceId}/{relativePath}",
+    "expectedStatus": 200
+  }
+}

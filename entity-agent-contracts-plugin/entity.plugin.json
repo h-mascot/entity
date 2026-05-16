@@ -1,0 +1,39 @@
+{
+  "id": "entity-agent-contracts",
+  "name": "Entity Agent Contracts",
+  "version": "0.1.0",
+  "kind": "behavior",
+  "description": "Externalized agent operating contracts required for Entity-aware agents: document link delivery, source registry, deploy discipline, Mission Control completion, and OpenClaw config safety.",
+  "author": "Enterprise Crew",
+  "host": ["openclaw", "entity-server", "standalone"],
+  "entityVersion": {
+    "min": "0.1.0"
+  },
+  "capabilities": [
+    "messaging.outbound.transform",
+    "documents.source.adapter",
+    "documents.metadata.enrich",
+    "tasks.events.observe",
+    "tasks.actions.register",
+    "admin.settings.register",
+    "admin.status.probe"
+  ],
+  "hooks": ["message:outbound", "task:moved", "task:updated"],
+  "settings": {
+    "contracts": "./contracts/agent-contracts.v1.json",
+    "sourceRegistry": "./contracts/source-registry.v1.json",
+    "preferredDocsUrlTemplate": "{entityBaseUrl}/docs/source/{sourceId}/{relativePath}",
+    "defaultEntityBaseUrl": "http://100.104.229.62:3000"
+  },
+  "ownerBoundaries": {
+    "ownsRoutes": false,
+    "ownsTables": false,
+    "modifiesCoreSchema": false,
+    "requiresCoreSlots": [
+      "messaging.outbound.transform",
+      "documents.source.adapter",
+      "tasks.events.observe",
+      "admin.settings"
+    ]
+  }
+}
