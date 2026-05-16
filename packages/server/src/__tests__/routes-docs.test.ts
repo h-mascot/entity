@@ -125,7 +125,7 @@ describe('Docs Route Handlers', () => {
     it('should serve the SPA shell for docs routes', () => {
       const res = mockRes();
       handlers['/docs/*'](mockReq(), res);
-      expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'public, max-age=60');
+      expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-cache');
       expect(res.sendFile).toHaveBeenCalledWith(expect.stringContaining('app/dist/index.html'));
     });
   });

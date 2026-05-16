@@ -31,7 +31,7 @@ This task continues the existing cleanup/open-source-readiness branch. The worki
   - Verify: config tests and scanner pass.
 - [x] Step 4: Run verification gates.
   - Verify: npm run scan:private-defaults -- --enforce; cd packages/server && npx vitest run src/config/load.test.ts src/config/effective.test.ts src/config/routes.test.ts src/plugins/entity-services/routes.test.ts src/plugins/entity-linker/routes.test.ts src/terminal.test.ts; npm run build; npm run doctor after setup/config exists.
-- [ ] Step 5: Summarize evidence and move MC #563 to review.
+- [x] Step 5: Summarize evidence and move MC #563 to review.
   - Verify: bash /Users/enterprise/.hermes/.entity-mc/runtime/mc.sh review 563 <summary>.
 
 ## Files Touched
@@ -59,6 +59,7 @@ This task continues the existing cleanup/open-source-readiness branch. The worki
 - 2026-05-16 06:55 — Context and prior branch state loaded. Existing branch already has config/schema/routes/setup/doctor work; found obvious public-safety correctness gaps in .env.example, root config example, secret redaction regex, workflow deploy header, and scanner roots.
 - 2026-05-16 07:01 — Tightened secret-path detection, restored safe env examples, expanded scanner roots, added seeded onboarding skill refs for uninitialized registries, fixed in-memory onboarding route behavior, and corrected mobile tab typing for the token dashboard.
 - 2026-05-16 07:03 — Verification: private-default scan enforce passed with warnings-only baseline; targeted server vitest suite passed 29/29; npm run build passed; npm run ctrl:gate passed. ctrl:full intentionally fails closed because CTRL_LIVE_BASE_URL/ENTITY_PROD_HTTP_HOST and deploy env are unset, proving no private production default is assumed.
+- 2026-05-16 19:08 — Final verification on Node 22.22.2 after local setup: full server build passed; full server Vitest passed 303/303 across 44 files; private-default scan passed with 128 warnings/0 errors; npm run build passed; npm run doctor passed after npm run setup created ignored local entity.config.yaml; npm run ctrl:gate passed; npm run ctrl:full reached test:live and failed closed because CTRL_LIVE_BASE_URL/ENTITY_PROD_HTTP_HOST is intentionally unset.
 
 ## Resume Instructions
 1. Re-read CONTEXT.md and this plan.

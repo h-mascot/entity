@@ -20,11 +20,13 @@ const FALLBACK_DOCS_ROOT = path.resolve(process.cwd(), 'packages/app/dist/docs')
 
 function parseDocsWorkspaceFallbacks(): string[] {
   const configured = process.env.DOCS_WORKSPACE_FALLBACKS?.trim();
+  const explicitDocsWorkRoot = process.env.DOCS_WORK_ROOT?.trim();
   const defaults = [
+    explicitDocsWorkRoot,
     WORKSPACE_ROOT,
     DEFAULT_DOCS_ROOT,
     process.cwd(),
-  ];
+  ].filter((value): value is string => Boolean(value));
 
   const parsed = configured
     ? configured.split(path.delimiter).map((entry) => entry.trim()).filter(Boolean)
@@ -479,7 +481,7 @@ export function registerDocsRoute(app: any) {
   });
 
   app.get('/docs/*', (_req: Request, res: Response) => {
-    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.resolve(process.cwd(), 'packages/app/dist/index.html'));
   });
 }
