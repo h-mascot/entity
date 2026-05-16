@@ -526,6 +526,20 @@ describe('config routes', () => {
       const bundlePaths = bundle.files.map((file: { path: string }) => file.path);
       expect(bundlePaths.filter((filePath: string) => filePath.startsWith('manifests/'))).toEqual(['manifests/example.env']);
       expect(bundlePaths.some((filePath: string) => filePath.startsWith('exec-tracking/'))).toBe(false);
+
+      const progressRes = await server.request(`/api/onboarding/agent-session/${created.token}/progress`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          progress: [{ id: 'skill', status: 'done', message: 'qa pass' }],
+        }),
+      });
+      expect(progressRes.status).toBe(200);
+      const progress = await progressRes.json() as any;
+      expect(progress.status).toBe('opened');
+      expect(progress.progress).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'skill', status: 'done', message: 'qa pass' }),
+      ]));
     } finally {
       await server.close();
     }

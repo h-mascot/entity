@@ -628,7 +628,7 @@ export function registerConfigRoutes(app: express.Express): void {
       });
       const next = OnboardingAgentSessionSchema.parse({
         ...session,
-        status: req.body?.status ?? session.status,
+        status: typeof req.body?.sessionStatus === 'string' ? req.body.sessionStatus : session.status,
         progress,
       });
       setSettingJson(db, `${ONBOARDING_AGENT_SESSION_PREFIX}${session.token}`, next, 'onboarding-agent');

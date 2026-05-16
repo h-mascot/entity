@@ -919,6 +919,7 @@ export default function OnboardingFlow({
   }, [apiBase, moduleCatalog, selectionRequest]);
 
   useEffect(() => {
+    if (selectedProviderId === 'custom') return;
     if (selectedProviderModels.some((model) => model.id === state.defaultAiModel || model.name === state.defaultAiModel)) return;
     void patchState({ defaultAiProvider: selectedProviderId, defaultAiModel: defaultModelForProvider(selectedProviderId, modelOptions) });
   }, [modelOptions, patchState, selectedProviderId, selectedProviderModels, state.defaultAiModel]);
