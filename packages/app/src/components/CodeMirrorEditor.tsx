@@ -85,7 +85,7 @@ interface EditorProps {
   onSuggestingEdit?: (request: EditorSuggestingEditRequest) => void;
 }
 
-const agents = ['Ada', 'Spock', 'Scotty'] as const;
+const agents = ['Assistant', 'Human'] as const;
 
 function normalizeAuthorshipActor(value: string): AuthorshipActor {
   const normalized = value.trim().toLowerCase();

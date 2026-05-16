@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import express from 'express';
+import { Readable, Writable } from 'stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerConfigRoutes } from './routes';
 
@@ -16,22 +17,111 @@ function createServer() {
   const app = express();
   app.use(express.json());
   registerConfigRoutes(app);
-  return new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolve) => {
-    const server = app.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') throw new Error('No test server address');
-      resolve({
-        baseUrl: `http://127.0.0.1:${address.port}`,
-        close: () => new Promise<void>((done) => server.close(() => done())),
-      });
+  return Promise.resolve({
+    request: (requestPath: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) =>
+      requestApp(app, { path: requestPath, ...init }),
+    close: async () => undefined,
+  });
+}
+
+async function requestApp(
+  app: express.Express,
+  options: {
+    path: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  },
+): Promise<Response> {
+  const normalizedHeaders = Object.fromEntries(
+    Object.entries(options.headers ?? {}).map(([key, value]) => [key.toLowerCase(), String(value)]),
+  );
+  const bodyText = options.body ?? '';
+  if (bodyText && !normalizedHeaders['content-length']) {
+    normalizedHeaders['content-length'] = String(Buffer.byteLength(bodyText));
+  }
+
+  return await new Promise<Response>((resolve, reject) => {
+    const req = Readable.from(bodyText ? [bodyText] : []) as any;
+    req.url = options.path;
+    req.method = options.method ?? 'GET';
+    req.headers = normalizedHeaders;
+    req.rawHeaders = Object.entries(normalizedHeaders).flatMap(([key, value]) => [key, value]);
+    req.httpVersion = '1.1';
+    req.httpVersionMajor = 1;
+    req.httpVersionMinor = 1;
+    req.socket = { writable: true, on() {}, removeListener() {}, destroy() {} };
+    req.connection = req.socket;
+
+    const chunks: Buffer[] = [];
+    const res: any = new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        callback();
+      },
     });
+
+    const headersMap = new Map<string, string>();
+    res.statusCode = 200;
+    Object.defineProperty(res, 'headersSent', { value: false, writable: true, configurable: true });
+    Object.defineProperty(res, 'finished', { value: false, writable: true, configurable: true });
+    Object.defineProperty(res, 'writableEnded', { value: false, writable: true, configurable: true });
+    res.setHeader = (name: string, value: string) => {
+      headersMap.set(String(name).toLowerCase(), String(value));
+      return res;
+    };
+    res.getHeader = (name: string) => headersMap.get(String(name).toLowerCase());
+    res.getHeaders = () => Object.fromEntries(headersMap.entries());
+    res.removeHeader = (name: string) => {
+      headersMap.delete(String(name).toLowerCase());
+    };
+    res.writeHead = (statusCode: number, reasonOrHeaders?: unknown, maybeHeaders?: Record<string, string>) => {
+      res.statusCode = statusCode;
+      const headerSource = typeof reasonOrHeaders === 'object' && reasonOrHeaders !== null
+        ? reasonOrHeaders as Record<string, string>
+        : maybeHeaders;
+      if (headerSource) {
+        for (const [name, value] of Object.entries(headerSource)) {
+          res.setHeader(name, value);
+        }
+      }
+      res.headersSent = true;
+      return res;
+    };
+    const end = res.end.bind(res);
+    res.end = (chunk?: unknown, encoding?: BufferEncoding, callback?: () => void) => {
+      if (chunk) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), encoding));
+      }
+      res.headersSent = true;
+      res.finished = true;
+      res.writableEnded = true;
+      resolve(new Response(Buffer.concat(chunks), {
+        status: Number(res.statusCode ?? 200),
+        headers: Object.fromEntries(headersMap.entries()),
+      }));
+      return end(() => {
+        if (typeof callback === 'function') callback();
+      });
+    };
+    res.on('error', reject);
+
+    try {
+      (app as any).handle(req, res, reject);
+    } catch (error) {
+      reject(error);
+    }
   });
 }
 
 describe('config routes', () => {
   beforeEach(() => {
     db.exec('DROP TABLE IF EXISTS app_settings');
+    db.exec('DROP TABLE IF EXISTS file_sources');
     db.exec('DROP TABLE IF EXISTS entity_agents');
+    db.exec('DROP TABLE IF EXISTS entity_agent_module_grants');
+    db.exec('DROP TABLE IF EXISTS entity_module_skill_refs');
+    db.exec('DROP TABLE IF EXISTS entity_modules');
     vi.stubEnv('PORT', undefined);
   });
 
@@ -42,7 +132,7 @@ describe('config routes', () => {
   it('returns effective config with source metadata', async () => {
     const server = await createServer();
     try {
-      const res = await fetch(`${server.baseUrl}/api/config/effective`);
+      const res = await server.request('/api/config/effective');
       expect(res.status).toBe(200);
       const body = await res.json() as any;
       expect(body.settings.profile.displayName).toBe('Entity Workspace');
@@ -55,7 +145,7 @@ describe('config routes', () => {
   it('saves DB-backed runtime profile and safe server patches', async () => {
     const server = await createServer();
     try {
-      const res = await fetch(`${server.baseUrl}/api/settings/config/runtime`, {
+      const res = await server.request('/api/settings/config/runtime', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -101,7 +191,7 @@ describe('config routes', () => {
 
     const server = await createServer();
     try {
-      const res = await fetch(`${server.baseUrl}/api/config/effective`);
+      const res = await server.request('/api/config/effective');
       expect(res.status).toBe(200);
       const body = await res.json() as any;
       expect(body.settings.agents).toEqual([
@@ -144,7 +234,7 @@ describe('config routes', () => {
 
     const server = await createServer();
     try {
-      const res = await fetch(`${server.baseUrl}/api/config/effective`);
+      const res = await server.request('/api/config/effective');
       expect(res.status).toBe(200);
       const body = await res.json() as any;
       expect(body.settings.fileSources).toEqual([
@@ -167,7 +257,7 @@ describe('config routes', () => {
   it('rejects invalid runtime patches', async () => {
     const server = await createServer();
     try {
-      const res = await fetch(`${server.baseUrl}/api/settings/config/runtime`, {
+      const res = await server.request('/api/settings/config/runtime', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server: { port: -1 } }),
@@ -181,24 +271,41 @@ describe('config routes', () => {
   it('stores onboarding state and completion server-side', async () => {
     const server = await createServer();
     try {
-      const initialRes = await fetch(`${server.baseUrl}/api/onboarding/state`);
+      const initialRes = await server.request('/api/onboarding/state');
       expect(initialRes.status).toBe(200);
       const initial = await initialRes.json() as any;
       expect(initial.completed).toBe(false);
       expect(initial.selectedTheme).toBe('aurora');
+      expect(initial.selectedBundle).toBe('default');
+      expect(initial.selectedModules).toEqual([
+        'entity-agent-contracts',
+        'entity-fs',
+        'entity-mc',
+        'entity-linker',
+      ]);
 
-      const patchRes = await fetch(`${server.baseUrl}/api/onboarding/state`, {
+      const patchRes = await server.request('/api/onboarding/state', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'manual', currentStep: 3, selectedTheme: 'paper' }),
+        body: JSON.stringify({
+          mode: 'manual',
+          currentStep: 3,
+          selectedTheme: 'paper',
+          selectedBundle: 'custom',
+          selectedModules: ['entity-agent-contracts', 'entity-fs', 'entity-linker'],
+          selectedModuleConfig: { 'entity-linker': { verify: 'docs' } },
+        }),
       });
       expect(patchRes.status).toBe(200);
       const patched = await patchRes.json() as any;
       expect(patched.mode).toBe('manual');
       expect(patched.currentStep).toBe(3);
       expect(patched.selectedTheme).toBe('paper');
+      expect(patched.selectedBundle).toBe('custom');
+      expect(patched.selectedModules).toEqual(['entity-agent-contracts', 'entity-fs', 'entity-linker']);
+      expect(patched.selectedModuleConfig).toEqual({ 'entity-linker': { verify: 'docs' } });
 
-      const modelOnlyRes = await fetch(`${server.baseUrl}/api/onboarding/state`, {
+      const modelOnlyRes = await server.request('/api/onboarding/state', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ defaultAiModel: 'codex/gpt-5.5' }),
@@ -210,7 +317,7 @@ describe('config routes', () => {
       expect(modelOnly.selectedTheme).toBe('paper');
       expect(modelOnly.defaultAiModel).toBe('codex/gpt-5.5');
 
-      const completeRes = await fetch(`${server.baseUrl}/api/onboarding/complete`, {
+      const completeRes = await server.request('/api/onboarding/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ starterPreset: 'solo' }),
@@ -222,6 +329,118 @@ describe('config routes', () => {
       expect(completed.starterPreset).toBe('solo');
       expect(completed.currentStep).toBe(3);
       expect(completed.defaultAiModel).toBe('codex/gpt-5.5');
+      expect(completed.selectedBundle).toBe('custom');
+      expect(completed.selectedModules).toEqual(['entity-agent-contracts', 'entity-fs', 'entity-linker']);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('returns registry-backed onboarding modules and readiness', async () => {
+    const server = await createServer();
+    try {
+      const modulesRes = await server.request('/api/onboarding/modules');
+      expect(modulesRes.status).toBe(200);
+      const modules = await modulesRes.json() as any;
+      expect(modules.defaultBundle).toBe('default');
+      expect(modules.defaultModules).toEqual([
+        'entity-agent-contracts',
+        'entity-fs',
+        'entity-mc',
+        'entity-linker',
+      ]);
+      expect(modules.modules).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'entity-agent-contracts', category: 'required', locked: true }),
+        expect.objectContaining({ id: 'entity-fs', category: 'required', locked: true }),
+        expect.objectContaining({ id: 'entity-mc', category: 'recommended', recommended: true }),
+        expect.objectContaining({ id: 'entity-linker', category: 'recommended', recommended: true }),
+      ]));
+      expect(modules.modules.some((module: { id: string }) => module.id === 'geordi-swarm')).toBe(false);
+      expect(modules.groups.required).toHaveLength(2);
+      expect(modules.groups.recommended).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'entity-mc' }),
+        expect.objectContaining({ id: 'entity-linker' }),
+      ]));
+
+      const readinessRes = await server.request('/api/onboarding/readiness');
+      expect(readinessRes.status).toBe(200);
+      const readiness = await readinessRes.json() as any;
+      expect(readiness.entityVersion).toEqual(expect.any(String));
+      expect(readiness.installedRegistry.total).toBeGreaterThanOrEqual(7);
+      expect(readiness.fileSourcesAvailable).toBe(false);
+      expect(readiness.adminOnly).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'entity-discord-title-hook' }),
+        expect.objectContaining({ id: 'entity-services' }),
+        expect.objectContaining({ id: 'geordi-swarm' }),
+      ]));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('resolves onboarding selections, returns dry runs, and rejects invalid module ids', async () => {
+    const server = await createServer();
+    try {
+      const resolveRes = await server.request('/api/onboarding/resolve-selection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          selectedBundle: 'custom',
+          selectedModules: ['entity-linker'],
+        }),
+      });
+      expect(resolveRes.status).toBe(200);
+      const resolved = await resolveRes.json() as any;
+      expect(resolved.requestedBundle).toBe('custom');
+      expect(resolved.normalizedBundle).toBe('custom');
+      expect(resolved.selectedModules).toEqual([
+        'entity-agent-contracts',
+        'entity-fs',
+        'entity-linker',
+      ]);
+      expect(resolved.installOrder).toEqual([
+        'entity-agent-contracts',
+        'entity-fs',
+        'entity-linker',
+      ]);
+      expect(resolved.modules).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'entity-linker' }),
+      ]));
+      expect(resolved.context.root).toBe('~/.entity/agent-context');
+      expect(resolved.safeStopConditions).toEqual(expect.arrayContaining([
+        expect.stringContaining('Stop if any required validation gate fails'),
+      ]));
+
+      const dryRunRes = await server.request('/api/onboarding/dry-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selectedBundle: 'minimal' }),
+      });
+      expect(dryRunRes.status).toBe(200);
+      const dryRun = await dryRunRes.json() as any;
+      expect(dryRun.normalizedBundle).toBe('minimal');
+      expect(dryRun.selectedModules).toEqual(['entity-agent-contracts', 'entity-fs']);
+      expect(dryRun.dryRun.writes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ moduleId: 'entity-agent-contracts' }),
+        expect.objectContaining({ moduleId: 'entity-fs' }),
+      ]));
+      expect(dryRun.dryRun.verifySteps).toEqual(expect.arrayContaining([
+        expect.objectContaining({ moduleId: 'entity-agent-contracts' }),
+        expect.objectContaining({ moduleId: 'entity-fs' }),
+      ]));
+
+      const invalidRes = await server.request('/api/onboarding/resolve-selection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          selectedBundle: 'custom',
+          selectedModules: ['unknown-module'],
+        }),
+      });
+      expect(invalidRes.status).toBe(400);
+      const invalid = await invalidRes.json() as any;
+      expect(invalid.error).toContain('Unknown onboarding module selection');
+      expect(invalid.payload.unknownIds).toEqual(['unknown-module']);
     } finally {
       await server.close();
     }
@@ -230,33 +449,64 @@ describe('config routes', () => {
   it('creates agent setup sessions with manifests and Entity MC skill access', async () => {
     const server = await createServer();
     try {
-      const createRes = await fetch(`${server.baseUrl}/api/onboarding/agent-session`, {
+      const createRes = await server.request('/api/onboarding/agent-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: { mode: 'agent', starterPreset: 'crew' } }),
+        body: JSON.stringify({
+          state: {
+            mode: 'agent',
+            starterPreset: 'crew',
+            selectedBundle: 'default',
+            selectedModules: ['entity-agent-contracts', 'entity-fs', 'entity-mc', 'entity-linker'],
+          },
+        }),
       });
       expect(createRes.status).toBe(201);
       const created = await createRes.json() as any;
       expect(created.token).toEqual(expect.any(String));
       expect(created.setupUrl).toBe(`/onboard/agent/${created.token}`);
 
-      const manifestRes = await fetch(`${server.baseUrl}/api/onboarding/agent-session/${created.token}/manifest`);
+      const manifestRes = await server.request(`/api/onboarding/agent-session/${created.token}/manifest`);
       expect(manifestRes.status).toBe(200);
       const manifest = await manifestRes.json() as any;
       expect(manifest.entityMc.name).toBe('entity-mc');
+      expect(manifest.entityMc.selected).toBe(true);
       expect(manifest.entityMc.bundlePath).toBeUndefined();
       expect(manifest.entityMc.bundleUrl).toBe(`/api/onboarding/agent-session/${created.token}/bundle`);
       expect(manifest.entityMc.progressUrl).toBe(`/api/onboarding/agent-session/${created.token}/progress`);
+      expect(manifest.onboarding.selectedBundle).toBe('default');
+      expect(manifest.modules).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'entity-agent-contracts', required: true }),
+        expect.objectContaining({ id: 'entity-fs', required: true }),
+        expect.objectContaining({ id: 'entity-mc', required: false }),
+        expect.objectContaining({ id: 'entity-linker', required: false }),
+      ]));
+      expect(manifest.installOrder).toEqual([
+        'entity-agent-contracts',
+        'entity-fs',
+        'entity-mc',
+        'entity-linker',
+      ]);
+      expect(manifest.moduleSkillRefs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ moduleId: 'entity-mc' }),
+      ]));
+      const linkerModule = manifest.modules.find((module: { id: string }) => module.id === 'entity-linker');
+      expect(linkerModule?.skillRefs?.length ?? 0).toBeGreaterThan(0);
+      expect(manifest.context.root).toBe('~/.entity/agent-context');
+      expect(manifest.safeStopConditions).toEqual(expect.arrayContaining([
+        expect.stringContaining('Stop before configuring any Admin-only module'),
+      ]));
       expect(manifest.checklist).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'skill', label: 'Entity MC skill installed' }),
+        expect.objectContaining({ id: 'module:entity-linker', label: 'Entity Linker configured' }),
       ]));
 
-      const skillRes = await fetch(`${server.baseUrl}/api/onboarding/agent-session/${created.token}/skill`);
+      const skillRes = await server.request(`/api/onboarding/agent-session/${created.token}/skill`);
       expect(skillRes.status).toBe(200);
       const skillText = await skillRes.text();
       expect(skillText).toContain('name: entity-mc');
 
-      const bundleRes = await fetch(`${server.baseUrl}/api/onboarding/agent-session/${created.token}/bundle`);
+      const bundleRes = await server.request(`/api/onboarding/agent-session/${created.token}/bundle`);
       expect(bundleRes.status).toBe(200);
       const bundle = await bundleRes.json() as any;
       expect(bundle.files).toEqual(expect.arrayContaining([

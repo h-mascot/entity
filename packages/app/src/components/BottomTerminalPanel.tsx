@@ -48,6 +48,24 @@ interface TerminalEnvelope {
 }
 
 // Loaded from config at runtime; empty array when no terminal.targets are configured.
+
+/**
+ * Append API token to WebSocket URL if configured.
+ */
+function getAuthenticatedWsUrl(baseUrl: string): string {
+  try {
+    if (typeof window === 'undefined') return baseUrl;
+    const token = window.localStorage.getItem('entity-api-token');
+    if (!token || !token.trim()) return baseUrl;
+    const url = new URL(baseUrl);
+    url.searchParams.set('token', token.trim());
+    return url.toString();
+  } catch {
+    return baseUrl;
+  }
+}
+
+
 const FALLBACK_TARGETS: TerminalTarget[] = [];
 
 function buildApiUrl(pathname: string): string {
@@ -302,7 +320,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
         return;
       }
 
-      const socket = new WebSocket(runtime.wsUrl);
+      const socket = new WebSocket(getAuthenticatedWsUrl(runtime.wsUrl));
       socketRef.current = socket;
 
       socket.onopen = () => {

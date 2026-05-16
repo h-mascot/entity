@@ -14,8 +14,9 @@ import {
   normalizeProjectOption,
   type ProjectOption,
 } from './projectOptions';
+import { getCachedAgents } from '../../lib/agentRegistry';
 
-const AGENT_ASSIGNEE_OPTIONS = ['Ada', 'Spock', 'Scotty'] as const;
+const DEFAULT_ASSIGNEE_OPTIONS = ['Assistant', 'Human'] as const;
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
 
@@ -906,6 +907,28 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const [replyTargetId, setReplyTargetId] = useState<number | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const { tasks: boardTasks, reloadTasks } = useTaskBoard({ apiBase, autoLoad: false });
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
+
+  // Fetch effective config for workspaceRoot
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/config/effective`);
+        if (res.ok && !cancelled) {
+          const data = (await res.json()) as { settings?: { server?: { workspaceRoot?: string } } };
+          if (data.settings?.server?.workspaceRoot) {
+            setWorkspaceRoot(data.settings.server.workspaceRoot);
+          }
+        }
+      } catch {
+        // ignore fetch errors
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase]);
 
   useEffect(() => {
     const animationId = window.requestAnimationFrame(() => setVisible(true));
@@ -1040,12 +1063,22 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   }, [apiBase, taskId]);
 
   const assigneeOptions = useMemo(() => {
-    const options = [...AGENT_ASSIGNEE_OPTIONS, userProfile.displayName, 'Unassigned'];
-    if (form?.assignee && !options.includes(form.assignee)) {
-      return [form.assignee, ...options];
+    const agents = getCachedAgents();
+    const agentNames = agents.map((a) => a.name);
+    const options = [...DEFAULT_ASSIGNEE_OPTIONS, ...agentNames, userProfile.displayName, 'Unassigned'];
+    // deduplicate while preserving order
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const o of options) {
+      if (!seen.has(o)) {
+        seen.add(o);
+        deduped.push(o);
+      }
     }
-
-    return options;
+    if (form?.assignee && !seen.has(form.assignee)) {
+      return [form.assignee, ...deduped];
+    }
+    return deduped;
   }, [form?.assignee, userProfile.displayName]);
 
   const modelOptions = useMemo(() => {

@@ -4,7 +4,7 @@ import type { CreateTaskPayload, TaskBoardTask, TaskColumn, TaskPriority } from 
 import { useUserProfile } from '../../lib/userProfile';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
 
-const AGENT_ASSIGNEE_OPTIONS = ['Ada', 'Spock', 'Scotty'] as const;
+const AGENT_ASSIGNEE_OPTIONS = ['Assistant', 'Human'] as const;
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 const CREATE_TASK_COLUMNS = ['backlog', 'todo', 'doing'] as const;
 

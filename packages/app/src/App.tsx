@@ -43,6 +43,7 @@ import AgentsSidebarTab from './components/AgentsSidebarTab';
 import AgentsMobileDetail from './components/AgentsMobileDetail';
 import AgentDashboardV2 from './components/AgentDashboardV2';
 import ChatView from './components/Chat/ChatView';
+import TokenView from './components/TokenView';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useActivityStream } from './hooks/useActivityStream';
@@ -135,7 +136,7 @@ interface AuthSession {
   loggedInAt: string;
 }
 
-type WorkspaceTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'admin';
+type WorkspaceTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'admin' | 'tokens';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -1281,7 +1282,7 @@ function ShowClawFeaturedPage() {
               <dl className="mt-5 space-y-4 text-sm">
                 {[
                   ['Request', 'Ship one ShowClaw featured page for Entity.'],
-                  ['Worker', 'Scotty lane · Mac · ~/Code/entity'],
+                  ['Worker', 'Assistant · local · ~/Code/entity'],
                   ['Changed surface', '/showclaw/entity-featured'],
                   ['Proof', 'Build output + deployed URL + screenshot-ready page'],
                   ['Verifier', 'Operator acceptance contract, v0'],
@@ -1367,7 +1368,7 @@ export default function App() {
       return 'files';
     }
     const saved = window.localStorage.getItem('entity.sidebar.tab') as WorkspaceTab | null;
-    const VALID_TABS: readonly string[] = ['files', 'agents', 'tasks', 'services', 'chat', 'admin'] as const;
+    const VALID_TABS: readonly string[] = ['files', 'agents', 'tasks', 'services', 'chat', 'admin', 'tokens'] as const;
     if (saved && VALID_TABS.includes(saved)) {
       return saved;
     }
@@ -2175,15 +2176,11 @@ export default function App() {
 
         if (docId === currentDocId && toastAction) {
           const label =
-            actor === 'ada'
-              ? 'Ada'
-              : actor === 'spock'
-                ? 'Spock'
-                : actor === 'scotty'
-                  ? 'Scotty'
-                  : actor === 'human'
-                    ? 'Human'
-                    : actor;
+            actor === 'assistant'
+              ? 'Assistant'
+              : actor === 'human'
+                ? 'Human'
+                : actor;
           pushToast(`${label} ${toastAction === 'joined' ? 'joined' : 'left'} the document`, 'info');
         }
 
@@ -2820,7 +2817,7 @@ export default function App() {
 
   const handleSidebarTabChange = (tab: WorkspaceTab) => {
     setSidebarTab(tab);
-    if (tab === 'admin') {
+    if (tab === 'admin' || tab === 'tokens') {
       setMobileTab('files');
     } else {
       setMobileTab(tab);
@@ -3871,7 +3868,7 @@ export default function App() {
                     {([
                       { value: 'dark', label: 'Dark', hint: 'Classic black shell' },
                       { value: 'light', label: 'Light', hint: 'Clean white workspace' },
-	                      { value: 'kitz', label: 'Kitz', hint: 'Enterprise gradient dark' },
+	                      { value: 'kitz', label: 'Kitz', hint: 'Dark gradient workspace' },
 	                      { value: 'nebula', label: 'Nebula', hint: 'Glassy blue violet' },
 	                      { value: 'aurora', label: 'Aurora', hint: 'Mint peach glass' },
 	                      { value: 'paper', label: 'Paper', hint: 'Notebook desk board' },
@@ -4354,6 +4351,31 @@ export default function App() {
       return null;
     }
 
+    if (sidebarTab === 'tokens') {
+      return (
+        <div className="flex w-full flex-col gap-3 p-3">
+          <div className="mc-shell-card rounded-lg bg-[var(--bg-secondary)] p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-medium text-[var(--text-muted)]">Token Usage</span>
+              <span className="text-lg">📊</span>
+            </div>
+            <div className="text-center">
+              <span className="text-2xl font-bold text-[var(--text-primary)]">Tokens</span>
+            </div>
+            <div className="mt-2 text-center">
+              <button
+                type="button"
+                onClick={() => openExpandedSidebarTab('tokens')}
+                className="mc-shell-btn w-full px-2 py-1 text-xs text-[var(--text-primary)]"
+              >
+                Open Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (sidebarTab === 'admin') {
       return renderAdminSidebarPanel();
     }
@@ -4370,7 +4392,7 @@ export default function App() {
       <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
         <div className="text-sm font-medium text-[var(--text-primary)]">Services</div>
         <div className="mt-2 text-xs text-[var(--text-muted)]">
-          Live operational registry for Entity runtime services, linked plugins, and Enterprise tooling.
+          Live operational registry for Entity runtime services, linked plugins, and crew tooling.
         </div>
       </div>
       <button
@@ -4390,7 +4412,7 @@ export default function App() {
           rel="noreferrer noopener"
           className="mc-shell-btn px-3 py-2 text-left text-xs"
         >
-          Open Enterprise Crew Admin
+          Open Crew Admin
         </a>
       )}
     </div>
@@ -4461,6 +4483,25 @@ export default function App() {
   );
 
   const renderContextBar = () => {
+    if (sidebarTab === 'tokens') {
+      return (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <div className="text-xs text-[var(--text-muted)]">AI token usage tracking</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => {}} className="mc-shell-btn px-2 py-1 text-xs">
+              7d
+            </button>
+            <button type="button" onClick={() => {}} className="mc-shell-btn px-2 py-1 text-xs">
+              30d
+            </button>
+            <button type="button" onClick={() => {}} className="mc-shell-btn px-2 py-1 text-xs">
+              90d
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (sidebarTab === 'admin') {
       return (
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
@@ -4578,9 +4619,8 @@ export default function App() {
                   aria-label="Filter by assignee"
                 >
                   <option value="all">Assignee: All</option>
-                  <option value="Ada">Ada</option>
-                  <option value="Spock">Spock</option>
-                  <option value="Scotty">Scotty</option>
+                  <option value="Assistant">Assistant</option>
+                  <option value="Human">Human</option>
                   <option value={userProfile.displayName}>{userProfile.displayName}</option>
                 </select>
                 <select
@@ -4744,7 +4784,6 @@ export default function App() {
       return null;
     }
 
-
     return (
       <div className="flex w-full flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-[220px] flex-1 items-center gap-2">
@@ -4805,13 +4844,13 @@ export default function App() {
             >
               {authorshipStats.human > 0 && <span>👤 {formatAuthorshipBadgePercent(authorshipStats.human)}%</span>}
               {authorshipStats.ada > 0 && (
-                <span className="text-purple-400">Ada {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>
+                <span className="text-purple-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>
               )}
               {authorshipStats.spock > 0 && (
-                <span className="text-blue-400">Spock {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>
+                <span className="text-blue-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>
               )}
               {authorshipStats.scotty > 0 && (
-                <span className="text-green-400">Scotty {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>
+                <span className="text-green-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>
               )}
             </div>
           )}
@@ -4957,7 +4996,7 @@ export default function App() {
             <span>⚡ Entity</span>
 
           </div>
-          {(['files', 'agents', 'tasks', 'services', 'chat', 'admin'] as const).map((tab) => (
+          {(['files', 'agents', 'tasks', 'services', 'chat', 'admin', 'tokens'] as const).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -5079,6 +5118,20 @@ export default function App() {
           title="Open chat"
         >
           <span aria-hidden="true">💬</span>
+        </button>
+      );
+    }
+
+    if (sidebarTab === 'tokens') {
+      return (
+        <button
+          type="button"
+          onClick={() => openExpandedSidebarTab('tokens')}
+          className="mc-shell-btn inline-flex h-10 w-10 items-center justify-center px-0 py-0 text-base text-[var(--text-primary)]"
+          aria-label="Open token dashboard"
+          title="Open token dashboard"
+        >
+          <span aria-hidden="true">📊</span>
         </button>
       );
     }
@@ -5358,6 +5411,10 @@ export default function App() {
       ) : sidebarTab === 'chat' ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <ChatView />
+        </div>
+      ) : sidebarTab === 'tokens' ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <TokenView apiBase={runtime.apiBase} />
         </div>
       ) : sidebarTab === 'admin' ? (
         <div className="flex min-h-0 flex-1 flex-col">{renderAdminWorkspace()}</div>

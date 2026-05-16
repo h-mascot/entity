@@ -19,8 +19,10 @@ const scannedRoots = [
   'dev.sh',
   'README.md',
   'docs/config',
+  '.github/workflows',
   'entity.config.example.yaml',
   '.env.example',
+  'packages/server/.env.example',
 ].map((p) => path.join(repoRoot, p));
 
 const excludedPathParts = new Set([

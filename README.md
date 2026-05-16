@@ -18,13 +18,12 @@ Entity gives agents a real operating surface: tasks, files, documents, chat, act
 git clone https://github.com/h-mascot/entity.git
 cd entity
 npm install
+npm run setup    # interactive first-run wizard - creates entity.config.yaml
 npm run build
-PORT=3000 npm --prefix packages/server run dev
+npm run dev      # starts server at http://localhost:3000
 ```
 
-Open `http://localhost:3000`.
-
-Entity is currently a real internal workspace moving into public form. It is useful now if you are comfortable running from source; a smoother first-run/demo path is on the roadmap.
+Open `http://localhost:3000`. No hardcoded paths, no Enterprise assumptions - just a local workspace you control.
 
 ---
 

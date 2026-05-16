@@ -23,7 +23,9 @@ export function registerFileSystemRoutes(app: Express, options: FileSystemRouteO
   const sourceRepo = createFileSourceRepository();
   const indexRepo = createFileIndexRepository();
 
-  // Auto-initialize/default-correct workspace source
+  // Auto-initialize/default-correct workspace source.
+  // Uses effective config workspaceRoot, NOT hardcoded paths.
+  // Only creates a source if DB has none and the path exists.
   const fs = require('fs');
   const homeDir = process.env.HOME || require('os').homedir();
   const workspaceRoot = options.workspaceRoot || homeDir;
@@ -31,7 +33,8 @@ export function registerFileSystemRoutes(app: Express, options: FileSystemRouteO
   // Check if any source exists in DB. If not, create a generic 'workspace' source.
   const existingSources = sourceRepo.listSources(false);
   if (existingSources.length === 0) {
-    const defaultSourcePath = path.join(workspaceRoot, 'workspace');
+    // Use workspaceRoot directly - no hardcoded subfolder like 'clawd'
+    const defaultSourcePath = workspaceRoot;
     if (fs.existsSync(defaultSourcePath)) {
       sourceRepo.createSource({
         id: 'workspace',

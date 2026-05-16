@@ -8,18 +8,20 @@ import { createFileSourceRepository } from '../../../db/src/file-sources';
 import { createFileSourceAdapter } from '../fs/adapters/registry';
 
 const HOME_DIR = process.env.HOME?.trim() || os.homedir();
+// Public-safe default: use ~/entity-workspace as generic workspace root.
+// This is NOT hardcoded to clawd or any Enterprise-specific path.
 const DEFAULT_DOCS_ROOT = path.join(HOME_DIR, 'entity-workspace');
-const CLAWD_ROOT =
-  process.env.DOCS_WORKSPACE_ROOT?.trim() ||
-  process.env.WORKSPACE?.trim() ||
-  process.env.DOCS_WORK_ROOT?.trim() ||
-  DEFAULT_DOCS_ROOT;
+// Support ENTITY_WORKSPACE_ROOT env var (set from entity.config.yaml server.workspaceRoot)
+// Fallback chain: explicit env -> cwd-based default -> generic ~/entity-workspace
+const WORKSPACE_ROOT = process.env.ENTITY_WORKSPACE_ROOT?.trim()
+  || process.env.WORKSPACE?.trim()
+  || DEFAULT_DOCS_ROOT;
 const FALLBACK_DOCS_ROOT = path.resolve(process.cwd(), 'packages/app/dist/docs');
 
 function parseDocsWorkspaceFallbacks(): string[] {
   const configured = process.env.DOCS_WORKSPACE_FALLBACKS?.trim();
   const defaults = [
-    CLAWD_ROOT,
+    WORKSPACE_ROOT,
     DEFAULT_DOCS_ROOT,
     process.cwd(),
   ];
@@ -41,20 +43,20 @@ const LEGACY_SERVER_DOCS_ROOTS = [
 // Allowed roots for docs serving
 const ALLOWED_ROOTS: Record<string, string[]> = {
   output: [
-    ...buildDocsRootCandidates('output', path.join(CLAWD_ROOT, 'output'), WORKSPACE_FALLBACKS),
+    ...buildDocsRootCandidates('output', path.join(WORKSPACE_ROOT, 'output'), WORKSPACE_FALLBACKS),
     path.join(FALLBACK_DOCS_ROOT, 'output'),
     ...LEGACY_SERVER_DOCS_ROOTS.map((root) => path.join(root, 'output')),
   ],
   memory: [
-    ...buildDocsRootCandidates('memory', path.join(CLAWD_ROOT, 'memory'), WORKSPACE_FALLBACKS),
+    ...buildDocsRootCandidates('memory', path.join(WORKSPACE_ROOT, 'memory'), WORKSPACE_FALLBACKS),
     ...(process.env.DOCS_VAULT_MEMORY_ROOT?.trim() ? [process.env.DOCS_VAULT_MEMORY_ROOT.trim()] : []),
     path.join(FALLBACK_DOCS_ROOT, 'memory'),
   ],
   projects: [
-    ...buildDocsRootCandidates('projects', path.join(CLAWD_ROOT, 'projects'), WORKSPACE_FALLBACKS),
+    ...buildDocsRootCandidates('projects', path.join(WORKSPACE_ROOT, 'projects'), WORKSPACE_FALLBACKS),
     path.join(FALLBACK_DOCS_ROOT, 'projects'),
   ],
-  workspace: buildDocsRootCandidates('workspace', CLAWD_ROOT, WORKSPACE_FALLBACKS),
+  workspace: buildDocsRootCandidates('workspace', WORKSPACE_ROOT, WORKSPACE_FALLBACKS),
 
 };
 
@@ -202,13 +204,46 @@ function normalizeTtsModel(value: unknown, fallback: string): string {
 }
 
 function isAllowedDocsFile(filePath: string): boolean {
-  return /\.(md|markdown|txt|log|json|jsonl|yaml|yml|csv|tsv)$/i.test(filePath);
+  return /\.(md|markdown|txt|log|json|jsonl|yaml|yml|csv|tsv|sh|bash|zsh|py|js|mjs|cjs|ts|tsx|jsx|css|html|xml|toml|ini)$/i.test(filePath);
+}
+
+function splitSourceDocsPath(filePath: string): { sourceId: string; sourcePath: string } | null {
+  const normalized = filePath.split('/').filter(Boolean).join('/');
+  const slashIndex = normalized.indexOf('/');
+  if (slashIndex <= 0) {
+    return null;
+  }
+
+  const sourceId = normalized.slice(0, slashIndex);
+  const sourcePath = normalized.slice(slashIndex + 1);
+  if (!sourceId || !sourcePath) {
+    return null;
+  }
+
+  return { sourceId, sourcePath };
 }
 
 function validateDocsRequestShape(
   root: string,
   filePath: string,
 ): { ok: true } | { ok: false; status: number; payload: Record<string, string> } {
+  if (root === 'source') {
+    const sourceDoc = splitSourceDocsPath(filePath);
+    if (!sourceDoc) {
+      return { ok: false, status: 400, payload: { error: 'Source id and path are required' } };
+    }
+
+    if (sourceDoc.sourcePath.includes('..') || sourceDoc.sourcePath.includes('~')) {
+      return { ok: false, status: 403, payload: { error: 'Path traversal not allowed' } };
+    }
+
+    if (!isAllowedDocsFile(sourceDoc.sourcePath)) {
+      return { ok: false, status: 400, payload: { error: 'Only text document files are allowed' } };
+    }
+
+    return { ok: true };
+  }
+
   const candidates = ALLOWED_ROOTS[root];
   if (!candidates?.length) {
     return { ok: false, status: 403, payload: { error: 'Invalid docs root' } };
@@ -238,6 +273,42 @@ function sourceRelativePathForDocsRoot(root: string, filePath: string): string |
 }
 
 async function readDocsDocument(root: string, filePath: string): Promise<DocsDocument | null> {
+  if (root === 'source') {
+    const sourceDoc = splitSourceDocsPath(filePath);
+    if (!sourceDoc) {
+      return null;
+    }
+
+    let source;
+    try {
+      source = getFileSourceRepository().getSource(sourceDoc.sourceId);
+    } catch {
+      return null;
+    }
+
+    if (!source || !source.enabled) {
+      return null;
+    }
+
+    try {
+      const adapter = createFileSourceAdapter(source);
+      const file = await adapter.read(sourceDoc.sourcePath);
+      if (file.isBinary) {
+        return null;
+      }
+
+      return {
+        root,
+        path: filePath,
+        filename: path.posix.basename(sourceDoc.sourcePath) || path.basename(sourceDoc.sourcePath),
+        content: file.content,
+        sourceId: source.id,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   const resolvedPath = await resolveDocsPath(root, filePath);
   if (resolvedPath) {
     const content = await fs.promises.readFile(resolvedPath, 'utf-8');

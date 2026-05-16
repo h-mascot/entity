@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { Router } from 'express';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 
 type SearchMode = 'keyword' | 'semantic' | 'hybrid';
 type SearchCollection = 'all' | 'obsidian' | 'superada' | 'sessions' | 'scotty' | 'spock' | 'memory';
@@ -470,8 +470,9 @@ function buildSshCommand(target: string, remoteCommand: string): string {
 
 function execCommand(command: string, timeoutMs: number, maxBufferBytes: number): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    exec(
-      command,
+    execFile(
+      '/bin/sh',
+      ['-c', command],
       {
         timeout: timeoutMs,
         maxBuffer: maxBufferBytes,

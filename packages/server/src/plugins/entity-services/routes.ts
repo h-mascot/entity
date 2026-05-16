@@ -517,7 +517,7 @@ function buildServiceDefinitions(settings: PluginSettingsRecord, runtimeBaseUrl 
         enterpriseAdminUrl,
       ],
       tags: ['enterprise', 'ops', 'crew-admin', 'external-app'],
-      host: 'Enterprise',
+      host: 'Entity',
       meta: {
         launchMode: 'new-tab',
         integrationMode: 'linked-service',
@@ -647,7 +647,7 @@ function toInternalRegistryEntry(definition: InternalPluginDefinition, plugin: L
       enabled: plugin?.enabled ?? false,
       loaded: plugin?.status.loaded ?? false,
       routesMounted: plugin?.status.routesMounted ?? [],
-      host: 'Ada Gateway',
+      host: 'Agent Gateway',
       source: 'internal-plugin',
     },
   };
@@ -678,7 +678,7 @@ async function toExternalRegistryEntry(
     meta: {
       appUrl: definition.appUrl,
       healthUrls: definition.healthUrls,
-      host: definition.host ?? 'Ada Gateway',
+      host: definition.host ?? 'Agent Gateway',
       source: 'curated',
       ...(definition.meta ?? {}),
     },
@@ -809,7 +809,7 @@ export async function buildServicesRegistry(
   const hosts: HostDiscoveryConfig[] = [
     {
       id: 'gateway',
-      label: 'Ada Gateway',
+      label: 'Agent Gateway',
       publicHost: runtimeHost || '127.0.0.1',
       enabled: readBooleanSetting(currentPlugin.settings, 'discoverGatewayServices', true),
     },

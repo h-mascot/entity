@@ -47,17 +47,10 @@ export interface AgentCapabilityCard {
 const MAX_CAPABILITY_LABELS = 4;
 const MAX_PERMISSION_LABELS = 4;
 
-const DEFAULT_OWNER_BY_SLUG: Record<string, string> = {
-  ada: 'Entity Core',
-  main: 'Entity Core',
-  spock: 'Entity Research',
-  scotty: 'Entity Build',
-  geordi: 'Henry Mascot',
-  zora: 'Entity Ops',
-  midas: 'Entity Revenue',
-  uhura: 'Entity Comms',
-  book: 'Entity Docs',
-};
+// Default owner labels for well-known agent slugs.
+// Public install uses generic 'Entity' for all.
+// Enterprise-specific mappings are loaded from entity config profiles only.
+const DEFAULT_OWNER_BY_SLUG: Record<string, string> = {};
 
 function parseJsonValue(value: string | null | undefined): unknown {
   if (typeof value !== 'string' || !value.trim()) {
@@ -160,10 +153,7 @@ function resolveOwnerLabel(agent: AgentCapabilitySource, metadata: AgentCapabili
     return DEFAULT_OWNER_BY_SLUG[key];
   }
 
-  if (agent.runtime_type === 'mac') {
-    return 'Henry Mascot';
-  }
-
+  // Generic fallback: derive owner from agent slug or runtime type
   if (key) {
     return 'Entity';
   }

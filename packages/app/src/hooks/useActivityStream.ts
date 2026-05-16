@@ -101,9 +101,7 @@ export const useActivityStreamStore = create<ActivityStreamState>((set) => ({
 }));
 
 const AGENTS = [
-  { name: 'Ada', emoji: '🔮' },
-  { name: 'Spock', emoji: '🖖' },
-  { name: 'Scotty', emoji: '🔧' },
+  { name: 'Assistant', emoji: '🤖' },
 ] as const;
 
 const MOCK_FILE_PATHS = [

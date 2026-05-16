@@ -1,93 +1,42 @@
 # Private Default Scan Baseline
 
-Generated: 2026-05-07T11:47:10.485Z
+Generated: 2026-05-16T06:00:46.444Z
 
-Scanned files: 286
-Findings: 154
+Scanned files: 294
+Findings: 128
 Errors: 0
-Warnings: 154
+Warnings: 128
 
 This is the baseline guardrail for Entity portability work. It intentionally reports current hardcoded private defaults without failing by default. Use `npm run scan:private-defaults -- --enforce` when the allowlist has been tightened enough to block regressions.
 
 ## Findings by file
+
+### README.md
+
+- L26 [warn] enterprise-name: `Open \`http://localhost:3000\`. No hardcoded paths, no Enterprise assumptions - just a local workspace you control.`
+
+### dev.sh
+
+- L3 [warn] enterprise-name: `# No hardcoded Enterprise paths, IPs, or remote connections`
 
 ### docs/config/gpt-55-instant-default-evaluation.md
 
 - L6 [warn] enterprise-agent-name: `Scope: Entity Ada/Main-style OpenClaw agents when live OpenClaw model policy is unavailable`
 - L18 [warn] enterprise-agent-name: `- It only applies when Entity cannot resolve configured models and falls back to its built-in Ada/OpenClaw policy.`
 
-### entity.config.example.yaml
-
-- L51 [warn] enterprise-agent-name: `#   # Geordi Swarm dispatch — Codex host and Mac home path for tilde expansion`
-
-### packages/app/src/App.tsx
-
-- L1284 [warn] enterprise-agent-name: `['Worker', 'Scotty lane · Mac · ~/Code/entity'],`
-- L2179 [warn] enterprise-agent-name: `? 'Ada'`
-- L2181 [warn] enterprise-agent-name: `? 'Spock'`
-- L2183 [warn] enterprise-agent-name: `? 'Scotty'`
-- L3874 [warn] enterprise-name: `{ value: 'kitz', label: 'Kitz', hint: 'Enterprise gradient dark' },`
-- L4373 [warn] enterprise-name: `Live operational registry for Entity runtime services, linked plugins, and Enterprise tooling.`
-- L4393 [warn] enterprise-name: `Open Enterprise Crew Admin`
-- L4581 [warn] enterprise-agent-name: `<option value="Ada">Ada</option>`
-- L4582 [warn] enterprise-agent-name: `<option value="Spock">Spock</option>`
-- L4583 [warn] enterprise-agent-name: `<option value="Scotty">Scotty</option>`
-- L4808 [warn] enterprise-agent-name: `<span className="text-purple-400">Ada {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>`
-- L4811 [warn] enterprise-agent-name: `<span className="text-blue-400">Spock {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>`
-- L4814 [warn] enterprise-agent-name: `<span className="text-green-400">Scotty {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>`
-
-### packages/app/src/components/CodeMirrorEditor.tsx
-
-- L88 [warn] enterprise-agent-name: `const agents = ['Ada', 'Spock', 'Scotty'] as const;`
-
-### packages/app/src/components/CursorAvatars.tsx
-
-- L95 [warn] enterprise-agent-name: `return 'Ada';`
-- L97 [warn] enterprise-agent-name: `return 'Spock';`
-- L99 [warn] enterprise-agent-name: `return 'Scotty';`
-
-### packages/app/src/components/NewCommentPopover.tsx
-
-- L121 [warn] enterprise-agent-name: `Mentions ready: type @Ada, @Spock, @Scotty`
-
-### packages/app/src/components/OnboardingFlow.tsx
-
-- L128 [warn] enterprise-name: `{ id: 'kitz', title: 'Kitz', hint: 'Enterprise gradient dark' },`
-
-### packages/app/src/components/PresenceChips.tsx
-
-- L118 [warn] enterprise-agent-name: `return 'Ada';`
-- L120 [warn] enterprise-agent-name: `return 'Spock';`
-- L122 [warn] enterprise-agent-name: `return 'Scotty';`
-
-### packages/app/src/components/mission-control/MCCreateTaskModal.tsx
-
-- L7 [warn] enterprise-agent-name: `const AGENT_ASSIGNEE_OPTIONS = ['Ada', 'Spock', 'Scotty'] as const;`
-
 ### packages/app/src/components/mission-control/TaskDetailPanel.tsx
 
-- L18 [warn] enterprise-agent-name: `const AGENT_ASSIGNEE_OPTIONS = ['Ada', 'Spock', 'Scotty'] as const;`
-- L570 [warn] clawd-workspace-name: `String.raw\`(?:https?:\/\/[^\s<>()]+|\/(?:docs|task|tasks)\/[^\s<>()]+|(?:docs|notes|output|memory|workspace|projects|zora|spock)\/[^\s<>()]+\.${TASK_OUTPUT_DOCUMENT_EXT}(?:[?#][^\s<>()]+)?|(?:~|\/(?:Users|home)\/[^\s<>()]+)\/clawd(?:-[^\/\s`
-- L635 [warn] clawd-workspace-name: `{ root: 'output', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/output\/(.+)$/i },`
-- L636 [warn] clawd-workspace-name: `{ root: 'memory', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/memory\/(.+)$/i },`
-- L637 [warn] clawd-workspace-name: `{ root: 'projects', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/projects\/(.+)$/i },`
-- L638 [warn] clawd-workspace-name: `{ root: 'zora', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-zora\/output\/(.+)$/i },`
-- L639 [warn] clawd-workspace-name: `{ root: 'spock', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-spock\/output\/(.+)$/i },`
-- L640 [warn] clawd-workspace-name: `{ root: 'workspace', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/(.+)$/i },`
-
-### packages/app/src/hooks/useActivityStream.ts
-
-- L104 [warn] enterprise-agent-name: `{ name: 'Ada', emoji: '🔮' },`
-- L105 [warn] enterprise-agent-name: `{ name: 'Spock', emoji: '🖖' },`
-- L106 [warn] enterprise-agent-name: `{ name: 'Scotty', emoji: '🔧' },`
+- L571 [warn] clawd-workspace-name: `String.raw\`(?:https?:\/\/[^\s<>()]+|\/(?:docs|task|tasks)\/[^\s<>()]+|(?:docs|notes|output|memory|workspace|projects|zora|spock)\/[^\s<>()]+\.${TASK_OUTPUT_DOCUMENT_EXT}(?:[?#][^\s<>()]+)?|(?:~|\/(?:Users|home)\/[^\s<>()]+)\/clawd(?:-[^\/\s`
+- L636 [warn] clawd-workspace-name: `{ root: 'output', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/output\/(.+)$/i },`
+- L637 [warn] clawd-workspace-name: `{ root: 'memory', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/memory\/(.+)$/i },`
+- L638 [warn] clawd-workspace-name: `{ root: 'projects', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/projects\/(.+)$/i },`
+- L639 [warn] clawd-workspace-name: `{ root: 'zora', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-zora\/output\/(.+)$/i },`
+- L640 [warn] clawd-workspace-name: `{ root: 'spock', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-spock\/output\/(.+)$/i },`
+- L641 [warn] clawd-workspace-name: `{ root: 'workspace', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/(.+)$/i },`
 
 ### packages/app/src/hooks/useSwarmBoard.ts
 
 - L2 [warn] enterprise-agent-name: `* Geordi Swarm — React Hook`
-
-### packages/app/src/lib/userProfile.ts
-
-- L14 [warn] henry-name: `displayName: 'Henry',`
 
 ### packages/app/src/stores/pluginStore.ts
 
@@ -95,7 +44,9 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 
 ### packages/db/src/index.ts
 
-- L1013 [warn] clawd-workspace-name: `['tasks-mc-sh', 'tasks', 'mc.sh', 'script', '~/clawd/scripts/mc.sh', 1, 'Mission Control CLI'],`
+- L1008 [warn] enterprise-agent-name: `['geordi-swarm', 'geordi-swarm', 'Geordi Swarm', 'Future multi-agent swarm orchestration on top of Entity helper modules.', 1, '🐝', 'plugin', '["read","dispatch","admin"]', '{"label":"Future swarm module"}']`
+- L1020 [warn] clawd-workspace-name: `['tasks-mc-sh', 'tasks', 'mc.sh', 'script', '~/clawd/scripts/mc.sh', 1, 'Mission Control CLI'],`
+- L1030 [warn] enterprise-agent-name: `['geordi-swarm-doc', 'geordi-swarm', 'Geordi Swarm manifest example', 'doc', 'docs/ENTITY-PLUGIN-MANIFEST.example.json', 0, 'Future swarm packaging reference']`
 
 ### packages/server/src/__tests__/agent-registry-routes.test.ts
 
@@ -131,8 +82,7 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 
 ### packages/server/src/agent/agent-capability-card.ts
 
-- L55 [warn] henry-name: `geordi: 'Henry Mascot',`
-- L164 [warn] henry-name: `return 'Henry Mascot';`
+- L52 [warn] enterprise-name: `// Enterprise-specific mappings are loaded from entity config profiles only.`
 
 ### packages/server/src/agent/agent-display.test.ts
 
@@ -160,15 +110,19 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 - L17 [warn] tailnet-ip-100: `expect(serialized).not.toContain('100.104.229.62');`
 - L18 [warn] enterprise-agent-name: `expect(serialized).not.toContain('Ada');`
 
-### packages/server/src/index.ts
+### packages/server/src/config/onboarding-modules.ts
 
-- L160 [warn] clawd-workspace-name: `const DEFAULT_WORK_ROOT = path.join(HOME_DIR, "clawd");`
-- L1527 [warn] henry-name: `author: author || "Henry",`
-- L5366 [warn] henry-name: `assignee: "Henry",`
-- L5373 [warn] enterprise-agent-name: `assignee: "Ada",`
-- L5380 [warn] enterprise-agent-name: `assignee: "Spock",`
-- L5572 [warn] clawd-workspace-name: `process.env.ENTITY_WORKSPACE_SPOCK || path.join(HOME_DIR, "clawd-spock"),`
-- L5574 [warn] clawd-workspace-name: `process.env.ENTITY_WORKSPACE_SCOTTY || path.join(HOME_DIR, "clawd-scotty"),`
+- L516 [warn] enterprise-agent-name: `name: 'Geordi Swarm',`
+- L541 [warn] enterprise-agent-name: `agentContextSnippet: 'Admin-only: Geordi Swarm requires runtime configuration beyond first-run setup.',`
+
+### packages/server/src/config/routes.ts
+
+- L54 [warn] enterprise-agent-name: `['geordi-swarm', 'geordi-swarm', 'Geordi Swarm', 'Future multi-agent swarm orchestration on top of Entity helper modules.', 1, '🐝', 'plugin', '["read","dispatch","admin"]', '{"label":"Future swarm module"}'],`
+- L63 [warn] enterprise-agent-name: `['geordi-swarm-doc', 'geordi-swarm', 'Geordi Swarm manifest example', 'doc', 'docs/ENTITY-PLUGIN-MANIFEST.example.json', 0, 'Future swarm packaging reference'],`
+
+### packages/server/src/fs/index.ts
+
+- L36 [warn] clawd-workspace-name: `// Use workspaceRoot directly - no hardcoded subfolder like 'clawd'`
 
 ### packages/server/src/plugins/entity-linker/routes.test.ts
 
@@ -190,10 +144,6 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 ### packages/server/src/plugins/entity-services/routes.ts
 
 - L510 [warn] enterprise-name: `name: 'Enterprise Crew Admin',`
-- L520 [warn] enterprise-name: `host: 'Enterprise',`
-- L650 [warn] enterprise-agent-name: `host: 'Ada Gateway',`
-- L681 [warn] enterprise-agent-name: `host: definition.host ?? 'Ada Gateway',`
-- L812 [warn] enterprise-agent-name: `label: 'Ada Gateway',`
 
 ### packages/server/src/plugins/geordi-swarm/plugin.json
 
@@ -245,6 +195,11 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 - L57 [warn] clawd-workspace-name: `const privateWorkspaceRoot = path.join('/Users', 'enterprise', 'clawd');`
 - L67 [warn] clawd-workspace-name: `fs.writeFileSync(path.join(root, 'output', 'report.md'), '# Output Report\n\nLoaded from clawd output.');`
 - L76 [warn] clawd-workspace-name: `expect(payload.content).toContain('Loaded from clawd output.');`
+
+### packages/server/src/routes/docs.ts
+
+- L12 [warn] enterprise-name: `// This is NOT hardcoded to clawd or any Enterprise-specific path.`
+- L12 [warn] clawd-workspace-name: `// This is NOT hardcoded to clawd or any Enterprise-specific path.`
 
 ### packages/server/src/routes/tts.test.ts
 
@@ -309,6 +264,13 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 
 - L87 [warn] clawd-workspace-name: `/(?:~|\/(?:Users|home)\/[^/\s)]+)\/clawd(-zora|-spock|-scotty)?\/([^\s)]+)/gi,`
 
+### scripts/entity-doctor.js
+
+- L16 [warn] enterprise-name: `// IP prefix patterns (100.x range = Enterprise tailnet)`
+- L23 [warn] enterprise-agent-name: `ada: String.fromCharCode(65,100,97),       // 'Ada'`
+- L24 [warn] enterprise-agent-name: `spock: String.fromCharCode(83,112,111,99,107),  // 'Spock'`
+- L25 [warn] enterprise-agent-name: `scotty: String.fromCharCode(83,99,111,116,116,121), // 'Scotty'`
+
 ### scripts/ralph/mc-agent-native-editor-prd.json
 
 - L133 [warn] enterprise-agent-name: `"description": "Extend CodeMirrorEditor with authorship range decorations (Human/Ada/Spock/Scotty colors) and render an authorship stats panel in the app shell.",`
@@ -339,5 +301,5 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 
 ### scripts/scan-private-defaults.mjs
 
-- L48 [warn] enterprise-agent-name: `{ id: 'enterprise-agent-name', re: /\b(?:Ada|Spock|Scotty|Zora|Midas|Uhura|Geordi|Book)\b/g, severity: 'warn' },`
-- L49 [warn] clawd-workspace-name: `{ id: 'clawd-workspace-name', re: /\bclawd(?:-[A-Za-z0-9_-]+)?\b/g, severity: 'warn' },`
+- L50 [warn] enterprise-agent-name: `{ id: 'enterprise-agent-name', re: /\b(?:Ada|Spock|Scotty|Zora|Midas|Uhura|Geordi|Book)\b/g, severity: 'warn' },`
+- L51 [warn] clawd-workspace-name: `{ id: 'clawd-workspace-name', re: /\bclawd(?:-[A-Za-z0-9_-]+)?\b/g, severity: 'warn' },`

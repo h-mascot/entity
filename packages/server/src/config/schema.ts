@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  DEFAULT_ONBOARDING_BUNDLE,
+  DEFAULT_ONBOARDING_MODULE_IDS,
+} from './onboarding-modules';
 
 const NullableString = z.string().nullable();
 const StringArray = z.array(z.string());
@@ -119,6 +123,9 @@ export const OnboardingStateSchema = z.object({
   defaultAiProvider: z.string().default('codex'),
   defaultAiModel: z.string().default('GPT-5.5'),
   starterPreset: z.enum(['solo', 'crew', 'open-source']).default('crew'),
+  selectedBundle: z.enum(['minimal', 'default', 'custom']).default(DEFAULT_ONBOARDING_BUNDLE),
+  selectedModules: StringArray.default([...DEFAULT_ONBOARDING_MODULE_IDS]),
+  selectedModuleConfig: z.record(z.string(), z.unknown()).default({}),
   firstAgentMode: z.enum(['assistant', 'invite', 'manual', 'skip']).default('assistant'),
   firstSourceMode: z.enum(['current-folder', 'github', 'skip']).default('current-folder'),
 });
@@ -134,6 +141,7 @@ export const OnboardingAgentSessionSchema = z.object({
   progress: z.array(z.object({
     id: z.string(),
     label: z.string(),
+    moduleId: z.string().optional(),
     status: z.enum(['pending', 'running', 'done', 'error']),
     message: z.string().optional(),
     updatedAt: z.string(),
@@ -154,7 +162,7 @@ export interface SourceMetadata {
   overriddenBy: ConfigSource | null;
 }
 
-export const SECRET_KEY_PATTERN = /(token|password|secret|api[_-]?key|credential)/i;
+export const SECRET_KEY_PATTERN = /(token|secret|password|api[_-]?key|authorization|credential|private|dsn)/i;
 
 export const BUILTIN_DEFAULT_CONFIG: EntityConfig = EntityConfigSchema.parse({});
 

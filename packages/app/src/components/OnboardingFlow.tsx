@@ -3,6 +3,8 @@ import type { UserProfile } from '../lib/userProfile';
 
 type AppTheme = 'dark' | 'light' | 'kitz' | 'nebula' | 'aurora' | 'paper';
 type SetupMode = 'quick' | 'agent' | 'manual';
+type OnboardingBundleId = 'minimal' | 'default' | 'custom';
+type OnboardingModuleCategory = 'required' | 'recommended' | 'optional' | 'third-party';
 type WorkspaceMode = 'private' | 'team' | 'open-source';
 type StarterPreset = 'solo' | 'crew' | 'open-source';
 type FirstAgentMode = 'assistant' | 'invite' | 'manual' | 'skip';
@@ -47,6 +49,9 @@ interface OnboardingState {
   defaultAiProvider: string;
   defaultAiModel: string;
   starterPreset: StarterPreset;
+  selectedBundle: OnboardingBundleId;
+  selectedModules: string[];
+  selectedModuleConfig: Record<string, unknown>;
   firstAgentMode: FirstAgentMode;
   firstSourceMode: FirstSourceMode;
 }
@@ -56,6 +61,127 @@ interface AgentSession {
   setupUrl: string;
   expiresAt: string;
   progress: Array<{ id: string; label: string; status: 'pending' | 'running' | 'done' | 'error'; message?: string }>;
+}
+
+interface OnboardingModuleSkillRef {
+  id: string;
+  label: string;
+  kind: string;
+  ref: string;
+  required: boolean;
+  notes: string | null;
+}
+
+interface OnboardingOperationStep {
+  id: string;
+  label: string;
+  detail: string;
+  command?: string;
+  url?: string;
+  optional?: boolean;
+}
+
+interface OnboardingAgentContextExport {
+  moduleId: string;
+  path: string;
+  description: string;
+}
+
+interface OnboardingModuleSummary {
+  id: string;
+  name: string;
+  description: string;
+  category: OnboardingModuleCategory;
+  required: boolean;
+  recommended: boolean;
+  locked: boolean;
+  selectable: boolean;
+  host: string;
+  capabilities: string[];
+  installFootprint: string[];
+  skillRefs: OnboardingModuleSkillRef[];
+  verifySteps: OnboardingOperationStep[];
+  riskLevel: string;
+  uiLabel: string;
+}
+
+interface OnboardingSelectionWarning {
+  id: string;
+  reason: string;
+}
+
+interface OnboardingReadiness {
+  version: number;
+  entityVersion: string;
+  publicUrl: string;
+  openClawDetected: boolean;
+  fileSourcesAvailable: boolean;
+  missionControlReachable: boolean;
+  pluginHostAvailable: boolean;
+  installedRegistry: {
+    total: number;
+    onboarding: number;
+    selectable: number;
+  };
+  warnings: string[];
+  adminOnly: OnboardingSelectionWarning[];
+}
+
+interface OnboardingModulesResponse {
+  version: number;
+  defaultBundle: OnboardingBundleId;
+  defaultModules: string[];
+  modules: OnboardingModuleSummary[];
+  groups: Record<OnboardingModuleCategory, OnboardingModuleSummary[]>;
+  warnings: string[];
+}
+
+interface OnboardingDryRunPlan {
+  mode: OnboardingBundleId;
+  writes: Array<{ path: string; reason: string; moduleId?: string }>;
+  downloads: Array<{ ref: string; label: string; moduleId: string }>;
+  installSteps: Array<OnboardingOperationStep & { moduleId: string }>;
+  verifySteps: Array<OnboardingOperationStep & { moduleId: string }>;
+  rollbackSteps: Array<OnboardingOperationStep & { moduleId: string }>;
+  contextExports: OnboardingAgentContextExport[];
+}
+
+interface OnboardingSelectionResolution {
+  requestedBundle: OnboardingBundleId;
+  normalizedBundle: OnboardingBundleId;
+  selectedModules: string[];
+  selectedModuleConfig: Record<string, unknown>;
+  modules: OnboardingModuleSummary[];
+  installOrder: string[];
+  warnings: string[];
+  skipped: OnboardingSelectionWarning[];
+  adminOnly: OnboardingSelectionWarning[];
+  dryRun: OnboardingDryRunPlan;
+  checklist: Array<{ id: string; label: string; moduleId?: string; status: 'pending' | 'running' | 'done' | 'error'; message?: string }>;
+  safeStopConditions: string[];
+  canApply: boolean;
+  status: 'ready' | 'warning' | 'blocked';
+}
+
+interface OnboardingAgentManifest {
+  expiresAt?: string;
+  onboarding?: Partial<OnboardingState>;
+  modules?: OnboardingModuleSummary[];
+  installOrder?: string[];
+  safeStopConditions?: string[];
+  warnings?: string[];
+  checklist?: AgentSession['progress'];
+  dryRun?: OnboardingDryRunPlan;
+  context?: {
+    root: string;
+    exports: OnboardingAgentContextExport[];
+  };
+  entityMc?: {
+    selected?: boolean;
+    bundleUrl?: string;
+    progressUrl?: string;
+    skillUrl?: string;
+  };
 }
 
 interface ChatModelOption {
@@ -94,6 +220,9 @@ const DEFAULT_STATE: OnboardingState = {
   defaultAiProvider: 'openai',
   defaultAiModel: 'gpt-5.5',
   starterPreset: 'crew',
+  selectedBundle: 'default',
+  selectedModules: ['entity-agent-contracts', 'entity-fs', 'entity-mc', 'entity-linker'],
+  selectedModuleConfig: {},
   firstAgentMode: 'assistant',
   firstSourceMode: 'current-folder',
 };
@@ -125,7 +254,7 @@ const SETUP_OPTIONS: Array<{
 const THEMES: Array<{ id: AppTheme; title: string; hint: string }> = [
   { id: 'dark', title: 'Dark', hint: 'Classic black shell' },
   { id: 'light', title: 'Light', hint: 'Clean white workspace' },
-  { id: 'kitz', title: 'Kitz', hint: 'Enterprise gradient dark' },
+  { id: 'kitz', title: 'Kitz', hint: 'Dark gradient workspace' },
   { id: 'nebula', title: 'Nebula', hint: 'Glassy blue violet' },
   { id: 'aurora', title: 'Aurora', hint: 'Mint peach glass' },
   { id: 'paper', title: 'Paper', hint: 'Notebook desk board' },
@@ -575,6 +704,11 @@ export default function OnboardingFlow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
+  const [agentManifest, setAgentManifest] = useState<OnboardingAgentManifest | null>(null);
+  const [moduleCatalog, setModuleCatalog] = useState<OnboardingModulesResponse | null>(null);
+  const [moduleReadiness, setModuleReadiness] = useState<OnboardingReadiness | null>(null);
+  const [selection, setSelection] = useState<OnboardingSelectionResolution | null>(null);
+  const [selectionLoading, setSelectionLoading] = useState(false);
   const [sourceStatus, setSourceStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [modelOptions, setModelOptions] = useState<ChatModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -609,17 +743,44 @@ export default function OnboardingFlow({
     }
   }, [apiBase]);
 
+  const loadManifest = useCallback(async (token: string) => {
+    const res = await fetch(apiPath(apiBase, `/api/onboarding/agent-session/${encodeURIComponent(token)}/manifest`));
+    if (!res.ok) throw new Error(`manifest ${res.status}`);
+    const manifest = await res.json() as OnboardingAgentManifest;
+    setAgentManifest(manifest);
+    setAgentSession({
+      token,
+      setupUrl: `/onboard/agent/${token}`,
+      expiresAt: manifest.expiresAt ?? '',
+      progress: manifest.checklist ?? [],
+    });
+    if (manifest.onboarding) {
+      setState((current) => normalizeLoadedState({ ...current, ...manifest.onboarding, mode: 'agent' } as OnboardingState));
+    }
+    return manifest;
+  }, [apiBase]);
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(apiPath(apiBase, '/api/onboarding/state'));
-        if (!res.ok) throw new Error(`state ${res.status}`);
-        const loaded = normalizeLoadedState(await res.json() as OnboardingState);
+        const [stateRes, modulesRes, readinessRes] = await Promise.all([
+          fetch(apiPath(apiBase, '/api/onboarding/state')),
+          fetch(apiPath(apiBase, '/api/onboarding/modules')),
+          fetch(apiPath(apiBase, '/api/onboarding/readiness')),
+        ]);
+        if (!stateRes.ok) throw new Error(`state ${stateRes.status}`);
+        if (!modulesRes.ok) throw new Error(`modules ${modulesRes.status}`);
+        if (!readinessRes.ok) throw new Error(`readiness ${readinessRes.status}`);
+        const loaded = normalizeLoadedState(await stateRes.json() as OnboardingState);
+        const modules = await modulesRes.json() as OnboardingModulesResponse;
+        const readiness = await readinessRes.json() as OnboardingReadiness;
         if (!cancelled) {
           setState(loaded);
+          setModuleCatalog(modules);
+          setModuleReadiness(readiness);
           onThemeChange(loaded.selectedTheme);
         }
       } catch (err) {
@@ -636,26 +797,17 @@ export default function OnboardingFlow({
     if (!routeToken) return;
     const token = routeToken;
     let cancelled = false;
-    async function loadManifest() {
+    async function loadAgentManifest() {
       try {
-        const res = await fetch(apiPath(apiBase, `/api/onboarding/agent-session/${encodeURIComponent(token)}/manifest`));
-        if (!res.ok) return;
-        const manifest = await res.json() as { checklist?: AgentSession['progress']; expiresAt?: string };
-        if (!cancelled) {
-          setAgentSession({
-            token,
-            setupUrl: `/onboard/agent/${token}`,
-            expiresAt: manifest.expiresAt ?? '',
-            progress: manifest.checklist ?? [],
-          });
-        }
+        await loadManifest(token);
+        if (cancelled) return;
       } catch {
         // The UI still shows the copied route token so humans can recover.
       }
     }
-    void loadManifest();
+    void loadAgentManifest();
     return () => { cancelled = true; };
-  }, [apiBase, routeToken]);
+  }, [loadManifest, routeToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -690,7 +842,30 @@ export default function OnboardingFlow({
     () => PRESETS.find((preset) => preset.id === state.starterPreset) ?? PRESETS[1],
     [state.starterPreset],
   );
-  const selectedPresetModules = selectedPreset.modules.map((module) => module.label);
+  const defaultBundleSelection = useMemo(
+    () => ({
+      selectedBundle: moduleCatalog?.defaultBundle ?? DEFAULT_STATE.selectedBundle,
+      selectedModules: moduleCatalog?.defaultModules ?? DEFAULT_STATE.selectedModules,
+      selectedModuleConfig: {},
+    }),
+    [moduleCatalog],
+  );
+  const selectionRequest = useMemo(
+    () => (state.mode === 'manual'
+      ? {
+          selectedBundle: state.selectedBundle,
+          selectedModules: state.selectedModules,
+          selectedModuleConfig: state.selectedModuleConfig,
+        }
+      : defaultBundleSelection),
+    [defaultBundleSelection, state.mode, state.selectedBundle, state.selectedModuleConfig, state.selectedModules],
+  );
+  const moduleGroups = moduleCatalog?.groups ?? {
+    required: [],
+    recommended: [],
+    optional: [],
+    'third-party': [],
+  };
   const selectedProviderId = normalizeProviderId(state.defaultAiProvider, state.defaultAiModel);
   const selectedProvider = AI_PROVIDERS.find((provider) => provider.id === selectedProviderId) ?? AI_PROVIDERS[0];
   const selectedProviderDraft = providerDrafts[selectedProviderId];
@@ -708,11 +883,104 @@ export default function OnboardingFlow({
       ? selectedProviderDraft.customModel.trim()
       : selectedProviderModel?.name ?? state.defaultAiModel,
   );
+  const selectedModuleSet = useMemo(
+    () => new Set(selection?.selectedModules ?? selectionRequest.selectedModules),
+    [selection?.selectedModules, selectionRequest.selectedModules],
+  );
+  const enabledModules = agentManifest?.modules ?? selection?.modules ?? moduleCatalog?.modules.filter((module) => selectedModuleSet.has(module.id)) ?? [];
+  const selectedModuleNames = enabledModules.map((module) => module.uiLabel || module.name);
+  const selectedInstallOrder = agentManifest?.installOrder ?? selection?.installOrder ?? selectionRequest.selectedModules;
+  const selectedSafeStops = agentManifest?.safeStopConditions ?? selection?.safeStopConditions ?? [];
+  const selectionWarnings = agentManifest?.warnings ?? selection?.warnings ?? [];
+  const adminOnlyModules = moduleReadiness?.adminOnly ?? [];
+
+  useEffect(() => {
+    if (!moduleCatalog) return;
+    let cancelled = false;
+    async function loadSelection() {
+      setSelectionLoading(true);
+      try {
+        const res = await fetch(apiPath(apiBase, '/api/onboarding/resolve-selection'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(selectionRequest),
+        });
+        if (!res.ok) throw new Error(`selection ${res.status}`);
+        const resolved = await res.json() as OnboardingSelectionResolution;
+        if (!cancelled) setSelection(resolved);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Unable to resolve onboarding modules');
+      } finally {
+        if (!cancelled) setSelectionLoading(false);
+      }
+    }
+    void loadSelection();
+    return () => { cancelled = true; };
+  }, [apiBase, moduleCatalog, selectionRequest]);
 
   useEffect(() => {
     if (selectedProviderModels.some((model) => model.id === state.defaultAiModel || model.name === state.defaultAiModel)) return;
     void patchState({ defaultAiProvider: selectedProviderId, defaultAiModel: defaultModelForProvider(selectedProviderId, modelOptions) });
   }, [modelOptions, patchState, selectedProviderId, selectedProviderModels, state.defaultAiModel]);
+
+  const persistableState = useMemo(
+    () => ({
+      ...state,
+      selectedBundle: selection?.normalizedBundle ?? selectionRequest.selectedBundle,
+      selectedModules: selection?.selectedModules ?? selectionRequest.selectedModules,
+      selectedModuleConfig: selection?.selectedModuleConfig ?? selectionRequest.selectedModuleConfig,
+    }),
+    [selection, selectionRequest, state],
+  );
+
+  const handleModeSelect = useCallback((mode: SetupMode) => {
+    if (mode === 'manual') {
+      void patchState({ mode });
+      return;
+    }
+    void patchState({
+      mode,
+      selectedBundle: defaultBundleSelection.selectedBundle,
+      selectedModules: defaultBundleSelection.selectedModules,
+      selectedModuleConfig: {},
+    });
+  }, [defaultBundleSelection, patchState]);
+
+  const applyManualModuleSelection = useCallback(async (nextModules: string[]) => {
+    setSelectionLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(apiPath(apiBase, '/api/onboarding/resolve-selection'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          selectedBundle: 'custom',
+          selectedModules: nextModules,
+          selectedModuleConfig: state.selectedModuleConfig,
+        }),
+      });
+      if (!res.ok) throw new Error(`selection ${res.status}`);
+      const resolved = await res.json() as OnboardingSelectionResolution;
+      setSelection(resolved);
+      await patchState({
+        selectedBundle: resolved.normalizedBundle,
+        selectedModules: resolved.selectedModules,
+        selectedModuleConfig: resolved.selectedModuleConfig,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update module selection');
+    } finally {
+      setSelectionLoading(false);
+    }
+  }, [apiBase, patchState, state.selectedModuleConfig]);
+
+  const toggleModuleSelection = useCallback((moduleId: string) => {
+    if (state.mode !== 'manual') return;
+    const next = new Set(selection?.selectedModules ?? selectionRequest.selectedModules);
+    if (next.has(moduleId)) next.delete(moduleId);
+    else next.add(moduleId);
+    void applyManualModuleSelection(Array.from(next));
+  }, [applyManualModuleSelection, selection?.selectedModules, selectionRequest.selectedModules, state.mode]);
 
   const continueNext = async () => {
     if (state.currentStep === 2) {
@@ -768,7 +1036,7 @@ export default function OnboardingFlow({
       const res = await fetch(apiPath(apiBase, '/api/onboarding/complete'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...state, skipped }),
+        body: JSON.stringify({ ...persistableState, skipped }),
       });
       if (!res.ok) throw new Error(`complete ${res.status}`);
       onComplete();
@@ -786,12 +1054,19 @@ export default function OnboardingFlow({
       const res = await fetch(apiPath(apiBase, '/api/onboarding/agent-session'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ state: { ...state, mode: 'agent' } }),
+        body: JSON.stringify({ state: { ...persistableState, mode: 'agent' } }),
       });
       if (!res.ok) throw new Error(`agent-session ${res.status}`);
       const created = await res.json() as AgentSession;
       setAgentSession(created);
-      await patchState({ mode: 'agent', firstAgentMode: 'invite' });
+      await loadManifest(created.token).catch(() => undefined);
+      await patchState({
+        mode: 'agent',
+        firstAgentMode: 'invite',
+        selectedBundle: persistableState.selectedBundle,
+        selectedModules: persistableState.selectedModules,
+        selectedModuleConfig: persistableState.selectedModuleConfig,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create setup link');
     } finally {
@@ -832,6 +1107,30 @@ export default function OnboardingFlow({
   const skillUrl = activeToken ? absoluteUrl(apiPath(apiBase, `/api/onboarding/agent-session/${encodeURIComponent(activeToken)}/skill`)) : '';
   const progressUrl = activeToken ? absoluteUrl(apiPath(apiBase, `/api/onboarding/agent-session/${encodeURIComponent(activeToken)}/progress`)) : '';
   const entityOrigin = typeof window === 'undefined' ? profileDraft.publicUrl : window.location.origin;
+  const modulePromptLines = selectedModuleNames.length
+    ? selectedModuleNames.map((name) => `- ${name}`)
+    : ['- Default onboarding bundle'];
+  const safeStopLines = selectedSafeStops.length
+    ? selectedSafeStops.map((condition) => `- ${condition}`)
+    : ['- Stop if verification fails or the manifest changes unexpectedly.'];
+  const agentTimelineItems = agentSession?.progress ?? (
+    enabledModules.length
+      ? [
+          ...enabledModules.map((module) => ({
+            id: `module:${module.id}`,
+            label: module.uiLabel || module.name,
+            status: 'pending' as const,
+          })),
+          { id: 'workspace', label: 'Workspace configured', status: 'pending' as const },
+          { id: 'verified', label: 'Ready to enter workspace', status: 'pending' as const },
+        ]
+      : [
+          { id: 'docs', label: 'Documents API', status: 'pending' as const },
+          { id: 'plugins', label: 'Plugin installs', status: 'pending' as const },
+          { id: 'task-master', label: 'Task Master', status: 'pending' as const },
+          { id: 'voice', label: 'Voice/TTS', status: 'pending' as const },
+        ]
+  );
   const agentPrompt = activeToken ? [
     'You are setting up Entity for this user. Complete only the onboarding setup described below.',
     '',
@@ -850,19 +1149,29 @@ export default function OnboardingFlow({
     `- Starter preset: ${selectedPreset.title}`,
     `- First agent: ${state.firstAgentMode}`,
     `- First source: ${state.firstSourceMode}`,
+    `- Selected bundle: ${persistableState.selectedBundle}`,
+    '',
+    'Selected modules',
+    ...modulePromptLines,
+    '',
+    'Install order',
+    ...selectedInstallOrder.map((moduleId) => `- ${moduleId}`),
+    '',
+    'Safe stop conditions',
+    ...safeStopLines,
     '',
     'Instructions',
     '1. Open the setup URL or fetch the manifest URL. Treat the manifest as the source of truth.',
-    '2. Download the Entity MC bundle or skill from the URLs above.',
-    `3. Install the skill with: ./install.sh --entity-url ${entityOrigin} --token <token-from-manifest>`,
-    `4. Verify the skill with: ./verify.sh --entity-url ${entityOrigin} --token <token-from-manifest>`,
+    '2. Install only the modules listed above and use modules[] plus dryRun/context in the manifest as the source of truth.',
+    `3. If Entity MC is selected, install it with: ./install.sh --entity-url ${entityOrigin} --token <token-from-manifest>`,
+    `4. If Entity MC is selected, verify it with: ./verify.sh --entity-url ${entityOrigin} --token <token-from-manifest>`,
     '5. Apply the selected workspace setup. Keep optional advanced settings for Admin unless the user explicitly asks.',
     '6. Report progress through the manifest progress endpoint after each meaningful step.',
-    '7. Stop when the workspace is configured, the skill verifies, and the setup checklist is complete.',
+    '7. Stop when the selected modules verify and the setup checklist is complete.',
     '',
     'Guardrails',
     '- Do not commit or print the raw token except where a setup command requires it.',
-    '- Do not configure Documents API, Voice/TTS, Task Master, OpenClaw, advanced scopes, or unrelated modules during onboarding.',
+    '- Do not configure admin-only, third-party, or unrelated modules during onboarding.',
     '- Do not overwrite user files, secrets, databases, or local configuration unless the manifest explicitly requires it.',
     '- If a step fails, report the exact blocker and leave the workspace in a recoverable state.',
     '',
@@ -969,7 +1278,7 @@ export default function OnboardingFlow({
                       icon={option.icon}
                       selected={state.mode === option.id}
                       description={option.description}
-                      onClick={() => void patchState({ mode: option.id })}
+                      onClick={() => handleModeSelect(option.id)}
                     />
                   ))}
                 </div>
@@ -1280,7 +1589,7 @@ export default function OnboardingFlow({
                   <span className="onboarding-icon-tile"><Icon name="gear" className="h-8 w-8" /></span>
                   <div>
                     <h1 className="text-3xl font-semibold text-[var(--text-primary)]">Choose a starter setup</h1>
-                    <p className="mt-3 text-base text-[var(--text-muted)]">Pick a simple preset. You can fine tune every module later in Admin.</p>
+                    <p className="mt-3 text-base text-[var(--text-muted)]">Pick a simple preset. Manual setup unlocks the registry-backed module picker; Quick and Agent keep the recommended bundle.</p>
                   </div>
                 </div>
                 <div className="mt-8 grid gap-5 lg:grid-cols-2">
@@ -1313,31 +1622,118 @@ export default function OnboardingFlow({
                     </button>
                   ))}
                 </div>
-                <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--border-secondary)] bg-white/45 p-5">
-                  <div className="flex items-center gap-4">
-                    <span className="onboarding-small-icon"><Icon name="gear" className="h-5 w-5" /></span>
-                    <div>
-                      <div className="font-semibold text-[var(--text-primary)]">Advanced module toggles</div>
-                      <div className="mt-1 text-sm text-[var(--text-muted)]">Enable or disable individual modules.</div>
+                {state.mode === 'manual' ? (
+                  <div className="mt-6 rounded-2xl border border-[var(--border-secondary)] bg-white/45 p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-[var(--text-primary)]">Manual module selection</div>
+                        <div className="mt-1 text-sm text-[var(--text-muted)]">Required modules stay locked. Recommended modules start enabled. Optional and admin-only work stays out of first-run.</div>
+                      </div>
+                      <StatusChip tone={selection?.status === 'ready' ? 'success' : selection?.status === 'blocked' ? 'warning' : 'active'}>
+                        {selectionLoading ? 'Resolving...' : selection?.normalizedBundle ?? 'default'}
+                      </StatusChip>
+                    </div>
+
+                    <div className="mt-5 grid gap-5">
+                      {(['required', 'recommended', 'optional'] as const).map((group) => (
+                        moduleGroups[group].length ? (
+                          <div key={group} className="rounded-xl border border-[var(--border-secondary)] bg-white/50 p-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="font-semibold capitalize text-[var(--text-primary)]">{group}</div>
+                              <StatusChip tone={group === 'required' ? 'success' : group === 'recommended' ? 'active' : 'neutral'}>
+                                {moduleGroups[group].length} modules
+                              </StatusChip>
+                            </div>
+                            <div className="mt-4 grid gap-3">
+                              {moduleGroups[group].map((module) => (
+                                <label
+                                  key={module.id}
+                                  className={`flex items-start gap-4 rounded-xl border px-4 py-3 ${
+                                    selectedModuleSet.has(module.id)
+                                      ? 'border-blue-300 bg-blue-50/45'
+                                      : 'border-[var(--border-secondary)] bg-white/60'
+                                  } ${module.locked ? 'opacity-90' : ''}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="mt-1 h-4 w-4 rounded border-[var(--border-secondary)]"
+                                    checked={selectedModuleSet.has(module.id)}
+                                    disabled={module.locked || selectionLoading}
+                                    onChange={() => toggleModuleSelection(module.id)}
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <div className="font-semibold text-[var(--text-primary)]">{module.name}</div>
+                                      {module.locked ? <StatusChip tone="success">Locked</StatusChip> : null}
+                                      {module.recommended ? <StatusChip tone="active">Recommended</StatusChip> : null}
+                                    </div>
+                                    <div className="mt-1 text-sm text-[var(--text-muted)]">{module.description}</div>
+                                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--text-muted)]">
+                                      <span>Host: {module.host}</span>
+                                      <span>{module.capabilities.slice(0, 3).join(' · ')}</span>
+                                      <span>{module.verifySteps.length} verify checks</span>
+                                      <span>{module.installFootprint.length} managed paths</span>
+                                      {module.skillRefs.length ? <span>{module.skillRefs.length} skill refs</span> : null}
+                                    </div>
+                                  </div>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null
+                      ))}
+                    </div>
+
+                    {selectionWarnings.length ? (
+                      <div className="mt-5 rounded-xl border border-amber-300 bg-amber-50/70 p-4">
+                        <div className="font-semibold text-amber-800">Resolver notes</div>
+                        <div className="mt-3 grid gap-2">
+                          {selectionWarnings.map((warning) => <div key={warning} className="text-sm text-amber-700">{warning}</div>)}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {adminOnlyModules.length ? (
+                      <div className="mt-5 rounded-xl border border-[var(--border-secondary)] bg-white/50 p-4">
+                        <div className="font-semibold text-[var(--text-primary)]">Later in Admin</div>
+                        <div className="mt-3 grid gap-2">
+                          {adminOnlyModules.map((module) => (
+                            <div key={module.id} className="rounded-lg border border-[var(--border-secondary)] bg-white/55 px-3 py-2 text-sm text-[var(--text-muted)]">
+                              <div className="font-medium text-[var(--text-primary)]">{module.id}</div>
+                              <div className="mt-1">{module.reason}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="mt-6 rounded-2xl border border-[var(--border-secondary)] bg-white/45 p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-[var(--text-primary)]">Recommended module bundle</div>
+                        <div className="mt-1 text-sm text-[var(--text-muted)]">Quick and Agent setup keep the default onboarding bundle. Switch to Manual if you need to change modules now.</div>
+                      </div>
+                      <StatusChip tone="success">{defaultBundleSelection.selectedBundle}</StatusChip>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      {enabledModules.map((module) => <StatusChip key={module.id} tone="active">{module.uiLabel || module.name}</StatusChip>)}
                     </div>
                   </div>
-                  <button type="button" className="onboarding-action-secondary px-4 py-2" disabled>Configure later in Admin</button>
-                </div>
+                )}
               </section>
               <aside className="onboarding-card p-5">
                 <h2 className="text-lg font-semibold text-[var(--text-primary)]">Enabled now</h2>
                 <div className="mt-4 space-y-2">
-                  {selectedPreset.modules.map((module) => <IconListItem key={module.label} icon={module.icon} title={module.label} detail={module.label === 'Tasks' ? 'Track tasks and activity' : module.label === 'Files' ? 'Connect and index data' : module.label === 'Plugins' ? 'Manage plugins and tools' : 'Ready after setup'} />)}
+                  {enabledModules.map((module) => <IconListItem key={module.id} icon={module.id.includes('fs') ? 'folder' : module.id.includes('link') ? 'link' : module.id.includes('mc') ? 'check' : 'gear'} title={module.uiLabel || module.name} detail={module.description} />)}
                 </div>
                 <div className="mt-4 border-t border-[var(--border-secondary)] pt-4">
-                  <div className="font-semibold text-[var(--text-primary)]">Later in Admin</div>
+                  <div className="font-semibold text-[var(--text-primary)]">Readiness</div>
                   <div className="mt-3 grid gap-2">
-                    {[
-                      ['Voice / TTS', 'Voice and audio tools', 'spark' as IconName],
-                      ['Task Master', 'Advanced task orchestration', 'check' as IconName],
-                      ['Documents API', 'Programmatic document access', 'file' as IconName],
-                      ['OpenClaw', 'Embedded crew admin', 'agent' as IconName],
-                    ].map(([title, detail, icon]) => <IconListItem key={title as string} icon={icon as IconName} title={title as string} detail={detail as string} />)}
+                    <IconListItem icon="globe" title="Workspace URL" detail={moduleReadiness?.publicUrl ?? profileDraft.publicUrl} />
+                    <IconListItem icon="folder" title="File sources" detail={moduleReadiness?.fileSourcesAvailable ? 'Detected for docs/file links' : 'No file source configured yet'} />
+                    <IconListItem icon="check" title="Mission Control helper" detail={moduleReadiness?.missionControlReachable ? 'Bundle available for verification' : 'Bundle path will warn until available'} />
+                    <IconListItem icon="gear" title="Registry" detail={`${moduleReadiness?.installedRegistry.selectable ?? enabledModules.length} onboarding-safe modules available`} />
                   </div>
                 </div>
               </aside>
@@ -1464,12 +1860,7 @@ export default function OnboardingFlow({
                 <div className="onboarding-card p-6">
                   <h2 className="text-lg font-semibold text-[var(--text-primary)]">{isAgentRoute || agentSession ? 'Live setup timeline' : 'Admin can do later'}</h2>
                   <div className="mt-5 space-y-4">
-                    {(agentSession?.progress ?? [
-                      { id: 'docs', label: 'Documents API', status: 'pending' as const },
-                      { id: 'plugins', label: 'Plugin installs', status: 'pending' as const },
-                      { id: 'task-master', label: 'Task Master', status: 'pending' as const },
-                      { id: 'voice', label: 'Voice/TTS', status: 'pending' as const },
-                    ]).map((item, index) => (
+                    {agentTimelineItems.map((item, index) => (
                       <div key={item.id} className="relative flex gap-4">
                         {index < 5 && (isAgentRoute || agentSession) ? <span className="absolute left-[15px] top-8 h-8 border-l border-dashed border-[var(--border-secondary)]" /> : null}
                         <CircleState state={item.status === 'done' ? 'done' : 'idle'} />
@@ -1481,6 +1872,35 @@ export default function OnboardingFlow({
                     ))}
                   </div>
                 </div>
+                {(isAgentRoute || agentSession || state.mode === 'agent') && (
+                  <div className="onboarding-card p-6">
+                    <h2 className="text-lg font-semibold text-[var(--text-primary)]">Selected modules</h2>
+                    <div className="mt-4 grid gap-2">
+                      {enabledModules.map((module) => (
+                        <div key={module.id} className="rounded-xl border border-[var(--border-secondary)] bg-white/50 px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="font-semibold text-[var(--text-primary)]">{module.uiLabel || module.name}</div>
+                            {module.required ? <StatusChip tone="success">Required</StatusChip> : module.recommended ? <StatusChip tone="active">Recommended</StatusChip> : null}
+                          </div>
+                          <div className="mt-1 text-sm text-[var(--text-muted)]">{module.description}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {selectedSafeStops.length ? (
+                      <div className="mt-5 border-t border-[var(--border-secondary)] pt-4">
+                        <div className="font-semibold text-[var(--text-primary)]">Safe stop conditions</div>
+                        <div className="mt-3 grid gap-2">
+                          {selectedSafeStops.map((condition) => (
+                            <div key={condition} className="text-sm text-[var(--text-muted)]">
+                              <Icon name="warning" className="mr-2 inline h-4 w-4 text-amber-500" />
+                              {condition}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
                 {(isAgentRoute || agentSession) && (
                   <div className="onboarding-card p-6">
                     <div className="flex items-center gap-3 text-lg font-semibold text-[var(--text-primary)]">
@@ -1511,9 +1931,9 @@ export default function OnboardingFlow({
               <div className="mt-8 grid gap-4 xl:grid-cols-5">
                 {[
                   ['Workspace saved', profileDraft.workspaceName, 'Private local', 'check' as IconName],
-                  ['Aurora theme', 'Mint peach glass', 'Selected', 'palette' as IconName],
+                  [`${state.selectedTheme} theme`, THEMES.find((theme) => theme.id === state.selectedTheme)?.hint ?? 'Selected', 'Selected', 'palette' as IconName],
                   [`${providerTitle(selectedProviderId)} default AI`, defaultModelLabel, selectedProviderModel?.provider ?? providerTitle(selectedProviderId), 'code' as IconName],
-                  ['Starter preset', selectedPreset.title, `${selectedPresetModules.length} modules enabled`, 'users' as IconName],
+                  ['Starter preset', selectedPreset.title, `${enabledModules.length} modules enabled`, 'users' as IconName],
                   ['Source connected', 'Local documents', sourceStatus === 'ok' ? 'Healthy' : 'Optional', 'folder' as IconName],
                 ].map(([title, line1, line2, icon]) => (
                   <div key={title as string} className="rounded-2xl border border-[var(--border-secondary)] bg-white/50 p-4">
@@ -1532,7 +1952,7 @@ export default function OnboardingFlow({
                       ['Profile created', 'Workspace identity and access configured'],
                       ['Theme selected', `${state.selectedTheme} theme applied`],
                       ['Default AI selected', `${providerTitle(selectedProviderId)} (${defaultModelLabel}) set as default`],
-                      ['Starter modules enabled', 'Essential modules are ready'],
+                      ['Starter modules enabled', selectedModuleNames.join(', ') || 'Default bundle is ready'],
                       ['First agent/source optional', 'At least one agent and source configured'],
                     ].map(([title, detail]) => (
                       <div key={title} className="grid gap-2 border-b border-[var(--border-secondary)] bg-white/45 px-4 py-3 text-sm last:border-b-0 md:grid-cols-[minmax(0,0.4fr)_minmax(0,0.6fr)]">
@@ -1545,7 +1965,10 @@ export default function OnboardingFlow({
                     <div className="flex items-center gap-3 font-semibold text-amber-800"><Icon name="info" className="h-5 w-5" />Finish later in Admin</div>
                     <p className="mt-2 text-sm text-amber-700">These items are optional and can be configured anytime.</p>
                     <div className="mt-4 flex flex-wrap gap-3">
-                      {['Documents API', 'Plugins', 'Voice / TTS', 'Task Master', 'OpenClaw', 'Advanced scopes'].map((item) => <StatusChip key={item} tone="warning">{item}</StatusChip>)}
+                      {(adminOnlyModules.length
+                        ? adminOnlyModules.map((item) => item.id)
+                        : ['Documents API', 'Plugins', 'Voice / TTS', 'Task Master', 'OpenClaw', 'Advanced scopes']
+                      ).map((item) => <StatusChip key={item} tone="warning">{item}</StatusChip>)}
                     </div>
                   </div>
                 </div>
