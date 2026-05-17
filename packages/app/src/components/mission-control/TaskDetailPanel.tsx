@@ -789,6 +789,36 @@ function buildMetadataPatch(
   return JSON.stringify(nextRecord);
 }
 
+function hasReviewMetadata(metadata: Record<string, unknown>): boolean {
+  return Boolean(
+    readFirstString(metadata.review_type, metadata.review_class) ||
+      readFirstString(metadata.reviewer, metadata.review_owner) ||
+      readFirstString(metadata.review_decision) ||
+      normalizeBoolean(metadata.henry_required ?? metadata.requires_henry) ||
+      parseJsonRecord(metadata.review_packet) ||
+      parseJsonRecord(metadata.review_brief)
+  );
+}
+
+function reviewField(value: unknown, fallback = 'Not set'): string {
+  return readNonEmptyString(value) ?? fallback;
+}
+
+function reviewPacketSummary(metadata: Record<string, unknown>): string {
+  const packet = parseJsonRecord(metadata.review_packet) ?? parseJsonRecord(metadata.review_brief);
+  if (!packet) {
+    return 'Missing';
+  }
+
+  const outcome = readFirstString(packet.requested_outcome, packet.outcome) ?? 'Outcome not set';
+  const criteria = Array.isArray(packet.done_criteria)
+    ? packet.done_criteria.map((entry) => readNonEmptyString(entry)).filter(Boolean).length
+    : readNonEmptyString(packet.done_criteria)
+      ? 1
+      : 0;
+  return `${outcome}${criteria > 0 ? ` / ${criteria} criterion${criteria === 1 ? '' : 'a'}` : ''}`;
+}
+
 async function requestOptionalJson<T = unknown>(
   path: string,
   apiBase: string,
@@ -2167,7 +2197,50 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                />
 	              </section>
 
-	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
+	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
+	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+	                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                    Review
+	                  </div>
+	                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${
+	                    hasReviewMetadata(task.metadataRecord)
+	                      ? 'border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]'
+	                      : 'border-amber-500/25 bg-amber-500/10 text-amber-200'
+	                  }`}>
+	                    {hasReviewMetadata(task.metadataRecord) ? 'Packet present' : 'Needs packet'}
+	                  </span>
+	                </div>
+	                <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reviewer</div>
+	                    <div>{normalizeBoolean(task.metadataRecord.henry_required ?? task.metadataRecord.requires_henry) ? 'Henry' : reviewField(task.metadataRecord.reviewer ?? task.metadataRecord.review_owner)}</div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Decision</div>
+	                    <div>{reviewField(task.metadataRecord.review_decision, 'Pending')}</div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Type / Risk</div>
+	                    <div>{reviewField(task.metadataRecord.review_type ?? task.metadataRecord.review_class)} / {reviewField(task.metadataRecord.risk_level)}</div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reviewed By</div>
+	                    <div>{reviewField(task.metadataRecord.reviewed_by)}</div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Packet</div>
+	                    <div>{reviewPacketSummary(task.metadataRecord)}</div>
+	                  </div>
+	                  {readNonEmptyString(task.metadataRecord.review_note) ? (
+	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Review Note</div>
+	                      <div>{readNonEmptyString(task.metadataRecord.review_note)}</div>
+	                    </div>
+	                  ) : null}
+	                </div>
+	              </section>
+
+	              <section style={{ order: 3 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
 	                <div className={`${outputExpanded ? 'mb-2' : ''} flex flex-wrap items-center justify-between gap-2`}>
 	                  <div className="flex min-w-0 items-center gap-2">
 	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">

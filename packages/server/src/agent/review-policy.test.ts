@@ -6,6 +6,8 @@ import {
   inferTaskType,
   requiresReviewArtifact,
   scoreReviewVerdict,
+  validateReviewCompletion,
+  validateReviewEntry,
   type ArtifactAssessment,
   type ReviewAssessment,
 } from './review-policy';
@@ -243,5 +245,119 @@ describe('assessReviewOutput', () => {
     expect(assessment.verdict).toBe('INVALID');
     expect(assessment.recommendedAction).toBe('assign_owner');
     expect(assessment.reasons[0]).toContain('no owner');
+  });
+});
+
+describe('review lifecycle validation', () => {
+  const validPeerMetadata = {
+    review_type: 'peer',
+    reviewer: 'Book',
+    henry_required: false,
+    risk_level: 'low',
+    submitted_by: 'Ada',
+    review_packet: {
+      requested_outcome: 'Validate MC Review v2 hardening patch',
+      evidence: 'Patch touches review-policy.ts and helper scripts; tests were run.',
+      done_criteria: ['wrong reviewer blocked', 'missing packet blocked', 'accepted review can close'],
+    },
+    review_decision: 'accepted',
+    reviewed_by: 'Book',
+    review_note: 'Verified packet, evidence, tests, and independent reviewer route.',
+  };
+
+  it('rejects moving to review without a packet', () => {
+    const result = validateReviewEntry(null);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('Insufficient review packet');
+  });
+
+  it('requires review type, reviewer, risk level, and packet fields', () => {
+    expect(validateReviewEntry({ review_type: 'peer', risk_level: 'low' }).ok).toBe(false);
+    expect(validateReviewEntry({ ...validPeerMetadata, risk_level: undefined }).ok).toBe(false);
+    expect(validateReviewEntry({ ...validPeerMetadata, review_packet: { evidence: 'x' } }).ok).toBe(false);
+    expect(validateReviewEntry(validPeerMetadata).ok).toBe(true);
+  });
+
+  it('forces high-risk review to Henry unless delegation is explicit', () => {
+    const result = validateReviewEntry({
+      ...validPeerMetadata,
+      risk_level: 'high',
+      henry_required: false,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('High-risk');
+  });
+
+  it('blocks completion without metadata or accepted review', () => {
+    expect(validateReviewCompletion(makeTask({ metadata: null, assignee: 'Ada' }), 'Book').ok).toBe(false);
+    expect(
+      validateReviewCompletion(
+        makeTask({
+          assignee: 'Ada',
+          metadata: JSON.stringify({ ...validPeerMetadata, review_decision: 'pending' }),
+        }),
+        'Book'
+      ).ok
+    ).toBe(false);
+  });
+
+  it('blocks wrong reviewer and same-producer completion', () => {
+    const task = makeTask({
+      assignee: 'Ada',
+      metadata: JSON.stringify(validPeerMetadata),
+    });
+
+    expect(validateReviewCompletion(task, 'Spock').ok).toBe(false);
+    expect(validateReviewCompletion(task, 'Ada').ok).toBe(false);
+    expect(validateReviewCompletion(task, 'Book').ok).toBe(true);
+  });
+
+  it('keeps Henry-required tasks Henry-only unless delegated', () => {
+    const metadata = {
+      ...validPeerMetadata,
+      review_type: 'henry',
+      reviewer: 'henry',
+      henry_required: true,
+      risk_level: 'high',
+      submitted_by: 'Book',
+    };
+
+    expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Ada').ok).toBe(false);
+    expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Henry').ok).toBe(true);
+    expect(
+      validateReviewCompletion(
+        makeTask({
+          assignee: 'Book',
+          metadata: JSON.stringify({ ...metadata, henry_delegated: true, reviewer: 'Ada' }),
+        }),
+        'Ada'
+      ).ok
+    ).toBe(true);
+  });
+
+  it('allows explicit chat-delivery auto completion only with source proof', () => {
+    const base = {
+      review_type: 'auto',
+      risk_level: 'low',
+      review_decision: 'accepted',
+      chat_output_delivered: true,
+      source: 'discord',
+      source_id: 'channel/message',
+      review_packet: {
+        requested_outcome: 'Close chat-origin task after showing output to Henry',
+        evidence: 'The answer was delivered in the originating chat.',
+        done_criteria: ['chat output exists'],
+      },
+    };
+
+    expect(validateReviewCompletion(makeTask({ assignee: 'Ada', metadata: JSON.stringify(base) }), 'Ada').ok).toBe(true);
+    expect(
+      validateReviewCompletion(
+        makeTask({ assignee: 'Ada', metadata: JSON.stringify({ ...base, source_id: '' }) }),
+        'Ada'
+      ).ok
+    ).toBe(false);
   });
 });
