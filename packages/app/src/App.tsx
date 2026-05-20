@@ -105,6 +105,7 @@ interface AgentCapability {
   verificationLabel?: string;
   capabilityLabels?: string[];
   permissionLabels?: string[];
+  scopeLabels?: string[];
   runtimeLabel?: string;
   identityLabel?: string;
 }
@@ -394,6 +395,7 @@ function buildFallbackAgentCapabilities(agent: (typeof BUILT_IN_AGENTS)[number])
     verificationLabel: 'Local fallback',
     capabilityLabels,
     permissionLabels,
+    scopeLabels: [],
     runtimeLabel: `fallback · ${agent.status}`,
     moduleCount: agent.modules.length,
   };

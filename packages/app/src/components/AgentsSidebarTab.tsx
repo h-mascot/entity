@@ -11,6 +11,7 @@ interface AgentCapability {
   verificationLabel?: string;
   capabilityLabels?: string[];
   permissionLabels?: string[];
+  scopeLabels?: string[];
   runtimeLabel?: string;
   identityLabel?: string;
 }
@@ -245,6 +246,9 @@ export default function AgentsSidebarTab({
           const focus = focusByAgentId.get(agent.id) ?? null;
           const isWriting = focus ? nowMs - focus.lastEditMs <= ACTIVE_WRITING_WINDOW_MS : false;
           const statusLabel = isOnline ? (isWriting ? 'writing' : 'online') : 'offline';
+          const capabilityLabels = agent.capabilities?.capabilityLabels ?? [];
+          const permissionLabels = agent.capabilities?.permissionLabels ?? [];
+          const scopeLabels = agent.capabilities?.scopeLabels ?? [];
 
           return (
             <button
@@ -288,6 +292,45 @@ export default function AgentsSidebarTab({
                       <span className="text-[var(--text-secondary)]">Model</span> · {agent.model || 'default resolving'}
                     </div>
                   </div>
+                  <div className="mt-2 grid gap-1 text-[11px] text-[var(--text-muted)]">
+                    <div className="truncate">
+                      <span className="text-[var(--text-secondary)]">Owner</span> · {agent.capabilities?.ownerLabel || 'Entity'}
+                    </div>
+                    <div className="truncate">
+                      <span className="text-[var(--text-secondary)]">Verification</span> · {agent.capabilities?.verificationLabel || 'Registry'}
+                    </div>
+                  </div>
+                  {(capabilityLabels.length > 0 || permissionLabels.length > 0 || scopeLabels.length > 0) && (
+                    <div className="mt-2 space-y-1">
+                      {capabilityLabels.length > 0 && (
+                        <div className="flex min-w-0 flex-wrap gap-1">
+                          {capabilityLabels.map((label) => (
+                            <span key={'capability-' + label} className="entity-ops-chip max-w-full truncate">
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {permissionLabels.length > 0 && (
+                        <div className="flex min-w-0 flex-wrap gap-1">
+                          {permissionLabels.map((label) => (
+                            <span key={'permission-' + label} className="entity-ops-chip max-w-full truncate">
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {scopeLabels.length > 0 && (
+                        <div className="flex min-w-0 flex-wrap gap-1">
+                          {scopeLabels.map((label) => (
+                            <span key={'scope-' + label} className="entity-ops-chip max-w-full truncate">
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
