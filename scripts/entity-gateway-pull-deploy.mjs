@@ -21,6 +21,7 @@ const config = {
   prodLaunchdService: process.env.ENTITY_PROD_LAUNCHD_SERVICE || '',
   prodNodeEntry: process.env.ENTITY_PROD_NODE_ENTRY || '',
   runtimeWorkspace: process.env.ENTITY_RUNTIME_WORKSPACE || '',
+  nodeBinDir: process.env.ENTITY_DEPLOY_NODE_BIN_DIR || dirname(process.execPath),
 };
 
 const stateDir = process.env.ENTITY_DEPLOY_STATE_DIR || join(config.sourceDir, '.gateway-pull-deploy');
@@ -147,6 +148,7 @@ function printConfig() {
     prodLaunchdService: config.prodLaunchdService || '<unset>',
     prodNodeEntry: config.prodNodeEntry || '<unset>',
     runtimeWorkspace: config.runtimeWorkspace || '<unset>',
+    nodeBinDir: config.nodeBinDir,
     stateDir,
     logPath,
     envPath: envPath || '<unset>',
@@ -269,7 +271,7 @@ function run(command, commandArgs, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, commandArgs, {
       cwd,
-      env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ''}`, ...(options.env || {}) },
+      env: { ...process.env, PATH: `${config.nodeBinDir}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ''}`, ...(options.env || {}) },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

@@ -14,9 +14,9 @@ function createLoadedPlugin(overrides: Partial<LoadedPlugin> = {}): LoadedPlugin
     settings: {
       requestTimeoutMs: 1000,
       entityBaseUrl: 'http://entity.local',
-      enterpriseAdminUrl: 'http://enterprise.local:3000',
-      n8nBaseUrl: 'http://n8n.local:5678',
-      vaultwardenBaseUrl: 'http://vault.local:8222',
+      externalAdminUrl: '',
+      externalAdminName: 'External Admin',
+      services: [],
       discoverGatewayServices: false,
       discoverMacServices: false,
     },
@@ -42,7 +42,21 @@ function createResponse() {
 
 describe('entity-services routes', () => {
   it('builds a registry payload with live service summaries', async () => {
-    const entityServices = createLoadedPlugin();
+    const entityServices = createLoadedPlugin({
+      settings: {
+        ...createLoadedPlugin().settings,
+        services: [
+          {
+            id: 'ops-docs',
+            name: 'Ops Docs',
+            url: 'http://docs.local',
+            healthUrl: 'http://docs.local/health',
+            category: 'Knowledge',
+            tags: ['docs'],
+          },
+        ],
+      },
+    });
     const entityLinker = createLoadedPlugin({
       id: 'entity-linker',
       name: 'Entity Linker',
@@ -65,8 +79,8 @@ describe('entity-services routes', () => {
     };
 
     const fetchImpl = vi.fn(async (url: string) => {
-      if (url === 'http://enterprise.local:3000/api/health') {
-        return new Response('missing', { status: 404 });
+      if (url === 'http://docs.local/health') {
+        return new Response('ok', { status: 200 });
       }
 
       return new Response('ok', { status: 200 });
@@ -89,14 +103,14 @@ describe('entity-services routes', () => {
       link: { url: 'http://entity.local/api/entity-linker/status', external: true },
     });
 
-    const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
-    expect(enterprise).toMatchObject({
+    const docs = payload.services.find((service) => service.id === 'ops-docs');
+    expect(docs).toMatchObject({
       serviceType: 'external-http',
       status: 'operational',
       visibility: 'managed',
-      relevanceReason: 'Curated service definition',
-      family: { key: 'enterprise-crew-admin', name: 'Enterprise Crew Admin', memberCount: 1 },
-      link: { url: 'http://enterprise.local:3000', external: true },
+      relevanceReason: 'Configured service definition',
+      family: { key: 'ops-docs', name: 'Ops Docs', memberCount: 1 },
+      link: { url: 'http://docs.local', external: true },
     });
 
     expect(linker).toMatchObject({
@@ -106,13 +120,25 @@ describe('entity-services routes', () => {
     });
 
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://enterprise.local:3000/api/health',
+      'http://docs.local/health',
       expect.objectContaining({ method: 'GET' }),
     );
   });
 
   it('reports disabled or unreachable services as offline', async () => {
-    const entityServices = createLoadedPlugin();
+    const entityServices = createLoadedPlugin({
+      settings: {
+        ...createLoadedPlugin().settings,
+        services: [
+          {
+            id: 'ops-docs',
+            name: 'Ops Docs',
+            url: 'http://docs.local',
+            healthUrl: 'http://docs.local/health',
+          },
+        ],
+      },
+    });
     const entityLinker = createLoadedPlugin({
       id: 'entity-linker',
       name: 'Entity Linker',
@@ -149,7 +175,8 @@ describe('entity-services routes', () => {
       settings: {
         ...createLoadedPlugin().settings,
         entityBaseUrl: 'http://100.106.69.9:3000',
-        enterpriseAdminUrl: 'http://100.106.69.9:3002',
+        externalAdminUrl: '',
+        services: [],
         discoverGatewayServices: false,
         discoverMacServices: false,
       },
@@ -176,10 +203,9 @@ describe('entity-services routes', () => {
     );
 
     const linker = payload.services.find((service) => service.id === 'entity-linker');
-    const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
 
     expect(linker?.link.url).toBe('http://100.104.229.62:3000/api/entity-linker/status');
-    expect(enterprise?.link.url).toBe('http://100.104.229.62:3002');
+    expect(payload.services.some((service) => service.id.includes('enterprise'))).toBe(false);
   });
 
   it('registers registry endpoints', async () => {

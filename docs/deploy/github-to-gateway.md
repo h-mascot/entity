@@ -46,6 +46,7 @@ ENTITY_DEPLOY_REQUIRED_WORKFLOW=CI/CD Pipeline
 ENTITY_DEPLOY_SOURCE_DIR=<staging checkout path>
 ENTITY_DEPLOY_STATE_DIR=<state directory>
 ENTITY_DEPLOY_LOG=<log path>
+ENTITY_DEPLOY_NODE_BIN_DIR=<node/npm bin directory>
 ENTITY_PROD_HOST=<ssh target reachable from gateway>
 ENTITY_PROD_HTTP_HOST=<live HTTP host>
 ENTITY_PROD_DIR=<production runtime path>

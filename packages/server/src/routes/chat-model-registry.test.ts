@@ -62,7 +62,7 @@ describe('chat model registry', () => {
     expect(book.local.map((model) => model.id)).toEqual([]);
   });
 
-  it('uses GPT-5.5 Instant as the fallback OpenClaw default for Entity cron and builder sessions', async () => {
+  it('uses an empty assistant fallback until a provider is configured', async () => {
     const registry = new ChatModelRegistry({
       env: { OPENCLAW_HOME: '/tmp/no-openclaw-home', OPENCLAW_CLI: '/no/such/openclaw' },
       localInventory: async () => [],
@@ -70,15 +70,10 @@ describe('chat model registry', () => {
       now: () => new Date('2026-05-06T08:00:00.000Z'),
     });
 
-    const ada = await registry.buildResponse(['ada']);
-    expect(ada.source).toBe('fallback');
-    expect(ada.defaultModel).toBe('openai-codex/gpt-5.5');
-    expect(ada.models?.[0]).toMatchObject({
-      id: 'openai-codex/gpt-5.5',
-      name: 'GPT-5.5 Instant',
-      provider: 'openai-codex',
-      isLocal: false,
-    });
+    const assistant = await registry.buildResponse(['assistant']);
+    expect(assistant.source).toBe('fallback');
+    expect(assistant.defaultModel).toBeUndefined();
+    expect(assistant.models).toEqual([]);
   });
 
   it('loads OpenClaw models through the gateway env and auth token before using fallback models', async () => {

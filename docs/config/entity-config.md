@@ -129,6 +129,8 @@ agents:
     role: general
     enabled: true
     fileSources: []
+    healthUrls: []
+    workspaceRoot: null
     gateway:
       type: none
       url: null

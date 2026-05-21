@@ -176,7 +176,8 @@ npm run electron:build
 | `npm run electron` | Start the Electron desktop shell |
 | `npm run electron:build` | Build packaged desktop app |
 | `npm run ctrl:full` | Run this repo's release/check gates |
-| `npm run scan:private-defaults` | Scan for private defaults before public/release work |
+| `npm run scan:private-defaults` | Scan for private defaults before public/release work without rewriting the baseline |
+| `npm run scan:private-defaults -- --write-baseline` | Intentionally refresh `docs/reports/private-default-scan-baseline.md` |
 
 ---
 
@@ -202,7 +203,7 @@ Common environment variables:
 | `ENTITY_FS_INDEXER_ENABLED` | Enable or disable file indexing |
 | `SENTRY_DSN` / `VITE_SENTRY_DSN` | Optional backend/frontend Sentry reporting |
 
-Private deployments may have additional `.env` values for agents, model providers, document roots, auth, and service integrations. Do not commit secrets.
+Private deployments may have additional `.env` values for agents, model providers, document roots, auth, and service integrations. Do not commit secrets. Prefer `entity.config.yaml` for non-secret runtime defaults so setup, dev, doctor, and server bootstrap resolve the same profile.
 
 ### Production deploy profile
 
@@ -272,7 +273,7 @@ Entity is transitioning from an internal workspace to a public project. Before d
 Recommended gate:
 
 ```bash
-npm run scan:private-defaults
+npm run scan:private-defaults -- --enforce
 npm run build
 npm --prefix packages/server run test
 ```

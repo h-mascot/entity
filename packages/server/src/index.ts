@@ -94,7 +94,13 @@ import { registerCrewRoutes } from "./crews-routes";
 import { registerChatRoutes } from "./routes/chat";
 import { registerConfigRoutes } from "./config/routes";
 import { buildEffectiveConfig } from "./config/effective";
-import type { PluginSettingsRecord } from "./plugins/types";
+import {
+  applyBootstrapRuntimeEnv,
+  applyRuntimeConfigSeeds,
+  buildConfigPluginSettings,
+  buildConfiguredAgentHealthEndpoints,
+  buildConfiguredAgentWorkspaces,
+} from "./config/runtime";
 import { registerDocsApiRoutes } from "./routes/docs";
 import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
@@ -114,6 +120,7 @@ import {
 import { createApiAuthMiddleware, createWsAuthHandler } from "./middleware/api-auth";
 // Load .env from project root
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+const bootstrapConfig = applyBootstrapRuntimeEnv(process.cwd());
 
 import { createTaskSyncLayer, normalizeDbMode } from "../../db/src/task-sync";
 import {
@@ -239,6 +246,7 @@ function registerSetupClawLeadRoutes(app: express.Express) {
 
 const terminalBridge = createTerminalBridge({
   workspaceRoot: WORKSPACE,
+  targets: bootstrapConfig.terminal.targets,
 });
 
 registerTerminalRoutes(app, terminalBridge);
@@ -299,35 +307,16 @@ const activityRepository = createActivityRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
 const entityDb = getEntityDatabase();
+const runtimeConfig = applyRuntimeConfigSeeds({ db: entityDb, fileSourceRepository });
+const runtimeConfigBaseDir = path.dirname(process.env.ENTITY_CONFIG || path.resolve(process.cwd(), 'entity.config.yaml'));
 ensurePluginSettingsTable(entityDb);
 ensurePluginMigrationTable(entityDb);
 const pluginHooks = new PluginHookEmitter(console);
-function extractPluginConfigSettings(settings: unknown): Record<string, PluginSettingsRecord> {
-  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-    return {};
-  }
-  const plugins = (settings as { plugins?: unknown }).plugins;
-  if (!plugins || typeof plugins !== 'object' || Array.isArray(plugins)) {
-    return {};
-  }
-  const out: Record<string, PluginSettingsRecord> = {};
-  for (const [pluginId, rawPluginConfig] of Object.entries(plugins as Record<string, unknown>)) {
-    if (!rawPluginConfig || typeof rawPluginConfig !== 'object' || Array.isArray(rawPluginConfig)) {
-      continue;
-    }
-    const rawSettings = (rawPluginConfig as { settings?: unknown }).settings;
-    if (rawSettings && typeof rawSettings === 'object' && !Array.isArray(rawSettings)) {
-      out[pluginId] = JSON.parse(JSON.stringify(rawSettings)) as PluginSettingsRecord;
-    }
-  }
-  return out;
-}
-
 const startupEffectiveConfig = buildEffectiveConfig({ db: entityDb });
 const pluginRegistry = new PluginRegistry({
   db: entityDb,
   logger: console,
-  configPluginSettings: extractPluginConfigSettings(startupEffectiveConfig.settings),
+  configPluginSettings: buildConfigPluginSettings(startupEffectiveConfig.settings),
 });
 const loadedPlugins = pluginRegistry.load();
 runPluginMigrations({
@@ -5602,26 +5591,9 @@ app.get("/api/activity/recent", async (req, res) => {
 
 // === AGENT STATUS: Real gateway health pings ===
 
-const DEFAULT_AGENT_HEALTH_ENDPOINTS: Record<string, string[]> = {
-  main: [
-    process.env.ENTITY_AGENT_HEALTH_MAIN?.trim() || "",
-  ],
-  spock: [
-    process.env.ENTITY_AGENT_HEALTH_SPOCK?.trim() || "",
-  ],
-  scotty: [
-    process.env.ENTITY_AGENT_HEALTH_SCOTTY?.trim() || "",
-  ],
-  geordi: [
-    process.env.ENTITY_AGENT_HEALTH_GEORDI?.trim() || "",
-  ],
-  zora: [
-    process.env.ENTITY_AGENT_HEALTH_ZORA?.trim() || "",
-  ],
-};
-
+const CONFIGURED_AGENT_HEALTH_ENDPOINTS = buildConfiguredAgentHealthEndpoints(runtimeConfig);
 const AGENT_HEALTH_ENDPOINTS: Record<string, string[]> = Object.fromEntries(
-  Object.entries(DEFAULT_AGENT_HEALTH_ENDPOINTS).map(([agentId, urls]) => [
+  Object.entries(CONFIGURED_AGENT_HEALTH_ENDPOINTS).map(([agentId, urls]) => [
     agentId,
     urls.filter(
       (url, index, list) => Boolean(url) && list.indexOf(url) === index,
@@ -5697,13 +5669,8 @@ app.get("/api/agents/status", async (_req, res) => {
 
 // === AGENT FOCUS: Most recently modified file per workspace ===
 
-// Agent workspaces are set via ENTITY_WORKSPACE_MAIN/SPOCK/SCOTTY env vars.
-// No hardcoded private workspace paths — safe defaults only.
-const AGENT_WORKSPACES: Record<string, string> = {
-  main: process.env.ENTITY_WORKSPACE_MAIN || DEFAULT_WORK_ROOT,
-  spock: process.env.ENTITY_WORKSPACE_SPOCK || DEFAULT_WORK_ROOT,
-  scotty: process.env.ENTITY_WORKSPACE_SCOTTY || DEFAULT_WORK_ROOT,
-};
+// Agent workspaces come from entity.config.yaml/admin file-source bindings.
+const AGENT_WORKSPACES: Record<string, string> = buildConfiguredAgentWorkspaces(runtimeConfig, runtimeConfigBaseDir);
 const AGENT_FOCUS_FILE_EXTENSIONS = new Set([
   ".ts",
   ".tsx",

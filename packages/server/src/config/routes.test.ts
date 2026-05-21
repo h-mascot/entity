@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3';
+import os from 'os';
+import path from 'path';
 import express from 'express';
 import { Readable, Writable } from 'stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -123,6 +125,7 @@ describe('config routes', () => {
     db.exec('DROP TABLE IF EXISTS entity_module_skill_refs');
     db.exec('DROP TABLE IF EXISTS entity_modules');
     vi.stubEnv('PORT', undefined);
+    vi.stubEnv('ENTITY_CONFIG', path.join(os.tmpdir(), `entity-config-routes-missing-${process.pid}.yaml`));
   });
 
   afterEach(() => {

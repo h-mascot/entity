@@ -59,13 +59,30 @@ This task continues the existing cleanup/open-source-readiness branch. The worki
 - scripts/ctrl-deploy-path-check.sh
 - scripts/entity-setup.js
 - scripts/scan-private-defaults.mjs
+- packages/server/src/config/runtime.ts
+- packages/server/src/config/runtime.test.ts
+- docs/reports/private-default-scan-baseline.md
+
+## Follow-up Execution Plan (2026-05-21)
+- [x] Step 6: Wire config into server bootstrap/runtime defaults.
+  - Verify: config loader tests cover database/workspace/port/env export; server startup uses config/env bridge.
+- [x] Step 7: Seed file sources, agents, terminal targets, health endpoints, services, and plugin settings from config/admin-safe defaults.
+  - Verify: targeted server tests for config/effective, file source seeding, agent registry, terminal targets, entity-services, chat model fallback.
+- [x] Step 8: Remove or quarantine shipped private/static Enterprise surfaces and hardcoded Ada defaults from runtime/public assets.
+  - Verify: private-default scan shows zero error findings; runtime-source search has no private default blockers outside allowed internal/test fixtures.
+- [x] Step 9: Harden setup/doctor/CI scan behavior and docs.
+  - Verify: setup does not clobber existing config unless forced; doctor can run without rewriting baseline; CI guardrail fails on runtime private defaults.
+- [x] Step 10: Run full verification gates and update MC #563 with evidence.
+  - Verify: scan, targeted Vitest, full server build/tests, npm build/doctor/ctrl gate/fail-closed checks.
 
 ## Progress Log
+- 2026-05-21 17:10 UTC — Reopened #563 after static audits found remaining productization gaps: config file not driving server/bootstrap DB/env, config fileSources/agents not seeded into runtime DB, terminal/health/service catalogs still hardcoded, service plugin manifest defaults still unsafe, chat/model fallback still Ada-centered, public static assets still include private Enterprise demos, setup could clobber config, and doctor/scan writes baseline during read-only checks.
 - 2026-05-16 06:55 — Context and prior branch state loaded. Existing branch already has config/schema/routes/setup/doctor work; found obvious public-safety correctness gaps in .env.example, root config example, secret redaction regex, workflow deploy header, and scanner roots.
 - 2026-05-16 07:01 — Tightened secret-path detection, restored safe env examples, expanded scanner roots, added seeded onboarding skill refs for uninitialized registries, fixed in-memory onboarding route behavior, and corrected mobile tab typing for the token dashboard.
 - 2026-05-16 07:03 — Verification: private-default scan enforce passed with warnings-only baseline; targeted server vitest suite passed 29/29; npm run build passed; npm run ctrl:gate passed. ctrl:full intentionally fails closed because CTRL_LIVE_BASE_URL/ENTITY_PROD_HTTP_HOST and deploy env are unset, proving no private production default is assumed.
 - 2026-05-16 19:08 — Final verification on Node 22.22.2 after local setup: full server build passed; full server Vitest passed 303/303 across 44 files; private-default scan passed with 128 warnings/0 errors; npm run build passed; npm run doctor passed after npm run setup created ignored local entity.config.yaml; npm run ctrl:gate passed; npm run ctrl:full reached test:live and failed closed because CTRL_LIVE_BASE_URL/ENTITY_PROD_HTTP_HOST is intentionally unset.
 - 2026-05-21 13:38 UTC — Follow-up hardening: made deploy runtime port/log/launchd/node entry explicit profile knobs, removed deploy webhook DB/HTTP host fallback defaults, fixed CI deploy authorization header syntax, ignored generated local setup DB/log paths, and documented the deploy profile contract in public/internal docs. Verification: private-default scan enforce passed with 0 errors/152 warnings; targeted config/plugin/terminal/swarm Vitest passed 30/30; full server build passed; full server Vitest passed 311/311 across 45 files; npm run build passed; npm run doctor passed; npm run ctrl:gate passed; deploy.sh missing-env fail-closed exit 78 and dry-run print-config passed; npm run ctrl:full reached test:live and failed closed exit 78 because live/deploy env is intentionally unset.
+- 2026-05-21 23:15 UTC — Closed productization pass: server bootstrap now applies entity.config.yaml before DB/terminal startup, runtime seeding updates agents/file sources/plugin settings/service catalog from config, Mission Control helper reference no longer points to ~/clawd, and private-default baseline was refreshed to 0 errors/146 warnings. Verification: scan enforce passed; targeted config/plugin/terminal/chat registry Vitest passed 43/43; server build passed; full server Vitest passed 315/315 across 46 files; root npm run build passed; npm run doctor passed; npm run ctrl:gate passed; deploy.sh missing-env fail-closed exit 78 and configured dry-run print-config passed; npm run ctrl:full reached test:live and failed closed exit 78 because live/deploy env is intentionally unset.
 
 ## Resume Instructions
 1. Re-read CONTEXT.md and this plan.

@@ -14,6 +14,7 @@ const ENV_PATH = path.join(CONFIG_DIR, '.env');
 
 const args = new Set(process.argv.slice(2));
 const useDefaults = args.has('--defaults') || args.has('--yes') || args.has('-y');
+const force = args.has('--force');
 
 if (args.has('--help') || args.has('-h')) {
   console.log(`Usage: npm run setup -- [--defaults]
@@ -22,6 +23,7 @@ Creates a local-safe Entity first-run configuration.
 
 Options:
   --defaults, --yes, -y   Write the safe local defaults without prompting
+  --force                 Overwrite an existing entity.config.yaml
   --help, -h              Show this help`);
   process.exit(0);
 }
@@ -75,6 +77,17 @@ async function main() {
   console.log('This will create a safe local-first configuration.');
   console.log('');
 
+  if (fs.existsSync(CONFIG_PATH) && !force) {
+    console.log(`entity.config.yaml already exists at ${CONFIG_PATH}`);
+    console.log('Preserving existing config. Re-run with --force to overwrite it.');
+    console.log('');
+    console.log('Next steps:');
+    console.log('  npm run doctor     # Check workspace health');
+    console.log('  npm run dev        # Start development server');
+    if (rl) rl.close();
+    return;
+  }
+
   if (useDefaults) {
     console.log('Using safe local defaults (--defaults).');
     console.log('');
@@ -86,7 +99,6 @@ async function main() {
   const workspaceRoot = await askDefault('Workspace root path', DEFAULTS.workspaceRoot);
   const useOnboarding = (await askDefault('Run first-run onboarding wizard (y/n)', 'n')).toLowerCase() === 'y';
 
-  const resolvedDatabasePath = resolveRepoPath(DEFAULTS.databasePath);
   ensureLocalPaths({ workspaceRoot, databasePath: DEFAULTS.databasePath, logPath: DEFAULTS.logPath });
 
   const yaml = [
@@ -116,17 +128,36 @@ async function main() {
     '    enabled: true',
     '    role: general',
     '    fileSources: []',
+    '    healthUrls: []',
+    '    workspaceRoot: null',
     '    gateway:',
     '      type: none',
     '      url: null',
     '      tokenRef: null',
     '',
-    'fileSources: []',
+    'fileSources:',
+    '  - id: workspace',
+    '    displayName: Workspace',
+    '    type: local',
+    `    basePath: ${JSON.stringify(workspaceRoot)}`,
+    '    baseUrl: null',
+    '    enabled: true',
+    '    icon: null',
+    '    agentBindings:',
+    '      - assistant',
     '',
     'services: []',
     '',
     'providers: {}',
-    'plugins: {}',
+    'plugins:',
+    '  entity-services:',
+    '    settings:',
+    '      entityBaseUrl: "http://localhost:' + serverPort + '"',
+    '      externalAdminUrl: ""',
+    '      externalAdminName: External Admin',
+    '      services: []',
+    '      discoverGatewayServices: false',
+    '      discoverMacServices: false',
     'voice:',
     '  defaultProvider: browser',
     '  providers: {}',
@@ -149,14 +180,16 @@ async function main() {
       '',
       'ENTITY_CONFIG=entity.config.yaml',
       'ENTITY_DB_MODE=LOCAL',
-      `ENTITY_TASK_DB_PATH=${quoteEnv(resolvedDatabasePath)}`,
-      `ENTITY_CLOUD_API_BASE=http://localhost:${serverPort}`,
-      `VITE_MC_ORIGIN=http://localhost:${serverPort}`,
-      `VITE_ENTITY_API_BASE=http://localhost:${serverPort}`,
-      `VITE_ENTITY_WS_PORT=${serverPort}`,
       'ENTITY_FS_MULTISOURCE=true',
       'ENTITY_FS_INDEXER_ENABLED=false',
-      `PORT=${serverPort}`,
+      '# Non-secret runtime defaults live in entity.config.yaml.',
+      '# Uncomment these only when you need an environment override:',
+      `# ENTITY_TASK_DB_PATH=${quoteEnv(resolveRepoPath(DEFAULTS.databasePath))}`,
+      `# ENTITY_CLOUD_API_BASE=http://localhost:${serverPort}`,
+      `# VITE_MC_ORIGIN=http://localhost:${serverPort}`,
+      `# VITE_ENTITY_API_BASE=http://localhost:${serverPort}`,
+      `# VITE_ENTITY_WS_PORT=${serverPort}`,
+      `# PORT=${serverPort}`,
       'ENTITY_API_TOKEN=',
       'ENTITY_DEFAULT_DOCUMENTS_TOKEN=',
       '',

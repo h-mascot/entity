@@ -31,6 +31,8 @@ agents:
     emoji: "🤖"
     enabled: true
     fileSources: []
+    healthUrls: []
+    workspaceRoot: null
     gateway:
       type: none
       url: null

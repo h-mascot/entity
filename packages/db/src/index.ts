@@ -1017,7 +1017,7 @@ function seedEntityRegistryDefaults(db: Database.Database): void {
   }
 
   const skillRefs = [
-    ['tasks-mc-sh', 'tasks', 'mc.sh', 'script', '~/clawd/scripts/mc.sh', 1, 'Mission Control CLI'],
+    ['tasks-mc-sh', 'tasks', 'mc.sh', 'script', 'skills/entity-mc/source-scripts/mc.sh', 1, 'Mission Control CLI helper bundled with Entity'],
     ['tasks-context', 'tasks', 'Entity context', 'doc', 'memory/entity-project-context.md', 1, 'Entity runtime context'],
     ['swarm-skill', 'swarm', 'Swarm skill', 'skill', 'skills/entity-mc/', 0, 'Swarm-adjacent execution runtime'],
     ['plugins-admin', 'plugins', 'Plugin admin', 'doc', 'packages/app/src/stores/pluginStore.ts', 0, 'Plugin UI/state wiring'],

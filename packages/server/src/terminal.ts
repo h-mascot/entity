@@ -62,6 +62,7 @@ export interface CreateTerminalBridgeOptions {
   spawnProcess?: TerminalSpawner;
   now?: () => Date;
   logger?: Pick<Console, 'warn' | 'error'>;
+  targets?: readonly TerminalTarget[];
 }
 
 export type TerminalSpawner = (
@@ -119,13 +120,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function normalizeTargetId(value: unknown): TerminalTargetId | null {
+function normalizeTargetId(value: unknown, targets: readonly TerminalTarget[] = TERMINAL_TARGETS): TerminalTargetId | null {
   if (typeof value !== 'string') {
     return null;
   }
 
   const normalized = value.trim() as TerminalTargetId;
-  return TERMINAL_TARGETS.some((target) => target.id === normalized) ? normalized : null;
+  return targets.some((target) => target.id === normalized) ? normalized : null;
 }
 
 function terminalTargetIds(targets: readonly TerminalTarget[] = TERMINAL_TARGETS): string {
@@ -160,8 +161,9 @@ export function buildTerminalLaunchSpec(
   workspaceRoot: string,
   cols = DEFAULT_COLS,
   rows = DEFAULT_ROWS,
+  targets: readonly TerminalTarget[] = TERMINAL_TARGETS,
 ): TerminalLaunchSpec {
-  const target = TERMINAL_TARGETS.find((entry) => entry.id === targetId);
+  const target = targets.find((entry) => entry.id === targetId);
   if (!target) {
     throw new Error(`Unsupported terminal target: ${targetId}`);
   }
@@ -285,6 +287,7 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
   const spawnProcess = options.spawnProcess ?? defaultSpawnProcess;
   const now = options.now ?? (() => new Date());
   const logger = options.logger ?? console;
+  const targets = options.targets && options.targets.length > 0 ? options.targets : TERMINAL_TARGETS;
   const sessions = new Map<string, TerminalSession>();
   const socketSessions = new Map<WebSocket, Set<string>>();
 
@@ -325,13 +328,13 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
   };
 
   const createSession = (input: CreateTerminalSessionInput = {}): TerminalSessionSummary => {
-    const targetId = normalizeTargetId(input.target) ?? TERMINAL_TARGETS[0]?.id;
+    const targetId = normalizeTargetId(input.target, targets) ?? targets[0]?.id;
     if (!targetId) {
       throw new Error('No terminal targets are configured.');
     }
     const cols = toDimension(input.cols, DEFAULT_COLS);
     const rows = toDimension(input.rows, DEFAULT_ROWS);
-    const launch = buildTerminalLaunchSpec(targetId, options.workspaceRoot, cols, rows);
+    const launch = buildTerminalLaunchSpec(targetId, options.workspaceRoot, cols, rows, targets);
     const summary: TerminalSessionSummary = {
       id: randomUUID(),
       target: launch.target.id,
@@ -410,8 +413,8 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
             socket,
             {
               id: sessionId || 'unknown',
-              target: TERMINAL_TARGETS[0]?.id ?? 'unknown',
-              targetLabel: TERMINAL_TARGETS[0]?.label ?? 'unknown',
+              target: targets[0]?.id ?? 'unknown',
+              targetLabel: targets[0]?.label ?? 'unknown',
               transport: 'local',
               status: 'error',
               createdAt: now().toISOString(),
@@ -497,7 +500,7 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
   };
 
   return {
-    listTargets: () => TERMINAL_TARGETS.map((target) => ({ ...target })),
+    listTargets: () => targets.map((target) => ({ ...target })),
     createSession,
     closeSession,
     handleSocketConnection,
