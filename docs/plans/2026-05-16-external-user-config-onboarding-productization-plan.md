@@ -37,8 +37,11 @@ This task continues the existing cleanup/open-source-readiness branch. The worki
 ## Files Touched
 - .env.example
 - .github/workflows/main.yml
+- .gitignore
 - README.md
+- deploy.sh
 - dev.sh
+- docs/config/entity-config.md
 - docs/config/entity.config.example.yaml
 - docs/internal/enterprise-profile.md
 - docs/plans/2026-05-16-external-user-config-onboarding-productization-plan.md
@@ -52,6 +55,8 @@ This task continues the existing cleanup/open-source-readiness branch. The worki
 - packages/server/src/config/routes.test.ts
 - packages/server/src/config/schema.ts
 - scripts/entity-doctor.js
+- scripts/entity-deploy-webhook-server.mjs
+- scripts/ctrl-deploy-path-check.sh
 - scripts/entity-setup.js
 - scripts/scan-private-defaults.mjs
 
@@ -60,6 +65,7 @@ This task continues the existing cleanup/open-source-readiness branch. The worki
 - 2026-05-16 07:01 — Tightened secret-path detection, restored safe env examples, expanded scanner roots, added seeded onboarding skill refs for uninitialized registries, fixed in-memory onboarding route behavior, and corrected mobile tab typing for the token dashboard.
 - 2026-05-16 07:03 — Verification: private-default scan enforce passed with warnings-only baseline; targeted server vitest suite passed 29/29; npm run build passed; npm run ctrl:gate passed. ctrl:full intentionally fails closed because CTRL_LIVE_BASE_URL/ENTITY_PROD_HTTP_HOST and deploy env are unset, proving no private production default is assumed.
 - 2026-05-16 19:08 — Final verification on Node 22.22.2 after local setup: full server build passed; full server Vitest passed 303/303 across 44 files; private-default scan passed with 128 warnings/0 errors; npm run build passed; npm run doctor passed after npm run setup created ignored local entity.config.yaml; npm run ctrl:gate passed; npm run ctrl:full reached test:live and failed closed because CTRL_LIVE_BASE_URL/ENTITY_PROD_HTTP_HOST is intentionally unset.
+- 2026-05-21 13:38 UTC — Follow-up hardening: made deploy runtime port/log/launchd/node entry explicit profile knobs, removed deploy webhook DB/HTTP host fallback defaults, fixed CI deploy authorization header syntax, ignored generated local setup DB/log paths, and documented the deploy profile contract in public/internal docs. Verification: private-default scan enforce passed with 0 errors/152 warnings; targeted config/plugin/terminal/swarm Vitest passed 30/30; full server build passed; full server Vitest passed 311/311 across 45 files; npm run build passed; npm run doctor passed; npm run ctrl:gate passed; deploy.sh missing-env fail-closed exit 78 and dry-run print-config passed; npm run ctrl:full reached test:live and failed closed exit 78 because live/deploy env is intentionally unset.
 
 ## Resume Instructions
 1. Re-read CONTEXT.md and this plan.

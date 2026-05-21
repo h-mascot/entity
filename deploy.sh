@@ -18,7 +18,7 @@ for arg in "$@"; do
     --print-config) PRINT_CONFIG=1 ;;
     *)
       echo "ERROR: Unsupported deploy argument: $arg" >&2
-      echo "Usage: ENTITY_PROD_HOST=... ENTITY_PROD_DIR=... ENTITY_PROD_DB=... ENTITY_PROD_HTTP_HOST=... ./deploy.sh [--all|--server-only|--frontend-only] [--print-config]" >&2
+      echo "Usage: ENTITY_PROD_HOST=... ENTITY_PROD_DIR=... ENTITY_PROD_DB=... ENTITY_PROD_HTTP_HOST=... [ENTITY_PROD_PORT=3000] ./deploy.sh [--all|--server-only|--frontend-only] [--print-config]" >&2
       exit 64
       ;;
   esac
@@ -26,10 +26,14 @@ done
 
 PROD_HOST="${ENTITY_PROD_HOST:-}"
 PROD_HTTP_HOST="${ENTITY_PROD_HTTP_HOST:-}"
+PROD_PORT="${ENTITY_PROD_PORT:-3000}"
 ENTITY_DIR="${ENTITY_PROD_DIR:-}"
 PROD_DB="${ENTITY_PROD_DB:-}"
 MAC_ENTITY_DIR="${ENTITY_SOURCE_DIR:-${SCRIPT_DIR}}"
 RUNTIME_WORKSPACE="${ENTITY_RUNTIME_WORKSPACE:-}"
+RUNTIME_LOG_PATH="${ENTITY_PROD_LOG_PATH:-/tmp/entity-server.log}"
+RUNTIME_LAUNCHD_SERVICE="${ENTITY_PROD_LAUNCHD_SERVICE:-}"
+RUNTIME_NODE_ENTRY="${ENTITY_PROD_NODE_ENTRY:-packages/server/dist/server/src/index.js}"
 RELEASE_CHECK_SCRIPT="${SCRIPT_DIR}/scripts/entity-release-check.sh"
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 SERVER_DIST="${ENTITY_DIR}/packages/server/dist"
@@ -41,7 +45,7 @@ if [[ -z "$PROD_HTTP_HOST" ]]; then
 elif [[ "$PROD_HTTP_HOST" == http://* || "$PROD_HTTP_HOST" == https://* ]]; then
   PROD_BASE_URL="${PROD_HTTP_HOST%/}"
 else
-  PROD_BASE_URL="http://${PROD_HTTP_HOST}:3000"
+  PROD_BASE_URL="http://${PROD_HTTP_HOST}:${PROD_PORT}"
 fi
 
 RED='\033[0;31m'
@@ -65,10 +69,14 @@ dryRun=${DRY_RUN}
 sourceDir=${MAC_ENTITY_DIR}
 prodHost=${PROD_HOST:-<missing>}
 prodHttpHost=${PROD_HTTP_HOST:-<missing>}
+prodPort=${PROD_PORT}
 prodBaseUrl=${PROD_BASE_URL:-<missing>}
 prodDir=${ENTITY_DIR:-<missing>}
 prodDb=${PROD_DB:-<missing>}
 runtimeWorkspace=${RUNTIME_WORKSPACE:-<unset>}
+runtimeLogPath=${RUNTIME_LOG_PATH}
+runtimeLaunchdService=${RUNTIME_LAUNCHD_SERVICE:-<unset>}
+runtimeNodeEntry=${RUNTIME_NODE_ENTRY}
 skipMacBuild=${SKIP_MAC_BUILD}
 EOF
 fi
@@ -150,12 +158,12 @@ if [[ "$SYMLINK_TARGET" != "$PROD_DB" ]]; then
 fi
 
 log "Restarting server..."
-REMOTE_ENV="PORT=3000"
+REMOTE_ENV="PORT=${PROD_PORT}"
 if [[ -n "$RUNTIME_WORKSPACE" ]]; then
   REMOTE_ENV="${REMOTE_ENV} WORKSPACE='${RUNTIME_WORKSPACE}'"
 fi
 
-ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; UID_NUM=\$(id -u); if launchctl print \"gui/\${UID_NUM}/com.claw.entity-server\" >/dev/null 2>&1; then launchctl kickstart -k \"gui/\${UID_NUM}/com.claw.entity-server\"; else lsof -i :3000 -t 2>/dev/null | xargs kill -9 2>/dev/null || true; sleep 2; cd '${ENTITY_DIR}' && ${REMOTE_ENV} nohup node packages/server/dist/server/src/index.js > /tmp/entity-server.log 2>&1 & fi"
+ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; UID_NUM=\$(id -u); if [[ -n '${RUNTIME_LAUNCHD_SERVICE}' ]] && launchctl print \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\" >/dev/null 2>&1; then launchctl kickstart -k \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\"; else lsof -i :'${PROD_PORT}' -t 2>/dev/null | xargs kill -9 2>/dev/null || true; sleep 2; mkdir -p \"\$(dirname '${RUNTIME_LOG_PATH}')\"; cd '${ENTITY_DIR}' && ${REMOTE_ENV} nohup node '${RUNTIME_NODE_ENTRY}' > '${RUNTIME_LOG_PATH}' 2>&1 & fi"
 sleep 4
 
 NEW_COUNT=$(curl -s "${PROD_BASE_URL}/api/tasks" | python3 -c "import sys, json; raw = sys.stdin.read().strip(); payload = json.loads(raw) if raw else {}; print(len(payload) if isinstance(payload, list) else payload.get('total', len(payload.get('tasks', [])) if isinstance(payload.get('tasks'), list) else 0))" 2>/dev/null || echo "0")

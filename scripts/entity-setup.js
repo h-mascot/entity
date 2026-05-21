@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * entity-setup.js
- * Interactive first-run setup for Entity workspace.
- * Generates entity.config.yaml from user prompts with safe local defaults.
+ * First-run setup for Entity workspace.
+ * Generates entity.config.yaml from prompts or safe local defaults.
  */
 const fs = require('fs');
 const path = require('path');
@@ -12,18 +12,60 @@ const CONFIG_DIR = path.join(__dirname, '..');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'entity.config.yaml');
 const ENV_PATH = path.join(CONFIG_DIR, '.env');
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const args = new Set(process.argv.slice(2));
+const useDefaults = args.has('--defaults') || args.has('--yes') || args.has('-y');
 
-function ask(question) {
-  return new Promise(resolve => rl.question(question, resolve));
+if (args.has('--help') || args.has('-h')) {
+  console.log(`Usage: npm run setup -- [--defaults]
+
+Creates a local-safe Entity first-run configuration.
+
+Options:
+  --defaults, --yes, -y   Write the safe local defaults without prompting
+  --help, -h              Show this help`);
+  process.exit(0);
 }
 
+const DEFAULTS = {
+  displayName: 'My Entity Workspace',
+  ownerName: 'Local User',
+  serverPort: '3000',
+  workspaceRoot: '~/entity-workspace',
+  databasePath: './data/entity.sqlite',
+  logPath: './logs/entity.log',
+};
+
+const rl = useDefaults ? null : readline.createInterface({ input: process.stdin, output: process.stdout });
+
 function askDefault(question, defaultVal) {
+  if (!rl) return Promise.resolve(defaultVal);
   return new Promise(resolve => {
     rl.question(`${question} [${defaultVal}]: `, answer => {
       resolve(answer.trim() || defaultVal);
     });
   });
+}
+
+function expandHome(value) {
+  if (!value || typeof value !== 'string') return value;
+  if (value === '~') return process.env.HOME || value;
+  if (value.startsWith('~/')) return path.join(process.env.HOME || '~', value.slice(2));
+  return value;
+}
+
+function resolveRepoPath(value) {
+  const expanded = expandHome(value);
+  return path.isAbsolute(expanded) ? expanded : path.resolve(CONFIG_DIR, expanded);
+}
+
+function ensureLocalPaths({ workspaceRoot, databasePath, logPath }) {
+  fs.mkdirSync(resolveRepoPath(workspaceRoot), { recursive: true });
+  fs.mkdirSync(path.dirname(resolveRepoPath(databasePath)), { recursive: true });
+  fs.mkdirSync(path.dirname(resolveRepoPath(logPath)), { recursive: true });
+}
+
+function quoteEnv(value) {
+  return JSON.stringify(String(value).replace(/\n/g, ''));
 }
 
 async function main() {
@@ -33,12 +75,19 @@ async function main() {
   console.log('This will create a safe local-first configuration.');
   console.log('');
 
-  const displayName = await askDefault('Display name for this workspace', 'My Entity Workspace');
-  const ownerName = await askDefault('Owner/user display name', 'Local User');
-  const serverPort = await askDefault('Server port', '3000');
-  const workspaceRoot = await askDefault('Workspace root path', '~/entity-workspace');
+  if (useDefaults) {
+    console.log('Using safe local defaults (--defaults).');
+    console.log('');
+  }
 
+  const displayName = await askDefault('Display name for this workspace', DEFAULTS.displayName);
+  const ownerName = await askDefault('Owner/user display name', DEFAULTS.ownerName);
+  const serverPort = await askDefault('Server port', DEFAULTS.serverPort);
+  const workspaceRoot = await askDefault('Workspace root path', DEFAULTS.workspaceRoot);
   const useOnboarding = (await askDefault('Run first-run onboarding wizard (y/n)', 'n')).toLowerCase() === 'y';
+
+  const resolvedDatabasePath = resolveRepoPath(DEFAULTS.databasePath);
+  ensureLocalPaths({ workspaceRoot, databasePath: DEFAULTS.databasePath, logPath: DEFAULTS.logPath });
 
   const yaml = [
     '# Entity Configuration',
@@ -46,19 +95,19 @@ async function main() {
     '',
     'version: 1',
     '',
-    `profile:`,
+    'profile:',
     `  displayName: ${JSON.stringify(displayName)}`,
     `  ownerName: ${JSON.stringify(ownerName)}`,
     '',
     'server:',
-    `  host: localhost`,
+    '  host: localhost',
     `  port: ${serverPort}`,
     `  workspaceRoot: ${JSON.stringify(workspaceRoot)}`,
     `  publicBaseUrl: "http://localhost:${serverPort}"`,
     `  apiBaseUrl: "http://localhost:${serverPort}"`,
     `  wsBaseUrl: "ws://localhost:${serverPort}"`,
-    `  databasePath: "./data/entity.sqlite"`,
-    `  logPath: "./logs/entity.log"`,
+    `  databasePath: ${JSON.stringify(DEFAULTS.databasePath)}`,
+    `  logPath: ${JSON.stringify(DEFAULTS.logPath)}`,
     '',
     'agents:',
     '  - id: assistant',
@@ -89,19 +138,22 @@ async function main() {
     '  targets: []',
   ].filter(line => line !== '').join('\n');
 
-  fs.writeFileSync(CONFIG_PATH, yaml);
+  fs.writeFileSync(CONFIG_PATH, `${yaml}\n`);
 
-  // Create .env if it doesn't exist
-  if (!fs.existsSync(ENV_PATH)) {
+  // Create .env if it doesn't exist. Existing local secrets are never overwritten.
+  const envAlreadyExisted = fs.existsSync(ENV_PATH);
+  if (!envAlreadyExisted) {
     const envContent = [
       '# Entity Environment Configuration',
       '# Generated by npm run setup - safe local defaults',
       '',
       'ENTITY_CONFIG=entity.config.yaml',
       'ENTITY_DB_MODE=LOCAL',
+      `ENTITY_TASK_DB_PATH=${quoteEnv(resolvedDatabasePath)}`,
       `ENTITY_CLOUD_API_BASE=http://localhost:${serverPort}`,
       `VITE_MC_ORIGIN=http://localhost:${serverPort}`,
       `VITE_ENTITY_API_BASE=http://localhost:${serverPort}`,
+      `VITE_ENTITY_WS_PORT=${serverPort}`,
       'ENTITY_FS_MULTISOURCE=true',
       'ENTITY_FS_INDEXER_ENABLED=false',
       `PORT=${serverPort}`,
@@ -115,19 +167,19 @@ async function main() {
   console.log('');
   console.log('Configuration created:');
   console.log(`  entity.config.yaml (${CONFIG_PATH})`);
-  console.log(`  .env (${ENV_PATH})`);
+  console.log(`  .env (${ENV_PATH}${envAlreadyExisted ? ', preserved existing file' : ''})`);
   console.log('');
   console.log('Next steps:');
   console.log('  npm run build      # Build all packages');
-  console.log('  npm run dev        # Start development server');
   console.log('  npm run doctor     # Check workspace health');
+  console.log('  npm run dev        # Start development server');
   console.log('');
 
   if (useOnboarding) {
     console.log('Onboarding: visit http://localhost:' + serverPort + '/onboarding');
   }
 
-  rl.close();
+  if (rl) rl.close();
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

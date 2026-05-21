@@ -21,7 +21,15 @@ Use `/api/config/effective` to inspect the final value and source for a field be
 
 ## Quick start for a new installation
 
-Create `entity.config.yaml` in the Entity working directory:
+Create `entity.config.yaml` in the Entity working directory using the setup command:
+
+```bash
+npm run setup
+# or, for CI/non-interactive local defaults:
+npm run setup -- --defaults
+```
+
+You can also copy the example manually:
 
 ```bash
 cp docs/config/entity.config.example.yaml entity.config.yaml
@@ -40,6 +48,27 @@ Then edit installation-specific values:
 - `plugins.entity-services.settings.services` for any external service catalog entries
 
 Keep secrets out of this file when possible. Use environment variables or secret references, and expect `/api/config/effective` to redact token-like fields.
+
+## Production deploy profiles
+
+`./deploy.sh` intentionally refuses to run until a production target and DB are explicit. Use environment variables or a private wrapper/profile to provide these values; do not add private defaults to public source.
+
+Required:
+
+- `ENTITY_PROD_HOST`
+- `ENTITY_PROD_HTTP_HOST`
+- `ENTITY_PROD_DIR`
+- `ENTITY_PROD_DB`
+
+Optional runtime knobs:
+
+- `ENTITY_PROD_PORT` — port used for fallback runtime and verification URL construction; default `3000`.
+- `ENTITY_RUNTIME_WORKSPACE` — workspace path passed to the server process.
+- `ENTITY_PROD_LOG_PATH` — remote fallback process log path.
+- `ENTITY_PROD_LAUNCHD_SERVICE` — macOS launchd service label to restart when the deployment uses launchd.
+- `ENTITY_PROD_NODE_ENTRY` — server entrypoint relative to `ENTITY_PROD_DIR` for fallback process startup.
+
+Run `ENTITY_DEPLOY_DRY_RUN=1 ./deploy.sh --print-config` to inspect the resolved profile without deploying.
 
 ## Human Admin path
 

@@ -19,7 +19,9 @@ git clone https://github.com/h-mascot/entity.git
 cd entity
 npm install
 npm run setup    # interactive first-run wizard - creates entity.config.yaml
+# or: npm run setup -- --defaults  # non-interactive safe local defaults
 npm run build
+npm run doctor   # verifies config, paths, build outputs, and private-default scan
 npm run dev      # starts server at http://localhost:3000
 ```
 
@@ -97,9 +99,11 @@ cp .env.example .env
 
 ```bash
 npm run setup
+# Non-interactive / CI-friendly defaults:
+npm run setup -- --defaults
 ```
 
-This runs an interactive wizard that generates `entity.config.yaml` with your workspace settings. You can also manually create one from `entity.config.example.yaml`.
+This generates `entity.config.yaml` with your workspace settings. The defaults are localhost-only and create the local workspace, data, and log directories. You can also manually create one from `entity.config.example.yaml`.
 
 ### Run the full app locally
 
@@ -161,6 +165,9 @@ npm run electron:build
 | Command | Purpose |
 |---|---|
 | `npm install` | Install workspace dependencies |
+| `npm run setup` | Interactive first-run setup for `entity.config.yaml` |
+| `npm run setup -- --defaults` | Non-interactive setup with safe local defaults |
+| `npm run doctor` | Verify config, local paths, build outputs, and private-default scan |
 | `npm run build` | Build frontend, DB package, and server |
 | `npm --prefix packages/app run build` | Build the Vite frontend only |
 | `npm --prefix packages/server run build` | Build the server only |
@@ -181,8 +188,10 @@ Common environment variables:
 
 | Variable | Purpose |
 |---|---|
+| `ENTITY_CONFIG` | Path to `entity.config.yaml`; defaults to the repo-local file created by `npm run setup` |
 | `PORT` | Entity server port, default `3000` |
 | `ENTITY_DB_MODE` | Database mode; local development defaults to SQLite |
+| `ENTITY_TASK_DB_PATH` | SQLite DB path override; setup/dev default to `./data/entity.sqlite` |
 | `ENTITY_CLOUD_API_BASE` | Base URL for Entity's own API when a deployment needs an explicit origin |
 | `VITE_ENTITY_API_BASE` | Frontend API base URL when using the Vite dev server |
 | `VITE_ENTITY_WS_URL` | Frontend WebSocket URL when using the Vite dev server |
@@ -194,6 +203,24 @@ Common environment variables:
 | `SENTRY_DSN` / `VITE_SENTRY_DSN` | Optional backend/frontend Sentry reporting |
 
 Private deployments may have additional `.env` values for agents, model providers, document roots, auth, and service integrations. Do not commit secrets.
+
+### Production deploy profile
+
+`./deploy.sh` is fail-closed. It has no built-in production host, directory, DB, service name, or private workspace. A production deploy must provide an explicit profile through environment variables:
+
+| Variable | Required | Purpose |
+|---|---:|---|
+| `ENTITY_PROD_HOST` | yes | SSH target for the deployment host |
+| `ENTITY_PROD_HTTP_HOST` | yes | HTTP host or full URL used for post-deploy verification |
+| `ENTITY_PROD_DIR` | yes | Remote Entity install directory |
+| `ENTITY_PROD_DB` | yes | Remote SQLite DB path to verify, back up, and preserve |
+| `ENTITY_PROD_PORT` | no | Runtime/verification port when `ENTITY_PROD_HTTP_HOST` is a hostname; defaults to `3000` |
+| `ENTITY_RUNTIME_WORKSPACE` | no | Runtime workspace path passed to the server process |
+| `ENTITY_PROD_LOG_PATH` | no | Remote fallback log path when not using a service manager |
+| `ENTITY_PROD_LAUNCHD_SERVICE` | no | macOS launchd service label to restart instead of starting a fallback process |
+| `ENTITY_PROD_NODE_ENTRY` | no | Server entrypoint relative to `ENTITY_PROD_DIR` for fallback process start |
+
+Keep private deployment values in internal docs or a private profile, not in public defaults.
 
 ---
 
@@ -327,7 +354,7 @@ PORT=3000 npm --prefix packages/server run dev
 | Feature | Status |
 |---|---|
 | Public demo/default configuration | Needed for low-friction evaluation |
-| Portable first-run setup wizard | Planned |
+| Portable first-run setup wizard | Present; run `npm run setup` or `npm run setup -- --defaults` |
 | Browser pane / computer-use surface | Planned |
 | Third-party install hardening | In progress |
 | Hosted/public deployment guide | Planned |

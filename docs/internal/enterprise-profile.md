@@ -29,8 +29,12 @@ cd ~/Code/entity
 # Set required env vars
 export ENTITY_PROD_HOST=enterprise@100.104.229.62
 export ENTITY_PROD_HTTP_HOST=100.104.229.62
+export ENTITY_PROD_PORT=3000
 export ENTITY_PROD_DIR=/Users/enterprise/Services/entity
 export ENTITY_PROD_DB=/Users/enterprise/Services/entity/packages/server/dist/db/entity-tasks.db
+export ENTITY_RUNTIME_WORKSPACE=/home/henrymascot/clawd
+export ENTITY_PROD_LOG_PATH=/tmp/entity-server.log
+export ENTITY_PROD_LAUNCHD_SERVICE=com.claw.entity-server
 
 # Deploy
 ./deploy.sh --all
