@@ -1767,16 +1767,21 @@ app.get("/api/agents", async (_req, res) => {
             moduleCount: 0,
             capabilityLabels: [],
             permissionLabels: [],
+            scopeLabels: [],
           },
         });
       });
     res.json({ ...data, list });
   } catch {
     res.json({
-      list: registryAgents.map((entry: { avatar_url: string | null }) => ({
-        ...entry,
-        avatarUrl: entry.avatar_url || undefined,
-      })),
+      list: registryAgents.map((entry: { id: string; avatar_url: string | null }) => {
+        const grants = moduleRegistryRepo.listAgentModuleGrants(entry.id);
+        return {
+          ...entry,
+          avatarUrl: entry.avatar_url || undefined,
+          capabilities: buildAgentCapabilityCard({ agent: entry, grants, modules }),
+        };
+      }),
     });
   }
 });
