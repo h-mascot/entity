@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main, develop, 'feature/**']
+    branches: ['**']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -23,54 +23,18 @@ jobs:
       - run: npm test || echo "Tests skipped (MVP mode)"
 
   deploy:
-    name: Deploy to Production
+    name: Deploy Handoff
     needs: ctrl-gate
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.repository == 'h-mascot/entity'
+    if: github.repository == 'h-mascot/entity' && needs.ctrl-gate.result == 'success'
     steps:
-      - name: Check deploy secrets
-        id: deploy-config
-        env:
-          DEPLOY_URL: ${{ secrets.WEBHOOK_DEPLOY_URL }}
-          DEPLOY_TOKEN: ${{ secrets.WEBHOOK_DEPLOY_TOKEN }}
+      - name: Record gateway pull-deploy handoff
         run: |
-          if [ -z "$DEPLOY_URL" ] || [ -z "$DEPLOY_TOKEN" ]; then
-            echo "Deploy webhook secrets are not configured. Skipping deploy from public runner."
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "configured=true" >> "$GITHUB_OUTPUT"
-
-      - name: Trigger Webhook Deploy
-        if: steps.deploy-config.outputs.configured == 'true'
-        env:
-          DEPLOY_URL: ${{ secrets.WEBHOOK_DEPLOY_URL }}
-          DEPLOY_TOKEN: ${{ secrets.WEBHOOK_DEPLOY_TOKEN }}
-        run: |
-          echo "Triggering public Entity deploy"
-          DEPLOY_BODY=$(cat <<EOF
-          {
-            "action": "approve",
-            "repo": "h-mascot/entity",
-            "sha": "${{ github.sha }}",
-            "ref": "${{ github.ref_name }}",
-            "runId": "${{ github.run_id }}",
-            "docId": "entity-deploy-${{ github.run_id }}"
-          }
-          EOF)
-          RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST "$DEPLOY_URL" \
-            -H "Authorization: Bearer $DEPLOY_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$DEPLOY_BODY")
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          echo "HTTP status: $HTTP_CODE"
-          echo "Response body: $BODY"
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Deploy failed with status $HTTP_CODE: $BODY"
-            exit 1
-          fi
-          echo "Deploy triggered successfully: $BODY"
+          echo "GitHub public runners do not deploy over private networking."
+          echo "The on-network Entity pull deployer polls this successful workflow and deploys the configured branch from inside the gateway network."
+          echo "repo=${{ github.repository }}"
+          echo "branch=${{ github.ref_name }}"
+          echo "sha=${{ github.sha }}"
 
   notify:
     name: Notify
@@ -89,7 +53,7 @@ jobs:
             exit 0
           fi
           if [ "$GATE" = "success" ] && [ "$DEPLOY" = "success" ]; then
-            STATUS="✅ DEPLOYED"
+            STATUS="✅ CI PASS - gateway deployer will pull tracked branch"
           elif [ "$GATE" = "success" ] && [ "$DEPLOY" = "skipped" ]; then
             STATUS="✅ CTRL PASS (no deploy - not main)"
           elif [ "$GATE" = "success" ]; then
