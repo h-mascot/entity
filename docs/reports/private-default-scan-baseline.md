@@ -1,8 +1,8 @@
 # Private Default Scan Baseline
 
-Generated: 2026-05-07T11:47:10.485Z
+Generated: 2026-05-22T08:07:25.177Z
 
-Scanned files: 286
+Scanned files: 287
 Findings: 154
 Errors: 0
 Warnings: 154
