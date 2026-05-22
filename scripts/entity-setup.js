@@ -13,8 +13,11 @@ const CONFIG_PATH = path.join(CONFIG_DIR, 'entity.config.yaml');
 const ENV_PATH = path.join(CONFIG_DIR, '.env');
 
 const args = new Set(process.argv.slice(2));
-const useDefaults = args.has('--defaults') || args.has('--yes') || args.has('-y');
+const interactive = args.has('--interactive');
+const useDefaults = !interactive || args.has('--defaults') || args.has('--yes') || args.has('-y');
 const force = args.has('--force');
+const checkOnly = args.has('--check');
+const skipClickClack = args.has('--skip-clickclack');
 
 if (args.has('--help') || args.has('-h')) {
   console.log(`Usage: npm run setup -- [--defaults]
@@ -23,6 +26,9 @@ Creates a local-safe Entity first-run configuration.
 
 Options:
   --defaults, --yes, -y   Write the safe local defaults without prompting
+  --interactive           Prompt for local workspace values
+  --check                 Validate setup inputs without creating missing files
+  --skip-clickclack       Skip ClickClack sidecar checkout verification
   --force                 Overwrite an existing entity.config.yaml
   --help, -h              Show this help`);
   process.exit(0);
@@ -70,11 +76,23 @@ function quoteEnv(value) {
   return JSON.stringify(String(value).replace(/\n/g, ''));
 }
 
+function printCheck(ok, name, detail) {
+  console.log(`[${ok ? 'PASS' : 'FAIL'}] ${name}${detail ? ` - ${detail}` : ''}`);
+}
+
 async function main() {
+  const {
+    checkSidecarPrerequisites,
+    ensureSidecarDataDir,
+    failedRequiredChecks,
+    loadSidecarPin,
+    verifyClickClackCheckout,
+  } = await import('./clickclack-sidecar-lib.mjs');
+
   console.log('');
   console.log('Entity Workspace Setup');
   console.log('======================');
-  console.log('This will create a safe local-first configuration.');
+  console.log('This will create a safe local-first configuration and ClickClack sidecar pin.');
   console.log('');
 
   if (fs.existsSync(CONFIG_PATH) && !force) {
@@ -84,6 +102,19 @@ async function main() {
     console.log('Next steps:');
     console.log('  npm run doctor     # Check workspace health');
     console.log('  npm run dev        # Start development server');
+    if (rl) rl.close();
+    if (!skipClickClack) {
+      await verifyClickClack({ install: !checkOnly });
+    }
+    return;
+  }
+
+  if (checkOnly) {
+    printCheck(false, 'entity.config.yaml', `missing: ${CONFIG_PATH}`);
+    if (!skipClickClack) {
+      await verifyClickClack({ install: false });
+    }
+    process.exitCode = 1;
     if (rl) rl.close();
     return;
   }
@@ -208,11 +239,45 @@ async function main() {
   console.log('  npm run dev        # Start development server');
   console.log('');
 
+  if (!skipClickClack) {
+    await verifyClickClack({ install: true });
+  }
+
   if (useOnboarding) {
     console.log('Onboarding: visit http://localhost:' + serverPort + '/onboarding');
   }
 
   if (rl) rl.close();
+}
+
+async function verifyClickClack({ install }) {
+  const {
+    checkSidecarPrerequisites,
+    ensureSidecarDataDir,
+    failedRequiredChecks,
+    loadSidecarPin,
+    verifyClickClackCheckout,
+  } = await import('./clickclack-sidecar-lib.mjs');
+
+  const checks = await checkSidecarPrerequisites();
+  for (const check of checks) {
+    printCheck(check.ok, check.name, check.detail);
+  }
+  const missing = failedRequiredChecks(checks);
+  if (missing.length > 0) {
+    process.exitCode = 1;
+    return;
+  }
+
+  const pin = loadSidecarPin();
+  try {
+    const checkout = await verifyClickClackCheckout({ pin, install });
+    printCheck(true, 'ClickClack checkout pinned', `${checkout.head}${checkout.clean ? '' : ' (checkout has local changes)'}`);
+    printCheck(true, 'ClickClack sidecar data dir', ensureSidecarDataDir(pin));
+  } catch (error) {
+    printCheck(false, 'ClickClack checkout pinned', error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

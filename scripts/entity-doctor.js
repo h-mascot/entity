@@ -31,14 +31,14 @@ const pathPatterns = [PP.ip1, PP.ip2, PP.ent, PP.homeEnt];
 const namePatterns = [PP.entAt, PP.ada, PP.spock, PP.scotty];
 const checks = [];
 
-function check(name, fn) {
+function check(name, fn, options = {}) {
   return fn().then(pass => {
-    checks.push({ name, pass });
-    console.log((pass ? '[PASS]' : '[FAIL]') + ' ' + name);
+    checks.push({ name, pass, required: options.required !== false });
+    console.log((pass ? '[PASS]' : options.required === false ? '[WARN]' : '[FAIL]') + ' ' + name);
     return pass;
   }).catch(e => {
-    checks.push({ name, pass: false, error: e.message });
-    console.log('[FAIL] ' + name + ': ' + e.message);
+    checks.push({ name, pass: false, required: options.required !== false, error: e.message });
+    console.log((options.required === false ? '[WARN]' : '[FAIL]') + ' ' + name + ': ' + e.message);
     return false;
   });
 }
@@ -66,6 +66,17 @@ function resolveRepoPath(repoRoot, value, fallback) {
   return path.isAbsolute(input) ? input : path.resolve(repoRoot, input);
 }
 
+function assertNativeSqliteLoads(repoRoot) {
+  try {
+    const Database = require(require.resolve('better-sqlite3', { paths: [repoRoot] }));
+    const db = new Database(':memory:');
+    db.close();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`better-sqlite3 failed to load under Node ${process.version}: ${message}. Run npm rebuild better-sqlite3 or use the Node version that installed dependencies.`);
+  }
+}
+
 function loadEntityConfig(repoRoot) {
   const cfgPath = path.resolve(repoRoot, process.env.ENTITY_CONFIG || 'entity.config.yaml');
   if (!fs.existsSync(cfgPath)) {
@@ -81,8 +92,19 @@ async function main() {
   console.log('=============');
   console.log('');
 
+  const {
+    apiJson,
+    checkSidecarPrerequisites,
+    defaultEntityDevEnv,
+    ensureClickClackSidecar,
+    failedRequiredChecks,
+    loadSidecarPin,
+    verifyClickClackCheckout,
+  } = await import('./clickclack-sidecar-lib.mjs');
+
   const repoRoot = path.join(__dirname, '..');
   let configInfo = null;
+  let startedSidecar = null;
 
   await check('entity.config.yaml exists and parses', async () => {
     configInfo = loadEntityConfig(repoRoot);
@@ -177,6 +199,11 @@ async function main() {
     return true;
   });
 
+  await check('Native SQLite module loads', async () => {
+    assertNativeSqliteLoads(repoRoot);
+    return true;
+  });
+
   await check('Server dist exists', async () => {
     const dist = path.join(repoRoot, 'packages/server/dist');
     if (!fs.existsSync(dist)) {
@@ -193,7 +220,69 @@ async function main() {
     return true;
   });
 
-  const failed = checks.filter(c => !c.pass).length;
+  const pin = loadSidecarPin(process.env);
+  const devEnv = defaultEntityDevEnv(pin, process.env);
+  const entityUrl = (process.env.ENTITY_URL || `http://127.0.0.1:${devEnv.PORT || 3000}`).replace(/\/+$/, '');
+  const prereqs = await checkSidecarPrerequisites();
+  for (const prereq of prereqs) {
+    checks.push({ name: prereq.name, pass: prereq.ok, required: prereq.required, error: prereq.detail });
+    console.log((prereq.ok ? '[PASS]' : prereq.required ? '[FAIL]' : '[WARN]') + ' ' + prereq.name + (prereq.detail ? ': ' + prereq.detail : ''));
+  }
+
+  if (failedRequiredChecks(prereqs).length === 0) {
+    await check('ClickClack checkout pinned', async () => {
+      const checkout = await verifyClickClackCheckout({ pin, install: false });
+      return Boolean(checkout.head);
+    });
+
+    await check('ClickClack sidecar startup health', async () => {
+      const sidecar = await ensureClickClackSidecar({
+        pin,
+        start: true,
+        install: false,
+        prefix: '[doctor:clickclack]',
+      });
+      if (sidecar.child) startedSidecar = sidecar.child;
+      return Boolean(sidecar.health?.ok);
+    });
+  }
+
+  await check('Entity ClickClack dev configuration', async () => {
+    if (!['0', '1'].includes(String(devEnv.ENTITY_CHAT_CLICKCLACK_BRIDGE))) {
+      throw new Error(`ENTITY_CHAT_CLICKCLACK_BRIDGE must be 0 or 1, got ${devEnv.ENTITY_CHAT_CLICKCLACK_BRIDGE}`);
+    }
+    if (devEnv.ENTITY_CLICKCLACK_BASE_URL !== pin.baseUrl) {
+      throw new Error(`ENTITY_CLICKCLACK_BASE_URL=${devEnv.ENTITY_CLICKCLACK_BASE_URL}, expected ${pin.baseUrl}`);
+    }
+    if (devEnv.ENTITY_CHAT_CLICKCLACK_BRIDGE !== '1') {
+      console.log('      /api/chat/send bridge disabled; set ENTITY_CHAT_CLICKCLACK_BRIDGE=1 to opt into compatibility routing.');
+    }
+    return true;
+  });
+
+  const entityReachable = await check('Entity server reachable', async () => {
+    const me = await apiJson(`${entityUrl}/api/chat/me`, {}, 3_000);
+    if (!me?.member?.id) {
+      throw new Error('Unexpected /api/chat/me response');
+    }
+    return true;
+  }, { required: false });
+
+  if (entityReachable) {
+    await check('Entity /api/clickclack proxy reachable', async () => {
+      const me = await apiJson(`${entityUrl}/api/clickclack/me`, {}, 3_000);
+      if (!me?.user?.id) {
+        throw new Error('Unexpected /api/clickclack/me response');
+      }
+      return true;
+    });
+  }
+
+  if (startedSidecar) {
+    startedSidecar.kill('SIGTERM');
+  }
+
+  const failed = checks.filter(c => c.required !== false && !c.pass).length;
   console.log('');
   console.log('Summary: ' + (failed === 0 ? 'All checks passed' : failed + ' check(s) failed'));
   console.log('');

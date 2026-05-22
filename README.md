@@ -18,11 +18,10 @@ Entity gives agents a real operating surface: tasks, files, documents, chat, act
 git clone https://github.com/h-mascot/entity.git
 cd entity
 npm install
-npm run setup    # interactive first-run wizard - creates entity.config.yaml
-# or: npm run setup -- --defaults  # non-interactive safe local defaults
+npm run setup    # creates local config and pins the ClickClack sidecar
 npm run build
 npm run doctor   # verifies config, paths, build outputs, and private-default scan
-npm run dev      # starts server at http://localhost:3000
+npm run dev      # starts Entity + ClickClack at http://localhost:3000
 ```
 
 Open `http://localhost:3000`. No hardcoded paths, no Enterprise assumptions - just a local workspace you control.
@@ -99,16 +98,25 @@ cp .env.example .env
 
 ```bash
 npm run setup
-# Non-interactive / CI-friendly defaults:
-npm run setup -- --defaults
+# Interactive prompts:
+npm run setup -- --interactive
 ```
 
-This generates `entity.config.yaml` with your workspace settings. The defaults are localhost-only and create the local workspace, data, and log directories. You can also manually create one from `entity.config.example.yaml`.
+This generates `entity.config.yaml` with localhost-only workspace settings, prepares local data/log directories, verifies Go/git/npm, and clones/checks out the pinned ClickClack sidecar. Use `npm run setup -- --skip-clickclack` if you only want the Entity shell.
 
 ### Run the full app locally
 
 ```bash
 npm run dev
+```
+
+`npm run dev` starts or reuses the local ClickClack sidecar at `http://127.0.0.1:3091`, mounts the embedded ClickClack UI/API under Entity, and serves Entity at `http://localhost:3000`. Set `ENTITY_CHAT_CLICKCLACK_BRIDGE=1` only when you want `/api/chat/send` compatibility traffic routed through the sidecar.
+
+Useful checks:
+
+```bash
+npm run doctor
+npm run clickclack:smoke
 ```
 
 Or build and run manually:

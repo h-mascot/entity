@@ -92,6 +92,8 @@ import {
 import { registerPluginManagementRoutes } from "./plugins/routes";
 import { registerCrewRoutes } from "./crews-routes";
 import { registerChatRoutes } from "./routes/chat";
+import { createClickClackBridge } from "./clickclack/bridge";
+import { registerClickClackProxyRoutes } from "./clickclack/proxy";
 import { registerConfigRoutes } from "./config/routes";
 import { buildEffectiveConfig } from "./config/effective";
 import {
@@ -135,6 +137,7 @@ const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
 applySecurityHardening(app);
 app.use(cors());
 app.use(compression());
+app.use("/api/clickclack", express.raw({ type: "*/*", limit: "50mb" }));
 app.use(express.json());
 app.use("/api", setApiNoStoreHeaders);
 
@@ -5570,7 +5573,11 @@ registerPluginManagementRoutes({
 registerNodeOperationsRoutes(app);
 
 // Chat routes
-registerChatRoutes({ app, openClawBaseUrl: OPENCLAW });
+const clickClackBridge = process.env.ENTITY_CHAT_CLICKCLACK_BRIDGE === '1'
+  ? createClickClackBridge()
+  : undefined;
+registerClickClackProxyRoutes(app);
+registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge });
 
 // Token usage routes
 registerTokenRoutes({ app });

@@ -7,6 +7,7 @@
  * Public routes that don't require auth:
  *   - GET /api/health (health checks)
  *   - GET /api/config (client config)
+ *   - /api/clickclack/* (ClickClack proxy handles bearer/cookie auth)
  *
  * When ENTITY_API_TOKEN is not set, auth is SKIPPED (development mode).
  * When set, all /api/* requests require Authorization: Bearer <token>.
@@ -77,6 +78,8 @@ const PUBLIC_ROUTE_PATTERNS: readonly (string | RegExp)[] = [
   "/api/health",
   // Client-side config (needed before auth)
   "/api/config",
+  // Embedded ClickClack API proxy has its own auth path for SPA cookie requests.
+  "/api/clickclack",
 ];
 
 /**

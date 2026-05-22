@@ -1,0 +1,85 @@
+/goal Build the narrow Entity + ClickClack sidecar spike: pin and run ClickClack as an embedded sidecar behind Entity, then prove one human chat send and one Entity agent reply through ClickClack.
+
+<goal_contract>
+
+## Context
+- Project: Entity chat pivot.
+- Working directory/repo: `/Users/henrymascot/Code/entity-discord-core-chat`.
+- Branch: `feature/discord-core-chat`.
+- Runtime/model: Geordi Codex on GPT-5.5 with xhigh reasoning.
+- Entity source-of-truth checkout `/Users/henrymascot/Code/entity` is protected. Do not modify it.
+- Existing dirty native WIP in this worktree is frozen. Do not extend the native TypeScript chat implementation by default.
+- Native WIP patch exists at `docs/specs/entity-discord-core-chat-native-wip-before-clickclack-pivot.patch` and is a reference artifact only.
+- Decision already made in `docs/specs/clickclack-reuse-assessment-2026-05-16.md`: use ClickClack Path A, sidecar/service embedded into Entity.
+- ClickClack inspected commit: `d77dd568d8ff5c9d3d7c1063b4c317c1e3cd1be2`.
+
+## Required first reads
+Before editing, inspect:
+- `docs/plans/ACTIVE_PLAN.md`
+- `docs/specs/clickclack-reuse-assessment-2026-05-16.md`
+- `docs/specs/entity-discord-core-chat-spec-2026-05-16.md`
+- `CONTEXT.md`
+- Entity server entry/proxy patterns: `packages/server/src/index.ts`, existing route/plugin proxy code if any
+- Existing chat compatibility route: `packages/server/src/routes/chat.ts`
+- ClickClack source under `/tmp/clickclack`; if missing, clone `https://github.com/openclaw/clickclack` read-only and checkout/pin commit `d77dd568d8ff5c9d3d7c1063b4c317c1e3cd1be2`.
+
+## Success criteria
+All must be true before stopping:
+1. ClickClack is pinned or vendored by a reversible mechanism in the Entity worktree, with the commit recorded and without copying arbitrary generated artifacts.
+2. Entity can start or document/start ClickClack as a local private sidecar on `127.0.0.1:3091` using an Entity-managed data directory.
+3. Entity server exposes proxy routes for the ClickClack SPA/API under a non-conflicting namespace, for example `/clickclack/*` and `/api/clickclack/*`, without breaking existing Entity routes.
+4. A minimal identity/bootstrap bridge exists for the spike: one human operator and at least one Entity agent/bot user can exist in ClickClack. Use the safest dev-only bridge if full auth integration is too large, and mark it clearly as dev-only.
+5. Existing `/api/chat/send` compatibility is preserved or adapted enough to post a user message into ClickClack and create one bot-authored agent reply in ClickClack for a selected Entity agent.
+6. Proof exists for one human send and one Entity agent reply flowing through ClickClack. Acceptable proof: API transcript, HTTP responses, DB rows, and browser screenshot of proxied chat UI if the SPA can run.
+7. Validation runs at least: `npm --prefix packages/app run build`, `cd packages/server && npm run build`, and targeted server tests or a documented stronger/smaller substitute if the sidecar changes are script-only.
+8. `docs/plans/ACTIVE_PLAN.md` is updated with actual progress, files touched, commands run, proof, blockers, and resume instructions.
+9. The final report states whether the sidecar path is viable, blocked, or should fall back.
+
+## Non-goals
+- Do not continue broad native Entity chat implementation.
+- Do not merge or commit the frozen native WIP.
+- Do not replace Entity's whole app shell.
+- Do not implement full Discord parity in this spike.
+- Do not implement voice, calls, gaming, E2EE, federation, or multi-node fanout.
+- Do not touch `/Users/henrymascot/Code/entity`.
+
+## Operating rules
+- Plan first and update `docs/plans/ACTIVE_PLAN.md` before substantial edits.
+- Preserve unrelated dirty changes. If you need to isolate from the frozen WIP, create a sub-worktree or save/restore patch carefully, but never reset without preserving evidence.
+- Prefer reversible integration: scripts, proxy routes, adapter layer, and docs before invasive rewrites.
+- Use ClickClack code if it is better or similar. The burden of proof is on avoiding reuse, not on using it.
+- Debug failures yourself. If a command fails, inspect logs, patch, rerun, and continue until fixed or truly blocked.
+- If the sidecar cannot be run due to toolchain/env, still produce exact blocker evidence and finish all code/docs that are independent.
+- If context compacts, re-read `docs/plans/ACTIVE_PLAN.md`, inspect git status and running processes, then continue from the first unchecked step.
+
+## Validation loop
+Run during/after implementation:
+- `git status --short --branch`
+- `git diff --check`
+- `npm --prefix packages/app run build`
+- `cd packages/server && npm run build`
+- targeted tests or API smoke script for proxy + chat send bridge
+- browser screenshot of `/clickclack/` through Entity if UI proxy works
+
+## Completion audit
+Before final report:
+1. Re-read this goal contract and `docs/plans/ACTIVE_PLAN.md`.
+2. Verify every success criterion with evidence.
+3. Check actual process state for Entity and ClickClack sidecar.
+4. Check git status and list every changed file.
+5. If any required criterion lacks proof, continue or report status `blocked` with exact missing proof.
+
+## Final report
+Return:
+- Status: achieved, blocked, paused, or unmet.
+- Sidecar viability decision.
+- Criterion-by-criterion proof.
+- Files created/modified.
+- Commands run and results.
+- URLs/ports used.
+- Browser screenshot path if available.
+- Known limitations and next steps.
+
+</goal_contract>
+
+Begin by planning in `docs/plans/ACTIVE_PLAN.md`, then execute the sidecar spike end-to-end until the completion audit passes or you are genuinely blocked.

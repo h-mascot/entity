@@ -63,6 +63,7 @@ test-results/
 # Database files - NEVER track these
 data/
 logs/
+/var/
 packages/db/entity-tasks.db
 entity.db
 *.db
