@@ -122,6 +122,48 @@ describe('Docs Route Handlers', () => {
   });
 
   describe('GET /docs/*', () => {
+    it('should redirect binary source docs routes to the raw file endpoint', () => {
+      const res = mockRes();
+      const next = vi.fn();
+      handlers['/docs/source/:sourceId/*'](
+        mockReq({ sourceId: 'crew-home', '0': 'Vision Board/2026-05-25/image.png' }),
+        res,
+        next,
+      );
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.redirect).toHaveBeenCalledWith(
+        302,
+        '/api/file/raw?source=crew-home&path=Vision+Board%2F2026-05-25%2Fimage.png',
+      );
+    });
+
+    it('should keep text source docs routes in the SPA viewer', () => {
+      const res = mockRes();
+      const next = vi.fn();
+      handlers['/docs/source/:sourceId/*'](
+        mockReq({ sourceId: 'crew-home', '0': 'Vision Board/2026-05-25/README.md' }),
+        res,
+        next,
+      );
+
+      expect(next).toHaveBeenCalled();
+      expect(res.redirect).not.toHaveBeenCalled();
+    });
+
+    it('should reject traversal attempts on source docs routes', () => {
+      const res = mockRes();
+      const next = vi.fn();
+      handlers['/docs/source/:sourceId/*'](
+        mockReq({ sourceId: 'crew-home', '0': '../secret.png' }),
+        res,
+        next,
+      );
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
     it('should serve the SPA shell for docs routes', () => {
       const res = mockRes();
       handlers['/docs/*'](mockReq(), res);

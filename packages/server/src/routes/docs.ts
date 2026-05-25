@@ -1,4 +1,4 @@
-import type { Request, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
@@ -274,6 +274,11 @@ function sourceRelativePathForDocsRoot(root: string, filePath: string): string |
   return null;
 }
 
+function rawSourceFileUrl(sourceId: string, sourcePath: string): string {
+  const params = new URLSearchParams({ source: sourceId, path: sourcePath });
+  return `/api/file/raw?${params.toString()}`;
+}
+
 async function readDocsDocument(root: string, filePath: string): Promise<DocsDocument | null> {
   if (root === 'source') {
     const sourceDoc = splitSourceDocsPath(filePath);
@@ -478,6 +483,25 @@ export function registerDocsRoute(app: any) {
     } catch {
       return res.status(500).json({ error: 'Failed to read file' });
     }
+  });
+
+  app.get('/docs/source/:sourceId/*', (req: Request, res: Response, next: NextFunction) => {
+    const sourceId = req.params.sourceId;
+    const sourcePath = req.params[0] as string;
+
+    if (!sourceId || !sourcePath) {
+      return res.status(400).json({ error: 'Source id and path are required' });
+    }
+
+    if (sourcePath.includes('..') || sourcePath.includes('~')) {
+      return res.status(403).json({ error: 'Path traversal not allowed' });
+    }
+
+    if (isAllowedDocsFile(sourcePath)) {
+      return next();
+    }
+
+    return res.redirect(302, rawSourceFileUrl(sourceId, sourcePath));
   });
 
   app.get('/docs/*', (_req: Request, res: Response) => {
