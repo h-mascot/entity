@@ -571,9 +571,17 @@ function getDocumentsDatabase(): Database.Database {
   return documentsDb;
 }
 
+function getDefaultTaskActor(): string {
+  return (
+    process.env.ENTITY_TASK_ACTOR?.trim() ||
+    process.env.ENTITY_DEFAULT_ACTOR?.trim() ||
+    "Henry"
+  );
+}
+
 function getTaskActorFromRequest(
   req: express.Request,
-  fallback = "human",
+  fallback = getDefaultTaskActor(),
 ): string {
   const entityActor = req.header("X-Entity-Actor");
   if (typeof entityActor === "string" && entityActor.trim()) {

@@ -325,6 +325,7 @@ describe('review lifecycle validation', () => {
     };
 
     expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Ada').ok).toBe(false);
+    expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'human').ok).toBe(false);
     expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Henry').ok).toBe(true);
     expect(
       validateReviewCompletion(

@@ -25,8 +25,12 @@ function toEntityDocsPath(docsPath: string): string {
   return `workspace/${normalizedPath}`;
 }
 
+function normalizeEntityBaseUrl(entityBaseUrl: string): string {
+  return entityBaseUrl.replace(/\/+$/, '');
+}
+
 function toEntityDocsUrl(docsPath: string, entityBaseUrl: string): string {
-  return `${entityBaseUrl}/docs/${toEntityDocsPath(docsPath)}`;
+  return `${normalizeEntityBaseUrl(entityBaseUrl)}/docs/${toEntityDocsPath(docsPath)}`;
 }
 
 function rewriteMatchedPath(rawPath: string, entityBaseUrl: string): string {
@@ -72,7 +76,8 @@ export function normalizeTaskOutputLinks(
     const alreadyEntityDocsUrl = root === 'docs' && second !== undefined && DOCS_ROUTE_ROOTS.has(second);
 
     if (alreadyEntityDocsUrl) {
-      return full;
+      const { core, suffix } = trimTrailingPunctuation(String(docsPath));
+      return `${normalizeEntityBaseUrl(entityBaseUrl)}/${core.replace(/^\/+/, '')}${suffix}`;
     }
 
     const legacyFileServerUrl = /^https?:\/\/[^\s)]+:8788\//i.test(full);

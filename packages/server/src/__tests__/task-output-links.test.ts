@@ -43,6 +43,15 @@ describe('normalizeTaskOutputLinks', () => {
     expect(normalizeTaskOutputLinks(`See ${normalized}`, BASE)).toBe(`See ${normalized}`);
   });
 
+  it('rewrites already-normalized localhost docs links to the configured public base', () => {
+    const result = normalizeTaskOutputLinks(
+      'See http://localhost:3000/docs/workspace/docs/source/ada/report.md.',
+      BASE
+    );
+
+    expect(result).toBe(`See ${BASE}/docs/workspace/docs/source/ada/report.md.`);
+  });
+
   it('rewrites absolute cross-agent local paths to the matching docs root', () => {
     expect(normalizeTaskOutputLinks('/Users/operator/clawd/output/a.md', BASE)).toBe(`${BASE}/docs/output/a.md`);
     expect(normalizeTaskOutputLinks('/home/operator/clawd-spock/output/a.md', BASE)).toBe(`${BASE}/docs/spock/a.md`);
