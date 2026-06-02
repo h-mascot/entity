@@ -58,6 +58,7 @@ import {
   getPrimaryReviewReason,
   hasAssignedOwner,
   isActiveTaskColumn,
+  shouldValidateReviewEntryOnTransition,
   validateReviewCompletion,
   validateReviewEntry,
   type AgentTriggerEvent,
@@ -2102,6 +2103,11 @@ function registerTaskRoutes(prefix: "" | "/api") {
       // This avoids 296 individual SQLite queries on every poll
       const includeActivity =
         String(req.query.includeActivity ?? "false").toLowerCase() === "true";
+      if (includeActivity && (pagination.limit === null || pagination.limit > 500)) {
+        return res.status(400).json({
+          error: "includeActivity requires an explicit limit of 500 or fewer",
+        });
+      }
       const result = includeActivity
         ? paginatedTasks.map((task) => ({
             ...task,
@@ -2608,8 +2614,10 @@ function registerTaskRoutes(prefix: "" | "/api") {
         });
       }
 
-      const movingToReview =
-        nextColumn === "review" && existingTask.column !== "review";
+      const movingToReview = shouldValidateReviewEntryOnTransition(
+        existingTask.column,
+        nextColumn,
+      );
       const normalizedOutput = normalizeTaskOutputLinks(output) ?? undefined;
       if (movingToReview) {
         const reviewEntry = validateReviewEntry(
@@ -2929,7 +2937,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
         });
       }
 
-      if (column === "review" && existingTask.column !== "review") {
+      if (shouldValidateReviewEntryOnTransition(existingTask.column, column)) {
         const reviewEntry = validateReviewEntry(existingTask.metadata);
         if (!reviewEntry.ok) {
           return res.status(400).json({

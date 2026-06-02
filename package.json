@@ -22,7 +22,11 @@
     "clickclack:status": "node scripts/clickclack-sidecar.mjs status",
     "clickclack:smoke": "node scripts/clickclack-sidecar.mjs smoke",
     "clickclack:test": "node --test scripts/clickclack-sidecar-lib.test.mjs && npm --prefix packages/server run test -- src/clickclack/bridge.test.ts src/clickclack/proxy.test.ts src/routes/chat-clickclack.test.ts",
-    "scan:private-defaults": "node scripts/scan-private-defaults.mjs"
+    "scan:private-defaults": "node scripts/scan-private-defaults.mjs",
+    "verify:sandbox": "bash scripts/entity-verify-sandbox.sh",
+    "deploy:sandbox": "bash scripts/entity-deploy-sandbox.sh",
+    "ship:sandbox": "npm run ctrl:gate && npm run deploy:sandbox",
+    "promote:prod": "bash scripts/entity-promote-prod.sh"
   },
   "workspaces": [
     "packages/*",

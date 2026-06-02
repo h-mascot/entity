@@ -6,6 +6,7 @@ import {
   inferTaskType,
   requiresReviewArtifact,
   scoreReviewVerdict,
+  shouldValidateReviewEntryOnTransition,
   validateReviewCompletion,
   validateReviewEntry,
   type ArtifactAssessment,
@@ -360,5 +361,15 @@ describe('review lifecycle validation', () => {
         'Ada'
       ).ok
     ).toBe(false);
+  });
+});
+
+describe('shouldValidateReviewEntryOnTransition', () => {
+  it('validates new review entries but not done tasks reopened to review', () => {
+    expect(shouldValidateReviewEntryOnTransition('todo', 'review')).toBe(true);
+    expect(shouldValidateReviewEntryOnTransition('doing', 'review')).toBe(true);
+    expect(shouldValidateReviewEntryOnTransition('done', 'review')).toBe(false);
+    expect(shouldValidateReviewEntryOnTransition('review', 'review')).toBe(false);
+    expect(shouldValidateReviewEntryOnTransition('review', 'done')).toBe(false);
   });
 });
