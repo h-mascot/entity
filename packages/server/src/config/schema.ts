@@ -7,6 +7,10 @@ import {
 const NullableString = z.string().nullable();
 const StringArray = z.array(z.string());
 
+function normalizeConfigId(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'assistant';
+}
+
 export const TerminalTargetSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -16,7 +20,17 @@ export const TerminalTargetSchema = z.object({
   defaultDirectory: z.string().default('.'),
 });
 
-export const AgentSettingsSchema = z.object({
+export const AgentSettingsSchema = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const agent = value as Record<string, unknown>;
+  const name = typeof agent.name === 'string' ? agent.name : '';
+  const description = typeof agent.description === 'string' ? agent.description : undefined;
+  return {
+    ...agent,
+    id: typeof agent.id === 'string' && agent.id.trim() ? agent.id : normalizeConfigId(name),
+    role: typeof agent.role === 'string' ? agent.role : description,
+  };
+}, z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   role: z.string().default('general'),
@@ -31,7 +45,7 @@ export const AgentSettingsSchema = z.object({
     url: NullableString.default(null),
     tokenRef: NullableString.default(null),
   }).default({ type: 'none', url: null, tokenRef: null }),
-});
+}));
 
 export const EntityConfigSchema = z.object({
   version: z.number().int().positive().default(1),

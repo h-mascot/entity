@@ -63,6 +63,28 @@ agents:
     expect(config.agents.map((agent) => agent.id)).toEqual(['assistant']);
   });
 
+  it('normalizes legacy agent config entries without explicit ids', () => {
+    clearRuntimeEnv();
+    const { cwd } = makeRepoFixture(`
+version: 1
+agents:
+  - name: assistant
+    description: General purpose AI assistant
+    model: local
+    capabilities:
+      - chat
+      - code
+`);
+
+    const config = loadRuntimeFileConfig(cwd);
+
+    expect(config.agents[0]).toMatchObject({
+      id: 'assistant',
+      name: 'assistant',
+      role: 'General purpose AI assistant',
+    });
+  });
+
   it('exports bootstrap env from config without private defaults', () => {
     clearRuntimeEnv();
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-runtime-home-'));
