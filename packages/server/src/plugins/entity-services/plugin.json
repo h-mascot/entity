@@ -3,7 +3,7 @@
   "name": "Entity Services",
   "version": "0.1.0",
   "kind": "integration",
-  "description": "Operational services registry for Entity and user-configured adjacent runtime services.",
+  "description": "Operational services registry for Entity, Enterprise tooling, and adjacent runtime services.",
   "capabilities": [
     "api.routes.register",
     "ui.top-level.register",
@@ -24,10 +24,9 @@
   ],
   "settings": {
     "requestTimeoutMs": 3500,
-    "discoverGatewayServices": false,
-    "discoverMacServices": false,
-    "services": [],
-    "externalAdminUrl": null,
-    "externalAdminName": "External Admin"
+    "discoverGatewayServices": true,
+    "discoverMacServices": true,
+    "macDiscoverySshTarget": null,
+    "macDiscoveryPublicHost": null
   }
 }

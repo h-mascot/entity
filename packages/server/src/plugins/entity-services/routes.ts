@@ -526,9 +526,13 @@ function buildServiceDefinitions(settings: PluginSettingsRecord, runtimeBaseUrl 
   const runtimeEntityBaseUrl = normalizeRuntimeBaseUrl(runtimeBaseUrl);
   const configuredEntityBaseUrl = readStringSetting(settings, 'entityBaseUrl', runtimeEntityBaseUrl || 'http://127.0.0.1:3000');
   const entityBaseUrl = preferRuntimeTailnetUrl(configuredEntityBaseUrl, runtimeEntityBaseUrl);
-  const externalAdminUrl = readStringSetting(settings, 'externalAdminUrl', '');
-  const externalAdminName = readStringSetting(settings, 'externalAdminName', 'External Admin') || 'External Admin';
-  const definitions: ServiceDefinition[] = [
+  const defaultEnterpriseAdminUrl = entityBaseUrl ? `${getUrlProtocol(entityBaseUrl)}//${getUrlHostname(entityBaseUrl)}:3002` : 'http://127.0.0.1:3002';
+  const legacyEnterpriseAdminUrl = readStringSetting(settings, 'externalAdminUrl', '') || defaultEnterpriseAdminUrl;
+  const configuredEnterpriseAdminUrl = readStringSetting(settings, 'enterpriseAdminUrl', legacyEnterpriseAdminUrl) || legacyEnterpriseAdminUrl;
+  const enterpriseAdminName = readStringSetting(settings, 'enterpriseAdminName', readStringSetting(settings, 'externalAdminName', 'Enterprise Crew Admin')) || 'Enterprise Crew Admin';
+  const enterpriseAdminUrl = preferRuntimeTailnetUrl(configuredEnterpriseAdminUrl, entityBaseUrl, 3002);
+
+  return [
     {
       kind: 'internal-plugin',
       id: 'entity-linker',
@@ -540,31 +544,26 @@ function buildServiceDefinitions(settings: PluginSettingsRecord, runtimeBaseUrl 
       tags: ['plugin', 'entity', 'linking'],
     },
     ...readConfiguredServices(settings),
-  ];
-
-  if (externalAdminUrl) {
-    definitions.push({
+    {
       kind: 'external-http',
-      id: 'external-admin',
-      name: externalAdminName,
-      description: 'User-configured external admin app linked from Entity services.',
+      id: 'enterprise-crew-admin',
+      name: enterpriseAdminName,
+      description: 'Standalone crew admin app linked from Entity services instead of embedded app-shell wiring.',
       category: 'Operations',
-      appUrl: externalAdminUrl,
+      appUrl: enterpriseAdminUrl,
       healthUrls: [
-        joinUrl(externalAdminUrl, '/api/health'),
-        joinUrl(externalAdminUrl, '/health'),
-        externalAdminUrl,
+        joinUrl(enterpriseAdminUrl, '/api/health'),
+        joinUrl(enterpriseAdminUrl, '/health'),
+        enterpriseAdminUrl,
       ],
-      tags: ['ops', 'external-app'],
-      host: 'Configured',
+      tags: ['enterprise', 'ops', 'crew-admin', 'external-app'],
+      host: 'Entity',
       meta: {
         launchMode: 'new-tab',
         integrationMode: 'linked-service',
       },
-    });
-  }
-
-  return definitions;
+    },
+  ];
 }
 
 function describeInternalPluginStatus(plugin: LoadedPlugin | undefined): ServiceHealthRecord {
@@ -847,19 +846,20 @@ export async function buildServicesRegistry(
   const runtimeHost = getUrlHostname(runtimeEntityBaseUrl);
   const definitions = buildServiceDefinitions(currentPlugin.settings, runtimeEntityBaseUrl);
 
+  const macDiscoverySshTarget = readStringSetting(currentPlugin.settings, 'macDiscoverySshTarget', undefined);
   const hosts: HostDiscoveryConfig[] = [
     {
       id: 'gateway',
       label: 'Agent Gateway',
       publicHost: runtimeHost || '127.0.0.1',
-      enabled: readBooleanSetting(currentPlugin.settings, 'discoverGatewayServices', false),
+      enabled: readBooleanSetting(currentPlugin.settings, 'discoverGatewayServices', true),
     },
     {
       id: 'mac',
       label: 'Mac',
-      sshTarget: readStringSetting(currentPlugin.settings, 'macDiscoverySshTarget', undefined),
+      sshTarget: macDiscoverySshTarget,
       publicHost: readStringSetting(currentPlugin.settings, 'macDiscoveryPublicHost', undefined) || '',
-      enabled: readBooleanSetting(currentPlugin.settings, 'discoverMacServices', false),
+      enabled: Boolean(macDiscoverySshTarget) && readBooleanSetting(currentPlugin.settings, 'discoverMacServices', true),
     },
   ];
 

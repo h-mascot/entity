@@ -2102,6 +2102,11 @@ function registerTaskRoutes(prefix: "" | "/api") {
       // This avoids 296 individual SQLite queries on every poll
       const includeActivity =
         String(req.query.includeActivity ?? "false").toLowerCase() === "true";
+      if (includeActivity && (pagination.limit === null || pagination.limit > 500)) {
+        return res.status(400).json({
+          error: "includeActivity requires an explicit limit of 500 or fewer",
+        });
+      }
       const result = includeActivity
         ? paginatedTasks.map((task) => ({
             ...task,

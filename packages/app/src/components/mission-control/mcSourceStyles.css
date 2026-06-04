@@ -231,6 +231,13 @@
   margin-bottom: 6px;
 }
 
+
+.mc-root .task-header-minimal {
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
 .mc-root .task-kicker {
   margin-bottom: 6px;
   display: flex;
@@ -313,6 +320,42 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+
+.mc-root .task-meta-minimal {
+  margin-top: 0;
+}
+
+.mc-root .assignee-avatar-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+}
+
+.mc-root .assignee-avatar {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  object-fit: cover;
+  font-size: 14px;
+}
+
+.mc-root .assignee-avatar-fallback {
+  line-height: 1;
+}
+
+.mc-root .task-due-date {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .mc-root .task-id-badge {

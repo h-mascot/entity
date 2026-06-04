@@ -14,9 +14,9 @@ function createLoadedPlugin(overrides: Partial<LoadedPlugin> = {}): LoadedPlugin
     settings: {
       requestTimeoutMs: 1000,
       entityBaseUrl: 'http://entity.local',
-      externalAdminUrl: '',
-      externalAdminName: 'External Admin',
-      services: [],
+      enterpriseAdminUrl: 'http://enterprise.local:3000',
+      n8nBaseUrl: 'http://n8n.local:5678',
+      vaultwardenBaseUrl: 'http://vault.local:8222',
       discoverGatewayServices: false,
       discoverMacServices: false,
     },
@@ -42,21 +42,7 @@ function createResponse() {
 
 describe('entity-services routes', () => {
   it('builds a registry payload with live service summaries', async () => {
-    const entityServices = createLoadedPlugin({
-      settings: {
-        ...createLoadedPlugin().settings,
-        services: [
-          {
-            id: 'ops-docs',
-            name: 'Ops Docs',
-            url: 'http://docs.local',
-            healthUrl: 'http://docs.local/health',
-            category: 'Knowledge',
-            tags: ['docs'],
-          },
-        ],
-      },
-    });
+    const entityServices = createLoadedPlugin();
     const entityLinker = createLoadedPlugin({
       id: 'entity-linker',
       name: 'Entity Linker',
@@ -79,8 +65,8 @@ describe('entity-services routes', () => {
     };
 
     const fetchImpl = vi.fn(async (url: string) => {
-      if (url === 'http://docs.local/health') {
-        return new Response('ok', { status: 200 });
+      if (url === 'http://enterprise.local:3000/api/health') {
+        return new Response('missing', { status: 404 });
       }
 
       return new Response('ok', { status: 200 });
@@ -103,14 +89,14 @@ describe('entity-services routes', () => {
       link: { url: 'http://entity.local/api/entity-linker/status', external: true },
     });
 
-    const docs = payload.services.find((service) => service.id === 'ops-docs');
-    expect(docs).toMatchObject({
+    const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
+    expect(enterprise).toMatchObject({
       serviceType: 'external-http',
       status: 'operational',
       visibility: 'managed',
-      relevanceReason: 'Configured service definition',
-      family: { key: 'ops-docs', name: 'Ops Docs', memberCount: 1 },
-      link: { url: 'http://docs.local', external: true },
+      relevanceReason: 'Curated service definition',
+      family: { key: 'enterprise-crew-admin', name: 'Enterprise Crew Admin', memberCount: 1 },
+      link: { url: 'http://enterprise.local:3000', external: true },
     });
 
     expect(linker).toMatchObject({
@@ -120,25 +106,73 @@ describe('entity-services routes', () => {
     });
 
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://docs.local/health',
+      'http://enterprise.local:3000/api/health',
       expect.objectContaining({ method: 'GET' }),
     );
   });
 
-  it('reports disabled or unreachable services as offline', async () => {
+  it('preserves legacy external admin settings', async () => {
     const entityServices = createLoadedPlugin({
       settings: {
-        ...createLoadedPlugin().settings,
-        services: [
-          {
-            id: 'ops-docs',
-            name: 'Ops Docs',
-            url: 'http://docs.local',
-            healthUrl: 'http://docs.local/health',
-          },
-        ],
+        requestTimeoutMs: 1000,
+        entityBaseUrl: 'http://entity.local',
+        externalAdminUrl: 'http://legacy-admin.local:3555',
+        externalAdminName: 'Legacy Admin',
+        discoverGatewayServices: false,
+        discoverMacServices: false,
       },
     });
+
+    const payload = await buildServicesRegistry(
+      {
+        plugin: entityServices,
+        registry: {
+          get: (id: string) => (id === entityServices.id ? entityServices : undefined),
+        },
+      } as any,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+    );
+
+    const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
+    expect(enterprise).toMatchObject({
+      name: 'Legacy Admin',
+      link: { url: 'http://legacy-admin.local:3555', external: true },
+      healthLink: { url: 'http://legacy-admin.local:3555/api/health', external: true },
+    });
+  });
+
+  it('falls back from blank legacy external admin URL to the default admin service', async () => {
+    const entityServices = createLoadedPlugin({
+      settings: {
+        requestTimeoutMs: 1000,
+        entityBaseUrl: 'http://entity.local',
+        externalAdminUrl: '',
+        externalAdminName: 'External Admin',
+        discoverGatewayServices: false,
+        discoverMacServices: false,
+      },
+    });
+
+    const payload = await buildServicesRegistry(
+      {
+        plugin: entityServices,
+        registry: {
+          get: (id: string) => (id === entityServices.id ? entityServices : undefined),
+        },
+      } as any,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+    );
+
+    const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
+    expect(enterprise).toMatchObject({
+      name: 'External Admin',
+      link: { url: 'http://entity.local:3002', external: true },
+      healthLink: { url: 'http://entity.local:3002/api/health', external: true },
+    });
+  });
+
+  it('reports disabled or unreachable services as offline', async () => {
+    const entityServices = createLoadedPlugin();
     const entityLinker = createLoadedPlugin({
       id: 'entity-linker',
       name: 'Entity Linker',
@@ -175,8 +209,7 @@ describe('entity-services routes', () => {
       settings: {
         ...createLoadedPlugin().settings,
         entityBaseUrl: 'http://100.106.69.9:3000',
-        externalAdminUrl: '',
-        services: [],
+        enterpriseAdminUrl: 'http://100.106.69.9:3002',
         discoverGatewayServices: false,
         discoverMacServices: false,
       },
@@ -203,9 +236,10 @@ describe('entity-services routes', () => {
     );
 
     const linker = payload.services.find((service) => service.id === 'entity-linker');
+    const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
 
     expect(linker?.link.url).toBe('http://100.104.229.62:3000/api/entity-linker/status');
-    expect(payload.services.some((service) => service.id.includes('enterprise'))).toBe(false);
+    expect(enterprise?.link.url).toBe('http://100.104.229.62:3002');
   });
 
   it('registers registry endpoints', async () => {

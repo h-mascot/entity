@@ -1,5 +1,5 @@
 export interface TaskPagination {
-  limit: number;
+  limit: number | null;
   offset: number;
 }
 
@@ -13,9 +13,8 @@ export interface TaskPaginationError {
   error: string;
 }
 
-const DEFAULT_LIMIT = 500;
+const DEFAULT_LIMIT = null;
 const DEFAULT_OFFSET = 0;
-const MAX_LIMIT = 500;
 
 function parseInteger(
   rawValue: unknown,
@@ -24,11 +23,11 @@ function parseInteger(
     minimum,
     errorMessage,
   }: {
-    defaultValue: number;
+    defaultValue: number | null;
     minimum: number;
     errorMessage: string;
   }
-): number | TaskPaginationError {
+): number | null | TaskPaginationError {
   if (rawValue === undefined || rawValue === null || rawValue === '') {
     return defaultValue;
   }
@@ -52,7 +51,7 @@ export function parseTaskPaginationQuery(query: Record<string, unknown>): TaskPa
     errorMessage: 'limit must be a positive integer',
   });
 
-  if (typeof parsedLimit !== 'number') {
+  if (parsedLimit !== null && typeof parsedLimit !== 'number') {
     return parsedLimit;
   }
 
@@ -62,17 +61,20 @@ export function parseTaskPaginationQuery(query: Record<string, unknown>): TaskPa
     errorMessage: 'offset must be a non-negative integer',
   });
 
-  if (typeof parsedOffset !== 'number') {
-    return parsedOffset;
+  if (parsedOffset === null || typeof parsedOffset !== 'number') {
+    return parsedOffset ?? { error: 'offset must be a non-negative integer' };
   }
 
   return {
-    limit: Math.min(parsedLimit, MAX_LIMIT),
+    limit: parsedLimit,
     offset: parsedOffset,
   };
 }
 
 export function paginateTasks<T>(tasks: T[], pagination: TaskPagination): T[] {
+  if (pagination.limit === null) {
+    return tasks.slice(pagination.offset);
+  }
   return tasks.slice(pagination.offset, pagination.offset + pagination.limit);
 }
 
