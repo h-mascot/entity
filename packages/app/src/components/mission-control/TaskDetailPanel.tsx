@@ -819,6 +819,36 @@ function reviewPacketSummary(metadata: Record<string, unknown>): string {
   return `${outcome}${criteria > 0 ? ` / ${criteria} criterion${criteria === 1 ? '' : 'a'}` : ''}`;
 }
 
+type ReviewDecision = 'pending' | 'accepted' | 'needs_fix' | 'rejected';
+
+const REVIEW_DECISION_LABELS: Record<ReviewDecision, string> = {
+  pending: 'Pending',
+  accepted: 'Accepted',
+  needs_fix: 'Needs fix',
+  rejected: 'Rejected',
+};
+
+function normalizeReviewDecision(value: unknown): ReviewDecision {
+  const normalized = readNonEmptyString(value)?.toLowerCase().replace(/[\s-]+/g, '_');
+  if (normalized === 'accepted' || normalized === 'needs_fix' || normalized === 'rejected') {
+    return normalized;
+  }
+  return 'pending';
+}
+
+function buildReviewMetadataPatch(
+  task: TaskDetailData,
+  decision: ReviewDecision,
+  reviewer: string
+): string {
+  return JSON.stringify({
+    ...task.metadataRecord,
+    review_decision: decision,
+    reviewed_by: reviewer,
+    reviewed_at: new Date().toISOString(),
+  });
+}
+
 async function requestOptionalJson<T = unknown>(
   path: string,
   apiBase: string,
@@ -1270,6 +1300,10 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
       void reloadTasks().catch(() => undefined);
     } catch (saveError) {
       setError(toErrorMessage(saveError, 'Unable to save task.'));
+      await loadSupplementalData(task.id, {
+        preserveOutput: true,
+        preserveDependencyInput: true,
+      }).catch(() => undefined);
     } finally {
       setBusyAction(null);
     }
@@ -1519,6 +1553,27 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const removeProject = async (projectId: number) => {
     const nextIds = selectedProjects.filter((project) => project.id !== projectId).map((project) => project.id);
     await saveTaskProjects(nextIds);
+  };
+
+  const saveReviewDecision = async (decision: ReviewDecision, options: { complete?: boolean } = {}) => {
+    if (!task) {
+      return;
+    }
+
+    const reviewer = userProfile.displayName || 'Reviewer';
+    const metadata = buildReviewMetadataPatch(task, decision, reviewer);
+    await patchTask(
+      {
+        metadata,
+        ...(options.complete ? { column: 'done' } : {}),
+      },
+      {
+        successMessage: options.complete
+          ? 'Review accepted and task moved to Done.'
+          : `Review marked ${REVIEW_DECISION_LABELS[decision].toLowerCase()}.`,
+        action: 'review',
+      }
+    );
   };
 
   const addNote = async () => {
@@ -2238,6 +2293,47 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                    </div>
 	                  ) : null}
 	                </div>
+                  {hasReviewMetadata(task.metadataRecord) ? (
+                    <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--border-primary)] pt-3">
+                      <button
+                        type="button"
+                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                        onClick={() => void saveReviewDecision('accepted')}
+                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'accepted'}
+                      >
+                        Accept review
+                      </button>
+                      <button
+                        type="button"
+                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                        onClick={() => void saveReviewDecision('accepted', { complete: true })}
+                        disabled={busyAction !== null}
+                      >
+                        Accept + Done
+                      </button>
+                      <button
+                        type="button"
+                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                        onClick={() => void saveReviewDecision('needs_fix')}
+                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'needs_fix'}
+                      >
+                        Needs fix
+                      </button>
+                      <button
+                        type="button"
+                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                        onClick={() => void saveReviewDecision('rejected')}
+                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'rejected'}
+                      >
+                        Reject
+                      </button>
+                      {normalizeReviewDecision(task.metadataRecord.review_decision) !== 'accepted' ? (
+                        <div className="basis-full text-[11px] text-[var(--text-muted)]">
+                          Done is locked until the review decision is accepted.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
 	              </section>
 
 	              <section style={{ order: 3 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
