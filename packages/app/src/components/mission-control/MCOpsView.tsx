@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import MCInsightsDashboard from './MCInsightsDashboard';
 import KanbanColumn from './KanbanColumn';
 import TaskDetailPanel from './TaskDetailPanel';
-import type { TaskBoardTask, TaskColumn } from '../../hooks/useTaskBoard';
+import { useTaskBoard, type TaskBoardTask, type TaskColumn } from '../../hooks/useTaskBoard';
 import type { MCTab } from './MCHeader';
+import { fetchProjectOptions, type ProjectOption } from './projectOptions';
 import { formatTaskProjectSummary } from './utils/taskHelpers';
 
 interface MCOpsViewProps {
@@ -69,10 +70,12 @@ export default function MCOpsView({
   onDocsLinkNavigate,
   showArchiveColumn = true,
 }: MCOpsViewProps) {
+  const { updateTask } = useTaskBoard({ apiBase, autoLoad: false });
   const shouldShowInsights = showInsights || !compactShell;
   const [draggedTaskId, setDraggedTaskId] = useState<number | null>(null);
   const [movingTaskId, setMovingTaskId] = useState<number | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const activeTaskDetailId = selectedTaskId ?? highlightTaskId;
   const query = globalSearch.trim().toLowerCase();
   const searchMatchedTasks = tasks.filter((task) => matchesGlobalSearch(task, query));
@@ -97,6 +100,27 @@ export default function MCOpsView({
   filteredTasks.forEach((task) => {
     tasksByColumn[task.column].push(task);
   });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetchProjectOptions(apiBase)
+      .then((projects) => {
+        if (!cancelled) {
+          setProjectOptions(projects);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load Mission Control project tags:', error);
+        if (!cancelled) {
+          setProjectOptions([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase]);
 
   useEffect(() => {
     if (highlightTaskId === null) {
@@ -135,6 +159,17 @@ export default function MCOpsView({
   const handleCloseTask = () => {
     setSelectedTaskId(null);
     onCloseTask?.();
+  };
+
+  const handleUpdateTaskProjects = async (taskId: number, projectIds: number[]) => {
+    const selectedProjectNames = projectOptions
+      .filter((project) => projectIds.includes(project.id))
+      .map((project) => project.name);
+
+    return updateTask(taskId, {
+      projectIds,
+      project: selectedProjectNames.length > 0 ? selectedProjectNames.join(', ') : 'General',
+    });
   };
 
   return (
@@ -186,6 +221,8 @@ export default function MCOpsView({
               onDragStart={setDraggedTaskId}
               onMoveTask={handleMoveTask}
               onOpenTask={handleOpenTask}
+              onUpdateTaskProjects={handleUpdateTaskProjects}
+              projectOptions={projectOptions}
               tasks={tasksByColumn[column]}
               title={COLUMN_TITLES[column]}
             />
