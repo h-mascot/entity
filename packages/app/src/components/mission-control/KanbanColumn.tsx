@@ -1,6 +1,7 @@
 import { useEffect, useState, type DragEvent } from 'react';
 import type { TaskBoardTask, TaskColumn } from '../../hooks/useTaskBoard';
 import MCTaskCard from './MCTaskCard';
+import type { ProjectOption } from './projectOptions';
 
 const BACKLOG_PAGE_SIZE = 50;
 const COLUMN_COLORS: Record<TaskColumn | 'archive', string> = {
@@ -23,6 +24,8 @@ interface KanbanColumnProps {
   onDragEnd: () => void;
   onMoveTask: (taskId: number, column: TaskColumn | 'archive') => Promise<unknown>;
   onOpenTask?: (taskId: number) => void;
+  onUpdateTaskProjects: (taskId: number, projectIds: number[]) => Promise<unknown>;
+  projectOptions: ProjectOption[];
 }
 
 export default function KanbanColumn({
@@ -36,6 +39,8 @@ export default function KanbanColumn({
   onDragEnd,
   onMoveTask,
   onOpenTask,
+  onUpdateTaskProjects,
+  projectOptions,
 }: KanbanColumnProps) {
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [visibleCount, setVisibleCount] = useState(() =>
@@ -152,6 +157,8 @@ export default function KanbanColumn({
               onDragEnd={onDragEnd}
               onDragStart={onDragStart}
               onOpenTask={onOpenTask}
+              onUpdateProjects={onUpdateTaskProjects}
+              projectOptions={projectOptions}
               task={task}
             />
           ))

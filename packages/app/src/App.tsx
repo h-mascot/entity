@@ -43,7 +43,6 @@ import AgentsSidebarTab from './components/AgentsSidebarTab';
 import AgentsMobileDetail from './components/AgentsMobileDetail';
 import AgentDashboardV2 from './components/AgentDashboardV2';
 import ChatView from './components/Chat/ChatView';
-import OpenClawLobsterSite from './components/OpenClawLobsterSite';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useActivityStream } from './hooks/useActivityStream';
@@ -1315,10 +1314,6 @@ function ShowClawFeaturedPage() {
 }
 
 export default function App() {
-  if (typeof window !== 'undefined' && window.location.pathname === '/openclaw-lobster') {
-    return <OpenClawLobsterSite />;
-  }
-
   if (typeof window !== 'undefined' && window.location.pathname === '/showclaw/entity-featured') {
     return <ShowClawFeaturedPage />;
   }
