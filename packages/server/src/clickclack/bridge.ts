@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { loadRuntimeFileConfig } from '../config/runtime';
 
 export const CLICKCLACK_PINNED_COMMIT = 'd77dd568d8ff5c9d3d7c1063b4c317c1e3cd1be2';
 export const DEFAULT_CLICKCLACK_BASE_URL = 'http://127.0.0.1:3091';
@@ -142,6 +143,19 @@ function displayAgentName(agent: string): string {
     .join(' ') || 'Entity Agent';
 }
 
+function uniqueAgents(agents: string[]): string[] {
+  return [...new Set(agents.map(normalizeAgent).filter(Boolean))];
+}
+
+function loadActiveConfiguredAgents(root: string): string[] {
+  const config = loadRuntimeFileConfig(root);
+  return uniqueAgents(
+    config.agents
+      .filter((agent) => agent.enabled !== false)
+      .map((agent) => agent.id)
+  );
+}
+
 function readManifest(manifestPath: string): BridgeManifest {
   try {
     const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as BridgeManifest;
@@ -237,6 +251,14 @@ export function createClickClackBridge(options: CreateClickClackBridgeOptions = 
   const dataDir = path.resolve(root, options.dataDir ?? process.env.ENTITY_CLICKCLACK_DATA_DIR ?? defaultClickClackDataDir());
   const manifestPath = options.manifestPath ?? process.env.ENTITY_CLICKCLACK_BRIDGE_MANIFEST ?? defaultClickClackManifestPath(dataDir);
   const fetcher = options.fetcher ?? fetch;
+
+  function activeAgentRoster(): string[] {
+    const configured = loadActiveConfiguredAgents(root);
+    if (configured.length === 0) {
+      throw new Error('ClickClack bridge found no active Entity agents in entity.config.yaml');
+    }
+    return configured;
+  }
 
   async function request<T>(apiPath: string, init: RequestInit = {}, token?: string): Promise<T> {
     const headers = new Headers(init.headers);
@@ -345,12 +367,17 @@ export function createClickClackBridge(options: CreateClickClackBridgeOptions = 
       const humanMessage = await sendChannelMessage(channel.id, input.content);
       const agentUserIds: Record<string, string> = {};
       const replies: ClickClackCompatibilityMessage[] = [];
+      const roster = uniqueAgents([...activeAgentRoster(), ...input.targets]);
+
+      for (const agent of roster) {
+        const bot = await ensureAgentBot(agent, workspace.id, me.user.id);
+        agentUserIds[agent] = bot.botUserId;
+      }
 
       for (const target of input.targets) {
         const agent = normalizeAgent(target) || 'agent';
         const model = input.modelByAgent.get(agent);
         const bot = await ensureAgentBot(agent, workspace.id, me.user.id);
-        agentUserIds[agent] = bot.botUserId;
         const replyText = [
           `${displayAgentName(agent)} received the Entity sidecar spike message.`,
           `Echo: ${input.content}`,

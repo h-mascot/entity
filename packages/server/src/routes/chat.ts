@@ -976,32 +976,50 @@ export function registerChatRoutes({ app, openClawBaseUrl, clickClackBridge }: C
       if (sidecarBridge) {
         const threadId = typeof req.body?.threadId === 'string' ? req.body.threadId : undefined;
         const parentMessageId = typeof req.body?.parentMessageId === 'string' ? req.body.parentMessageId : undefined;
-        const result = await sidecarBridge.sendCompatibilityMessage({
-          channelId,
-          content,
-          targets,
-          messageId: typeof req.body?.messageId === 'string' ? req.body.messageId : undefined,
-          threadId: typeof req.body?.threadId === 'string' ? req.body.threadId : undefined,
-          // Entity message ids are local; keep ClickClack sidecar sends channel-scoped until we persist an id map.
-          parentMessageId: undefined,
-          modelByAgent,
-        });
+        const timestamp = typeof req.body?.timestamp === 'string' ? req.body.timestamp : new Date().toISOString();
         const userMessage = repo.createMessage({
-          id: typeof req.body?.messageId === 'string' ? req.body.messageId : result.message.id,
+          id: typeof req.body?.messageId === 'string' ? req.body.messageId : undefined,
           channel_id: channelId,
           thread_id: threadId,
-          sender: result.message.sender,
+          sender: typeof req.body?.sender === 'string' ? req.body.sender : 'user',
           sender_emoji: typeof req.body?.senderEmoji === 'string' ? req.body.senderEmoji : '🧑',
-          content: result.message.content,
-          model: result.message.model,
-          is_local: Boolean(result.message.isLocal),
+          content,
+          model: modelId && modelId !== 'auto' ? modelId : undefined,
+          is_local: Boolean(req.body?.isLocal),
           status: 'sent',
-          timestamp: compatibilityMessageTimestamp(result.message.createdAt),
+          timestamp,
           reply_to: parentMessageId,
         });
 
         if (threadId) {
           repo.incrementThreadCount(threadId, userMessage.timestamp);
+        }
+
+        let result;
+        try {
+          result = await sidecarBridge.sendCompatibilityMessage({
+            channelId,
+            content,
+            targets,
+            messageId: userMessage.id,
+            threadId: typeof req.body?.threadId === 'string' ? req.body.threadId : undefined,
+            // Entity message ids are local; keep ClickClack sidecar sends channel-scoped until we persist an id map.
+            parentMessageId: undefined,
+            modelByAgent,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'ClickClack delivery failed';
+          return res.status(202).json({
+            degraded: true,
+            error: message,
+            message: toMessage(userMessage),
+            messages: [],
+            clickclack: {
+              mode: 'dev-sidecar',
+              baseUrl: process.env.ENTITY_CLICKCLACK_BASE_URL ?? 'http://127.0.0.1:3091',
+              error: message,
+            },
+          });
         }
 
         const storedReplies = result.messages.map((message) => {

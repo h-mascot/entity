@@ -80,6 +80,82 @@ describe('chat ClickClack compatibility bridge', () => {
     }
   });
 
+  it('persists the user message when ClickClack delivery fails', async () => {
+    const { registerChatRoutes } = await import('./chat');
+    const app = express();
+    app.use(express.json());
+    registerChatRoutes({
+      app,
+      clickClackBridge: {
+        sendCompatibilityMessage: async () => {
+          throw new Error('sidecar down');
+        },
+      },
+    });
+
+    let degradedServer: http.Server | null = null;
+    const degradedBaseUrl = await new Promise<string>((resolve) => {
+      degradedServer = app.listen(0, '127.0.0.1', () => {
+        const address = degradedServer?.address();
+        if (!address || typeof address === 'string') {
+          throw new Error('failed to bind degraded test server');
+        }
+        resolve(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    try {
+      const setupResponse = await fetch(`${degradedBaseUrl}/api/chat/setup`, { method: 'POST' });
+      expect(setupResponse.status).toBe(200);
+
+      const response = await fetch(`${degradedBaseUrl}/api/chat/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelId: 'command-deck',
+          targetAgent: 'geordi',
+          agents: ['geordi'],
+          content: 'persist despite sidecar outage',
+          messageId: 'entity-human-degraded-1',
+        }),
+      });
+      const payload = await response.json() as {
+        degraded?: boolean;
+        error?: string;
+        message: { id: string; channelId: string; content: string; status: string };
+        messages: Array<unknown>;
+      };
+
+      expect(response.status).toBe(202);
+      expect(payload.degraded).toBe(true);
+      expect(payload.error).toContain('sidecar down');
+      expect(payload.message).toMatchObject({
+        id: 'entity-human-degraded-1',
+        channelId: 'command-deck',
+        content: 'persist despite sidecar outage',
+        status: 'sent',
+      });
+      expect(payload.messages).toEqual([]);
+
+      const historyResponse = await fetch(`${degradedBaseUrl}/api/chat/channels/command-deck/messages`);
+      const historyPayload = await historyResponse.json() as {
+        messages: Array<{ id: string; sender: string; channelId: string; content: string }>;
+      };
+      expect(historyPayload.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'entity-human-degraded-1',
+          sender: 'user',
+          channelId: 'command-deck',
+          content: 'persist despite sidecar outage',
+        }),
+      ]));
+    } finally {
+      if (degradedServer) {
+        await new Promise<void>((resolve, reject) => degradedServer?.close((error) => (error ? reject(error) : resolve())));
+      }
+    }
+  }, 15000);
+
   it('delegates /api/chat/send to ClickClack when a bridge is configured', async () => {
     const setupResponse = await fetch(`${baseUrl}/api/chat/setup`, { method: 'POST' });
     expect(setupResponse.status).toBe(200);
@@ -112,9 +188,9 @@ describe('chat ClickClack compatibility bridge', () => {
     const historyPayload = await historyResponse.json() as {
       messages: Array<{ id: string; sender: string; channelId: string; content: string }>;
     };
-    expect(historyPayload.messages).toEqual([
+    expect(historyPayload.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'entity-human-1', sender: 'user', channelId: 'command-deck', content: 'prove sidecar send' }),
       expect.objectContaining({ id: 'msg_agent', sender: 'geordi', channelId: 'command-deck', content: 'geordi reply through ClickClack' }),
-    ]);
+    ]));
   }, 15000);
 });

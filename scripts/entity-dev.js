@@ -112,18 +112,83 @@ async function main() {
     process.exit(1);
   }
 
+  let server = null;
   let sidecarChild = null;
+  let sidecarRestartTimer = null;
+  let sidecarRestartAttempts = 0;
+  const maxSidecarRestarts = Number(env.ENTITY_CLICKCLACK_MAX_RESTARTS || '5');
+  const sidecarRestartBaseDelayMs = Number(env.ENTITY_CLICKCLACK_RESTART_BASE_DELAY_MS || '1000');
+  let shuttingDown = false;
+
+  function attachSidecarExitHandler(child) {
+    child.on('exit', (code, signal) => {
+      if (child !== sidecarChild || shuttingDown) return;
+      sidecarChild = null;
+      scheduleSidecarRestart(`ClickClack sidecar exited${signal ? ` via ${signal}` : ` with ${code ?? 0}`}`);
+    });
+  }
+
+  function scheduleSidecarRestart(reason) {
+    if (shuttingDown || sidecarRestartTimer) return;
+    if (sidecarRestartAttempts >= maxSidecarRestarts) {
+      console.error(`[dev] ClickClack sidecar restart budget exhausted after ${sidecarRestartAttempts} attempts; chat is degraded (${reason}).`);
+      return;
+    }
+    sidecarRestartAttempts += 1;
+    const delayMs = Math.min(30_000, sidecarRestartBaseDelayMs * (2 ** (sidecarRestartAttempts - 1)));
+    console.warn(`[dev] ClickClack sidecar degraded (${reason}); restart ${sidecarRestartAttempts}/${maxSidecarRestarts} in ${delayMs}ms.`);
+    sidecarRestartTimer = setTimeout(() => {
+      sidecarRestartTimer = null;
+      void startManagedSidecar(`restart ${sidecarRestartAttempts}`);
+    }, delayMs);
+  }
+
+  async function startManagedSidecar(reason = 'startup') {
+    if (shuttingDown) return;
+    try {
+      const sidecar = await ensureClickClackSidecar({
+        pin,
+        start: true,
+        prefix: '[clickclack]',
+        env,
+      });
+      sidecarChild = sidecar.child;
+      if (sidecarChild) {
+        sidecarRestartAttempts = 0;
+        attachSidecarExitHandler(sidecarChild);
+      }
+      const supervision = sidecarChild ? 'supervised' : 'external';
+      console.log(`[dev] ClickClack sidecar ${sidecar.status} at ${pin.baseUrl} (${supervision}, ${reason})`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      scheduleSidecarRestart(message);
+    }
+  }
+
+  function stopSidecarChild(signal = 'SIGTERM') {
+    if (!sidecarChild?.pid) return;
+    try {
+      process.kill(-sidecarChild.pid, signal);
+    } catch {
+      sidecarChild.kill(signal);
+    }
+  }
+
+  function shutdown(reason, code = 0) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.exitCode = code;
+    console.log(`[dev] Shutting down (${reason})`);
+    if (sidecarRestartTimer) clearTimeout(sidecarRestartTimer);
+    if (server) server.kill('SIGTERM');
+    stopSidecarChild('SIGTERM');
+    setTimeout(() => process.exit(code), 5_000).unref();
+  }
+
   const sidecarEnabled = !flagDisabled(env.ENTITY_CLICKCLACK_SIDECAR);
   if (sidecarEnabled) {
     console.log(`[dev] ClickClack sidecar target: ${pin.baseUrl}`);
-    const sidecar = await ensureClickClackSidecar({
-      pin,
-      start: true,
-      prefix: '[clickclack]',
-      env,
-    });
-    sidecarChild = sidecar.child;
-    console.log(`[dev] ClickClack sidecar ${sidecar.status} at ${pin.baseUrl}`);
+    await startManagedSidecar();
   } else {
     env.ENTITY_CHAT_CLICKCLACK_BRIDGE = '0';
     console.log('[dev] ClickClack sidecar disabled by env.');
@@ -135,21 +200,10 @@ async function main() {
   console.log(`URL: ${apiBaseUrl}`);
   console.log('');
 
-  const server = spawnPrefixed('npm', ['run', 'dev'], {
+  server = spawnPrefixed('npm', ['run', 'dev'], {
     cwd: path.join(repoRoot, 'packages', 'server'),
     env,
   }, '[entity]');
-
-  let shuttingDown = false;
-  function shutdown(reason, code = 0) {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    process.exitCode = code;
-    console.log(`[dev] Shutting down (${reason})`);
-    server.kill('SIGTERM');
-    if (sidecarChild) sidecarChild.kill('SIGTERM');
-    setTimeout(() => process.exit(code), 5_000).unref();
-  }
 
   server.on('error', (error) => {
     console.error(`[dev] Failed to start Entity server: ${error.message}`);
@@ -160,14 +214,6 @@ async function main() {
       shutdown(`Entity server exited${signal ? ` via ${signal}` : ` with ${code ?? 0}`}`, code ?? (signal ? 1 : 0));
     }
   });
-  if (sidecarChild) {
-    sidecarChild.on('exit', (code, signal) => {
-      if (!shuttingDown) {
-        shutdown(`ClickClack sidecar exited${signal ? ` via ${signal}` : ` with ${code ?? 0}`}`, code ?? (signal ? 1 : 0));
-      }
-    });
-  }
-
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 }

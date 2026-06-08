@@ -103,10 +103,28 @@ export async function verifyClickClackCheckout(options = {}) {
   }
 
   if (!fs.existsSync(path.join(pin.checkoutPath, '.git'))) {
-    throw new Error(`ClickClack checkout is not a git repository: ${pin.checkoutPath}`);
+    if (!install) {
+      throw new Error(`ClickClack checkout is not a git repository: ${pin.checkoutPath}`);
+    }
+    const backupPath = `${pin.checkoutPath}.invalid-${Date.now()}`;
+    fs.renameSync(pin.checkoutPath, backupPath);
+    fs.mkdirSync(path.dirname(pin.checkoutPath), { recursive: true });
+    await execText('git', ['clone', pin.remote, pin.checkoutPath]);
   }
 
-  let head = await execText('git', ['-C', pin.checkoutPath, 'rev-parse', 'HEAD']);
+  let head;
+  try {
+    head = await execText('git', ['-C', pin.checkoutPath, 'rev-parse', 'HEAD']);
+  } catch (error) {
+    if (!install) {
+      throw error;
+    }
+    const backupPath = `${pin.checkoutPath}.invalid-${Date.now()}`;
+    fs.renameSync(pin.checkoutPath, backupPath);
+    fs.mkdirSync(path.dirname(pin.checkoutPath), { recursive: true });
+    await execText('git', ['clone', pin.remote, pin.checkoutPath]);
+    head = await execText('git', ['-C', pin.checkoutPath, 'rev-parse', 'HEAD']);
+  }
   if (head !== pin.commit) {
     if (!install) {
       throw new Error(`ClickClack checkout is ${head}, expected ${pin.commit}`);
@@ -229,6 +247,7 @@ export function startClickClackSidecar(pin = loadSidecarPin(), options = {}) {
     '--dev-bootstrap=true',
   ], {
     cwd: pin.checkoutPath,
+    detached: true,
     stdio: stdio === 'inherit' ? 'inherit' : ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
@@ -297,7 +316,11 @@ export async function ensureClickClackSidecar(options = {}) {
     ]);
     return { status: 'started', child, health: ready };
   } catch (error) {
-    child.kill('SIGTERM');
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      child.kill('SIGTERM');
+    }
     throw error;
   }
 }
