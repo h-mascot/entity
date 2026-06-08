@@ -81,6 +81,11 @@ interface ChatTransportContextValue {
 const DEFAULT_LOCAL_MODEL = 'qwen2.5-coder:7b';
 const SERVER_CHAT_TIMEOUT_MS = 90_000;
 
+function configuredOllamaUrl(): string | null {
+  const configured = (import.meta.env.VITE_OLLAMA_BASE_URL as string | undefined)?.trim();
+  return configured ? configured.replace(/\/+$/, '') : null;
+}
+
 const ChatTransportContext = createContext<ChatTransportContextValue | null>(null);
 
 function createMessageId(prefix = 'msg'): string {
@@ -183,8 +188,12 @@ function toConversationHistory(messages: ChatMessage[]): Array<{ role: 'user' | 
 }
 
 async function resolveOllamaModel(): Promise<string> {
+  const ollamaUrl = configuredOllamaUrl();
+  if (!ollamaUrl) {
+    return DEFAULT_LOCAL_MODEL;
+  }
+
   try {
-    const ollamaUrl = (import.meta.env.VITE_OLLAMA_BASE_URL as string | undefined) || 'http://localhost:11434';
     const response = await fetchWithTimeout(`${ollamaUrl}/api/tags`, { method: 'GET' }, 3500);
     if (!response.ok) {
       return DEFAULT_LOCAL_MODEL;
@@ -218,7 +227,11 @@ async function requestLocalAgentReply(params: {
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
 }): Promise<string> {
   const agent = findAgent(params.agentId);
-  const ollamaUrl = (import.meta.env.VITE_OLLAMA_BASE_URL as string | undefined) || 'http://localhost:11434';
+  const ollamaUrl = configuredOllamaUrl();
+  if (!ollamaUrl) {
+    throw new Error('Local Ollama is not configured for this browser session.');
+  }
+
   const response = await fetchWithTimeout(
     `${ollamaUrl}/v1/chat/completions`,
     {

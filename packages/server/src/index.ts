@@ -5591,7 +5591,6 @@ const clickClackBridge = process.env.ENTITY_CHAT_CLICKCLACK_BRIDGE === '1'
 registerClickClackProxyRoutes(app);
 registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge });
 
-// Token usage routes
 
 // TTS routes
 registerTtsRoutes({ app, db: entityDb });
