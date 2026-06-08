@@ -80,3 +80,4 @@ entity.db
 *.db.recovered*
 *.db.restore
 packages/db/*.db*
+.clawpatch/
