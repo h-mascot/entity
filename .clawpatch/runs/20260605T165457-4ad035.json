@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260605T165457-4ad035",
+  "command": "revalidate",
+  "args": [
+    "revalidate",
+    "--finding",
+    "fnd_sig-feat-cli-command-f1df57017b-_1e6d958cb0"
+  ],
+  "rootPath": "/Users/enterprise/Code/entity",
+  "headSha": "3a18d59c042fd242820eb2daa1bea7a8fba4b2b7",
+  "startedAt": "2026-06-05T16:54:57.380Z",
+  "finishedAt": "2026-06-05T16:55:43.217Z",
+  "status": "completed",
+  "claimedFeatureIds": [],
+  "findingIds": [
+    "fnd_sig-feat-cli-command-f1df57017b-_1e6d958cb0"
+  ],
+  "patchAttemptIds": [],
+  "errors": []
+}

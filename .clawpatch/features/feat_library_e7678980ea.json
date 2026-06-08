@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_e7678980ea",
+  "title": "Node package entity",
+  "summary": "Node package entity with package metadata and review context rooted at ..",
+  "kind": "library",
+  "source": "node-package",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "package.json",
+      "symbol": "entity",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "package.json",
+      "reason": "package manifest"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "README.md",
+      "reason": "package context"
+    },
+    {
+      "path": "AGENTS.md",
+      "reason": "package context"
+    },
+    {
+      "path": "scripts/clickclack-sidecar-lib.mjs",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/clickclack-sidecar.mjs",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/ctrl-live-smoke.mjs",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/entity-deploy-webhook-server.mjs",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/entity-dev.js",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/entity-doctor.js",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/entity-gateway-pull-deploy.mjs",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/entity-setup.js",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/fs-regression-smoke.mjs",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/scan-private-defaults.mjs",
+      "reason": "package source overview"
+    },
+    {
+      "path": "scripts/clickclack-sidecar-lib.test.mjs",
+      "reason": "package test"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "package",
+    "project:entity",
+    "project-root:."
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

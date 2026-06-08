@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_ui-flow_7f79244390",
+  "title": "React component ChatOfflineProvider",
+  "summary": "React component implemented by packages/app/src/components/Chat/ChatOfflineProvider.tsx.",
+  "kind": "ui-flow",
+  "source": "react-component",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/app/src/components/Chat/ChatOfflineProvider.tsx",
+      "symbol": "ChatOfflineProvider",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/app/src/components/Chat/ChatOfflineProvider.tsx",
+      "reason": "component implementation"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/app/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/app/src/hooks/useChat.ts",
+      "reason": "direct import"
+    },
+    {
+      "path": "packages/app/src/lib/chat-store.ts",
+      "reason": "direct import"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "react",
+    "component",
+    "web"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "serialization"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

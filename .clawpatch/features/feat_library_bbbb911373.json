@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_bbbb911373",
+  "title": "Node source packages/app/src/hooks",
+  "summary": "Node/TypeScript source group packages/app/src/hooks with 12 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/app/package.json",
+      "symbol": "packages/app/src/hooks",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/app/src/hooks/useActivityStream.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useChat.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useFileSources.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useFollowMode.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useIsMobile.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useMCData.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useNotificationCenter.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useSwarmBoard.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useSyncStatus.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useTaskBoard.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useWatchModeAutoFollow.ts",
+      "reason": "source group packages/app/src/hooks"
+    },
+    {
+      "path": "packages/app/src/hooks/useWebSocket.ts",
+      "reason": "source group packages/app/src/hooks"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/app/package.json",
+      "reason": "package manifest"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/app",
+    "project-root:packages/app"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

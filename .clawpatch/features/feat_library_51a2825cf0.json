@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_51a2825cf0",
+  "title": "Node source packages/server/src/fs",
+  "summary": "Node/TypeScript source group packages/server/src/fs with 9 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/package.json",
+      "symbol": "packages/server/src/fs",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/fs/classify.ts",
+      "reason": "source group packages/server/src/fs"
+    },
+    {
+      "path": "packages/server/src/fs/index-runner.ts",
+      "reason": "source group packages/server/src/fs"
+    },
+    {
+      "path": "packages/server/src/fs/index.ts",
+      "reason": "source group packages/server/src/fs"
+    },
+    {
+      "path": "packages/server/src/fs/metrics.ts",
+      "reason": "source group packages/server/src/fs"
+    },
+    {
+      "path": "packages/server/src/fs/routes-files.ts",
+      "reason": "source group packages/server/src/fs"
+    },
+    {
+      "path": "packages/server/src/fs/routes-search.ts",
+      "reason": "source group packages/server/src/fs"
+    },
+    {
+      "path": "packages/server/src/fs/routes-sources.ts",
+      "reason": "source group packages/server/src/fs"
+    },
+    {
+      "path": "packages/server/src/fs/security.ts",
+      "reason": "source group packages/server/src/fs"
+    },
+    {
+      "path": "packages/server/src/fs/types.ts",
+      "reason": "source group packages/server/src/fs"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/src/__tests__/routes-search.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/fs/classify.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/fs/metrics.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/fs/security.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/security.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/__tests__/routes-search.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/fs/classify.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/fs/metrics.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/fs/security.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/security.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

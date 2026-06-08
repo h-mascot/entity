@@ -106,7 +106,6 @@ import {
 import { registerDocsApiRoutes } from "./routes/docs";
 import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
-import { registerTokenRoutes } from "./routes/tokens";
 import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
@@ -5593,7 +5592,6 @@ registerClickClackProxyRoutes(app);
 registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge });
 
 // Token usage routes
-registerTokenRoutes({ app });
 
 // TTS routes
 registerTtsRoutes({ app, db: entityDb });

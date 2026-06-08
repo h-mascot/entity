@@ -2755,19 +2755,6 @@ export {
   type ChatThreadRecord,
 } from "./chat";
 
-// Token usage module re-exports
-export {
-  createTokenUsageRepository,
-  resolveOpenClawLcmPath,
-  resolveCodexLogsPath,
-  resolveClaudeCodeProjectsPath,
-  type TokenSource,
-  type TokenUsageRecord,
-  type UpsertTokenUsageInput,
-  type TokenUsageSummary,
-  type TokenUsageDaily,
-  type TokenSourceInfo,
-} from "./token-usage";
 
 export function getSubscribedCrews(agentSlug: string): CrewRecord[] {
   return getStrategicRepository().getSubscribedCrews(agentSlug);

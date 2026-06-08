@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_route_e2adfee636",
+  "title": "Express route GET /documents/:slug/snapshot",
+  "summary": "Express route GET /documents/:slug/snapshot declared in packages/server/src/routes/agent-api.ts.",
+  "kind": "route",
+  "source": "express-route",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/src/routes/agent-api.ts",
+      "symbol": null,
+      "route": "GET /documents/:slug/snapshot",
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/routes/agent-api.ts",
+      "reason": "Express route declaration"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/tsconfig.json",
+      "reason": "package context"
+    },
+    {
+      "path": "packages/server/vitest.config.ts",
+      "reason": "test configuration"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-api.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/__tests__/agent-api.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "express",
+    "route",
+    "api",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "serialization"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

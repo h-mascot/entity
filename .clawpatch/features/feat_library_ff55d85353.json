@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_ff55d85353",
+  "title": "Node source packages/app/src/components/Chat",
+  "summary": "Node/TypeScript source group packages/app/src/components/Chat with 7 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/app/package.json",
+      "symbol": "packages/app/src/components/Chat",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/app/src/components/Chat/ChannelView.tsx",
+      "reason": "source group packages/app/src/components/Chat"
+    },
+    {
+      "path": "packages/app/src/components/Chat/ChatOfflineProvider.tsx",
+      "reason": "source group packages/app/src/components/Chat"
+    },
+    {
+      "path": "packages/app/src/components/Chat/ChatSidebar.tsx",
+      "reason": "source group packages/app/src/components/Chat"
+    },
+    {
+      "path": "packages/app/src/components/Chat/ChatView.tsx",
+      "reason": "source group packages/app/src/components/Chat"
+    },
+    {
+      "path": "packages/app/src/components/Chat/MessageBubble.tsx",
+      "reason": "source group packages/app/src/components/Chat"
+    },
+    {
+      "path": "packages/app/src/components/Chat/MessageInput.tsx",
+      "reason": "source group packages/app/src/components/Chat"
+    },
+    {
+      "path": "packages/app/src/components/Chat/ThreadPanel.tsx",
+      "reason": "source group packages/app/src/components/Chat"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/app/package.json",
+      "reason": "package manifest"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/app",
+    "project-root:packages/app"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

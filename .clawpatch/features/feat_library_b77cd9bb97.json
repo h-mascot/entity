@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_b77cd9bb97",
+  "title": "Node source packages/server/src/swarm",
+  "summary": "Node/TypeScript source group packages/server/src/swarm with 8 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/package.json",
+      "symbol": "packages/server/src/swarm",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/swarm/db.ts",
+      "reason": "source group packages/server/src/swarm"
+    },
+    {
+      "path": "packages/server/src/swarm/dispatcher.ts",
+      "reason": "source group packages/server/src/swarm"
+    },
+    {
+      "path": "packages/server/src/swarm/healer.ts",
+      "reason": "source group packages/server/src/swarm"
+    },
+    {
+      "path": "packages/server/src/swarm/index.ts",
+      "reason": "source group packages/server/src/swarm"
+    },
+    {
+      "path": "packages/server/src/swarm/provider-registry.ts",
+      "reason": "source group packages/server/src/swarm"
+    },
+    {
+      "path": "packages/server/src/swarm/routes-heal-patch.ts",
+      "reason": "source group packages/server/src/swarm"
+    },
+    {
+      "path": "packages/server/src/swarm/routes.ts",
+      "reason": "source group packages/server/src/swarm"
+    },
+    {
+      "path": "packages/server/src/swarm/types.ts",
+      "reason": "source group packages/server/src/swarm"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/src/config/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-linker/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-services/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/swarm/acp-provider.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/swarm/db.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/swarm/e2e-integration.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/swarm/routes.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/config/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-linker/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-services/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/swarm/acp-provider.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/swarm/db.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/swarm/e2e-integration.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/swarm/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

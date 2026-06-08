@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_route_70696446c9",
+  "title": "Express route POST /jobs/:id/cancel",
+  "summary": "Express route POST /jobs/:id/cancel declared in packages/server/src/swarm/routes.ts.",
+  "kind": "route",
+  "source": "express-route",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/src/swarm/routes.ts",
+      "symbol": null,
+      "route": "POST /jobs/:id/cancel",
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/swarm/routes.ts",
+      "reason": "Express route declaration"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/tsconfig.json",
+      "reason": "package context"
+    },
+    {
+      "path": "packages/server/vitest.config.ts",
+      "reason": "test configuration"
+    },
+    {
+      "path": "packages/server/src/config/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-linker/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-services/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/swarm/routes.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/config/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-linker/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-services/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/swarm/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "express",
+    "route",
+    "api",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "serialization",
+    "auth"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

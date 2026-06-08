@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_a7d26df258",
+  "title": "Node source packages/app/src/components#3",
+  "summary": "Node/TypeScript source group packages/app/src/components#3 with 12 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/app/package.json",
+      "symbol": "packages/app/src/components#3",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/app/src/components/PresenceChips.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/QuickSwitcher.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/ReviewPanel.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/RichTextEditor.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/SourceFileTree.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/SuggestionPanel.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/SwarmBoard.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/SyncStatusBadge.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/TaskBoard.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/TaskMasterSettings.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/Toast.tsx",
+      "reason": "source group packages/app/src/components#3"
+    },
+    {
+      "path": "packages/app/src/components/TokenView.tsx",
+      "reason": "source group packages/app/src/components#3"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/app/package.json",
+      "reason": "package manifest"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/app",
+    "project-root:packages/app"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

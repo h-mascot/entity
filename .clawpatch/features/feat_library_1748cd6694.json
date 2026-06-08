@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_1748cd6694",
+  "title": "Node source packages/server/src/routes",
+  "summary": "Node/TypeScript source group packages/server/src/routes with 8 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/package.json",
+      "symbol": "packages/server/src/routes",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/routes/agent-api.ts",
+      "reason": "source group packages/server/src/routes"
+    },
+    {
+      "path": "packages/server/src/routes/agent-registry.ts",
+      "reason": "source group packages/server/src/routes"
+    },
+    {
+      "path": "packages/server/src/routes/chat-model-registry.ts",
+      "reason": "source group packages/server/src/routes"
+    },
+    {
+      "path": "packages/server/src/routes/chat.ts",
+      "reason": "source group packages/server/src/routes"
+    },
+    {
+      "path": "packages/server/src/routes/docs.ts",
+      "reason": "source group packages/server/src/routes"
+    },
+    {
+      "path": "packages/server/src/routes/search.ts",
+      "reason": "source group packages/server/src/routes"
+    },
+    {
+      "path": "packages/server/src/routes/tokens.ts",
+      "reason": "source group packages/server/src/routes"
+    },
+    {
+      "path": "packages/server/src/routes/tts.ts",
+      "reason": "source group packages/server/src/routes"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-api.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/routes/chat-clickclack.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/routes/chat-model-registry.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/routes/chat.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/routes/docs.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/routes/tts.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/__tests__/agent-api.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/routes/chat-clickclack.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/routes/chat-model-registry.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/routes/chat.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/routes/docs.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/routes/tts.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

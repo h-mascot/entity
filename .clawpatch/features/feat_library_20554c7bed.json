@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_20554c7bed",
+  "title": "Node source packages/server/src/fs/adapters",
+  "summary": "Node/TypeScript source group packages/server/src/fs/adapters with 5 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/package.json",
+      "symbol": "packages/server/src/fs/adapters",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/fs/adapters/docsify.ts",
+      "reason": "source group packages/server/src/fs/adapters"
+    },
+    {
+      "path": "packages/server/src/fs/adapters/http-markdown.ts",
+      "reason": "source group packages/server/src/fs/adapters"
+    },
+    {
+      "path": "packages/server/src/fs/adapters/local.ts",
+      "reason": "source group packages/server/src/fs/adapters"
+    },
+    {
+      "path": "packages/server/src/fs/adapters/registry.ts",
+      "reason": "source group packages/server/src/fs/adapters"
+    },
+    {
+      "path": "packages/server/src/fs/adapters/types.ts",
+      "reason": "source group packages/server/src/fs/adapters"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/src/plugins/registry.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/plugins/registry.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

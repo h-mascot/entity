@@ -44,7 +44,6 @@ import AgentsMobileDetail from './components/AgentsMobileDetail';
 import AgentDashboardV2 from './components/AgentDashboardV2';
 import ChatView from './components/Chat/ChatView';
 import OpenClawLobsterSite from './components/OpenClawLobsterSite';
-import TokenView from './components/TokenView';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useActivityStream } from './hooks/useActivityStream';
@@ -138,7 +137,7 @@ interface AuthSession {
   loggedInAt: string;
 }
 
-type WorkspaceTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'admin' | 'tokens';
+type WorkspaceTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'admin';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -1375,7 +1374,7 @@ export default function App() {
       return 'files';
     }
     const saved = window.localStorage.getItem('entity.sidebar.tab') as WorkspaceTab | null;
-    const VALID_TABS: readonly string[] = ['files', 'agents', 'tasks', 'services', 'chat', 'admin', 'tokens'] as const;
+    const VALID_TABS: readonly string[] = ['files', 'agents', 'tasks', 'services', 'chat', 'admin'] as const;
     if (saved && VALID_TABS.includes(saved)) {
       return saved;
     }
@@ -2824,7 +2823,7 @@ export default function App() {
 
   const handleSidebarTabChange = (tab: WorkspaceTab) => {
     setSidebarTab(tab);
-    if (tab === 'admin' || tab === 'tokens') {
+    if (tab === 'admin') {
       setMobileTab('files');
     } else {
       setMobileTab(tab);
@@ -4358,31 +4357,6 @@ export default function App() {
       return null;
     }
 
-    if (sidebarTab === 'tokens') {
-      return (
-        <div className="flex w-full flex-col gap-3 p-3">
-          <div className="mc-shell-card rounded-lg bg-[var(--bg-secondary)] p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-medium text-[var(--text-muted)]">Token Usage</span>
-              <span className="text-lg">📊</span>
-            </div>
-            <div className="text-center">
-              <span className="text-2xl font-bold text-[var(--text-primary)]">Tokens</span>
-            </div>
-            <div className="mt-2 text-center">
-              <button
-                type="button"
-                onClick={() => openExpandedSidebarTab('tokens')}
-                className="mc-shell-btn w-full px-2 py-1 text-xs text-[var(--text-primary)]"
-              >
-                Open Dashboard
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
     if (sidebarTab === 'admin') {
       return renderAdminSidebarPanel();
     }
@@ -4490,25 +4464,6 @@ export default function App() {
   );
 
   const renderContextBar = () => {
-    if (sidebarTab === 'tokens') {
-      return (
-        <div className="flex w-full flex-wrap items-center justify-between gap-2">
-          <div className="text-xs text-[var(--text-muted)]">AI token usage tracking</div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => {}} className="mc-shell-btn px-2 py-1 text-xs">
-              7d
-            </button>
-            <button type="button" onClick={() => {}} className="mc-shell-btn px-2 py-1 text-xs">
-              30d
-            </button>
-            <button type="button" onClick={() => {}} className="mc-shell-btn px-2 py-1 text-xs">
-              90d
-            </button>
-          </div>
-        </div>
-      );
-    }
-
     if (sidebarTab === 'admin') {
       return (
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
@@ -5003,7 +4958,7 @@ export default function App() {
             <span>⚡ Entity</span>
 
           </div>
-          {(['files', 'agents', 'tasks', 'services', 'chat', 'admin', 'tokens'] as const).map((tab) => (
+          {(['files', 'agents', 'tasks', 'services', 'chat', 'admin'] as const).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -5128,21 +5083,6 @@ export default function App() {
         </button>
       );
     }
-
-    if (sidebarTab === 'tokens') {
-      return (
-        <button
-          type="button"
-          onClick={() => openExpandedSidebarTab('tokens')}
-          className="mc-shell-btn inline-flex h-10 w-10 items-center justify-center px-0 py-0 text-base text-[var(--text-primary)]"
-          aria-label="Open token dashboard"
-          title="Open token dashboard"
-        >
-          <span aria-hidden="true">📊</span>
-        </button>
-      );
-    }
-
     if (sidebarTab === 'admin') {
       const miniItems: Array<{ key: AdminSection; icon: string; label: string }> = [
         { key: 'general', icon: '🧩', label: 'General settings' },
@@ -5418,10 +5358,6 @@ export default function App() {
       ) : sidebarTab === 'chat' ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <ChatView />
-        </div>
-      ) : sidebarTab === 'tokens' ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <TokenView apiBase={runtime.apiBase} />
         </div>
       ) : sidebarTab === 'admin' ? (
         <div className="flex min-h-0 flex-1 flex-col">{renderAdminWorkspace()}</div>

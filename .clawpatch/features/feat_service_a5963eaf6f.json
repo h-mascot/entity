@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_service_a5963eaf6f",
+  "title": "Node source packages/db/src/:task",
+  "summary": "Node/TypeScript source group packages/db/src/:task with 2 files.",
+  "kind": "service",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/db/package.json",
+      "symbol": "packages/db/src/:task",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/db/src/task-sync.js",
+      "reason": "source group packages/db/src/:task"
+    },
+    {
+      "path": "packages/db/src/task-sync.ts",
+      "reason": "source group packages/db/src/:task"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/db/package.json",
+      "reason": "package manifest"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/db",
+    "project-root:packages/db"
+  ],
+  "trustBoundaries": [
+    "filesystem",
+    "database"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

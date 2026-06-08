@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "findingId": "fnd_sig-feat-cli-command-f1df57017b-_e11d884274",
+  "featureId": "feat_cli-command_f1df57017b",
+  "title": "Concurrent bot creation can duplicate bot users and lose manifest updates",
+  "category": "concurrency",
+  "severity": "medium",
+  "confidence": "medium",
+  "triage": "risk",
+  "evidence": [
+    {
+      "path": "packages/server/src/clickclack/bridge.ts",
+      "startLine": 290,
+      "endLine": 325,
+      "symbol": "ensureAgentBot",
+      "quote": null
+    }
+  ],
+  "reasoning": "ensureAgentBot performs a read-check-create-write sequence against a shared manifest with no lock, atomic compare/write, or re-read before persisting. Two simultaneous sendCompatibilityMessage calls for the same new agent can both miss the manifest entry, both run bot creation, and then race writing the manifest. That can create duplicate ClickClack bots/tokens and leave only one record persisted, making the other created credential unmanaged.",
+  "reproduction": null,
+  "recommendation": "Serialize manifest mutation per manifest path/agent or use an atomic lock file around read/create/write. Re-read the manifest after acquiring the lock and before creating the bot so only one caller creates the missing record.",
+  "whyTestsDoNotAlreadyCoverThis": "bridge.test.ts exercises sequential sends only and injects createAgentBot without concurrent calls, so the read-create-write race is never exercised.",
+  "suggestedRegressionTest": "Add a bridge test that fires two sendCompatibilityMessage calls concurrently for the same target with a delayed createAgentBot, asserts createAgentBot is called once, and asserts both results use the same bot user id.",
+  "minimumFixScope": "Guard ensureAgentBot manifest read/create/write with per-manifest locking or in-process serialization.",
+  "status": "open",
+  "history": [],
+  "signature": "sig_feat-cli-command-f1df57017b_71271bdffe",
+  "linkedPatchAttemptIds": [],
+  "createdByRunId": "20260605T164138-2783b1",
+  "createdAt": "2026-06-05T16:42:09.635Z",
+  "updatedAt": "2026-06-05T16:42:09.635Z"
+}

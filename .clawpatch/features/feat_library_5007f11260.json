@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_5007f11260",
+  "title": "Node source packages/server/src",
+  "summary": "Node/TypeScript source group packages/server/src with 12 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/package.json",
+      "symbol": "packages/server/src",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/agent-metrics.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/docs-paths.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/file-types.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/index.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/node-operations.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/sentry.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/static-cache.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/task-dedupe.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/task-output-links.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/task-pagination.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/task-projects.ts",
+      "reason": "source group packages/server/src"
+    },
+    {
+      "path": "packages/server/src/terminal.ts",
+      "reason": "source group packages/server/src"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-api.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-registry-routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-scheduler.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/db-repositories.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/docs-paths.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/file-sources.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/index-portability.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/routes-docs.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/__tests__/agent-api.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-registry-routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-scheduler.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/db-repositories.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/docs-paths.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/file-sources.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/index-portability.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/routes-docs.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

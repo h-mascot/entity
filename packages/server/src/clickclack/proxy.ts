@@ -52,7 +52,11 @@ function cookieValue(req: express.Request, name: string): string {
     if (index === -1) continue;
     const key = part.slice(0, index).trim();
     if (key !== name) continue;
-    return decodeURIComponent(part.slice(index + 1).trim());
+    try {
+      return decodeURIComponent(part.slice(index + 1).trim());
+    } catch {
+      return '';
+    }
   }
   return '';
 }

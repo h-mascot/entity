@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_4a8ddb43bd",
+  "title": "Node package @entity/app",
+  "summary": "Node package @entity/app with package metadata and review context rooted at packages/app.",
+  "kind": "library",
+  "source": "node-package",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/app/package.json",
+      "symbol": "@entity/app",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/app/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/app/tsconfig.json",
+      "reason": "typescript configuration"
+    },
+    {
+      "path": "packages/app/vite.config.ts",
+      "reason": "build configuration"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/app/src/App.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/ActivityStream.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/AgentDashboardV2.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/AgentsMobileDetail.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/AgentsSidebarTab.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/AppErrorBoundary.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/BottomTerminalPanel.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/Chat/ChannelView.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/Chat/ChatOfflineProvider.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/Chat/ChatSidebar.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/Chat/ChatView.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/Chat/MessageBubble.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/Chat/MessageInput.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/Chat/ThreadPanel.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/CodeMirrorEditor.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/CodeMirrorFileViewer.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/CommentThread.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/CursorAvatars.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/DocumentViewer.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/EntityServicesBoard.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/FileHistoryPanel.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/FileTree.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/InlineCommentAnchor.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/components/InlineFindingHighlight.tsx",
+      "reason": "package source overview"
+    },
+    {
+      "path": "packages/app/src/lib/__tests__/fileRestoreState.test.ts",
+      "reason": "package test"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "package",
+    "project:@entity/app",
+    "project-root:packages/app",
+    "workspace"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

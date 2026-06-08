@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "findingId": "fnd_sig-feat-config-26bfbb7d61-3fb36_58af2129ef",
+  "featureId": "feat_config_26bfbb7d61",
+  "title": "Seed script exits successfully without seeding any sources",
+  "category": "bug",
+  "severity": "medium",
+  "confidence": "medium",
+  "triage": "risk",
+  "evidence": [
+    {
+      "path": "scripts/seed-agent-sources.sh",
+      "startLine": 25,
+      "endLine": 30,
+      "symbol": null,
+      "quote": null
+    },
+    {
+      "path": "scripts/seed-agent-sources.sh",
+      "startLine": 47,
+      "endLine": 70,
+      "symbol": null,
+      "quote": null
+    },
+    {
+      "path": "scripts/seed-agent-sources.sh",
+      "startLine": 73,
+      "endLine": 76,
+      "symbol": null,
+      "quote": null
+    }
+  ],
+  "reasoning": "The script selects an endpoint and fetches the current source list, and it defines create_source, but no code invokes create_source or otherwise mutates configuration before printing Done. Any workflow using this seed script as an automation step will get a successful exit even though no seed data was applied.",
+  "reproduction": null,
+  "recommendation": "Either call the intended seeding logic before printing Done, or rename/replace the script with an explicit validation/no-op script so callers cannot mistake it for a successful seed operation.",
+  "whyTestsDoNotAlreadyCoverThis": "No tests are included for this shell workflow, and there is no assertion that running the script creates or updates expected sources.",
+  "suggestedRegressionTest": "Add an integration test or shell-level smoke test with a mock HTTP server that runs scripts/seed-agent-sources.sh and asserts the expected POST request(s) are made, or asserts no-op behavior if that is the intended contract.",
+  "minimumFixScope": "Add the missing top-level seeding calls or remove the misleading unused seeding functions and update the script contract.",
+  "status": "open",
+  "history": [],
+  "signature": "sig_feat-config-26bfbb7d61_3fb36021dc",
+  "linkedPatchAttemptIds": [],
+  "createdByRunId": "20260605T164138-2783b1",
+  "createdAt": "2026-06-05T16:42:10.048Z",
+  "updatedAt": "2026-06-05T16:42:10.048Z"
+}

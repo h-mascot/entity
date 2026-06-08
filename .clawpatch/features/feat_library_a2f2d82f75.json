@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_a2f2d82f75",
+  "title": "Node source packages/app/src/components/mission-control#1",
+  "summary": "Node/TypeScript source group packages/app/src/components/mission-control#1 with 12 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/app/package.json",
+      "symbol": "packages/app/src/components/mission-control#1",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/app/src/components/mission-control/KanbanColumn.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCAgentsView.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCCreateTaskModal.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCDatePicker.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCFilterBar.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCHeader.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCInsightsDashboard.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCModals.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCOpsView.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCProjectTagPicker.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCRightSidebar.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCStrategicView.tsx",
+      "reason": "source group packages/app/src/components/mission-control#1"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/app/package.json",
+      "reason": "package manifest"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/app",
+    "project-root:packages/app"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

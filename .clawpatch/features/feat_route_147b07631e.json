@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_route_147b07631e",
+  "title": "Express route DELETE /api/file",
+  "summary": "Express route DELETE /api/file declared in packages/server/src/index.ts.",
+  "kind": "route",
+  "source": "express-route",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/src/index.ts",
+      "symbol": null,
+      "route": "DELETE /api/file",
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/index.ts",
+      "reason": "Express route declaration"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/tsconfig.json",
+      "reason": "package context"
+    },
+    {
+      "path": "packages/server/vitest.config.ts",
+      "reason": "test configuration"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-api.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-registry-routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-scheduler.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/db-repositories.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/docs-paths.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/file-sources.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/index-portability.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/__tests__/routes-docs.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/__tests__/agent-api.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-registry-routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/agent-scheduler.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/db-repositories.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/docs-paths.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/file-sources.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/index-portability.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/__tests__/routes-docs.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "express",
+    "route",
+    "api",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "serialization",
+    "auth"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

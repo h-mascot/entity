@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_92e84db8b6",
+  "title": "Node source packages/app/src/components#1",
+  "summary": "Node/TypeScript source group packages/app/src/components#1 with 12 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/app/package.json",
+      "symbol": "packages/app/src/components#1",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/app/src/components/ActivityStream.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/AgentDashboardV2.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/AgentsMobileDetail.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/AgentsSidebarTab.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/AppErrorBoundary.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/BottomTerminalPanel.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/CodeMirrorEditor.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/CodeMirrorFileViewer.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/CommentThread.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/CursorAvatars.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/DocumentViewer.tsx",
+      "reason": "source group packages/app/src/components#1"
+    },
+    {
+      "path": "packages/app/src/components/EntityServicesBoard.tsx",
+      "reason": "source group packages/app/src/components#1"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/app/package.json",
+      "reason": "package manifest"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/app",
+    "project-root:packages/app"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

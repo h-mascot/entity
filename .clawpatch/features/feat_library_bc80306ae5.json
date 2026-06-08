@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_bc80306ae5",
+  "title": "Node source packages/app/src/components/plugins",
+  "summary": "Node/TypeScript source group packages/app/src/components/plugins with 6 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/app/package.json",
+      "symbol": "packages/app/src/components/plugins",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/app/src/components/plugins/PluginAdminPanel.tsx",
+      "reason": "source group packages/app/src/components/plugins"
+    },
+    {
+      "path": "packages/app/src/components/plugins/PluginDetailSlot.tsx",
+      "reason": "source group packages/app/src/components/plugins"
+    },
+    {
+      "path": "packages/app/src/components/plugins/PluginSubViewSlot.tsx",
+      "reason": "source group packages/app/src/components/plugins"
+    },
+    {
+      "path": "packages/app/src/components/plugins/PluginTopLevelSlot.tsx",
+      "reason": "source group packages/app/src/components/plugins"
+    },
+    {
+      "path": "packages/app/src/components/plugins/componentRegistry.tsx",
+      "reason": "source group packages/app/src/components/plugins"
+    },
+    {
+      "path": "packages/app/src/components/plugins/services/ServicesPage.tsx",
+      "reason": "source group packages/app/src/components/plugins"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/app/package.json",
+      "reason": "package manifest"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/app",
+    "project-root:packages/app"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

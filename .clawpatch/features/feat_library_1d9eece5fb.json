@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_1d9eece5fb",
+  "title": "Node source packages/desktop/src",
+  "summary": "Node/TypeScript source file packages/desktop/src/main.ts.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/desktop/package.json",
+      "symbol": "packages/desktop/src",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/desktop/src/main.ts",
+      "reason": "source group packages/desktop/src"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/desktop/package.json",
+      "reason": "package manifest"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:entity-desktop",
+    "project-root:packages/desktop"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

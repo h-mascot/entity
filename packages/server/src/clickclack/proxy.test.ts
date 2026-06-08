@@ -231,6 +231,19 @@ describe('ClickClack proxy routes', () => {
     expect(await response.json()).toEqual({ user: { id: 'usr_human', display_name: 'Entity Human' } });
   });
 
+  it('rejects malformed auth cookies without failing the proxy route', async () => {
+    vi.stubEnv('ENTITY_API_TOKEN', 'entity-token');
+
+    const response = await fetch(`${baseUrl}/api/clickclack/me`, {
+      headers: { cookie: 'entity-clickclack-token=%' },
+    });
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({
+      code: 'AUTH_TOKEN_REQUIRED',
+    });
+  });
+
   it('strips Entity bearer tokens before proxying to ClickClack', async () => {
     const response = await fetch(`${baseUrl}/api/clickclack/auth-check`, {
       headers: { authorization: 'Bearer entity-token' },

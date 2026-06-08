@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_ui-flow_802715df12",
+  "title": "React component TaskDetailPanel",
+  "summary": "React component implemented by packages/app/src/components/mission-control/TaskDetailPanel.tsx.",
+  "kind": "ui-flow",
+  "source": "react-component",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/app/src/components/mission-control/TaskDetailPanel.tsx",
+      "symbol": "TaskDetailPanel",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/app/src/components/mission-control/TaskDetailPanel.tsx",
+      "reason": "component implementation"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/app/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/app/src/lib/http.ts",
+      "reason": "direct import"
+    },
+    {
+      "path": "packages/app/src/lib/userProfile.ts",
+      "reason": "direct import"
+    },
+    {
+      "path": "packages/app/src/components/plugins/PluginDetailSlot.tsx",
+      "reason": "direct import"
+    },
+    {
+      "path": "packages/app/src/hooks/useTaskBoard.ts",
+      "reason": "direct import"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/projectOptions.ts",
+      "reason": "direct import"
+    },
+    {
+      "path": "packages/app/src/lib/agentRegistry.ts",
+      "reason": "direct import"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "react",
+    "component",
+    "web"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "serialization"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

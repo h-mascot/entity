@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_service_e54e8baffe",
+  "title": "Node source packages/server/src/config",
+  "summary": "Node/TypeScript source group packages/server/src/config with 7 files.",
+  "kind": "service",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/package.json",
+      "symbol": "packages/server/src/config",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/config/effective.ts",
+      "reason": "source group packages/server/src/config"
+    },
+    {
+      "path": "packages/server/src/config/load.ts",
+      "reason": "source group packages/server/src/config"
+    },
+    {
+      "path": "packages/server/src/config/onboarding-modules.ts",
+      "reason": "source group packages/server/src/config"
+    },
+    {
+      "path": "packages/server/src/config/routes.ts",
+      "reason": "source group packages/server/src/config"
+    },
+    {
+      "path": "packages/server/src/config/runtime.ts",
+      "reason": "source group packages/server/src/config"
+    },
+    {
+      "path": "packages/server/src/config/schema.ts",
+      "reason": "source group packages/server/src/config"
+    },
+    {
+      "path": "packages/server/src/config/settings-store.ts",
+      "reason": "source group packages/server/src/config"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/src/config/effective.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/config/load.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/config/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/config/runtime.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-linker/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-services/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/swarm/routes.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/config/effective.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/config/load.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/config/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/config/runtime.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-linker/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-services/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/swarm/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [
+    "filesystem",
+    "database"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}

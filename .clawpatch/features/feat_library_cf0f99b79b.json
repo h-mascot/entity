@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_cf0f99b79b",
+  "title": "Node source packages/server/src/editor",
+  "summary": "Node/TypeScript source group packages/server/src/editor with 6 files.",
+  "kind": "library",
+  "source": "node-source-group",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "packages/server/package.json",
+      "symbol": "packages/server/src/editor",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "packages/server/src/editor/auth.ts",
+      "reason": "source group packages/server/src/editor"
+    },
+    {
+      "path": "packages/server/src/editor/index.ts",
+      "reason": "source group packages/server/src/editor"
+    },
+    {
+      "path": "packages/server/src/editor/reviews.ts",
+      "reason": "source group packages/server/src/editor"
+    },
+    {
+      "path": "packages/server/src/editor/routes.ts",
+      "reason": "source group packages/server/src/editor"
+    },
+    {
+      "path": "packages/server/src/editor/service.ts",
+      "reason": "source group packages/server/src/editor"
+    },
+    {
+      "path": "packages/server/src/editor/ws.ts",
+      "reason": "source group packages/server/src/editor"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "packages/server/package.json",
+      "reason": "package manifest"
+    },
+    {
+      "path": "packages/server/src/config/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-linker/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-services/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/plugins/routes.test.ts",
+      "reason": "associated test"
+    },
+    {
+      "path": "packages/server/src/swarm/routes.test.ts",
+      "reason": "associated test"
+    }
+  ],
+  "tests": [
+    {
+      "path": "packages/server/src/config/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-linker/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/entity-services/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/plugins/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    },
+    {
+      "path": "packages/server/src/swarm/routes.test.ts",
+      "command": "npm --prefix packages/server run test"
+    }
+  ],
+  "tags": [
+    "node",
+    "typescript",
+    "source-group",
+    "project:@entity/server",
+    "project-root:packages/server"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [],
+  "patchAttemptIds": [],
+  "analysisHistory": [],
+  "createdAt": "2026-06-05T16:33:00.450Z",
+  "updatedAt": "2026-06-05T16:33:00.450Z"
+}
