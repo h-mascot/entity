@@ -73,29 +73,26 @@ function extractBearerToken(req: Request | IncomingMessage): string | null {
  * Routes that are always public (no auth required).
  * These are typically health checks and client configuration endpoints.
  */
-const PUBLIC_ROUTE_PATTERNS: readonly (string | RegExp)[] = [
-  // Health check
+/** Routes that match exactly (no sub-paths). */
+const PUBLIC_EXACT_ROUTES: readonly string[] = [
   "/api/health",
-  // Client-side config (needed before auth)
-  "/api/config",
-  // Embedded ClickClack API proxy has its own auth path for SPA cookie requests.
-  "/api/clickclack",
+  "/api/config",          // client bootstrap config only; /api/config/effective requires auth
+];
+
+/** Routes where the prefix and all sub-paths are public. */
+const PUBLIC_PREFIX_ROUTES: readonly string[] = [
+  "/api/clickclack",      // has its own auth for SPA cookie requests
 ];
 
 /**
  * Check if a request path matches a public route pattern.
  */
 function isPublicRoute(path: string): boolean {
-  for (const pattern of PUBLIC_ROUTE_PATTERNS) {
-    if (typeof pattern === "string") {
-      if (path === pattern || path.startsWith(pattern + "/")) {
-        return true;
-      }
-    } else {
-      if (pattern.test(path)) {
-        return true;
-      }
-    }
+  for (const exact of PUBLIC_EXACT_ROUTES) {
+    if (path === exact) return true;
+  }
+  for (const prefix of PUBLIC_PREFIX_ROUTES) {
+    if (path === prefix || path.startsWith(prefix + "/")) return true;
   }
   return false;
 }
