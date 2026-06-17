@@ -194,7 +194,8 @@ export function createFileIndexRepository(): FileIndexRepository {
   const getRecordStmt = db.prepare('SELECT * FROM file_index WHERE source_id = ? AND path = ?');
   const deleteBySourcePathPrefixStmt = db.prepare(`
     DELETE FROM file_index
-    WHERE source_id = ? AND (path = ? OR path LIKE ? ESCAPE '\\')
+    WHERE source_id = ?
+      AND (path = ? OR (substr(path, 1, ?) = ? AND substr(path, ?, 1) = '/'))
   `);
   const listBySourceStmt = db.prepare('SELECT * FROM file_index WHERE source_id = ? ORDER BY indexed_at DESC LIMIT ?');
   const getSyncRunStmt = db.prepare('SELECT * FROM file_sync_runs WHERE id = ?');
@@ -311,8 +312,13 @@ export function createFileIndexRepository(): FileIndexRepository {
         return 0;
       }
 
-      const likePrefix = `${normalized.replace(/[\\%_]/g, (char) => `\\${char}`)}/%`;
-      const result = deleteBySourcePathPrefixStmt.run(sourceId, normalized, likePrefix);
+      const result = deleteBySourcePathPrefixStmt.run(
+        sourceId,
+        normalized,
+        normalized.length,
+        normalized,
+        normalized.length + 1
+      );
       return Number(result.changes ?? 0);
     },
 

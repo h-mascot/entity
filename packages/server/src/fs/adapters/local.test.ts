@@ -47,7 +47,13 @@ describe('LocalFileSourceAdapter metadata', () => {
 
     const adapter = new LocalFileSourceAdapter(sourceFor(root));
 
-    await expect(adapter.list('')).resolves.toEqual([]);
+    await expect(adapter.list('')).resolves.toEqual([
+      expect.objectContaining({
+        path: 'linked-dir',
+        isDirectory: false,
+        kind: 'other',
+      }),
+    ]);
 
     await expect(adapter.stat('linked-dir')).resolves.toMatchObject({
       path: 'linked-dir',

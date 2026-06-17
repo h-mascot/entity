@@ -9,16 +9,18 @@ export interface SourceCapability {
   search: boolean;
 }
 
+export type SourcePathKind = 'file' | 'directory' | 'other';
+
 export interface SourceNode {
   sourceId: string;
   path: string;
   name: string;
   isDirectory: boolean;
+  kind?: SourcePathKind;
   size?: number;
   updatedAt?: string;
 }
 
-export type SourcePathKind = 'file' | 'directory' | 'other';
 
 export interface SourcePathMetadata {
   sourceId: string;

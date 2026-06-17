@@ -76,7 +76,7 @@ export function registerFileRoutes(router: Router): void {
 
       const adapter = createFileSourceAdapter(source);
       const startedAt = Date.now();
-      const nodes = await adapter.list(normalizedPath);
+      const nodes = (await adapter.list(normalizedPath)).filter((node) => node.kind !== 'other');
       const durationMs = Date.now() - startedAt;
 
       emitFsAudit('fs.tree', {

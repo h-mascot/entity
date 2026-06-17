@@ -22,14 +22,16 @@ function toKind(stats: fs.Stats): SourcePathMetadata['kind'] {
 function toNode(sourceId: string, rootPath: string, entryName: string, stats: fs.Stats): SourceNode {
   const normalizedRoot = rootPath.replace(/\\/g, '/').replace(/\/+$/, '');
   const relativePath = normalizedRoot ? `${normalizedRoot}/${entryName}` : entryName;
-  const isDirectory = stats.isDirectory();
+  const kind = toKind(stats);
+  const isDirectory = kind === 'directory';
 
   return {
     sourceId,
     path: relativePath,
     name: entryName,
     isDirectory,
-    size: isDirectory ? undefined : stats.size,
+    kind,
+    size: kind === 'file' ? stats.size : undefined,
     updatedAt: toIsoTimestamp(stats.mtime),
   };
 }
@@ -90,10 +92,6 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
             try {
               const entryAbsolutePath = path.join(absolutePath, entry.name);
               const stats = await fs.promises.lstat(entryAbsolutePath);
-              if (toKind(stats) === 'other') {
-                return null;
-              }
-
               const rootPath = normalizedRelative;
               return toNode(this.source.id, rootPath, entry.name, stats);
             } catch (err) {
