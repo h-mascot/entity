@@ -4,9 +4,12 @@ import { classifyFile } from './classify';
 import { createFileSourceAdapter } from './adapters/registry';
 import { emitFsAudit } from './security';
 import { recordFsOperation } from './metrics';
+import type { FileSourceAdapter, SourceNode, SourcePathMetadata } from './adapters/types';
 
 const MAX_SOURCE_DEPTH = 8;
 const MAX_DIRECTORIES_PER_SOURCE = 5000;
+const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_EXCLUDES = ['state-snapshots/**'];
 
 const IGNORED_DIRECTORIES = new Set([
   'node_modules', '.git', '.next', '.cache', 'dist', '__pycache__',
@@ -42,9 +45,119 @@ function normalizeDirectoryPath(value: string): string {
   return trimmed.replace(/\/+$/, '');
 }
 
+function readMaxFileBytes(): number {
+  const raw = process.env.ENTITY_FS_AUDIT_MAX_FILE_BYTES;
+  if (!raw) {
+    return DEFAULT_MAX_FILE_BYTES;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_MAX_FILE_BYTES;
+  }
+
+  return Math.floor(parsed);
+}
+
+function readAuditExcludes(): string[] {
+  const raw = process.env.ENTITY_FS_AUDIT_EXCLUDES;
+  const values = raw === undefined ? DEFAULT_EXCLUDES : raw.split(',');
+  return values.map((value) => value.trim()).filter(Boolean);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+}
+
+function globToRegex(pattern: string): RegExp {
+  const normalized = pattern.replace(/\\/g, '/').replace(/^\/+/, '');
+  let regex = '';
+  for (let i = 0; i < normalized.length; i += 1) {
+    const char = normalized[i];
+    const next = normalized[i + 1];
+    if (char === '*' && next === '*') {
+      regex += '.*';
+      i += 1;
+      continue;
+    }
+    if (char === '*') {
+      regex += '[^/]*';
+      continue;
+    }
+    regex += escapeRegex(char);
+  }
+  return new RegExp(`^${regex}$`);
+}
+
+interface ExcludeMatcher {
+  pattern: string;
+  regex: RegExp;
+  rootPrefix?: string;
+}
+
+function createExcludeMatchers(patterns: string[]): ExcludeMatcher[] {
+  return patterns.map((pattern) => {
+    const normalized = pattern.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+    const rootPrefix = normalized.endsWith('/**') ? normalized.slice(0, -3) : undefined;
+    return {
+      pattern: normalized,
+      regex: globToRegex(normalized),
+      rootPrefix,
+    };
+  });
+}
+
+function matchesExclude(pathValue: string, matchers: ExcludeMatcher[]): string | undefined {
+  const normalized = pathValue.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  for (const matcher of matchers) {
+    if (matcher.regex.test(normalized)) {
+      return matcher.pattern;
+    }
+    if (matcher.rootPrefix && (normalized === matcher.rootPrefix || normalized.startsWith(`${matcher.rootPrefix}/`))) {
+      return matcher.pattern;
+    }
+  }
+  return undefined;
+}
+
+function metadataFromNode(node: SourceNode): SourcePathMetadata {
+  return {
+    sourceId: node.sourceId,
+    path: node.path,
+    name: node.name,
+    kind: node.isDirectory ? 'directory' : 'file',
+    size: node.size,
+    updatedAt: node.updatedAt,
+  };
+}
+
+async function classifyCandidate(adapter: FileSourceAdapter, node: SourceNode): Promise<SourcePathMetadata> {
+  if (adapter.stat) {
+    return adapter.stat(node.path);
+  }
+
+  return metadataFromNode(node);
+}
+
+type SkipReason = 'directory' | 'oversize' | 'excluded' | 'non-regular';
+
+function metadataSignature(metadata: SourcePathMetadata | undefined): string {
+  if (!metadata) {
+    return 'no-metadata';
+  }
+
+  return [
+    metadata.kind,
+    metadata.size ?? '',
+    metadata.updatedAt ?? '',
+  ].join(':');
+}
+
 interface IndexRunnerOptions {
   maxConcurrentSources?: number;
   maxFilesPerSource?: number;
+  maxFileBytes?: number;
+  excludes?: string[];
 }
 
 export class FileIndexRunner {
@@ -52,10 +165,15 @@ export class FileIndexRunner {
   private readonly indexRepo = createFileIndexRepository();
   private readonly maxConcurrentSources: number;
   private readonly maxFilesPerSource: number;
+  private readonly maxFileBytes: number;
+  private readonly excludeMatchers: ExcludeMatcher[];
+  private readonly deterministicSkips = new Map<string, string>();
 
   constructor(options: IndexRunnerOptions = {}) {
     this.maxConcurrentSources = Math.max(1, options.maxConcurrentSources ?? 2);
     this.maxFilesPerSource = Math.max(10, options.maxFilesPerSource ?? 10000);
+    this.maxFileBytes = Math.max(1, options.maxFileBytes ?? readMaxFileBytes());
+    this.excludeMatchers = createExcludeMatchers(options.excludes ?? readAuditExcludes());
   }
 
   async runOnce(): Promise<void> {
@@ -90,6 +208,58 @@ export class FileIndexRunner {
     }
 
     await this.indexSource(source);
+  }
+
+  private rememberDeterministicSkip(
+    sourceId: string,
+    pathValue: string,
+    reason: SkipReason,
+    metadata?: SourcePathMetadata,
+    extra?: Record<string, unknown>
+  ): boolean {
+    const normalizedPath = pathValue.replace(/\\/g, '/').replace(/^\/+/, '');
+    const key = `${sourceId}:${normalizedPath}:${reason}`;
+    const signature = metadataSignature(metadata);
+    if (this.deterministicSkips.get(key) === signature) {
+      return false;
+    }
+
+    this.deterministicSkips.set(key, signature);
+    emitFsAudit('index.path.skipped', {
+      sourceId,
+      path: normalizedPath,
+      reason,
+      kind: metadata?.kind,
+      size: metadata?.size,
+      updatedAt: metadata?.updatedAt,
+      ...extra,
+    });
+    return true;
+  }
+
+  private enqueueDirectory(
+    queue: Array<{ path: string; depth: number }>,
+    queuedDirectories: Set<string>,
+    visitedDirectories: Set<string>,
+    pathValue: string,
+    depth: number
+  ): void {
+    const nextDepth = depth + 1;
+    if (nextDepth > MAX_SOURCE_DEPTH) {
+      return;
+    }
+
+    const childPath = normalizeDirectoryPath(pathValue);
+    if (visitedDirectories.has(childPath) || queuedDirectories.has(childPath)) {
+      return;
+    }
+
+    if (visitedDirectories.size + queuedDirectories.size >= MAX_DIRECTORIES_PER_SOURCE) {
+      return;
+    }
+
+    queue.push({ path: childPath, depth: nextDepth });
+    queuedDirectories.add(childPath);
   }
 
   private async indexSource(source: FileSourceRecord): Promise<void> {
@@ -129,7 +299,7 @@ export class FileIndexRunner {
 
         visitedDirectories.add(directoryPath);
 
-        let nodes: Array<{ path: string; name: string; isDirectory: boolean }> = [];
+        let nodes: SourceNode[] = [];
         try {
           nodes = await adapter.list(directoryPath);
         } catch (err) {
@@ -149,28 +319,9 @@ export class FileIndexRunner {
             break;
           }
 
-          if (node.isDirectory) {
-            const dirName = node.name.toLowerCase();
-            if (IGNORED_DIRECTORIES.has(dirName)) {
-              continue;
-            }
-
-            const nextDepth = next.depth + 1;
-            if (nextDepth > MAX_SOURCE_DEPTH) {
-              continue;
-            }
-
-            const childPath = normalizeDirectoryPath(node.path);
-            if (visitedDirectories.has(childPath) || queuedDirectories.has(childPath)) {
-              continue;
-            }
-
-            if (visitedDirectories.size + queuedDirectories.size >= MAX_DIRECTORIES_PER_SOURCE) {
-              continue;
-            }
-
-            queue.push({ path: childPath, depth: nextDepth });
-            queuedDirectories.add(childPath);
+          const excludedBy = matchesExclude(node.path, this.excludeMatchers);
+          if (excludedBy) {
+            this.rememberDeterministicSkip(source.id, node.path, 'excluded', metadataFromNode(node), { pattern: excludedBy });
             continue;
           }
 
@@ -178,17 +329,58 @@ export class FileIndexRunner {
             continue;
           }
 
-          visitedFiles.add(node.path);
+          let metadata: SourcePathMetadata;
+          try {
+            metadata = await classifyCandidate(adapter, node);
+          } catch (err) {
+            if (isMissingPathError(err)) {
+              continue;
+            }
+            const message = err instanceof Error ? err.message : 'Unknown stat error';
+            emitFsAudit('index.path.error', { sourceId: source.id, path: node.path, error: message });
+            continue;
+          }
+
+          if (metadata.kind === 'directory') {
+            const dirName = metadata.name.toLowerCase();
+            if (IGNORED_DIRECTORIES.has(dirName)) {
+              this.rememberDeterministicSkip(source.id, metadata.path, 'directory', metadata, { ignored: true });
+              continue;
+            }
+
+            this.enqueueDirectory(queue, queuedDirectories, visitedDirectories, metadata.path, next.depth);
+            continue;
+          }
+
+          if (metadata.kind !== 'file') {
+            this.rememberDeterministicSkip(source.id, metadata.path, 'non-regular', metadata);
+            continue;
+          }
+
+          const fileSize = metadata.size ?? node.size;
+          if (typeof fileSize === 'number' && fileSize > this.maxFileBytes) {
+            this.rememberDeterministicSkip(source.id, metadata.path, 'oversize', { ...metadata, size: fileSize }, {
+              maxFileBytes: this.maxFileBytes,
+            });
+            continue;
+          }
+
+          const filePath = metadata.path || node.path;
+          if (visitedFiles.has(filePath)) {
+            continue;
+          }
+
+          visitedFiles.add(filePath);
           filesScanned += 1;
 
           try {
-            const file = await adapter.read(node.path);
-            const classification = classifyFile(node.path, file.content);
+            const file = await adapter.read(filePath);
+            const classification = classifyFile(filePath, file.content);
 
             this.indexRepo.upsertRecord({
-              id: `${source.id}:${node.path}`,
+              id: `${source.id}:${filePath}`,
               source_id: source.id,
-              path: node.path,
+              path: filePath,
               title: classification.title,
               type: classification.type,
               agent: classification.agent,
@@ -196,7 +388,7 @@ export class FileIndexRunner {
               is_recurring: classification.isRecurring,
               recurring_pattern: classification.recurringPattern ?? null,
               tags: JSON.stringify(classification.tags),
-              updated_at: file.updatedAt ?? null,
+              updated_at: file.updatedAt ?? metadata.updatedAt ?? null,
               indexed_at: new Date().toISOString(),
               preview: file.content.slice(0, 280),
               content_hash: classification.contentHash,
@@ -208,7 +400,7 @@ export class FileIndexRunner {
               continue;
             }
             const message = err instanceof Error ? err.message : 'Unknown read error';
-            emitFsAudit('index.file.error', { sourceId: source.id, path: node.path, error: message });
+            emitFsAudit('index.file.error', { sourceId: source.id, path: filePath, error: message });
           }
         }
       }
