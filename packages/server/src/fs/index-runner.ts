@@ -225,6 +225,7 @@ export class FileIndexRunner {
     }
 
     this.deterministicSkips.set(key, signature);
+    this.indexRepo.deleteBySourcePathPrefix(sourceId, normalizedPath);
     emitFsAudit('index.path.skipped', {
       sourceId,
       path: normalizedPath,

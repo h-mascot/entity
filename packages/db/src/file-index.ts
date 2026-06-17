@@ -61,6 +61,7 @@ export interface FileSyncRunRecord {
 export interface FileIndexRepository {
   upsertRecord: (input: UpsertFileIndexInput) => FileIndexRecord;
   search: (query: string, filters?: FileIndexSearchFilters) => FileIndexRecord[];
+  deleteBySourcePathPrefix: (sourceId: string, pathPrefix: string) => number;
   listBySource: (sourceId: string, limit?: number) => FileIndexRecord[];
   startSyncRun: (sourceId: string) => FileSyncRunRecord;
   finishSyncRun: (
@@ -191,6 +192,10 @@ export function createFileIndexRepository(): FileIndexRepository {
   const db = openEntityDatabase();
 
   const getRecordStmt = db.prepare('SELECT * FROM file_index WHERE source_id = ? AND path = ?');
+  const deleteBySourcePathPrefixStmt = db.prepare(`
+    DELETE FROM file_index
+    WHERE source_id = ? AND (path = ? OR path LIKE ? ESCAPE '\\')
+  `);
   const listBySourceStmt = db.prepare('SELECT * FROM file_index WHERE source_id = ? ORDER BY indexed_at DESC LIMIT ?');
   const getSyncRunStmt = db.prepare('SELECT * FROM file_sync_runs WHERE id = ?');
   const latestSyncRunStmt = db.prepare(
@@ -298,6 +303,17 @@ export function createFileIndexRepository(): FileIndexRepository {
       const sql = `SELECT * FROM file_index ${where} ORDER BY datetime(COALESCE(updated_at, indexed_at)) DESC, datetime(indexed_at) DESC LIMIT ?`;
       const rows = db.prepare(sql).all(...values) as Array<Record<string, unknown>>;
       return rows.map(mapIndexRow);
+    },
+
+    deleteBySourcePathPrefix: (sourceId: string, pathPrefix: string) => {
+      const normalized = pathPrefix.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+      if (!sourceId.trim() || !normalized) {
+        return 0;
+      }
+
+      const likePrefix = `${normalized.replace(/[\\%_]/g, (char) => `\\${char}`)}/%`;
+      const result = deleteBySourcePathPrefixStmt.run(sourceId, normalized, likePrefix);
+      return Number(result.changes ?? 0);
     },
 
     listBySource: (sourceId: string, limit = 100) => {

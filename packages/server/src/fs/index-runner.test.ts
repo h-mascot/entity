@@ -7,6 +7,7 @@ const updateSourceMock = vi.fn();
 const startSyncRunMock = vi.fn();
 const finishSyncRunMock = vi.fn();
 const upsertRecordMock = vi.fn();
+const deleteBySourcePathPrefixMock = vi.fn();
 const createFileSourceAdapterMock = vi.fn();
 const emitFsAuditMock = vi.fn();
 const recordFsOperationMock = vi.fn();
@@ -27,6 +28,7 @@ vi.mock('../../../db/src/file-index', () => ({
     upsertRecord: upsertRecordMock,
     search: vi.fn(),
     listBySource: vi.fn(),
+    deleteBySourcePathPrefix: deleteBySourcePathPrefixMock,
     startSyncRun: startSyncRunMock,
     finishSyncRun: finishSyncRunMock,
     getLatestSyncRun: vi.fn(),
@@ -182,6 +184,7 @@ describe('FileIndexRunner deterministic incident skips', () => {
       files_indexed: 0,
     }));
     upsertRecordMock.mockImplementation((input) => input);
+    deleteBySourcePathPrefixMock.mockReturnValue(0);
   });
 
   it('pre-classifies exact incident fixtures before read/index and preserves unexpected read errors', async () => {
@@ -306,6 +309,7 @@ describe('FileIndexRunner deterministic incident skips', () => {
 
     expect(bookAdapter.stat).toHaveBeenCalledWith(oversizedPath);
     expect(bookAdapter.read).not.toHaveBeenCalledWith(oversizedPath);
+    expect(deleteBySourcePathPrefixMock).toHaveBeenCalledWith('book', oversizedPath);
     expect(upsertRecordMock).not.toHaveBeenCalledWith(expect.objectContaining({ path: oversizedPath }));
 
     const oversizeSkips = emitFsAuditMock.mock.calls.filter(
@@ -326,5 +330,30 @@ describe('FileIndexRunner deterministic incident skips', () => {
         (payload as { path?: string }).path === oversizedPath
     );
     expect(oversizeErrors).toHaveLength(0);
+  });
+
+  it('removes stale index rows when a path is excluded before classification', async () => {
+    const excludedPath = 'state-snapshots/20260611-181830-pre-update/state.db';
+    const fixtures = new Map<string, FixtureNode[]>([['', [node(excludedPath, false, 3722362880)]]]);
+    const bookAdapter = createAdapter(fixtures, new Map(), new Set([excludedPath]));
+    const spockAdapter = createAdapter(new Map([['', []]]), new Map(), new Set());
+
+    deleteBySourcePathPrefixMock.mockReturnValue(1);
+    createFileSourceAdapterMock.mockImplementation((source: FileSourceRecord) => {
+      if (source.id === 'book') {
+        return bookAdapter.adapter;
+      }
+
+      return spockAdapter.adapter;
+    });
+
+    const { FileIndexRunner } = await import('./index-runner');
+    const runner = new FileIndexRunner({ maxConcurrentSources: 1 });
+
+    await runner.runOnce();
+
+    expect(bookAdapter.stat).not.toHaveBeenCalledWith(excludedPath);
+    expect(bookAdapter.read).not.toHaveBeenCalledWith(excludedPath);
+    expect(deleteBySourcePathPrefixMock).toHaveBeenCalledWith('book', excludedPath);
   });
 });

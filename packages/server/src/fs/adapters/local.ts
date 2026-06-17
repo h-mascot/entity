@@ -90,6 +90,10 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
             try {
               const entryAbsolutePath = path.join(absolutePath, entry.name);
               const stats = await fs.promises.lstat(entryAbsolutePath);
+              if (toKind(stats) === 'other') {
+                return null;
+              }
+
               const rootPath = normalizedRelative;
               return toNode(this.source.id, rootPath, entry.name, stats);
             } catch (err) {
