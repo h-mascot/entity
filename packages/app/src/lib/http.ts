@@ -14,6 +14,21 @@ function readApiToken(): string | null {
   return null;
 }
 
+/**
+ * Attach the configured API bearer token to a fetch init, if one is set and an
+ * Authorization header is not already present. Use this for direct `fetch`
+ * calls so they keep working when the server runs with ENTITY_API_TOKEN.
+ */
+export function withApiToken(init: RequestInit = {}): RequestInit {
+  const token = readApiToken();
+  if (!token) return init;
+  const headers = new Headers(init.headers as HeadersInit | undefined);
+  if (!headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return { ...init, headers };
+}
+
 export class HttpRequestError extends Error {
   readonly status?: number;
   readonly url?: string;

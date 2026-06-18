@@ -26,15 +26,30 @@ export function loadRuntimeFileConfig(cwd = process.cwd()): EntityConfig {
 }
 
 export function applyBootstrapRuntimeEnv(cwd = process.cwd()): EntityConfig {
-  const config = loadRuntimeFileConfig(cwd);
+  const loaded = loadFileConfigSources(cwd);
+  const config = EntityConfigSchema.parse(
+    deepMerge(deepMerge(loaded.defaults, loaded.profile ?? {}), loaded.config ?? {}),
+  );
   const configPath = resolveConfigPath(cwd);
   const configBaseDir = path.dirname(configPath);
   const databasePath = expandPathTokens(config.server.databasePath, config, configBaseDir);
   const workspaceRoot = expandPathTokens(config.server.workspaceRoot, config, configBaseDir);
   const logPath = expandPathTokens(config.server.logPath, config, configBaseDir);
 
+  // Only export the task DB path when an explicit config file set it. On pure
+  // built-in defaults, leave ENTITY_TASK_DB_PATH unset so the db package's own
+  // fallback (the deployed entity-tasks.db symlink -> production DB) governs,
+  // instead of shadowing the production DB with a fresh ./data/entity.sqlite.
+  const fileProvidedDbPath =
+    loaded.config?.server?.databasePath !== undefined ||
+    loaded.profile?.server?.databasePath !== undefined;
+  const effectiveDbPath = process.env.ENTITY_TASK_DB_PATH || (fileProvidedDbPath ? databasePath : null);
+
   process.env.ENTITY_CONFIG = process.env.ENTITY_CONFIG || configPath;
-  process.env.ENTITY_TASK_DB_PATH = process.env.ENTITY_TASK_DB_PATH || databasePath;
+  if (effectiveDbPath) {
+    process.env.ENTITY_TASK_DB_PATH = effectiveDbPath;
+    fs.mkdirSync(path.dirname(effectiveDbPath), { recursive: true });
+  }
   process.env.WORKSPACE = process.env.WORKSPACE || workspaceRoot;
   process.env.PORT = process.env.PORT || String(config.server.port);
   process.env.ENTITY_PUBLIC_BASE_URL = process.env.ENTITY_PUBLIC_BASE_URL || config.server.publicBaseUrl;
@@ -44,7 +59,6 @@ export function applyBootstrapRuntimeEnv(cwd = process.cwd()): EntityConfig {
   process.env.VITE_ENTITY_WS_URL = process.env.VITE_ENTITY_WS_URL || config.server.wsBaseUrl;
   process.env.ENTITY_SERVER_LOG_PATH = process.env.ENTITY_SERVER_LOG_PATH || logPath;
 
-  fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   fs.mkdirSync(workspaceRoot, { recursive: true });
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
 

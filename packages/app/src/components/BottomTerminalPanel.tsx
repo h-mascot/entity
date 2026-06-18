@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { runtime } from '../config/runtime';
+import { withApiToken } from '../lib/http';
 
 type TerminalTargetId = string;
 
@@ -201,7 +202,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
     async function loadTargets() {
       setIsLoadingTargets(true);
       try {
-        const response = await fetch(buildApiUrl('/api/terminal/targets'));
+        const response = await fetch(buildApiUrl('/api/terminal/targets'), withApiToken());
         if (!response.ok) {
           throw new Error(`Unable to load terminal targets (${response.status}).`);
         }
@@ -440,9 +441,9 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
     }
 
     try {
-      await fetch(buildApiUrl(`/api/terminal/sessions/${sessionId}`), {
+      await fetch(buildApiUrl(`/api/terminal/sessions/${sessionId}`), withApiToken({
         method: 'DELETE',
-      });
+      }));
     } catch {
       // Best effort. Socket ownership cleanup will still close it on disconnect.
     }
@@ -470,13 +471,13 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
     const previousSession = sessionRef.current;
 
     try {
-      const response = await fetch(buildApiUrl('/api/terminal/sessions'), {
+      const response = await fetch(buildApiUrl('/api/terminal/sessions'), withApiToken({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ target }),
-      });
+      }));
 
       const data = (await response.json()) as CreateSessionResponse;
       if (!response.ok || !data.session) {

@@ -84,6 +84,32 @@ const PUBLIC_PREFIX_ROUTES: readonly string[] = [
   "/api/clickclack",      // has its own auth for SPA cookie requests
 ];
 
+/** Routes matched by pattern because they self-authenticate via a path token. */
+const PUBLIC_PATTERN_ROUTES: readonly RegExp[] = [
+  // Onboarding setup-agent entrypoints authenticate via the session token in
+  // the path, so they must bypass the global bearer check.
+  /^\/api\/onboarding\/agent-session\/[^/]+\/(manifest|progress|skill|bundle)$/,
+];
+
+/**
+ * Legacy unprefixed API route roots mirrored alongside the /api/* surface
+ * (registerTaskRoutes(""), registerAgentRoutes(""), etc.). They must be
+ * protected too, otherwise a token-auth server leaks the same read/write
+ * surface via /tasks, /agent/trigger, and friends.
+ */
+const PROTECTED_UNPREFIXED_ROOTS: readonly string[] = [
+  "/tasks",
+  "/activities",
+  "/agent",
+  "/crews",
+  "/db-mode",
+  "/documents",
+  "/projects",
+  "/roadmaps",
+  "/roadmap-items",
+  "/runtime",
+];
+
 /**
  * Check if a request path matches a public route pattern.
  */
@@ -93,6 +119,24 @@ function isPublicRoute(path: string): boolean {
   }
   for (const prefix of PUBLIC_PREFIX_ROUTES) {
     if (path === prefix || path.startsWith(prefix + "/")) return true;
+  }
+  for (const pattern of PUBLIC_PATTERN_ROUTES) {
+    if (pattern.test(path)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a path is part of the protected API surface: the /api/* routes plus
+ * the legacy unprefixed mirrors. Static assets and the SPA shell are
+ * intentionally excluded so they keep serving without a token.
+ */
+function isProtectedApiPath(path: string): boolean {
+  if (path === "/api" || path.startsWith("/api/")) {
+    return true;
+  }
+  for (const root of PROTECTED_UNPREFIXED_ROOTS) {
+    if (path === root || path.startsWith(root + "/")) return true;
   }
   return false;
 }
@@ -118,8 +162,8 @@ export function createApiAuthMiddleware(): RequestHandler {
       return next();
     }
 
-    // Only protect /api/* routes
-    if (!req.path.startsWith("/api/")) {
+    // Protect /api/* and the legacy unprefixed API mirror routes
+    if (!isProtectedApiPath(req.path)) {
       return next();
     }
 

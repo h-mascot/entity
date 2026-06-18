@@ -449,6 +449,44 @@ describe('config routes', () => {
     }
   });
 
+  it('rejects expired agent setup sessions on the tokenized endpoints', async () => {
+    const server = await createServer();
+    try {
+      // #given a freshly created agent setup session
+      const createRes = await server.request('/api/onboarding/agent-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          state: {
+            mode: 'agent',
+            starterPreset: 'crew',
+            selectedBundle: 'default',
+            selectedModules: ['entity-mc'],
+          },
+        }),
+      });
+      expect(createRes.status).toBe(201);
+      const created = await createRes.json() as any;
+
+      // #when its stored expiry is moved into the past
+      const key = `onboarding.agentSession.${created.token}`;
+      const row = db.prepare('SELECT value_json FROM app_settings WHERE key = ?').get(key) as { value_json: string };
+      const stored = JSON.parse(row.value_json);
+      stored.expiresAt = new Date(Date.now() - 60_000).toISOString();
+      db.prepare('UPDATE app_settings SET value_json = ? WHERE key = ?').run(JSON.stringify(stored), key);
+
+      // #then the tokenized endpoints reject it instead of serving the bundle
+      const manifestRes = await server.request(`/api/onboarding/agent-session/${created.token}/manifest`);
+      expect(manifestRes.status).toBe(401);
+      const skillRes = await server.request(`/api/onboarding/agent-session/${created.token}/skill`);
+      expect(skillRes.status).toBe(401);
+      const bundleRes = await server.request(`/api/onboarding/agent-session/${created.token}/bundle`);
+      expect(bundleRes.status).toBe(401);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('creates agent setup sessions with manifests and Entity MC skill access', async () => {
     const server = await createServer();
     try {

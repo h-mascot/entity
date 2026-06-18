@@ -95,6 +95,15 @@ function readAgentSession(db: ReturnType<typeof getEntityDatabase>, token: strin
   return parsed;
 }
 
+/**
+ * Whether an onboarding agent session is expired. These endpoints bypass the
+ * global API bearer (they self-authenticate via the path token), so they must
+ * reject expired links to avoid leaving stale setup tokens usable.
+ */
+function isExpiredAgentSession(session: OnboardingAgentSession): boolean {
+  return session.status === 'expired' || new Date(session.expiresAt).getTime() < Date.now();
+}
+
 function ensureOnboardingRegistrySeed(db: ReturnType<typeof getEntityDatabase>): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS entity_modules (
@@ -590,6 +599,10 @@ export function registerConfigRoutes(app: express.Express): void {
         res.status(404).json({ error: 'Agent setup session not found' });
         return;
       }
+      if (isExpiredAgentSession(session)) {
+        res.status(401).json({ error: 'Agent setup session has expired' });
+        return;
+      }
       const opened = session.status === 'created' ? { ...session, status: 'opened' as const } : session;
       const resolution = resolveSelectionForState(db, opened.state, opened.token);
       const progress = mergeChecklistProgress(resolution.checklist, opened.progress);
@@ -613,6 +626,10 @@ export function registerConfigRoutes(app: express.Express): void {
       const session = readAgentSession(db, req.params.token);
       if (!session) {
         res.status(404).json({ error: 'Agent setup session not found' });
+        return;
+      }
+      if (isExpiredAgentSession(session)) {
+        res.status(401).json({ error: 'Agent setup session has expired' });
         return;
       }
       const updates = Array.isArray(req.body?.progress) ? req.body.progress : [req.body];
@@ -649,6 +666,10 @@ export function registerConfigRoutes(app: express.Express): void {
         res.status(404).json({ error: 'Agent setup session not found' });
         return;
       }
+      if (isExpiredAgentSession(session)) {
+        res.status(401).json({ error: 'Agent setup session has expired' });
+        return;
+      }
       const skillPath = path.join(ENTITY_MC_BUNDLE_PATH, 'SKILL.md');
       if (!fs.existsSync(skillPath)) {
         res.status(404).json({ error: 'Entity MC skill bundle not found' });
@@ -669,6 +690,10 @@ export function registerConfigRoutes(app: express.Express): void {
       const session = readAgentSession(db, req.params.token);
       if (!session) {
         res.status(404).json({ error: 'Agent setup session not found' });
+        return;
+      }
+      if (isExpiredAgentSession(session)) {
+        res.status(401).json({ error: 'Agent setup session has expired' });
         return;
       }
       if (!fs.existsSync(ENTITY_MC_BUNDLE_PATH)) {

@@ -35,6 +35,13 @@ function makeRepoFixture(configYaml: string) {
   return { repo, cwd };
 }
 
+function makeRepoFixtureNoConfig() {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-runtime-noconfig-'));
+  const cwd = path.join(repo, 'packages', 'server');
+  fs.mkdirSync(cwd, { recursive: true });
+  return { repo, cwd };
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
   clearRuntimeEnv();
@@ -112,6 +119,37 @@ server:
     expect(process.env.ENTITY_SERVER_LOG_PATH).toBe(path.join(repo, 'logs', 'runtime.log'));
     expect(fs.existsSync(path.join(repo, 'data'))).toBe(true);
     expect(fs.existsSync(path.join(home, 'workspace'))).toBe(true);
+  });
+
+  it('does not set ENTITY_TASK_DB_PATH when no config file provides one, so the prod DB symlink wins', () => {
+    // #given a deploy-like checkout with no entity.config.yaml and no DB env set
+    clearRuntimeEnv();
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-runtime-home-'));
+    vi.stubEnv('HOME', home);
+    const { cwd } = makeRepoFixtureNoConfig();
+
+    // #when bootstrap runs on pure built-in defaults
+    applyBootstrapRuntimeEnv(cwd);
+
+    // #then the task DB path is left to the db package fallback (entity-tasks.db symlink),
+    // not forced to a fresh ./data/entity.sqlite that would shadow the production DB
+    expect(process.env.ENTITY_TASK_DB_PATH).toBeUndefined();
+  });
+
+  it('preserves an explicit ENTITY_TASK_DB_PATH env over default config', () => {
+    // #given an explicit DB path in the environment and no config file
+    clearRuntimeEnv();
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-runtime-home-'));
+    vi.stubEnv('HOME', home);
+    const explicitDb = path.join(home, 'prod', 'prod.db');
+    process.env.ENTITY_TASK_DB_PATH = explicitDb;
+    const { cwd } = makeRepoFixtureNoConfig();
+
+    // #when bootstrap runs
+    applyBootstrapRuntimeEnv(cwd);
+
+    // #then the explicit env path is kept
+    expect(process.env.ENTITY_TASK_DB_PATH).toBe(explicitDb);
   });
 
   it('builds health endpoint and workspace maps from configured agents and file sources', () => {
