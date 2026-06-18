@@ -6,7 +6,6 @@
  *
  * Public routes that don't require auth:
  *   - GET /api/health (health checks)
- *   - GET /api/config (client config)
  *   - /api/clickclack/* (ClickClack proxy handles bearer/cookie auth)
  *
  * When ENTITY_API_TOKEN is not set, auth is SKIPPED (development mode).
@@ -76,7 +75,6 @@ function extractBearerToken(req: Request | IncomingMessage): string | null {
 /** Routes that match exactly (no sub-paths). */
 const PUBLIC_EXACT_ROUTES: readonly string[] = [
   "/api/health",
-  "/api/config",          // client bootstrap config only; /api/config/effective requires auth
 ];
 
 /** Routes where the prefix and all sub-paths are public. */
