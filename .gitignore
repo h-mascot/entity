@@ -19,6 +19,7 @@ packages/server/dist_backup/
 .env.*
 !.env.example
 !.env.sample
+/entity.config.yaml
 *.log
 *.pid
 *.backup
@@ -60,11 +61,18 @@ test-results/
 /copilot-instructions.md
 
 # Database files - NEVER track these
+data/
+logs/
+/var/
 packages/db/entity-tasks.db
 entity.db
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
 *.db.backup*
 *.db.bak*
 *.db.corrupt*
@@ -72,3 +80,4 @@ entity.db
 *.db.recovered*
 *.db.restore
 packages/db/*.db*
+.clawpatch/

@@ -14,8 +14,9 @@ import {
   normalizeProjectOption,
   type ProjectOption,
 } from './projectOptions';
+import { getCachedAgents } from '../../lib/agentRegistry';
 
-const AGENT_ASSIGNEE_OPTIONS = ['Ada', 'Spock', 'Scotty'] as const;
+const DEFAULT_ASSIGNEE_OPTIONS = ['Assistant', 'Human'] as const;
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
 
@@ -788,6 +789,66 @@ function buildMetadataPatch(
   return JSON.stringify(nextRecord);
 }
 
+function hasReviewMetadata(metadata: Record<string, unknown>): boolean {
+  return Boolean(
+    readFirstString(metadata.review_type, metadata.review_class) ||
+      readFirstString(metadata.reviewer, metadata.review_owner) ||
+      readFirstString(metadata.review_decision) ||
+      normalizeBoolean(metadata.henry_required ?? metadata.requires_henry) ||
+      parseJsonRecord(metadata.review_packet) ||
+      parseJsonRecord(metadata.review_brief)
+  );
+}
+
+function reviewField(value: unknown, fallback = 'Not set'): string {
+  return readNonEmptyString(value) ?? fallback;
+}
+
+function reviewPacketSummary(metadata: Record<string, unknown>): string {
+  const packet = parseJsonRecord(metadata.review_packet) ?? parseJsonRecord(metadata.review_brief);
+  if (!packet) {
+    return 'Missing';
+  }
+
+  const outcome = readFirstString(packet.requested_outcome, packet.outcome) ?? 'Outcome not set';
+  const criteria = Array.isArray(packet.done_criteria)
+    ? packet.done_criteria.map((entry) => readNonEmptyString(entry)).filter(Boolean).length
+    : readNonEmptyString(packet.done_criteria)
+      ? 1
+      : 0;
+  return `${outcome}${criteria > 0 ? ` / ${criteria} criterion${criteria === 1 ? '' : 'a'}` : ''}`;
+}
+
+type ReviewDecision = 'pending' | 'accepted' | 'needs_fix' | 'rejected';
+
+const REVIEW_DECISION_LABELS: Record<ReviewDecision, string> = {
+  pending: 'Pending',
+  accepted: 'Accepted',
+  needs_fix: 'Needs fix',
+  rejected: 'Rejected',
+};
+
+function normalizeReviewDecision(value: unknown): ReviewDecision {
+  const normalized = readNonEmptyString(value)?.toLowerCase().replace(/[\s-]+/g, '_');
+  if (normalized === 'accepted' || normalized === 'needs_fix' || normalized === 'rejected') {
+    return normalized;
+  }
+  return 'pending';
+}
+
+function buildReviewMetadataPatch(
+  task: TaskDetailData,
+  decision: ReviewDecision,
+  reviewer: string
+): string {
+  return JSON.stringify({
+    ...task.metadataRecord,
+    review_decision: decision,
+    reviewed_by: reviewer,
+    reviewed_at: new Date().toISOString(),
+  });
+}
+
 async function requestOptionalJson<T = unknown>(
   path: string,
   apiBase: string,
@@ -906,6 +967,28 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const [replyTargetId, setReplyTargetId] = useState<number | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const { tasks: boardTasks, reloadTasks } = useTaskBoard({ apiBase, autoLoad: false });
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
+
+  // Fetch effective config for workspaceRoot
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/config/effective`);
+        if (res.ok && !cancelled) {
+          const data = (await res.json()) as { settings?: { server?: { workspaceRoot?: string } } };
+          if (data.settings?.server?.workspaceRoot) {
+            setWorkspaceRoot(data.settings.server.workspaceRoot);
+          }
+        }
+      } catch {
+        // ignore fetch errors
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase]);
 
   useEffect(() => {
     const animationId = window.requestAnimationFrame(() => setVisible(true));
@@ -1040,12 +1123,22 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   }, [apiBase, taskId]);
 
   const assigneeOptions = useMemo(() => {
-    const options = [...AGENT_ASSIGNEE_OPTIONS, userProfile.displayName, 'Unassigned'];
-    if (form?.assignee && !options.includes(form.assignee)) {
-      return [form.assignee, ...options];
+    const agents = getCachedAgents();
+    const agentNames = agents.map((a) => a.name);
+    const options = [...DEFAULT_ASSIGNEE_OPTIONS, ...agentNames, userProfile.displayName, 'Unassigned'];
+    // deduplicate while preserving order
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const o of options) {
+      if (!seen.has(o)) {
+        seen.add(o);
+        deduped.push(o);
+      }
     }
-
-    return options;
+    if (form?.assignee && !seen.has(form.assignee)) {
+      return [form.assignee, ...deduped];
+    }
+    return deduped;
   }, [form?.assignee, userProfile.displayName]);
 
   const modelOptions = useMemo(() => {
@@ -1207,6 +1300,10 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
       void reloadTasks().catch(() => undefined);
     } catch (saveError) {
       setError(toErrorMessage(saveError, 'Unable to save task.'));
+      await loadSupplementalData(task.id, {
+        preserveOutput: true,
+        preserveDependencyInput: true,
+      }).catch(() => undefined);
     } finally {
       setBusyAction(null);
     }
@@ -1456,6 +1553,27 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const removeProject = async (projectId: number) => {
     const nextIds = selectedProjects.filter((project) => project.id !== projectId).map((project) => project.id);
     await saveTaskProjects(nextIds);
+  };
+
+  const saveReviewDecision = async (decision: ReviewDecision, options: { complete?: boolean } = {}) => {
+    if (!task) {
+      return;
+    }
+
+    const reviewer = userProfile.displayName || 'Reviewer';
+    const metadata = buildReviewMetadataPatch(task, decision, reviewer);
+    await patchTask(
+      {
+        metadata,
+        ...(options.complete ? { column: 'done' } : {}),
+      },
+      {
+        successMessage: options.complete
+          ? 'Review accepted and task moved to Done.'
+          : `Review marked ${REVIEW_DECISION_LABELS[decision].toLowerCase()}.`,
+        action: 'review',
+      }
+    );
   };
 
   const addNote = async () => {
@@ -2134,7 +2252,91 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                />
 	              </section>
 
-	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
+	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
+	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+	                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                    Review
+	                  </div>
+	                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${
+	                    hasReviewMetadata(task.metadataRecord)
+	                      ? 'border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]'
+	                      : 'border-amber-500/25 bg-amber-500/10 text-amber-200'
+	                  }`}>
+	                    {hasReviewMetadata(task.metadataRecord) ? 'Packet present' : 'Needs packet'}
+	                  </span>
+	                </div>
+	                <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reviewer</div>
+	                    <div>{normalizeBoolean(task.metadataRecord.henry_required ?? task.metadataRecord.requires_henry) ? 'Henry' : reviewField(task.metadataRecord.reviewer ?? task.metadataRecord.review_owner)}</div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Decision</div>
+	                    <div>{reviewField(task.metadataRecord.review_decision, 'Pending')}</div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Type / Risk</div>
+	                    <div>{reviewField(task.metadataRecord.review_type ?? task.metadataRecord.review_class)} / {reviewField(task.metadataRecord.risk_level)}</div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reviewed By</div>
+	                    <div>{reviewField(task.metadataRecord.reviewed_by)}</div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Packet</div>
+	                    <div>{reviewPacketSummary(task.metadataRecord)}</div>
+	                  </div>
+	                  {readNonEmptyString(task.metadataRecord.review_note) ? (
+	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Review Note</div>
+	                      <div>{readNonEmptyString(task.metadataRecord.review_note)}</div>
+	                    </div>
+	                  ) : null}
+	                </div>
+                  {hasReviewMetadata(task.metadataRecord) ? (
+                    <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--border-primary)] pt-3">
+                      <button
+                        type="button"
+                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                        onClick={() => void saveReviewDecision('accepted')}
+                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'accepted'}
+                      >
+                        Accept review
+                      </button>
+                      <button
+                        type="button"
+                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                        onClick={() => void saveReviewDecision('accepted', { complete: true })}
+                        disabled={busyAction !== null}
+                      >
+                        Accept + Done
+                      </button>
+                      <button
+                        type="button"
+                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                        onClick={() => void saveReviewDecision('needs_fix')}
+                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'needs_fix'}
+                      >
+                        Needs fix
+                      </button>
+                      <button
+                        type="button"
+                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                        onClick={() => void saveReviewDecision('rejected')}
+                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'rejected'}
+                      >
+                        Reject
+                      </button>
+                      {normalizeReviewDecision(task.metadataRecord.review_decision) !== 'accepted' ? (
+                        <div className="basis-full text-[11px] text-[var(--text-muted)]">
+                          Done is locked until the review decision is accepted.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+	              </section>
+
+	              <section style={{ order: 3 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
 	                <div className={`${outputExpanded ? 'mb-2' : ''} flex flex-wrap items-center justify-between gap-2`}>
 	                  <div className="flex min-w-0 items-center gap-2">
 	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">

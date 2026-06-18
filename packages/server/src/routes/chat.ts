@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { execFile } from 'child_process';
 import type express from 'express';
+import { createClickClackBridge, type ClickClackChatBridge } from '../clickclack/bridge';
 import {
   createChatRepository,
   type ChatCategoryRecord,
@@ -13,6 +14,7 @@ import { ChatModelRegistry, type ChatModelOption } from './chat-model-registry';
 interface ChatRouteDependencies {
   app: express.Express;
   openClawBaseUrl?: string;
+  clickClackBridge?: ClickClackChatBridge;
 }
 
 interface OpenClawReply {
@@ -105,6 +107,15 @@ function normalizeAgents(value: unknown): string[] {
   return value
     .map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : ''))
     .filter(Boolean);
+}
+
+function compatibilityMessageTimestamp(value: string | undefined): string {
+  const fallback = new Date().toISOString();
+  if (!value) {
+    return fallback;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
 }
 
 function withTimeout(timeoutMs: number): AbortSignal {
@@ -704,12 +715,24 @@ async function getCachedOllamaModels(): Promise<ChatModelOption[]> {
   return localModelsRefresh;
 }
 
-export function registerChatRoutes({ app, openClawBaseUrl }: ChatRouteDependencies): void {
+export function registerChatRoutes({ app, openClawBaseUrl, clickClackBridge }: ChatRouteDependencies): void {
   const repo = createChatRepository();
   const modelRegistry = new ChatModelRegistry({
     openClawBaseUrl,
     localInventory: getCachedOllamaModels,
     env: process.env,
+  });
+  const sidecarBridge = clickClackBridge
+    ?? (process.env.ENTITY_CHAT_CLICKCLACK_BRIDGE === '1' ? createClickClackBridge() : undefined);
+
+  app.get('/api/chat/me', (_req, res) => {
+    res.json({
+      member: {
+        id: 'mem_human_user',
+        kind: 'human',
+        displayName: 'Entity Human',
+      },
+    });
   });
 
   app.get('/api/chat/task/:taskId', (req, res) => {
@@ -948,6 +971,84 @@ export function registerChatRoutes({ app, openClawBaseUrl }: ChatRouteDependenci
           return res.status(400).json({ error: resolved.message, agent, model: modelId });
         }
         modelByAgent.set(agent, { modelId: resolved.modelId, isLocal: resolved.isLocal });
+      }
+
+      if (sidecarBridge) {
+        const threadId = typeof req.body?.threadId === 'string' ? req.body.threadId : undefined;
+        const parentMessageId = typeof req.body?.parentMessageId === 'string' ? req.body.parentMessageId : undefined;
+        const timestamp = typeof req.body?.timestamp === 'string' ? req.body.timestamp : new Date().toISOString();
+        const userMessage = repo.createMessage({
+          id: typeof req.body?.messageId === 'string' ? req.body.messageId : undefined,
+          channel_id: channelId,
+          thread_id: threadId,
+          sender: typeof req.body?.sender === 'string' ? req.body.sender : 'user',
+          sender_emoji: typeof req.body?.senderEmoji === 'string' ? req.body.senderEmoji : '🧑',
+          content,
+          model: modelId && modelId !== 'auto' ? modelId : undefined,
+          is_local: Boolean(req.body?.isLocal),
+          status: 'sent',
+          timestamp,
+          reply_to: parentMessageId,
+        });
+
+        if (threadId) {
+          repo.incrementThreadCount(threadId, userMessage.timestamp);
+        }
+
+        let result;
+        try {
+          result = await sidecarBridge.sendCompatibilityMessage({
+            channelId,
+            content,
+            targets,
+            messageId: userMessage.id,
+            threadId: typeof req.body?.threadId === 'string' ? req.body.threadId : undefined,
+            // Entity message ids are local; keep ClickClack sidecar sends channel-scoped until we persist an id map.
+            parentMessageId: undefined,
+            modelByAgent,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'ClickClack delivery failed';
+          return res.status(202).json({
+            degraded: true,
+            error: message,
+            message: toMessage(userMessage),
+            messages: [],
+            clickclack: {
+              mode: 'dev-sidecar',
+              baseUrl: process.env.ENTITY_CLICKCLACK_BASE_URL ?? 'http://127.0.0.1:3091',
+              error: message,
+            },
+          });
+        }
+
+        const storedReplies = result.messages.map((message) => {
+          const stored = repo.createMessage({
+            id: message.id,
+            channel_id: channelId,
+            thread_id: threadId,
+            sender: message.sender,
+            sender_emoji: DEFAULT_AGENT_EMOJI[message.sender] ?? '🤖',
+            content: message.content,
+            model: message.model,
+            is_local: Boolean(message.isLocal),
+            status: 'sent',
+            timestamp: compatibilityMessageTimestamp(message.createdAt),
+            reply_to: parentMessageId,
+          });
+
+          if (threadId) {
+            repo.incrementThreadCount(threadId, stored.timestamp);
+          }
+
+          return toMessage(stored);
+        });
+
+        return res.status(201).json({
+          ...result,
+          message: toMessage(userMessage),
+          messages: storedReplies,
+        });
       }
 
       const timestamp = typeof req.body?.timestamp === 'string' ? req.body.timestamp : new Date().toISOString();

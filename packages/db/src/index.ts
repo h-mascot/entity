@@ -998,7 +998,14 @@ function seedEntityRegistryDefaults(db: Database.Database): void {
     ['files', 'files', 'Files', 'Workspace file access', 1, '📁', 'core', '["read","write","delete","search"]', '{"label":"Files"}'],
     ['docs', 'docs', 'Docs', 'Editor and docs collaboration', 1, '📝', 'core', '["read","write","comment","review"]', '{"label":"Docs"}'],
     ['swarm', 'swarm', 'Swarm', 'Swarm orchestration module', 1, '🐝', 'core', '["read","dispatch","supervise","kill","admin"]', '{"label":"Swarm"}'],
-    ['plugins', 'plugins', 'Plugins', 'Plugin management module', 1, '🧩', 'core', '["read","toggle","configure","admin"]', '{"label":"Plugins"}']
+    ['plugins', 'plugins', 'Plugins', 'Plugin management module', 1, '🧩', 'core', '["read","toggle","configure","admin"]', '{"label":"Plugins"}'],
+    ['entity-agent-contracts', 'entity-agent-contracts', 'Entity Agent Contracts', 'Required operating contract for Entity-aware onboarding agents.', 1, '📜', 'contract', '["read","validate"]', '{"label":"Required contract"}'],
+    ['entity-fs', 'entity-fs', 'Entity FS', 'Entity-backed file source and docs-link delivery behavior for setup agents.', 1, '📁', 'module', '["read","search","export"]', '{"label":"Required docs/file layer"}'],
+    ['entity-mc', 'entity-mc', 'Entity MC', 'Mission Control helper bundle for setup-safe progress reporting and verification.', 1, '📋', 'module', '["read","configure","verify"]', '{"label":"Recommended task helper"}'],
+    ['entity-linker', 'entity-linker', 'Entity Linker', 'Docs-link delivery integration for shared artifacts during onboarding.', 1, '🔗', 'plugin', '["read","rewrite","verify"]', '{"label":"Recommended docs linker"}'],
+    ['entity-discord-title-hook', 'entity-discord-title-hook', 'Discord Title Hook', 'Admin-managed Discord channel title sync integration.', 1, '#️⃣', 'plugin', '["read","configure"]', '{"label":"Admin only"}'],
+    ['entity-services', 'entity-services', 'Entity Services', 'Admin-managed service/runtime integrations.', 1, '🛠️', 'plugin', '["read","configure","admin"]', '{"label":"Admin only"}'],
+    ['geordi-swarm', 'geordi-swarm', 'Geordi Swarm', 'Future multi-agent swarm orchestration on top of Entity helper modules.', 1, '🐝', 'plugin', '["read","dispatch","admin"]', '{"label":"Future swarm module"}']
   ];
   const insertModule = db.prepare(`
     INSERT OR IGNORE INTO entity_modules (
@@ -1010,10 +1017,17 @@ function seedEntityRegistryDefaults(db: Database.Database): void {
   }
 
   const skillRefs = [
-    ['tasks-mc-sh', 'tasks', 'mc.sh', 'script', '~/clawd/scripts/mc.sh', 1, 'Mission Control CLI'],
+    ['tasks-mc-sh', 'tasks', 'mc.sh', 'script', 'skills/entity-mc/source-scripts/mc.sh', 1, 'Mission Control CLI helper bundled with Entity'],
     ['tasks-context', 'tasks', 'Entity context', 'doc', 'memory/entity-project-context.md', 1, 'Entity runtime context'],
     ['swarm-skill', 'swarm', 'Swarm skill', 'skill', 'skills/entity-mc/', 0, 'Swarm-adjacent execution runtime'],
-    ['plugins-admin', 'plugins', 'Plugin admin', 'doc', 'packages/app/src/stores/pluginStore.ts', 0, 'Plugin UI/state wiring']
+    ['plugins-admin', 'plugins', 'Plugin admin', 'doc', 'packages/app/src/stores/pluginStore.ts', 0, 'Plugin UI/state wiring'],
+    ['entity-agent-contracts-doc', 'entity-agent-contracts', 'Entity contract spec', 'doc', 'docs/pluggable-agents-modules-spec.md', 1, 'Required onboarding contract reference'],
+    ['entity-fs-doc', 'entity-fs', 'Entity FS onboarding spec', 'doc', 'docs/pluggable-agents-modules-spec.md', 1, 'Docs/file delivery reference'],
+    ['entity-mc-skill', 'entity-mc', 'Entity MC skill bundle', 'skill', 'skills/entity-mc/', 1, 'Setup-safe Mission Control helper bundle'],
+    ['entity-linker-doc', 'entity-linker', 'Plugin architecture spec', 'doc', 'docs/PLUGIN-ARCHITECTURE-SPEC.md', 0, 'Docs-link integration contract'],
+    ['entity-discord-title-hook-doc', 'entity-discord-title-hook', 'Plugin architecture spec', 'doc', 'docs/PLUGIN-ARCHITECTURE-SPEC.md', 0, 'Admin-only Discord integration reference'],
+    ['entity-services-doc', 'entity-services', 'Plugin architecture spec', 'doc', 'docs/PLUGIN-ARCHITECTURE-SPEC.md', 0, 'Admin-only service integration reference'],
+    ['geordi-swarm-doc', 'geordi-swarm', 'Geordi Swarm manifest example', 'doc', 'docs/ENTITY-PLUGIN-MANIFEST.example.json', 0, 'Future swarm packaging reference']
   ];
   const insertSkillRef = db.prepare(`
     INSERT OR IGNORE INTO entity_module_skill_refs (
@@ -2740,6 +2754,7 @@ export {
   type ChatMessageRecord,
   type ChatThreadRecord,
 } from "./chat";
+
 
 export function getSubscribedCrews(agentSlug: string): CrewRecord[] {
   return getStrategicRepository().getSubscribedCrews(agentSlug);

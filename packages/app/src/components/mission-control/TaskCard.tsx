@@ -92,6 +92,55 @@ function formatBlockerReason(reason: string): string {
   return reason;
 }
 
+function parseMetadata(task: TaskBoardTask): Record<string, unknown> {
+  if (!task.metadata) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(task.metadata);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function readBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+  return false;
+}
+
+function reviewSummary(task: TaskBoardTask): string | null {
+  if (task.column !== 'review' && task.column !== 'done') {
+    return null;
+  }
+
+  const metadata = parseMetadata(task);
+  const reviewType = readString(metadata.review_type ?? metadata.review_class);
+  const reviewer = readString(metadata.reviewer ?? metadata.review_owner);
+  const decision = readString(metadata.review_decision);
+  const henryRequired = readBoolean(metadata.henry_required ?? metadata.requires_henry);
+
+  if (!reviewType && !reviewer && !decision && !henryRequired) {
+    return task.column === 'review' ? 'Review: needs packet' : null;
+  }
+
+  const owner = henryRequired ? 'Henry' : reviewer || 'Unassigned';
+  const status = decision || 'pending';
+  return `Review: ${owner} / ${status}`;
+}
+
 export default function TaskCard({
   task,
   isDragging = false,
@@ -109,6 +158,7 @@ export default function TaskCard({
   const ageBadgeClass = isStale ? 'task-age-badge stale' : 'task-age-badge';
   const dueDate = formatDueAt(task.due_at);
   const blockedReason = task.blocker_reason ? formatBlockerReason(task.blocker_reason) : null;
+  const reviewStatus = reviewSummary(task);
   const cardClassName = ['task', task.blocked ? 'blocked' : '', isDragging ? 'dragging' : '', isHighlighted ? 'task-highlighted' : '']
     .filter(Boolean)
     .join(' ');
@@ -158,6 +208,7 @@ export default function TaskCard({
       </div>
       {task.description ? <div className="task-desc">{task.description}</div> : null}
       {blockedReason ? <div className="task-status blocked-status">{blockedReason}</div> : null}
+      {reviewStatus ? <div className="task-status">{reviewStatus}</div> : null}
       <div className="task-meta">
         <div className="task-meta-left">
           <span className="assignee-pill">{assignee}</span>

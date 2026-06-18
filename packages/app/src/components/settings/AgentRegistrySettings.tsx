@@ -18,6 +18,7 @@ interface RegistryAgent {
     verificationLabel?: string;
     capabilityLabels?: string[];
     permissionLabels?: string[];
+    scopeLabels?: string[];
   };
 }
 

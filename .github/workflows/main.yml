@@ -19,7 +19,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build
-      - run: npm run scan:private-defaults || echo "Private defaults scan passed"
+      - run: npm run scan:private-defaults -- --enforce
       - run: npm test || echo "Tests skipped (MVP mode)"
 
   deploy:

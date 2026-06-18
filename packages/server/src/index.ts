@@ -6,7 +6,7 @@ import "./sentry";
 import http from "http";
 import os from "os";
 import path from "path";
-import express, { type Response } from "express";
+import express, { type Request, type Response } from "express";
 import compression from "compression";
 import fs from "fs";
 import cors from "cors";
@@ -92,9 +92,17 @@ import {
 import { registerPluginManagementRoutes } from "./plugins/routes";
 import { registerCrewRoutes } from "./crews-routes";
 import { registerChatRoutes } from "./routes/chat";
+import { createClickClackBridge } from "./clickclack/bridge";
+import { registerClickClackProxyRoutes } from "./clickclack/proxy";
 import { registerConfigRoutes } from "./config/routes";
 import { buildEffectiveConfig } from "./config/effective";
-import type { PluginSettingsRecord } from "./plugins/types";
+import {
+  applyBootstrapRuntimeEnv,
+  applyRuntimeConfigSeeds,
+  buildConfigPluginSettings,
+  buildConfiguredAgentHealthEndpoints,
+  buildConfiguredAgentWorkspaces,
+} from "./config/runtime";
 import { registerDocsApiRoutes } from "./routes/docs";
 import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
@@ -110,8 +118,10 @@ import {
   setApiNoStoreHeaders,
   setFrontendStaticCacheHeaders,
 } from "./static-cache";
+import { createApiAuthMiddleware, createWsAuthHandler } from "./middleware/api-auth";
 // Load .env from project root
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
+const bootstrapConfig = applyBootstrapRuntimeEnv(process.cwd());
 
 import { createTaskSyncLayer, normalizeDbMode } from "../../db/src/task-sync";
 import {
@@ -126,8 +136,12 @@ const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
 applySecurityHardening(app);
 app.use(cors());
 app.use(compression());
+app.use("/api/clickclack", express.raw({ type: "*/*", limit: "50mb" }));
 app.use(express.json());
 app.use("/api", setApiNoStoreHeaders);
+
+// API authentication — requires ENTITY_API_TOKEN env var; skips when unset (dev mode)
+app.use(createApiAuthMiddleware());
 registerConfigRoutes(app);
 app.use("/api/search", createSearchRouter());
 registerDocsApiRoutes(app);
@@ -157,7 +171,9 @@ const MENTION_TIMEOUT_MS =
     ? mentionTimeoutMsRaw
     : 8_000;
 const HOME_DIR = process.env.HOME || os.homedir();
-const DEFAULT_WORK_ROOT = path.join(HOME_DIR, "clawd");
+// Safe local-first default — no hardcoded private workspace names.
+// Actual agent workspace paths are set via ENTITY_WORKSPACE_MAIN/SPOCK/SCOTTY env vars.
+const DEFAULT_WORK_ROOT = path.join(HOME_DIR, "entity-workspace");
 const DOCS_ROOTS: Record<string, string> = {
   output:
     process.env.DOCS_OUTPUT_ROOT || path.join(DEFAULT_WORK_ROOT, "output"),
@@ -167,14 +183,89 @@ const DOCS_ROOTS: Record<string, string> = {
 };
 
 const wsClients = new Set<WebSocket>();
+
+const SETUPCLAW_LEADS_DIR = process.env.SETUPCLAW_LEADS_DIR || path.join(WORKSPACE, "output", "setupclaw-leads");
+
+function normalizeLeadField(value: unknown): string {
+  return typeof value === "string" ? value.trim().slice(0, 4000) : "";
+}
+
+function registerSetupClawLeadRoutes(app: express.Express) {
+  app.post("/api/setupclaw-london/leads", (req: Request, res: Response) => {
+    const now = new Date();
+    const lead = {
+      id: randomUUID(),
+      capturedAt: now.toISOString(),
+      name: normalizeLeadField(req.body?.name),
+      email: normalizeLeadField(req.body?.email),
+      company: normalizeLeadField(req.body?.company),
+      preferredDay: normalizeLeadField(req.body?.preferred_day),
+      currentStack: normalizeLeadField(req.body?.current_stack),
+      firstTask: normalizeLeadField(req.body?.first_task),
+      toolsNeeded: normalizeLeadField(req.body?.tools_needed),
+      approvalBoundary: normalizeLeadField(req.body?.approval_boundary),
+      source: normalizeLeadField(req.body?.source) || "setupclaw-london",
+      userAgent: normalizeLeadField(req.get("user-agent")),
+      ip: normalizeLeadField(req.ip),
+    };
+
+    const requiredFields = [
+      lead.name,
+      lead.email,
+      lead.company,
+      lead.preferredDay,
+      lead.currentStack,
+      lead.firstTask,
+      lead.toolsNeeded,
+      lead.approvalBoundary,
+    ];
+
+    if (requiredFields.some((field) => !field)) {
+      res.status(400).json({ ok: false, error: "missing_required_fields" });
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email)) {
+      res.status(400).json({ ok: false, error: "invalid_email" });
+      return;
+    }
+
+    try {
+      fs.mkdirSync(SETUPCLAW_LEADS_DIR, { recursive: true });
+      const dayFile = path.join(SETUPCLAW_LEADS_DIR, `${now.toISOString().slice(0, 10)}.jsonl`);
+      fs.appendFileSync(dayFile, `${JSON.stringify(lead)}\n`, "utf8");
+      res.status(201).json({
+        ok: true,
+        id: lead.id,
+        message: "Setup request saved. An assistant will reply with a setup scope.",
+      });
+    } catch (err) {
+      console.error("[setupclaw] Failed to persist lead", err);
+      res.status(500).json({ ok: false, error: "lead_persist_failed" });
+    }
+  });
+}
+
 const terminalBridge = createTerminalBridge({
   workspaceRoot: WORKSPACE,
+  targets: bootstrapConfig.terminal.targets,
 });
 
 registerTerminalRoutes(app, terminalBridge);
+registerSetupClawLeadRoutes(app);
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wsAuthHandler = createWsAuthHandler();
+const wss = new WebSocketServer({
+  server,
+  verifyClient: (info, callback) => {
+    if (!wsAuthHandler(info.req as any)) {
+      callback(false, 401, "Unauthorized");
+      return;
+    }
+    callback(true);
+  },
+});
 const agentRegistryRepo = createAgentRegistryRepository();
 const moduleRegistryRepo = createModuleRegistryRepository();
 app.use("/api", createAgentRegistryRouter({ agentRegistryRepo, moduleRegistryRepo }));
@@ -218,35 +309,16 @@ const activityRepository = createActivityRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
 const entityDb = getEntityDatabase();
+const runtimeConfig = applyRuntimeConfigSeeds({ db: entityDb, fileSourceRepository });
+const runtimeConfigBaseDir = path.dirname(process.env.ENTITY_CONFIG || path.resolve(process.cwd(), 'entity.config.yaml'));
 ensurePluginSettingsTable(entityDb);
 ensurePluginMigrationTable(entityDb);
 const pluginHooks = new PluginHookEmitter(console);
-function extractPluginConfigSettings(settings: unknown): Record<string, PluginSettingsRecord> {
-  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-    return {};
-  }
-  const plugins = (settings as { plugins?: unknown }).plugins;
-  if (!plugins || typeof plugins !== 'object' || Array.isArray(plugins)) {
-    return {};
-  }
-  const out: Record<string, PluginSettingsRecord> = {};
-  for (const [pluginId, rawPluginConfig] of Object.entries(plugins as Record<string, unknown>)) {
-    if (!rawPluginConfig || typeof rawPluginConfig !== 'object' || Array.isArray(rawPluginConfig)) {
-      continue;
-    }
-    const rawSettings = (rawPluginConfig as { settings?: unknown }).settings;
-    if (rawSettings && typeof rawSettings === 'object' && !Array.isArray(rawSettings)) {
-      out[pluginId] = JSON.parse(JSON.stringify(rawSettings)) as PluginSettingsRecord;
-    }
-  }
-  return out;
-}
-
 const startupEffectiveConfig = buildEffectiveConfig({ db: entityDb });
 const pluginRegistry = new PluginRegistry({
   db: entityDb,
   logger: console,
-  configPluginSettings: extractPluginConfigSettings(startupEffectiveConfig.settings),
+  configPluginSettings: buildConfigPluginSettings(startupEffectiveConfig.settings),
 });
 const loadedPlugins = pluginRegistry.load();
 runPluginMigrations({
@@ -274,16 +346,9 @@ mountPluginRoutes({
   workspaceRoot: WORKSPACE,
 });
 const TASK_COLUMN_SET = new Set<string>(TASK_COLUMNS);
-const DOCUMENT_AUTHOR_SET = new Set([
+const AUTHOR_SET_VALID = new Set([
   "human",
-  "ada",
-  "spock",
-  "scotty",
-  "geordi",
-  "zora",
-  "midas",
-  "uhura",
-  "book",
+  "assistant",
   "unknown",
 ]);
 const DOCUMENT_PRESENCE_STATUS_SET = new Set([
@@ -379,7 +444,7 @@ function ensureDocumentsSchema(db: Database.Database): void {
       doc_id TEXT NOT NULL,
       start_offset INTEGER NOT NULL,
       end_offset INTEGER NOT NULL,
-      author TEXT NOT NULL CHECK(author IN ('human','ada','spock','scotty','geordi','zora','unknown')),
+      author TEXT NOT NULL CHECK(author IN ('human','assistant','unknown')),
       reviewed INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -505,9 +570,17 @@ function getDocumentsDatabase(): Database.Database {
   return documentsDb;
 }
 
+function getDefaultTaskActor(): string {
+  return (
+    process.env.ENTITY_TASK_ACTOR?.trim() ||
+    process.env.ENTITY_DEFAULT_ACTOR?.trim() ||
+    "Henry"
+  );
+}
+
 function getTaskActorFromRequest(
   req: express.Request,
-  fallback = "human",
+  fallback = getDefaultTaskActor(),
 ): string {
   const entityActor = req.header("X-Entity-Actor");
   if (typeof entityActor === "string" && entityActor.trim()) {
@@ -747,6 +820,27 @@ function toWorkspaceRelativePath(filePath: string): string {
   }
 
   return relativePath || path.basename(filePath);
+}
+
+function resolveWorkspaceMutationPath(rawPath: string): string {
+  if (rawPath.includes("\0")) {
+    throw new Error("Invalid path.");
+  }
+
+  const workspaceRoot = path.resolve(WORKSPACE);
+  const resolvedPath = path.resolve(workspaceRoot, rawPath);
+  const relativePath = path.relative(workspaceRoot, resolvedPath);
+
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error("File mutation path must stay inside the workspace.");
+  }
+
+  return resolvedPath;
 }
 
 function capitalizeColumn(column: string): string {
@@ -1296,16 +1390,24 @@ app.post("/api/files/:path(*)/versions", (req, res) => {
   const author = normalizeVersionAuthor(req.body?.author);
   const summary = normalizeVersionSummary(req.body?.summary) ?? "Snapshot";
 
-  const version: FileVersion = {
-    id: generateVersionId(),
-    content,
-    author,
-    timestamp: new Date().toISOString(),
-    summary,
-  };
+  try {
+    const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+    const version: FileVersion = {
+      id: generateVersionId(),
+      content,
+      author,
+      timestamp: new Date().toISOString(),
+      summary,
+    };
 
-  pushFileVersion(filePath, version);
-  return res.json({ version });
+    pushFileVersion(resolvedFilePath, version);
+    return res.json({ version });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return res
+      .status(mapFileRouteErrorStatus(message))
+      .json({ error: message });
+  }
 });
 
 app.get("/api/files/:path(*)/versions", (req, res) => {
@@ -1314,11 +1416,19 @@ app.get("/api/files/:path(*)/versions", (req, res) => {
     return res.status(400).json({ error: "path required" });
   }
 
-  const versions = fileVersionsByPath.get(filePath) ?? [];
-  const metas: FileVersionMeta[] = versions.map(
-    ({ content: _content, ...meta }) => meta,
-  );
-  return res.json({ versions: metas });
+  try {
+    const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+    const versions = fileVersionsByPath.get(resolvedFilePath) ?? [];
+    const metas: FileVersionMeta[] = versions.map(
+      ({ content: _content, ...meta }) => meta,
+    );
+    return res.json({ versions: metas });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return res
+      .status(mapFileRouteErrorStatus(message))
+      .json({ error: message });
+  }
 });
 
 app.get("/api/files/:path(*)/versions/:id", (req, res) => {
@@ -1329,13 +1439,21 @@ app.get("/api/files/:path(*)/versions/:id", (req, res) => {
     return res.status(400).json({ error: "path required" });
   }
 
-  const versions = fileVersionsByPath.get(filePath) ?? [];
-  const version = versions.find((entry) => entry.id === id);
-  if (!version) {
-    return res.status(404).json({ error: "version not found" });
-  }
+  try {
+    const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+    const versions = fileVersionsByPath.get(resolvedFilePath) ?? [];
+    const version = versions.find((entry) => entry.id === id);
+    if (!version) {
+      return res.status(404).json({ error: "version not found" });
+    }
 
-  return res.json({ version });
+    return res.json({ version });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return res
+      .status(mapFileRouteErrorStatus(message))
+      .json({ error: message });
+  }
 });
 
 app.put("/api/file", async (req, res) => {
@@ -1356,9 +1474,10 @@ app.put("/api/file", async (req, res) => {
   const author = normalizeVersionAuthor(req.body?.author);
   const requestSummary = normalizeVersionSummary(req.body?.summary);
   try {
+    const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
     // Auto-save a version snapshot before overwriting.
     try {
-      const previousContent = await fs.promises.readFile(filePath, "utf-8");
+      const previousContent = await fs.promises.readFile(resolvedFilePath, "utf-8");
       if (previousContent !== content) {
         const version: FileVersion = {
           id: generateVersionId(),
@@ -1368,7 +1487,7 @@ app.put("/api/file", async (req, res) => {
           summary:
             requestSummary ?? buildAutoSaveSummary(previousContent, content),
         };
-        pushFileVersion(filePath, version);
+        pushFileVersion(resolvedFilePath, version);
       }
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code;
@@ -1383,18 +1502,18 @@ app.put("/api/file", async (req, res) => {
       }
     }
 
-    await fs.promises.writeFile(filePath, content, "utf-8");
-    const relativePath = toWorkspaceRelativePath(filePath);
+    await fs.promises.writeFile(resolvedFilePath, content, "utf-8");
+    const relativePath = toWorkspaceRelativePath(resolvedFilePath);
     logActivity({
       source: "agent",
       type: "file_edit",
       action: "Edited file",
       description: `Updated ${relativePath}.`,
-      filePath,
+      filePath: resolvedFilePath,
       agentName: "Entity",
       agentEmoji: "⚡",
     });
-    broadcast({ type: "file:changed", path: filePath, content });
+    broadcast({ type: "file:changed", path: resolvedFilePath, content });
     return res.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -1409,23 +1528,24 @@ app.post("/api/file", async (req, res) => {
   }
 
   try {
-    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+    await fs.promises.mkdir(path.dirname(resolvedFilePath), { recursive: true });
     await fs.promises.writeFile(
-      filePath,
+      resolvedFilePath,
       typeof content === "string" ? content : "",
       "utf-8",
     );
-    const relativePath = toWorkspaceRelativePath(filePath);
+    const relativePath = toWorkspaceRelativePath(resolvedFilePath);
     logActivity({
       source: "agent",
       type: "file_edit",
       action: "Created file",
       description: `Created ${relativePath}.`,
-      filePath,
+      filePath: resolvedFilePath,
       agentName: "Entity",
       agentEmoji: "⚡",
     });
-    broadcast({ type: "file:created", path: filePath });
+    broadcast({ type: "file:created", path: resolvedFilePath });
     return res.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -1444,19 +1564,20 @@ app.delete("/api/file", async (req, res) => {
   }
 
   try {
-    await fs.promises.unlink(filePath);
-    fileVersionsByPath.delete(filePath);
-    const relativePath = toWorkspaceRelativePath(filePath);
+    const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+    await fs.promises.unlink(resolvedFilePath);
+    fileVersionsByPath.delete(resolvedFilePath);
+    const relativePath = toWorkspaceRelativePath(resolvedFilePath);
     logActivity({
       source: "agent",
       type: "file_edit",
       action: "Deleted file",
       description: `Deleted ${relativePath}.`,
-      filePath,
+      filePath: resolvedFilePath,
       agentName: "Entity",
       agentEmoji: "⚡",
     });
-    broadcast({ type: "file:deleted", path: filePath });
+    broadcast({ type: "file:deleted", path: resolvedFilePath });
     return res.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -1471,22 +1592,24 @@ app.post("/api/file/move", async (req, res) => {
   }
 
   try {
-    await fs.promises.rename(from, to);
-    const existingVersions = fileVersionsByPath.get(from);
+    const resolvedFrom = resolveWorkspaceMutationPath(from);
+    const resolvedTo = resolveWorkspaceMutationPath(to);
+    await fs.promises.rename(resolvedFrom, resolvedTo);
+    const existingVersions = fileVersionsByPath.get(resolvedFrom);
     if (existingVersions) {
-      fileVersionsByPath.delete(from);
-      fileVersionsByPath.set(to, existingVersions);
+      fileVersionsByPath.delete(resolvedFrom);
+      fileVersionsByPath.set(resolvedTo, existingVersions);
     }
     logActivity({
       source: "agent",
       type: "file_edit",
       action: "Moved file",
-      description: `Moved ${toWorkspaceRelativePath(from)} to ${toWorkspaceRelativePath(to)}.`,
-      filePath: to,
+      description: `Moved ${toWorkspaceRelativePath(resolvedFrom)} to ${toWorkspaceRelativePath(resolvedTo)}.`,
+      filePath: resolvedTo,
       agentName: "Entity",
       agentEmoji: "⚡",
     });
-    broadcast({ type: "file:moved", from, to });
+    broadcast({ type: "file:moved", from: resolvedFrom, to: resolvedTo });
     return res.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -1524,7 +1647,7 @@ app.post("/api/mention", async (req, res) => {
           document,
           instruction,
           context,
-          author: author || "Henry",
+          author: author || "User",
           timestamp: new Date().toISOString(),
         }),
       });
@@ -1643,16 +1766,21 @@ app.get("/api/agents", async (_req, res) => {
             moduleCount: 0,
             capabilityLabels: [],
             permissionLabels: [],
+            scopeLabels: [],
           },
         });
       });
     res.json({ ...data, list });
   } catch {
     res.json({
-      list: registryAgents.map((entry: { avatar_url: string | null }) => ({
-        ...entry,
-        avatarUrl: entry.avatar_url || undefined,
-      })),
+      list: registryAgents.map((entry: { id: string; avatar_url: string | null }) => {
+        const grants = moduleRegistryRepo.listAgentModuleGrants(entry.id);
+        return {
+          ...entry,
+          avatarUrl: entry.avatar_url || undefined,
+          capabilities: buildAgentCapabilityCard({ agent: entry, grants, modules }),
+        };
+      }),
     });
   }
 });
@@ -1973,6 +2101,11 @@ function registerTaskRoutes(prefix: "" | "/api") {
       // This avoids 296 individual SQLite queries on every poll
       const includeActivity =
         String(req.query.includeActivity ?? "false").toLowerCase() === "true";
+      if (includeActivity && (pagination.limit === null || pagination.limit > 500)) {
+        return res.status(400).json({
+          error: "includeActivity requires an explicit limit of 500 or fewer",
+        });
+      }
       const result = includeActivity
         ? paginatedTasks.map((task) => ({
             ...task,
@@ -5177,10 +5310,10 @@ function registerDocumentRoutes(prefix: "" | "/api") {
     }
 
     const author = req.body.author.trim().toLowerCase();
-    if (!DOCUMENT_AUTHOR_SET.has(author)) {
+    if (!AUTHOR_SET_VALID.has(author)) {
       return res.status(400).json({
         error:
-          "author must be one of human, ada, spock, scotty, geordi, zora, unknown",
+          "author must be one of human, assistant, unknown",
       });
     }
 
@@ -5363,21 +5496,21 @@ async function ensureSampleTasks() {
       description:
         "Open this card to test editing title, assignee, due date, and description.",
       column: "backlog",
-      assignee: "Henry",
+      assignee: "User",
     },
     {
       name: "Sample: QA regression checklist",
       description:
         "Use this to test task detail updates and comments workflow.",
       column: "doing",
-      assignee: "Ada",
+      assignee: "Assistant",
     },
     {
       name: "Sample: Weekly planning sync",
       description:
         "Move this card across columns to validate board interactions.",
       column: "review",
-      assignee: "Spock",
+      assignee: "Assistant",
     },
   ] as const;
 
@@ -5452,7 +5585,12 @@ registerPluginManagementRoutes({
 registerNodeOperationsRoutes(app);
 
 // Chat routes
-registerChatRoutes({ app, openClawBaseUrl: OPENCLAW });
+const clickClackBridge = process.env.ENTITY_CHAT_CLICKCLACK_BRIDGE === '1'
+  ? createClickClackBridge()
+  : undefined;
+registerClickClackProxyRoutes(app);
+registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge });
+
 
 // TTS routes
 registerTtsRoutes({ app, db: entityDb });
@@ -5470,27 +5608,9 @@ app.get("/api/activity/recent", async (req, res) => {
 
 // === AGENT STATUS: Real gateway health pings ===
 
-const DEFAULT_AGENT_HEALTH_ENDPOINTS: Record<string, string[]> = {
-  main: [
-    process.env.ENTITY_AGENT_HEALTH_MAIN?.trim() || "",
-    "http://127.0.0.1:18789/health",
-  ],
-  spock: [
-    process.env.ENTITY_AGENT_HEALTH_SPOCK?.trim() || "",
-  ],
-  scotty: [
-    process.env.ENTITY_AGENT_HEALTH_SCOTTY?.trim() || "",
-  ],
-  geordi: [
-    process.env.ENTITY_AGENT_HEALTH_GEORDI?.trim() || "",
-  ],
-  zora: [
-    process.env.ENTITY_AGENT_HEALTH_ZORA?.trim() || "",
-  ],
-};
-
+const CONFIGURED_AGENT_HEALTH_ENDPOINTS = buildConfiguredAgentHealthEndpoints(runtimeConfig);
 const AGENT_HEALTH_ENDPOINTS: Record<string, string[]> = Object.fromEntries(
-  Object.entries(DEFAULT_AGENT_HEALTH_ENDPOINTS).map(([agentId, urls]) => [
+  Object.entries(CONFIGURED_AGENT_HEALTH_ENDPOINTS).map(([agentId, urls]) => [
     agentId,
     urls.filter(
       (url, index, list) => Boolean(url) && list.indexOf(url) === index,
@@ -5566,13 +5686,8 @@ app.get("/api/agents/status", async (_req, res) => {
 
 // === AGENT FOCUS: Most recently modified file per workspace ===
 
-const AGENT_WORKSPACES: Record<string, string> = {
-  main: process.env.ENTITY_WORKSPACE_MAIN || DEFAULT_WORK_ROOT,
-  spock:
-    process.env.ENTITY_WORKSPACE_SPOCK || path.join(HOME_DIR, "clawd-spock"),
-  scotty:
-    process.env.ENTITY_WORKSPACE_SCOTTY || path.join(HOME_DIR, "clawd-scotty"),
-};
+// Agent workspaces come from entity.config.yaml/admin file-source bindings.
+const AGENT_WORKSPACES: Record<string, string> = buildConfiguredAgentWorkspaces(runtimeConfig, runtimeConfigBaseDir);
 const AGENT_FOCUS_FILE_EXTENSIONS = new Set([
   ".ts",
   ".tsx",

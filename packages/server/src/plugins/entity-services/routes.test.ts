@@ -111,6 +111,66 @@ describe('entity-services routes', () => {
     );
   });
 
+  it('preserves legacy external admin settings', async () => {
+    const entityServices = createLoadedPlugin({
+      settings: {
+        requestTimeoutMs: 1000,
+        entityBaseUrl: 'http://entity.local',
+        externalAdminUrl: 'http://legacy-admin.local:3555',
+        externalAdminName: 'Legacy Admin',
+        discoverGatewayServices: false,
+        discoverMacServices: false,
+      },
+    });
+
+    const payload = await buildServicesRegistry(
+      {
+        plugin: entityServices,
+        registry: {
+          get: (id: string) => (id === entityServices.id ? entityServices : undefined),
+        },
+      } as any,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+    );
+
+    const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
+    expect(enterprise).toMatchObject({
+      name: 'Legacy Admin',
+      link: { url: 'http://legacy-admin.local:3555', external: true },
+      healthLink: { url: 'http://legacy-admin.local:3555/api/health', external: true },
+    });
+  });
+
+  it('falls back from blank legacy external admin URL to the default admin service', async () => {
+    const entityServices = createLoadedPlugin({
+      settings: {
+        requestTimeoutMs: 1000,
+        entityBaseUrl: 'http://entity.local',
+        externalAdminUrl: '',
+        externalAdminName: 'External Admin',
+        discoverGatewayServices: false,
+        discoverMacServices: false,
+      },
+    });
+
+    const payload = await buildServicesRegistry(
+      {
+        plugin: entityServices,
+        registry: {
+          get: (id: string) => (id === entityServices.id ? entityServices : undefined),
+        },
+      } as any,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+    );
+
+    const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
+    expect(enterprise).toMatchObject({
+      name: 'External Admin',
+      link: { url: 'http://entity.local:3002', external: true },
+      healthLink: { url: 'http://entity.local:3002/api/health', external: true },
+    });
+  });
+
   it('reports disabled or unreachable services as offline', async () => {
     const entityServices = createLoadedPlugin();
     const entityLinker = createLoadedPlugin({

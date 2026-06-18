@@ -13,15 +13,7 @@
   </head>
   <body>
     <div id=root></div>
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function () {
-          navigator.serviceWorker.register('/sw.js').catch(function (error) {
-            console.error('Service worker registration failed:', error);
-          });
-        });
-      }
-    </script>
+    <script src=/register-sw.js defer></script>
     <script type=module src=/src/main.tsx></script>
   </body>
 </html>

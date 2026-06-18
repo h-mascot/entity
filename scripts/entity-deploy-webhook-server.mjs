@@ -13,9 +13,13 @@ const token = process.env.WEBHOOK_DEPLOY_TOKEN;
 const allowedRepo = process.env.WEBHOOK_DEPLOY_REPO || '';
 const sourceDir = process.env.ENTITY_DEPLOY_SOURCE_DIR || '';
 const prodHost = process.env.ENTITY_PROD_HOST || '';
-const prodHttpHost = process.env.ENTITY_PROD_HTTP_HOST || '127.0.0.1';
+const prodHttpHost = process.env.ENTITY_PROD_HTTP_HOST || '';
+const prodPort = process.env.ENTITY_PROD_PORT || '3000';
 const prodDir = process.env.ENTITY_PROD_DIR || '';
-const prodDb = process.env.ENTITY_PROD_DB || `${prodDir}/packages/db/entity-tasks.db`;
+const prodDb = process.env.ENTITY_PROD_DB || '';
+const prodLogPath = process.env.ENTITY_PROD_LOG_PATH || '';
+const prodLaunchdService = process.env.ENTITY_PROD_LAUNCHD_SERVICE || '';
+const prodNodeEntry = process.env.ENTITY_PROD_NODE_ENTRY || '';
 const logPath = process.env.ENTITY_DEPLOY_LOG || "/tmp/entity-deploy-webhook.log";
 
 let activeDeploy = null;
@@ -35,8 +39,18 @@ if (!prodHost) {
   process.exit(78);
 }
 
+if (!prodHttpHost) {
+  console.error("ENTITY_PROD_HTTP_HOST is required");
+  process.exit(78);
+}
+
 if (!prodDir) {
   console.error("ENTITY_PROD_DIR is required (set env or WEBHOOK_PROD_DIR)");
+  process.exit(78);
+}
+
+if (!prodDb) {
+  console.error("ENTITY_PROD_DB is required");
   process.exit(78);
 }
 
@@ -123,8 +137,12 @@ git clean -fdx
 npm ci
 ENTITY_PROD_HOST="${prodHost}" \
 ENTITY_PROD_HTTP_HOST="${prodHttpHost}" \
+ENTITY_PROD_PORT="${prodPort}" \
 ENTITY_PROD_DIR="${prodDir}" \
 ENTITY_PROD_DB="${prodDb}" \
+ENTITY_PROD_LOG_PATH="${prodLogPath}" \
+ENTITY_PROD_LAUNCHD_SERVICE="${prodLaunchdService}" \
+ENTITY_PROD_NODE_ENTRY="${prodNodeEntry}" \
 ENTITY_SOURCE_DIR="${sourceDir}" \
 ./deploy.sh --all
 `;

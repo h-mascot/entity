@@ -104,6 +104,7 @@ interface AgentCapability {
   verificationLabel?: string;
   capabilityLabels?: string[];
   permissionLabels?: string[];
+  scopeLabels?: string[];
   runtimeLabel?: string;
   identityLabel?: string;
 }
@@ -393,6 +394,7 @@ function buildFallbackAgentCapabilities(agent: (typeof BUILT_IN_AGENTS)[number])
     verificationLabel: 'Local fallback',
     capabilityLabels,
     permissionLabels,
+    scopeLabels: [],
     runtimeLabel: `fallback · ${agent.status}`,
     moduleCount: agent.modules.length,
   };
@@ -1281,7 +1283,7 @@ function ShowClawFeaturedPage() {
               <dl className="mt-5 space-y-4 text-sm">
                 {[
                   ['Request', 'Ship one ShowClaw featured page for Entity.'],
-                  ['Worker', 'Scotty lane · Mac · ~/Code/entity'],
+                  ['Worker', 'Assistant · local · ~/Code/entity'],
                   ['Changed surface', '/showclaw/entity-featured'],
                   ['Proof', 'Build output + deployed URL + screenshot-ready page'],
                   ['Verifier', 'Operator acceptance contract, v0'],
@@ -2175,15 +2177,11 @@ export default function App() {
 
         if (docId === currentDocId && toastAction) {
           const label =
-            actor === 'ada'
-              ? 'Ada'
-              : actor === 'spock'
-                ? 'Spock'
-                : actor === 'scotty'
-                  ? 'Scotty'
-                  : actor === 'human'
-                    ? 'Human'
-                    : actor;
+            actor === 'assistant'
+              ? 'Assistant'
+              : actor === 'human'
+                ? 'Human'
+                : actor;
           pushToast(`${label} ${toastAction === 'joined' ? 'joined' : 'left'} the document`, 'info');
         }
 
@@ -3871,7 +3869,7 @@ export default function App() {
                     {([
                       { value: 'dark', label: 'Dark', hint: 'Classic black shell' },
                       { value: 'light', label: 'Light', hint: 'Clean white workspace' },
-	                      { value: 'kitz', label: 'Kitz', hint: 'Enterprise gradient dark' },
+	                      { value: 'kitz', label: 'Kitz', hint: 'Dark gradient workspace' },
 	                      { value: 'nebula', label: 'Nebula', hint: 'Glassy blue violet' },
 	                      { value: 'aurora', label: 'Aurora', hint: 'Mint peach glass' },
 	                      { value: 'paper', label: 'Paper', hint: 'Notebook desk board' },
@@ -4370,7 +4368,7 @@ export default function App() {
       <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
         <div className="text-sm font-medium text-[var(--text-primary)]">Services</div>
         <div className="mt-2 text-xs text-[var(--text-muted)]">
-          Live operational registry for Entity runtime services, linked plugins, and Enterprise tooling.
+          Live operational registry for Entity runtime services, linked plugins, and crew tooling.
         </div>
       </div>
       <button
@@ -4390,7 +4388,7 @@ export default function App() {
           rel="noreferrer noopener"
           className="mc-shell-btn px-3 py-2 text-left text-xs"
         >
-          Open Enterprise Crew Admin
+          Open Crew Admin
         </a>
       )}
     </div>
@@ -4578,9 +4576,8 @@ export default function App() {
                   aria-label="Filter by assignee"
                 >
                   <option value="all">Assignee: All</option>
-                  <option value="Ada">Ada</option>
-                  <option value="Spock">Spock</option>
-                  <option value="Scotty">Scotty</option>
+                  <option value="Assistant">Assistant</option>
+                  <option value="Human">Human</option>
                   <option value={userProfile.displayName}>{userProfile.displayName}</option>
                 </select>
                 <select
@@ -4744,7 +4741,6 @@ export default function App() {
       return null;
     }
 
-
     return (
       <div className="flex w-full flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-[220px] flex-1 items-center gap-2">
@@ -4805,13 +4801,13 @@ export default function App() {
             >
               {authorshipStats.human > 0 && <span>👤 {formatAuthorshipBadgePercent(authorshipStats.human)}%</span>}
               {authorshipStats.ada > 0 && (
-                <span className="text-purple-400">Ada {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>
+                <span className="text-purple-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>
               )}
               {authorshipStats.spock > 0 && (
-                <span className="text-blue-400">Spock {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>
+                <span className="text-blue-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>
               )}
               {authorshipStats.scotty > 0 && (
-                <span className="text-green-400">Scotty {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>
+                <span className="text-green-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>
               )}
             </div>
           )}
@@ -5082,7 +5078,6 @@ export default function App() {
         </button>
       );
     }
-
     if (sidebarTab === 'admin') {
       const miniItems: Array<{ key: AdminSection; icon: string; label: string }> = [
         { key: 'general', icon: '🧩', label: 'General settings' },

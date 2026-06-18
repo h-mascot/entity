@@ -9,11 +9,24 @@ export interface SourceCapability {
   search: boolean;
 }
 
+export type SourcePathKind = 'file' | 'directory' | 'other';
+
 export interface SourceNode {
   sourceId: string;
   path: string;
   name: string;
   isDirectory: boolean;
+  kind?: SourcePathKind;
+  size?: number;
+  updatedAt?: string;
+}
+
+
+export interface SourcePathMetadata {
+  sourceId: string;
+  path: string;
+  name: string;
+  kind: SourcePathKind;
   size?: number;
   updatedAt?: string;
 }
@@ -38,6 +51,7 @@ export interface FileSourceAdapter {
   validate(source: FileSourceRecord): Promise<void>;
   capabilities(): SourceCapability;
   list(path: string): Promise<SourceNode[]>;
+  stat?(path: string): Promise<SourcePathMetadata>;
   read(path: string): Promise<SourceFileReadResult>;
   readRaw?(path: string): Promise<SourceFileRawResult>;
   write(path: string, content: string): Promise<{ updatedAt?: string }>;

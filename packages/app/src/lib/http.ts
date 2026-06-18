@@ -1,3 +1,19 @@
+
+/**
+ * Read the API bearer token from localStorage if available.
+ * Used to authenticate all API requests when ENTITY_API_TOKEN is configured server-side.
+ */
+const API_TOKEN_KEY = 'entity-api-token';
+
+function readApiToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(API_TOKEN_KEY);
+    if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  } catch { /* ignore */ }
+  return null;
+}
+
 export class HttpRequestError extends Error {
   readonly status?: number;
   readonly url?: string;
@@ -115,7 +131,20 @@ export async function requestJsonWithFallback<T = unknown>({
 
   for (const url of urls) {
     try {
-      const response = await fetch(url, init);
+      // Inject API bearer token if configured
+      const effectiveInit = { ...init };
+      if (!effectiveInit.headers || !('Authorization' in (effectiveInit.headers as Record<string, string>))) {
+        try {
+          const token = readApiToken();
+          if (token) {
+            effectiveInit.headers = {
+              ...(effectiveInit.headers as Record<string, string> || {}),
+              'Authorization': `Bearer ${token}`,
+            };
+          }
+        } catch { /* ignore localStorage errors */ }
+      }
+      const response = await fetch(url, effectiveInit);
       if (continueOnStatuses.includes(response.status)) {
         continue;
       }

@@ -384,7 +384,9 @@ export class PluginRegistry {
   }
 
   private readPluginSettings(pluginId: string, defaults: PluginSettingsRecord): PluginSettingsRow {
-    const settingsJson = JSON.stringify(cloneSettingsRecord(defaults));
+    const configSettings = cloneSettingsRecord(this.configPluginSettings[pluginId]);
+    const seededDefaults = mergeSettings(defaults, configSettings);
+    const settingsJson = JSON.stringify(seededDefaults);
     this.db
       .prepare(`
         INSERT OR IGNORE INTO plugin_settings (plugin_id, enabled, settings_json, updated_at)
@@ -397,7 +399,7 @@ export class PluginRegistry {
       .get(pluginId) as { enabled?: unknown; settings_json?: unknown } | undefined;
 
     const storedSettings = parseStoredSettings(row?.settings_json);
-    const mergedSettings = mergeSettings(defaults, storedSettings);
+    const mergedSettings = mergeSettings(seededDefaults, storedSettings);
     if (JSON.stringify(mergedSettings) !== JSON.stringify(storedSettings)) {
       this.db
         .prepare(`

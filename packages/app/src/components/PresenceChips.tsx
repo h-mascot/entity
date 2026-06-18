@@ -10,12 +10,8 @@ function normalizeActorId(value: string): string {
 
 function actorColorClass(actorId: string): string {
   switch (normalizeActorId(actorId)) {
-    case 'ada':
+    case 'assistant':
       return 'bg-purple-500';
-    case 'spock':
-      return 'bg-blue-500';
-    case 'scotty':
-      return 'bg-green-500';
     case 'human':
       return 'bg-white';
     default:
@@ -114,12 +110,8 @@ function resolveTypingLabel(presence: DocumentPresenceRecord): string | null {
 
 function actorLabel(actorId: string): string {
   switch (normalizeActorId(actorId)) {
-    case 'ada':
-      return 'Ada';
-    case 'spock':
-      return 'Spock';
-    case 'scotty':
-      return 'Scotty';
+    case 'assistant':
+      return 'Assistant';
     case 'human':
       return 'Human';
     default:

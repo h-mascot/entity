@@ -17,7 +17,16 @@
     "test:docker": "npm run test:deploy",
     "ctrl:gate": "bash scripts/ctrl-gate-runner.sh",
     "ctrl:full": "npm run ctrl:gate && npm run test:live && npm run test:deploy",
-    "scan:private-defaults": "node scripts/scan-private-defaults.mjs"
+    "clickclack:verify": "node scripts/clickclack-sidecar.mjs verify",
+    "clickclack:serve": "node scripts/clickclack-sidecar.mjs serve",
+    "clickclack:status": "node scripts/clickclack-sidecar.mjs status",
+    "clickclack:smoke": "node scripts/clickclack-sidecar.mjs smoke",
+    "clickclack:test": "node --test scripts/clickclack-sidecar-lib.test.mjs && npm --prefix packages/server run test -- src/clickclack/bridge.test.ts src/clickclack/proxy.test.ts src/routes/chat-clickclack.test.ts",
+    "scan:private-defaults": "node scripts/scan-private-defaults.mjs",
+    "verify:sandbox": "bash scripts/entity-verify-sandbox.sh",
+    "deploy:sandbox": "bash scripts/entity-deploy-sandbox.sh",
+    "ship:sandbox": "npm run ctrl:gate && npm run deploy:sandbox",
+    "promote:prod": "bash scripts/entity-promote-prod.sh"
   },
   "workspaces": [
     "packages/*",

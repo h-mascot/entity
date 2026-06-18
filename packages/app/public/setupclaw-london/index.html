@@ -171,7 +171,7 @@
     <section class="wrap">
       <h2>Book the first useful slice</h2>
       <p>Tell us the first task that would make the agent useful. We will reply with a one-afternoon scope.</p>
-      <form id="lead-form" action="#setupclaw-confirmation">
+      <form id="lead-form" action="/api/setupclaw-london/leads" method="post">
         <label>Name<input name="name" autocomplete="name" required /></label>
         <label>Email<input name="email" type="email" autocomplete="email" required /></label>
         <label>Company<input name="company" autocomplete="organization" required /></label>
@@ -182,7 +182,7 @@
         <label class="full">Must-not-do-without-approval constraint<textarea name="approval_boundary" required placeholder="Do not send external email without approval"></textarea></label>
         <div class="full cta-row" style="margin:6px 0 0;"><button class="btn primary" type="submit">Send setup request</button></div>
       </form>
-      <div class="confirmation" id="setupclaw-confirmation">Thanks - we will reply with a one-afternoon setup scope. The first session focuses on one channel, three useful tools, safety defaults, and handoff notes. No production data access until explicitly scoped.</div>
+      <div class="confirmation" id="setupclaw-confirmation" role="status" aria-live="polite">Thanks - your setup request has been saved. Ada will reply with a one-afternoon setup scope. The first session focuses on one channel, three useful tools, safety defaults, and handoff notes. No production data access until explicitly scoped.</div>
       <pre class="payload" id="notification-payload" aria-label="Generated notification payload"></pre>
     </section>
 
@@ -211,23 +211,41 @@
     const form = document.querySelector('#lead-form');
     const confirmation = document.querySelector('#setupclaw-confirmation');
     const payloadBox = document.querySelector('#notification-payload');
-    form.addEventListener('submit', (event) => {
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(form).entries());
-      const source = new URLSearchParams(window.location.search).get('source') || 'static-form';
-      const payload = `SetupClaw London lead\nName: ${data.name}\nEmail: ${data.email}\nCompany: ${data.company}\nPreferred day: ${data.preferred_day}\nStack: ${data.current_stack}\nFirst task: ${data.first_task}\nTools: ${data.tools_needed}\nApproval boundary: ${data.approval_boundary}\nSource: ${source}`;
-      const subject = encodeURIComponent(`SetupClaw London request - ${data.company || data.name}`);
-      const body = encodeURIComponent(`${payload}
+      data.source = new URLSearchParams(window.location.search).get('source') || 'static-form';
+      const button = form.querySelector('button[type="submit"]');
+      const originalButtonText = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Saving request...';
 
-Proof-first setup request captured from setupclaw-london-static.`);
-      const mailto = `mailto:ada@agentmail.to?subject=${subject}&body=${body}`;
-      confirmation.style.display = 'block';
-      payloadBox.textContent = `${payload}
-
-Notification draft: ${mailto}`;
-      payloadBox.style.display = 'block';
-      window.location.href = mailto;
-      confirmation.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) {
+          throw new Error(result.error || 'Could not save setup request');
+        }
+        confirmation.textContent = `${result.message} Reference: ${result.id}.`;
+        confirmation.style.display = 'block';
+        payloadBox.textContent = `Saved setup request reference: ${result.id}
+Next step: Ada replies with a one-afternoon setup scope.`;
+        payloadBox.style.display = 'block';
+        form.reset();
+      } catch (error) {
+        confirmation.textContent = 'We could not save the request automatically. Please email ada@agentmail.to with your setup details and we will handle it manually.';
+        confirmation.style.display = 'block';
+        payloadBox.textContent = error instanceof Error ? error.message : String(error);
+        payloadBox.style.display = 'block';
+      } finally {
+        button.disabled = false;
+        button.textContent = originalButtonText;
+        confirmation.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     });
   </script>
 </body>

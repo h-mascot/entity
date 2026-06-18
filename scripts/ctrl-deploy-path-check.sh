@@ -6,6 +6,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 
 PROD_HOST="${ENTITY_PROD_HOST:-}"
 PROD_HTTP_HOST="${ENTITY_PROD_HTTP_HOST:-}"
+PROD_PORT="${ENTITY_PROD_PORT:-3000}"
 ENTITY_DIR="${ENTITY_PROD_DIR:-}"
 PROD_DB="${ENTITY_PROD_DB:-}"
 SERVER_DIST="${ENTITY_DIR}/packages/server/dist"
@@ -34,7 +35,7 @@ fi
 if [[ "${PROD_HTTP_HOST}" == http://* || "${PROD_HTTP_HOST}" == https://* ]]; then
   PROD_BASE_URL="${PROD_HTTP_HOST%/}"
 else
-  PROD_BASE_URL="http://${PROD_HTTP_HOST}:3000"
+  PROD_BASE_URL="http://${PROD_HTTP_HOST}:${PROD_PORT}"
 fi
 
 REMOTE_COUNT="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; test -d '${ENTITY_DIR}'; test -f '${PROD_DB}'; sqlite3 '${PROD_DB}' 'select count(*) from tasks;'" 2>/dev/null || true)"

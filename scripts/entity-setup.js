@@ -1,66 +1,283 @@
 #!/usr/bin/env node
 /**
  * entity-setup.js
- * Interactive setup script that generates entity.config.yaml from prompts
+ * First-run setup for Entity workspace.
+ * Generates entity.config.yaml from prompts or safe local defaults.
  */
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
-const CONFIG_PATH = path.join(__dirname, '..', 'entity.config.yaml');
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const CONFIG_DIR = path.join(__dirname, '..');
+const CONFIG_PATH = path.join(CONFIG_DIR, 'entity.config.yaml');
+const ENV_PATH = path.join(CONFIG_DIR, '.env');
 
-function ask(question) {
-  return new Promise(resolve => rl.question(question, resolve));
+const args = new Set(process.argv.slice(2));
+const interactive = args.has('--interactive');
+const useDefaults = !interactive || args.has('--defaults') || args.has('--yes') || args.has('-y');
+const force = args.has('--force');
+const checkOnly = args.has('--check');
+const skipClickClack = args.has('--skip-clickclack');
+
+if (args.has('--help') || args.has('-h')) {
+  console.log(`Usage: npm run setup -- [--defaults]
+
+Creates a local-safe Entity first-run configuration.
+
+Options:
+  --defaults, --yes, -y   Write the safe local defaults without prompting
+  --interactive           Prompt for local workspace values
+  --check                 Validate setup inputs without creating missing files
+  --skip-clickclack       Skip ClickClack sidecar checkout verification
+  --force                 Overwrite an existing entity.config.yaml
+  --help, -h              Show this help`);
+  process.exit(0);
+}
+
+const DEFAULTS = {
+  displayName: 'My Entity Workspace',
+  ownerName: 'Local User',
+  serverPort: '3000',
+  workspaceRoot: '~/entity-workspace',
+  databasePath: './data/entity.sqlite',
+  logPath: './logs/entity.log',
+};
+
+const rl = useDefaults ? null : readline.createInterface({ input: process.stdin, output: process.stdout });
+
+function askDefault(question, defaultVal) {
+  if (!rl) return Promise.resolve(defaultVal);
+  return new Promise(resolve => {
+    rl.question(`${question} [${defaultVal}]: `, answer => {
+      resolve(answer.trim() || defaultVal);
+    });
+  });
+}
+
+function expandHome(value) {
+  if (!value || typeof value !== 'string') return value;
+  if (value === '~') return process.env.HOME || value;
+  if (value.startsWith('~/')) return path.join(process.env.HOME || '~', value.slice(2));
+  return value;
+}
+
+function resolveRepoPath(value) {
+  const expanded = expandHome(value);
+  return path.isAbsolute(expanded) ? expanded : path.resolve(CONFIG_DIR, expanded);
+}
+
+function ensureLocalPaths({ workspaceRoot, databasePath, logPath }) {
+  fs.mkdirSync(resolveRepoPath(workspaceRoot), { recursive: true });
+  fs.mkdirSync(path.dirname(resolveRepoPath(databasePath)), { recursive: true });
+  fs.mkdirSync(path.dirname(resolveRepoPath(logPath)), { recursive: true });
+}
+
+function quoteEnv(value) {
+  return JSON.stringify(String(value).replace(/\n/g, ''));
+}
+
+function printCheck(ok, name, detail) {
+  console.log(`[${ok ? 'PASS' : 'FAIL'}] ${name}${detail ? ` - ${detail}` : ''}`);
 }
 
 async function main() {
-  console.log('Entity Workspace Setup');
-  console.log('======================
-');
+  const {
+    checkSidecarPrerequisites,
+    ensureSidecarDataDir,
+    failedRequiredChecks,
+    loadSidecarPin,
+    verifyClickClackCheckout,
+  } = await import('./clickclack-sidecar-lib.mjs');
 
-  const displayName = await ask('Display name for this workspace: ') || 'My Entity Workspace';
-  const description = await ask('Description (optional): ') || '';
-  const serverPort = (await ask('Server port (default 3000): ')) || '3000';
+  console.log('');
+  console.log('Entity Workspace Setup');
+  console.log('======================');
+  console.log('This will create a safe local-first configuration and ClickClack sidecar pin.');
+  console.log('');
+
+  if (fs.existsSync(CONFIG_PATH) && !force) {
+    console.log(`entity.config.yaml already exists at ${CONFIG_PATH}`);
+    console.log('Preserving existing config. Re-run with --force to overwrite it.');
+    console.log('');
+    console.log('Next steps:');
+    console.log('  npm run doctor     # Check workspace health');
+    console.log('  npm run dev        # Start development server');
+    if (rl) rl.close();
+    if (!skipClickClack) {
+      await verifyClickClack({ install: !checkOnly });
+    }
+    return;
+  }
+
+  if (checkOnly) {
+    printCheck(false, 'entity.config.yaml', `missing: ${CONFIG_PATH}`);
+    if (!skipClickClack) {
+      await verifyClickClack({ install: false });
+    }
+    process.exitCode = 1;
+    if (rl) rl.close();
+    return;
+  }
+
+  if (useDefaults) {
+    console.log('Using safe local defaults (--defaults).');
+    console.log('');
+  }
+
+  const displayName = await askDefault('Display name for this workspace', DEFAULTS.displayName);
+  const ownerName = await askDefault('Owner/user display name', DEFAULTS.ownerName);
+  const serverPort = await askDefault('Server port', DEFAULTS.serverPort);
+  const workspaceRoot = await askDefault('Workspace root path', DEFAULTS.workspaceRoot);
+  const useOnboarding = (await askDefault('Run first-run onboarding wizard (y/n)', 'n')).toLowerCase() === 'y';
+
+  ensureLocalPaths({ workspaceRoot, databasePath: DEFAULTS.databasePath, logPath: DEFAULTS.logPath });
 
   const yaml = [
+    '# Entity Configuration',
+    '# Generated by npm run setup',
+    '',
+    'version: 1',
+    '',
     'profile:',
-    '  displayName: "' + displayName + '"',
-    '  description: "' + description + '"',
+    `  displayName: ${JSON.stringify(displayName)}`,
+    `  ownerName: ${JSON.stringify(ownerName)}`,
     '',
     'server:',
     '  host: localhost',
-    '  port: ' + serverPort,
-    '  cors:',
-    '    origins:',
-    '      - http://localhost:' + serverPort,
-    '  db:',
-    '    mode: LOCAL',
-    '    path: ./data/entity-tasks.db',
+    `  port: ${serverPort}`,
+    `  workspaceRoot: ${JSON.stringify(workspaceRoot)}`,
+    `  publicBaseUrl: "http://localhost:${serverPort}"`,
+    `  apiBaseUrl: "http://localhost:${serverPort}"`,
+    `  wsBaseUrl: "ws://localhost:${serverPort}"`,
+    `  databasePath: ${JSON.stringify(DEFAULTS.databasePath)}`,
+    `  logPath: ${JSON.stringify(DEFAULTS.logPath)}`,
     '',
     'agents:',
-    '  - name: assistant',
-    '    description: "General purpose AI assistant"',
-    '    model: local',
-    '    capabilities:',
-    '      - chat',
-    '      - code',
-    '      - search',
+    '  - id: assistant',
+    '    name: Assistant',
+    '    emoji: "🤖"',
+    '    enabled: true',
+    '    role: general',
+    '    fileSources: []',
+    '    healthUrls: []',
+    '    workspaceRoot: null',
+    '    gateway:',
+    '      type: none',
+    '      url: null',
+    '      tokenRef: null',
     '',
-    'fileSources: []',
+    'fileSources:',
+    '  - id: workspace',
+    '    displayName: Workspace',
+    '    type: local',
+    `    basePath: ${JSON.stringify(workspaceRoot)}`,
+    '    baseUrl: null',
+    '    enabled: true',
+    '    icon: null',
+    '    agentBindings:',
+    '      - assistant',
     '',
     'services: []',
     '',
-    'logging:',
-    '  level: info',
-    '  format: json'
-  ].join('
-');
+    'providers: {}',
+    'plugins:',
+    '  entity-services:',
+    '    settings:',
+    '      entityBaseUrl: "http://localhost:' + serverPort + '"',
+    '      externalAdminUrl: ""',
+    '      externalAdminName: External Admin',
+    '      services: []',
+    '      discoverGatewayServices: false',
+    '      discoverMacServices: false',
+    'voice:',
+    '  defaultProvider: browser',
+    '  providers: {}',
+    'deploy:',
+    '  mode: local',
+    '  preserveDatabase: true',
+    '  dryRunByDefault: true',
+    'terminal:',
+    '  targets: []',
+  ].filter(line => line !== '').join('\n');
 
-  fs.writeFileSync(CONFIG_PATH, yaml);
-  console.log('
-Created ' + CONFIG_PATH);
-  rl.close();
+  fs.writeFileSync(CONFIG_PATH, `${yaml}\n`);
+
+  // Create .env if it doesn't exist. Existing local secrets are never overwritten.
+  const envAlreadyExisted = fs.existsSync(ENV_PATH);
+  if (!envAlreadyExisted) {
+    const envContent = [
+      '# Entity Environment Configuration',
+      '# Generated by npm run setup - safe local defaults',
+      '',
+      'ENTITY_CONFIG=' + path.resolve(CONFIG_DIR, 'entity.config.yaml'),
+      'ENTITY_DB_MODE=LOCAL',
+      'ENTITY_FS_MULTISOURCE=true',
+      'ENTITY_FS_INDEXER_ENABLED=false',
+      '# Non-secret runtime defaults live in entity.config.yaml.',
+      '# Uncomment these only when you need an environment override:',
+      `# ENTITY_TASK_DB_PATH=${quoteEnv(resolveRepoPath(DEFAULTS.databasePath))}`,
+      `# ENTITY_CLOUD_API_BASE=http://localhost:${serverPort}`,
+      `# VITE_MC_ORIGIN=http://localhost:${serverPort}`,
+      `# VITE_ENTITY_API_BASE=http://localhost:${serverPort}`,
+      `# VITE_ENTITY_WS_PORT=${serverPort}`,
+      `# PORT=${serverPort}`,
+      'ENTITY_API_TOKEN=',
+      'ENTITY_DEFAULT_DOCUMENTS_TOKEN=',
+      '',
+    ].join('\n');
+    fs.writeFileSync(ENV_PATH, envContent);
+  }
+
+  console.log('');
+  console.log('Configuration created:');
+  console.log(`  entity.config.yaml (${CONFIG_PATH})`);
+  console.log(`  .env (${ENV_PATH}${envAlreadyExisted ? ', preserved existing file' : ''})`);
+  console.log('');
+  console.log('Next steps:');
+  console.log('  npm run build      # Build all packages');
+  console.log('  npm run doctor     # Check workspace health');
+  console.log('  npm run dev        # Start development server');
+  console.log('');
+
+  if (!skipClickClack) {
+    await verifyClickClack({ install: true });
+  }
+
+  if (useOnboarding) {
+    console.log('Onboarding: visit http://localhost:' + serverPort + '/onboarding');
+  }
+
+  if (rl) rl.close();
+}
+
+async function verifyClickClack({ install }) {
+  const {
+    checkSidecarPrerequisites,
+    ensureSidecarDataDir,
+    failedRequiredChecks,
+    loadSidecarPin,
+    verifyClickClackCheckout,
+  } = await import('./clickclack-sidecar-lib.mjs');
+
+  const checks = await checkSidecarPrerequisites();
+  for (const check of checks) {
+    printCheck(check.ok, check.name, check.detail);
+  }
+  const missing = failedRequiredChecks(checks);
+  if (missing.length > 0) {
+    process.exitCode = 1;
+    return;
+  }
+
+  const pin = loadSidecarPin();
+  try {
+    const checkout = await verifyClickClackCheckout({ pin, install });
+    printCheck(true, 'ClickClack checkout pinned', `${checkout.head}${checkout.clean ? '' : ' (checkout has local changes)'}`);
+    printCheck(true, 'ClickClack sidecar data dir', ensureSidecarDataDir(pin));
+  } catch (error) {
+    printCheck(false, 'ClickClack checkout pinned', error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

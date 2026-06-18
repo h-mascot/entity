@@ -11,9 +11,9 @@ export const USER_PROFILE_STORAGE_KEY = 'entity.user.profile.v1';
 export const USER_PROFILE_CHANGED_EVENT = 'entity:user-profile-changed';
 
 export const DEFAULT_USER_PROFILE: UserProfile = {
-  displayName: 'Henry',
-  handle: 'henrymascot',
-  avatarUrl: '/agent-avatars/henry.jpg',
+  displayName: 'User',
+  handle: 'user',
+  avatarUrl: '/agent-avatars/default.jpg',
   email: '',
 };
 

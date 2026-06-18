@@ -91,6 +91,12 @@ export interface ReviewValidationResult {
   metadata?: Record<string, unknown> | null;
 }
 
+type ReviewMetadata = Record<string, unknown>;
+
+const VALID_REVIEW_TYPES = new Set(['henry', 'peer', 'auto']);
+const VALID_REVIEW_DECISIONS = new Set(['accepted', 'needs_fix', 'escalated', 'pending']);
+const VALID_RISK_LEVELS = new Set(['low', 'medium', 'high']);
+
 const LEGACY_STALE_TASK_HOURS = 24 * 14;
 
 function toEpoch(value: string | null | undefined): number | null {
@@ -160,6 +166,70 @@ function parseReviewMetadata(value: unknown): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function readString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeIdentity(value: unknown): string {
+  return readString(value).toLowerCase();
+}
+
+function readBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+  return false;
+}
+
+function reviewPacketFrom(metadata: ReviewMetadata): Record<string, unknown> | null {
+  const packet = metadata.review_packet ?? metadata.review_brief;
+  return packet && typeof packet === 'object' && !Array.isArray(packet)
+    ? (packet as Record<string, unknown>)
+    : null;
+}
+
+function packetString(packet: Record<string, unknown>, key: string): string {
+  return readString(packet[key]);
+}
+
+function hasDoneCriteria(packet: Record<string, unknown>): boolean {
+  const criteria = packet.done_criteria ?? packet.validation_checklist;
+  if (Array.isArray(criteria)) {
+    return criteria.some((entry) => readString(entry).length > 0);
+  }
+  return readString(criteria).length > 0;
+}
+
+function isHenryActor(actor: string): boolean {
+  const normalized = normalizeIdentity(actor);
+  return normalized === 'henry' || normalized === 'henry mascot';
+}
+
+function hasAcceptedDecision(metadata: ReviewMetadata): boolean {
+  return readString(metadata.review_decision).toLowerCase() === 'accepted';
+}
+
+function hasReviewNote(metadata: ReviewMetadata): boolean {
+  return readString(metadata.review_note).length >= 20;
+}
+
+function reviewerMatchesActor(metadata: ReviewMetadata, actor: string): boolean {
+  const reviewer = normalizeIdentity(metadata.reviewer ?? metadata.review_owner);
+  if (!reviewer) return false;
+  return reviewer === normalizeIdentity(actor);
+}
+
+function hasExplicitChatDelivery(metadata: ReviewMetadata): boolean {
+  return (
+    readBoolean(metadata.chat_output_delivered) &&
+    Boolean(readString(metadata.source_id) || readString(metadata.origin_message_id)) &&
+    ['chat', 'discord'].includes(normalizeIdentity(metadata.source ?? metadata.origin_channel))
+  );
 }
 
 function normalizeReviewScore(score: number): number {
@@ -341,19 +411,167 @@ export function hasSubstantiveReviewOutput(value: string | null | undefined): bo
 }
 
 export function validateReviewEntry(metadata: unknown): ReviewValidationResult {
-  return { ok: true, metadata: parseReviewMetadata(metadata) };
+  const parsed = parseReviewMetadata(metadata);
+  if (!parsed) {
+    return {
+      ok: false,
+      message: 'Insufficient review packet. Add evidence or clearer done criteria.',
+      metadata: null,
+    };
+  }
+
+  const reviewType = readString(parsed.review_type ?? parsed.review_class).toLowerCase();
+  if (!VALID_REVIEW_TYPES.has(reviewType)) {
+    return {
+      ok: false,
+      message: 'Review metadata must include review_type: henry, peer, or auto.',
+      metadata: parsed,
+    };
+  }
+
+  const reviewer = readString(parsed.reviewer ?? parsed.review_owner);
+  if (reviewType !== 'auto' && !reviewer) {
+    return {
+      ok: false,
+      message: 'Review metadata must include reviewer/review_owner.',
+      metadata: parsed,
+    };
+  }
+
+  const riskLevel = readString(parsed.risk_level).toLowerCase();
+  if (!VALID_RISK_LEVELS.has(riskLevel)) {
+    return {
+      ok: false,
+      message: 'Review metadata must include explicit risk_level: low, medium, or high.',
+      metadata: parsed,
+    };
+  }
+
+  if (riskLevel === 'high' && !readBoolean(parsed.henry_required ?? parsed.requires_henry)) {
+    return {
+      ok: false,
+      message: 'High-risk review tasks must set henry_required=true unless Henry explicitly delegates.',
+      metadata: parsed,
+    };
+  }
+
+  const packet = reviewPacketFrom(parsed);
+  if (!packet) {
+    return {
+      ok: false,
+      message: 'Insufficient review packet. Add evidence or clearer done criteria.',
+      metadata: parsed,
+    };
+  }
+
+  if (!packetString(packet, 'requested_outcome') || !packetString(packet, 'evidence') || !hasDoneCriteria(packet)) {
+    return {
+      ok: false,
+      message: 'Insufficient review packet. Add requested outcome, evidence, and done criteria.',
+      metadata: parsed,
+    };
+  }
+
+  return { ok: true, metadata: parsed };
 }
 
 export function validateReviewCompletion(
-  task: Pick<TaskRecord, 'metadata'>,
+  task: Pick<TaskRecord, 'metadata' | 'assignee'>,
   actor: string | null | undefined
 ): ReviewValidationResult {
   const metadata = parseReviewMetadata(task.metadata);
   const normalizedActor = typeof actor === 'string' ? actor.trim() : '';
-  return {
-    ok: true,
-    metadata: normalizedActor ? { ...(metadata ?? {}), completedBy: normalizedActor } : metadata,
-  };
+  if (!metadata) {
+    return {
+      ok: false,
+      message: 'Task cannot move to done without review metadata.',
+      metadata: null,
+    };
+  }
+
+  if (!normalizedActor) {
+    return {
+      ok: false,
+      message: 'Task completion requires an explicit reviewer actor.',
+      metadata,
+    };
+  }
+
+  const reviewType = readString(metadata.review_type ?? metadata.review_class).toLowerCase();
+  if (!VALID_REVIEW_TYPES.has(reviewType)) {
+    return {
+      ok: false,
+      message: 'Task completion requires review_type: henry, peer, or auto.',
+      metadata,
+    };
+  }
+
+  const decision = readString(metadata.review_decision).toLowerCase();
+  if (decision && !VALID_REVIEW_DECISIONS.has(decision)) {
+    return {
+      ok: false,
+      message: 'Review decision must be accepted, needs_fix, escalated, or pending.',
+      metadata,
+    };
+  }
+
+  const henryRequired = readBoolean(metadata.henry_required ?? metadata.requires_henry);
+  const delegatedByHenry = readBoolean(metadata.henry_delegated ?? metadata.delegated_by_henry);
+  if (henryRequired && !isHenryActor(normalizedActor) && !delegatedByHenry) {
+    return {
+      ok: false,
+      message: 'Henry-required tasks can only be completed by Henry unless explicit delegation is recorded.',
+      metadata,
+    };
+  }
+
+  if (reviewType === 'auto') {
+    if (!hasAcceptedDecision(metadata) || (!hasReviewNote(metadata) && !hasExplicitChatDelivery(metadata))) {
+      return {
+        ok: false,
+        message: 'Auto review completion requires accepted decision plus review note or explicit chat-delivery proof.',
+        metadata,
+      };
+    }
+    return { ok: true, metadata: { ...metadata, completedBy: normalizedActor } };
+  }
+
+  if (!reviewerMatchesActor(metadata, normalizedActor) && !isHenryActor(normalizedActor)) {
+    return {
+      ok: false,
+      message: 'Task can only be completed by the assigned reviewer or Henry.',
+      metadata,
+    };
+  }
+
+  const assignee = normalizeIdentity(task.assignee);
+  const submittedBy = normalizeIdentity(metadata.submitted_by ?? metadata.producer ?? metadata.created_by);
+  const actorIdentity = normalizeIdentity(normalizedActor);
+  if (actorIdentity && (actorIdentity === assignee || (submittedBy && actorIdentity === submittedBy))) {
+    return {
+      ok: false,
+      message: 'Reviewer must be independent of assignee/submitted_by.',
+      metadata,
+    };
+  }
+
+  if (!hasAcceptedDecision(metadata)) {
+    return {
+      ok: false,
+      message: 'Task completion requires review_decision=accepted.',
+      metadata,
+    };
+  }
+
+  if (!hasReviewNote(metadata)) {
+    return {
+      ok: false,
+      message: 'Task completion requires a substantive review_note.',
+      metadata,
+    };
+  }
+
+  return { ok: true, metadata: { ...metadata, completedBy: normalizedActor } };
 }
 
 export function inferTaskType(

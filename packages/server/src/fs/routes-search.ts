@@ -145,6 +145,7 @@ export function registerSearchRoutes(router: Router): void {
               name: string;
               isDirectory: boolean;
               updatedAt?: string;
+              kind?: string;
             }> = [];
 
             try {
@@ -159,6 +160,10 @@ export function registerSearchRoutes(router: Router): void {
             }
 
             for (const node of nodes) {
+              if (node.kind === 'other') {
+                continue;
+              }
+
               if (node.isDirectory) {
                 const nextDepth = next.depth + 1;
                 if (nextDepth > MAX_FALLBACK_DEPTH) {

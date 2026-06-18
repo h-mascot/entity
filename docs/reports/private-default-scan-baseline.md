@@ -1,93 +1,47 @@
 # Private Default Scan Baseline
 
-Generated: 2026-05-22T08:07:25.177Z
+Generated: 2026-05-21T22:07:00.257Z
 
-Scanned files: 287
-Findings: 154
+Scanned files: 298
+Findings: 146
 Errors: 0
-Warnings: 154
+Warnings: 146
 
-This is the baseline guardrail for Entity portability work. It intentionally reports current hardcoded private defaults without failing by default. Use `npm run scan:private-defaults -- --enforce` when the allowlist has been tightened enough to block regressions.
+This is the baseline guardrail for Entity portability work. It intentionally reports current hardcoded private defaults without failing by default. Use `npm run scan:private-defaults -- --enforce` to block error-severity runtime defaults and `npm run scan:private-defaults -- --write-baseline` to refresh this report intentionally.
 
 ## Findings by file
+
+### README.md
+
+- L28 [warn] enterprise-name: `Open \`http://localhost:3000\`. No hardcoded paths, no Enterprise assumptions - just a local workspace you control.`
+
+### dev.sh
+
+- L3 [warn] enterprise-name: `# No hardcoded Enterprise paths, IPs, or remote connections`
 
 ### docs/config/gpt-55-instant-default-evaluation.md
 
 - L6 [warn] enterprise-agent-name: `Scope: Entity Ada/Main-style OpenClaw agents when live OpenClaw model policy is unavailable`
 - L18 [warn] enterprise-agent-name: `- It only applies when Entity cannot resolve configured models and falls back to its built-in Ada/OpenClaw policy.`
 
-### entity.config.example.yaml
+### packages/app/src/components/mission-control/TaskCard.tsx
 
-- L51 [warn] enterprise-agent-name: `#   # Geordi Swarm dispatch — Codex host and Mac home path for tilde expansion`
-
-### packages/app/src/App.tsx
-
-- L1284 [warn] enterprise-agent-name: `['Worker', 'Scotty lane · Mac · ~/Code/entity'],`
-- L2179 [warn] enterprise-agent-name: `? 'Ada'`
-- L2181 [warn] enterprise-agent-name: `? 'Spock'`
-- L2183 [warn] enterprise-agent-name: `? 'Scotty'`
-- L3874 [warn] enterprise-name: `{ value: 'kitz', label: 'Kitz', hint: 'Enterprise gradient dark' },`
-- L4373 [warn] enterprise-name: `Live operational registry for Entity runtime services, linked plugins, and Enterprise tooling.`
-- L4393 [warn] enterprise-name: `Open Enterprise Crew Admin`
-- L4581 [warn] enterprise-agent-name: `<option value="Ada">Ada</option>`
-- L4582 [warn] enterprise-agent-name: `<option value="Spock">Spock</option>`
-- L4583 [warn] enterprise-agent-name: `<option value="Scotty">Scotty</option>`
-- L4808 [warn] enterprise-agent-name: `<span className="text-purple-400">Ada {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>`
-- L4811 [warn] enterprise-agent-name: `<span className="text-blue-400">Spock {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>`
-- L4814 [warn] enterprise-agent-name: `<span className="text-green-400">Scotty {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>`
-
-### packages/app/src/components/CodeMirrorEditor.tsx
-
-- L88 [warn] enterprise-agent-name: `const agents = ['Ada', 'Spock', 'Scotty'] as const;`
-
-### packages/app/src/components/CursorAvatars.tsx
-
-- L95 [warn] enterprise-agent-name: `return 'Ada';`
-- L97 [warn] enterprise-agent-name: `return 'Spock';`
-- L99 [warn] enterprise-agent-name: `return 'Scotty';`
-
-### packages/app/src/components/NewCommentPopover.tsx
-
-- L121 [warn] enterprise-agent-name: `Mentions ready: type @Ada, @Spock, @Scotty`
-
-### packages/app/src/components/OnboardingFlow.tsx
-
-- L128 [warn] enterprise-name: `{ id: 'kitz', title: 'Kitz', hint: 'Enterprise gradient dark' },`
-
-### packages/app/src/components/PresenceChips.tsx
-
-- L118 [warn] enterprise-agent-name: `return 'Ada';`
-- L120 [warn] enterprise-agent-name: `return 'Spock';`
-- L122 [warn] enterprise-agent-name: `return 'Scotty';`
-
-### packages/app/src/components/mission-control/MCCreateTaskModal.tsx
-
-- L7 [warn] enterprise-agent-name: `const AGENT_ASSIGNEE_OPTIONS = ['Ada', 'Spock', 'Scotty'] as const;`
+- L139 [warn] henry-name: `const owner = henryRequired ? 'Henry' : reviewer || 'Unassigned';`
 
 ### packages/app/src/components/mission-control/TaskDetailPanel.tsx
 
-- L18 [warn] enterprise-agent-name: `const AGENT_ASSIGNEE_OPTIONS = ['Ada', 'Spock', 'Scotty'] as const;`
-- L570 [warn] clawd-workspace-name: `String.raw\`(?:https?:\/\/[^\s<>()]+|\/(?:docs|task|tasks)\/[^\s<>()]+|(?:docs|notes|output|memory|workspace|projects|zora|spock)\/[^\s<>()]+\.${TASK_OUTPUT_DOCUMENT_EXT}(?:[?#][^\s<>()]+)?|(?:~|\/(?:Users|home)\/[^\s<>()]+)\/clawd(?:-[^\/\s`
-- L635 [warn] clawd-workspace-name: `{ root: 'output', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/output\/(.+)$/i },`
-- L636 [warn] clawd-workspace-name: `{ root: 'memory', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/memory\/(.+)$/i },`
-- L637 [warn] clawd-workspace-name: `{ root: 'projects', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/projects\/(.+)$/i },`
-- L638 [warn] clawd-workspace-name: `{ root: 'zora', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-zora\/output\/(.+)$/i },`
-- L639 [warn] clawd-workspace-name: `{ root: 'spock', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-spock\/output\/(.+)$/i },`
-- L640 [warn] clawd-workspace-name: `{ root: 'workspace', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/(.+)$/i },`
-
-### packages/app/src/hooks/useActivityStream.ts
-
-- L104 [warn] enterprise-agent-name: `{ name: 'Ada', emoji: '🔮' },`
-- L105 [warn] enterprise-agent-name: `{ name: 'Spock', emoji: '🖖' },`
-- L106 [warn] enterprise-agent-name: `{ name: 'Scotty', emoji: '🔧' },`
+- L571 [warn] clawd-workspace-name: `String.raw\`(?:https?:\/\/[^\s<>()]+|\/(?:docs|task|tasks)\/[^\s<>()]+|(?:docs|notes|output|memory|workspace|projects|zora|spock)\/[^\s<>()]+\.${TASK_OUTPUT_DOCUMENT_EXT}(?:[?#][^\s<>()]+)?|(?:~|\/(?:Users|home)\/[^\s<>()]+)\/clawd(?:-[^\/\s`
+- L636 [warn] clawd-workspace-name: `{ root: 'output', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/output\/(.+)$/i },`
+- L637 [warn] clawd-workspace-name: `{ root: 'memory', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/memory\/(.+)$/i },`
+- L638 [warn] clawd-workspace-name: `{ root: 'projects', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/projects\/(.+)$/i },`
+- L639 [warn] clawd-workspace-name: `{ root: 'zora', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-zora\/output\/(.+)$/i },`
+- L640 [warn] clawd-workspace-name: `{ root: 'spock', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-spock\/output\/(.+)$/i },`
+- L641 [warn] clawd-workspace-name: `{ root: 'workspace', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/(.+)$/i },`
+- L2216 [warn] henry-name: `<div>{normalizeBoolean(task.metadataRecord.henry_required ?? task.metadataRecord.requires_henry) ? 'Henry' : reviewField(task.metadataRecord.reviewer ?? task.metadataRecord.review_owner)}</div>`
 
 ### packages/app/src/hooks/useSwarmBoard.ts
 
 - L2 [warn] enterprise-agent-name: `* Geordi Swarm — React Hook`
-
-### packages/app/src/lib/userProfile.ts
-
-- L14 [warn] henry-name: `displayName: 'Henry',`
 
 ### packages/app/src/stores/pluginStore.ts
 
@@ -95,7 +49,8 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 
 ### packages/db/src/index.ts
 
-- L1013 [warn] clawd-workspace-name: `['tasks-mc-sh', 'tasks', 'mc.sh', 'script', '~/clawd/scripts/mc.sh', 1, 'Mission Control CLI'],`
+- L1008 [warn] enterprise-agent-name: `['geordi-swarm', 'geordi-swarm', 'Geordi Swarm', 'Future multi-agent swarm orchestration on top of Entity helper modules.', 1, '🐝', 'plugin', '["read","dispatch","admin"]', '{"label":"Future swarm module"}']`
+- L1030 [warn] enterprise-agent-name: `['geordi-swarm-doc', 'geordi-swarm', 'Geordi Swarm manifest example', 'doc', 'docs/ENTITY-PLUGIN-MANIFEST.example.json', 0, 'Future swarm packaging reference']`
 
 ### packages/server/src/__tests__/agent-registry-routes.test.ts
 
@@ -127,12 +82,11 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 ### packages/server/src/agent/agent-capability-card.test.ts
 
 - L57 [warn] henry-name: `'{"modules":["tasks","docs"],"owner":"Henry Mascot","verification":"Registry + grants","permissions":["approve"]}',`
-- L63 [warn] henry-name: `expect(card.ownerLabel).toBe('Henry Mascot');`
+- L68 [warn] henry-name: `expect(card.ownerLabel).toBe('Henry Mascot');`
 
 ### packages/server/src/agent/agent-capability-card.ts
 
-- L55 [warn] henry-name: `geordi: 'Henry Mascot',`
-- L164 [warn] henry-name: `return 'Henry Mascot';`
+- L54 [warn] enterprise-name: `// Enterprise-specific mappings are loaded from entity config profiles only.`
 
 ### packages/server/src/agent/agent-display.test.ts
 
@@ -146,8 +100,37 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 
 ### packages/server/src/agent/review-policy.test.ts
 
-- L25 [warn] enterprise-agent-name: `assignee: 'Geordi',`
-- L186 [warn] tailnet-ip-100: `'Changed packages/server/src/routes/docs.ts and verified the docs endpoint at http://100.106.69.9:3000/docs/entity/recovery.md successfully.',`
+- L27 [warn] enterprise-agent-name: `assignee: 'Geordi',`
+- L188 [warn] tailnet-ip-100: `'Changed packages/server/src/routes/docs.ts and verified the docs endpoint at http://100.106.69.9:3000/docs/entity/recovery.md successfully.',`
+- L254 [warn] enterprise-agent-name: `reviewer: 'Book',`
+- L257 [warn] enterprise-agent-name: `submitted_by: 'Ada',`
+- L264 [warn] enterprise-agent-name: `reviewed_by: 'Book',`
+- L282 [warn] henry-name: `it('forces high-risk review to Henry unless delegation is explicit', () => {`
+- L294 [warn] enterprise-agent-name: `expect(validateReviewCompletion(makeTask({ metadata: null, assignee: 'Ada' }), 'Book').ok).toBe(false);`
+- L298 [warn] enterprise-agent-name: `assignee: 'Ada',`
+- L301 [warn] enterprise-agent-name: `'Book'`
+- L308 [warn] enterprise-agent-name: `assignee: 'Ada',`
+- L312 [warn] enterprise-agent-name: `expect(validateReviewCompletion(task, 'Spock').ok).toBe(false);`
+- L313 [warn] enterprise-agent-name: `expect(validateReviewCompletion(task, 'Ada').ok).toBe(false);`
+- L314 [warn] enterprise-agent-name: `expect(validateReviewCompletion(task, 'Book').ok).toBe(true);`
+- L317 [warn] henry-name: `it('keeps Henry-required tasks Henry-only unless delegated', () => {`
+- L324 [warn] enterprise-agent-name: `submitted_by: 'Book',`
+- L327 [warn] enterprise-agent-name: `expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Ada').ok).toBe(false);`
+- L328 [warn] henry-name: `expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Henry').ok).toBe(true);`
+- L328 [warn] enterprise-agent-name: `expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Henry').ok).toBe(true);`
+- L332 [warn] enterprise-agent-name: `assignee: 'Book',`
+- L333 [warn] enterprise-agent-name: `metadata: JSON.stringify({ ...metadata, henry_delegated: true, reviewer: 'Ada' }),`
+- L335 [warn] enterprise-agent-name: `'Ada'`
+- L349 [warn] henry-name: `requested_outcome: 'Close chat-origin task after showing output to Henry',`
+- L355 [warn] enterprise-agent-name: `expect(validateReviewCompletion(makeTask({ assignee: 'Ada', metadata: JSON.stringify(base) }), 'Ada').ok).toBe(true);`
+- L358 [warn] enterprise-agent-name: `makeTask({ assignee: 'Ada', metadata: JSON.stringify({ ...base, source_id: '' }) }),`
+- L359 [warn] enterprise-agent-name: `'Ada'`
+
+### packages/server/src/agent/review-policy.ts
+
+- L453 [warn] henry-name: `message: 'High-risk review tasks must set henry_required=true unless Henry explicitly delegates.',`
+- L523 [warn] henry-name: `message: 'Henry-required tasks can only be completed by Henry unless explicit delegation is recorded.',`
+- L542 [warn] henry-name: `message: 'Task can only be completed by the assigned reviewer or Henry.',`
 
 ### packages/server/src/agent/tools.test.ts
 
@@ -160,40 +143,29 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 - L17 [warn] tailnet-ip-100: `expect(serialized).not.toContain('100.104.229.62');`
 - L18 [warn] enterprise-agent-name: `expect(serialized).not.toContain('Ada');`
 
-### packages/server/src/index.ts
+### packages/server/src/config/onboarding-modules.ts
 
-- L160 [warn] clawd-workspace-name: `const DEFAULT_WORK_ROOT = path.join(HOME_DIR, "clawd");`
-- L1527 [warn] henry-name: `author: author || "Henry",`
-- L5366 [warn] henry-name: `assignee: "Henry",`
-- L5373 [warn] enterprise-agent-name: `assignee: "Ada",`
-- L5380 [warn] enterprise-agent-name: `assignee: "Spock",`
-- L5572 [warn] clawd-workspace-name: `process.env.ENTITY_WORKSPACE_SPOCK || path.join(HOME_DIR, "clawd-spock"),`
-- L5574 [warn] clawd-workspace-name: `process.env.ENTITY_WORKSPACE_SCOTTY || path.join(HOME_DIR, "clawd-scotty"),`
+- L516 [warn] enterprise-agent-name: `name: 'Geordi Swarm',`
+- L541 [warn] enterprise-agent-name: `agentContextSnippet: 'Admin-only: Geordi Swarm requires runtime configuration beyond first-run setup.',`
+
+### packages/server/src/config/routes.ts
+
+- L54 [warn] enterprise-agent-name: `['geordi-swarm', 'geordi-swarm', 'Geordi Swarm', 'Future multi-agent swarm orchestration on top of Entity helper modules.', 1, '🐝', 'plugin', '["read","dispatch","admin"]', '{"label":"Future swarm module"}'],`
+- L63 [warn] enterprise-agent-name: `['geordi-swarm-doc', 'geordi-swarm', 'Geordi Swarm manifest example', 'doc', 'docs/ENTITY-PLUGIN-MANIFEST.example.json', 0, 'Future swarm packaging reference'],`
+
+### packages/server/src/fs/index.ts
+
+- L36 [warn] clawd-workspace-name: `// Use workspaceRoot directly - no hardcoded subfolder like 'clawd'`
 
 ### packages/server/src/plugins/entity-linker/routes.test.ts
 
 - L18 [warn] tailnet-ip-100: `entityBaseUrl: 'http://100.106.69.9:3000',`
 
-### packages/server/src/plugins/entity-services/plugin.json
-
-- L6 [warn] enterprise-name: `"description": "Operational services registry for Entity, Enterprise tooling, and adjacent runtime services.",`
-
 ### packages/server/src/plugins/entity-services/routes.test.ts
 
-- L98 [warn] enterprise-name: `family: { key: 'enterprise-crew-admin', name: 'Enterprise Crew Admin', memberCount: 1 },`
-- L151 [warn] tailnet-ip-100: `entityBaseUrl: 'http://100.106.69.9:3000',`
-- L152 [warn] tailnet-ip-100: `enterpriseAdminUrl: 'http://100.106.69.9:3002',`
-- L175 [warn] tailnet-ip-100: `'http://100.104.229.62:3000',`
-- L181 [warn] tailnet-ip-100: `expect(linker?.link.url).toBe('http://100.104.229.62:3000/api/entity-linker/status');`
-- L182 [warn] tailnet-ip-100: `expect(enterprise?.link.url).toBe('http://100.104.229.62:3002');`
-
-### packages/server/src/plugins/entity-services/routes.ts
-
-- L510 [warn] enterprise-name: `name: 'Enterprise Crew Admin',`
-- L520 [warn] enterprise-name: `host: 'Enterprise',`
-- L650 [warn] enterprise-agent-name: `host: 'Ada Gateway',`
-- L681 [warn] enterprise-agent-name: `host: definition.host ?? 'Ada Gateway',`
-- L812 [warn] enterprise-agent-name: `label: 'Ada Gateway',`
+- L177 [warn] tailnet-ip-100: `entityBaseUrl: 'http://100.106.69.9:3000',`
+- L202 [warn] tailnet-ip-100: `'http://100.104.229.62:3000',`
+- L207 [warn] tailnet-ip-100: `expect(linker?.link.url).toBe('http://100.104.229.62:3000/api/entity-linker/status');`
 
 ### packages/server/src/plugins/geordi-swarm/plugin.json
 
@@ -216,10 +188,10 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 
 ### packages/server/src/routes/chat-model-registry.test.ts
 
-- L171 [warn] enterprise-agent-name: `it('loads Ada models from the OpenClaw models CLI as the primary OpenClaw source', async () => {`
-- L179 [warn] enterprise-name: `{ key: 'enterprise-local/mlx-community/Qwen3.6-35B-A3B-4bit', name: 'Qwen 3.6 35B A3B 4bit (Enterprise MLX)', local: true, available: true, tags: ['configured'] }`
-- L226 [warn] enterprise-agent-name: `it('loads Book models from Hermes provider config', async () => {`
-- L243 [warn] tailnet-ip-100: `base_url: http://100.104.229.62:11434/v1`
+- L166 [warn] enterprise-agent-name: `it('loads Ada models from the OpenClaw models CLI as the primary OpenClaw source', async () => {`
+- L174 [warn] enterprise-name: `{ key: 'enterprise-local/mlx-community/Qwen3.6-35B-A3B-4bit', name: 'Qwen 3.6 35B A3B 4bit (Enterprise MLX)', local: true, available: true, tags: ['configured'] }`
+- L221 [warn] enterprise-agent-name: `it('loads Book models from Hermes provider config', async () => {`
+- L238 [warn] tailnet-ip-100: `base_url: http://100.104.229.62:11434/v1`
 
 ### packages/server/src/routes/chat.test.ts
 
@@ -245,6 +217,11 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 - L57 [warn] clawd-workspace-name: `const privateWorkspaceRoot = path.join('/Users', 'enterprise', 'clawd');`
 - L67 [warn] clawd-workspace-name: `fs.writeFileSync(path.join(root, 'output', 'report.md'), '# Output Report\n\nLoaded from clawd output.');`
 - L76 [warn] clawd-workspace-name: `expect(payload.content).toContain('Loaded from clawd output.');`
+
+### packages/server/src/routes/docs.ts
+
+- L12 [warn] enterprise-name: `// This is NOT hardcoded to clawd or any Enterprise-specific path.`
+- L12 [warn] clawd-workspace-name: `// This is NOT hardcoded to clawd or any Enterprise-specific path.`
 
 ### packages/server/src/routes/tts.test.ts
 
@@ -339,5 +316,5 @@ This is the baseline guardrail for Entity portability work. It intentionally rep
 
 ### scripts/scan-private-defaults.mjs
 
-- L48 [warn] enterprise-agent-name: `{ id: 'enterprise-agent-name', re: /\b(?:Ada|Spock|Scotty|Zora|Midas|Uhura|Geordi|Book)\b/g, severity: 'warn' },`
-- L49 [warn] clawd-workspace-name: `{ id: 'clawd-workspace-name', re: /\bclawd(?:-[A-Za-z0-9_-]+)?\b/g, severity: 'warn' },`
+- L51 [warn] enterprise-agent-name: `{ id: 'enterprise-agent-name', re: /\b(?:Ada|Spock|Scotty|Zora|Midas|Uhura|Geordi|Book)\b/g, severity: 'warn' },`
+- L52 [warn] clawd-workspace-name: `{ id: 'clawd-workspace-name', re: /\bclawd(?:-[A-Za-z0-9_-]+)?\b/g, severity: 'warn' },`

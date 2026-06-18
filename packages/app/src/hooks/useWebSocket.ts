@@ -22,6 +22,23 @@ interface UseWebSocketOptions {
   onEditorEvent?: (event: { event: string; docId: string; payload: unknown; emittedAt?: string }) => void;
 }
 
+
+/**
+ * Append API token to WebSocket URL if configured.
+ */
+function getAuthenticatedWsUrl(baseUrl: string): string {
+  try {
+    if (typeof window === 'undefined') return baseUrl;
+    const token = window.localStorage.getItem('entity-api-token');
+    if (!token || !token.trim()) return baseUrl;
+    const url = new URL(baseUrl);
+    url.searchParams.set('token', token.trim());
+    return url.toString();
+  } catch {
+    return baseUrl;
+  }
+}
+
 export function useWebSocket(options: UseWebSocketOptions = {}) {
   const [connected, setConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
@@ -63,7 +80,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
         return;
       }
 
-      const ws = new WebSocket(runtime.wsUrl);
+      const ws = new WebSocket(getAuthenticatedWsUrl(runtime.wsUrl));
       wsRef.current = ws;
 
       ws.onopen = () => {

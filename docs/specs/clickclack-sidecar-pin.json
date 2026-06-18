@@ -1,0 +1,16 @@
+{
+  "name": "clickclack",
+  "remote": "https://github.com/openclaw/clickclack",
+  "checkoutPath": "/tmp/clickclack",
+  "commit": "d77dd568d8ff5c9d3d7c1063b4c317c1e3cd1be2",
+  "integration": "Path A sidecar/service embedded behind Entity",
+  "entityNamespace": {
+    "spa": "/clickclack/*",
+    "api": "/api/clickclack/*"
+  },
+  "sidecar": {
+    "bind": "127.0.0.1:3091",
+    "dataDir": "var/clickclack-sidecar",
+    "devBridge": "Uses ClickClack dev bootstrap plus Entity-created bot token manifest under the ignored data dir. Dev-only; do not expose publicly."
+  }
+}

@@ -1,5 +1,5 @@
-const STATIC_CACHE = 'entity-static-v3';
-const RUNTIME_CACHE = 'entity-runtime-v3';
+const STATIC_CACHE = 'entity-static-v4';
+const RUNTIME_CACHE = 'entity-runtime-v4';
 const OFFLINE_DB_NAME = 'entity.offline.v1';
 const OFFLINE_DB_VERSION = 1;
 const WRITE_QUEUE_STORE = 'write-queue';
@@ -10,6 +10,7 @@ const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
+  '/register-sw.js',
   '/entity-icon.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

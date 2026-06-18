@@ -12,6 +12,27 @@ function joinUrl(baseUrl: string, relativePath: string): string {
   return cleanRelative ? `${baseUrl}/${cleanRelative}` : baseUrl;
 }
 
+function isAllowedTextDocument(targetUrl: string, contentTypeHeader: string): boolean {
+  const ext = path.extname(targetUrl).toLowerCase();
+  if (['.md', '.markdown', '.txt', '.log', '.json', '.jsonl', '.yaml', '.yml', '.csv', '.tsv', '.sh', '.bash', '.zsh', '.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.css', '.html', '.xml', '.toml', '.ini'] .includes(ext)) {
+    return true;
+  }
+
+  if (!contentTypeHeader) {
+    return false;
+  }
+
+  return contentTypeHeader.includes('markdown')
+    || contentTypeHeader.includes('text/plain')
+    || contentTypeHeader.includes('application/json')
+    || contentTypeHeader.includes('application/x-ndjson')
+    || contentTypeHeader.includes('application/yaml')
+    || contentTypeHeader.includes('application/x-yaml')
+    || contentTypeHeader.includes('text/yaml')
+    || contentTypeHeader.includes('text/csv')
+    || contentTypeHeader.includes('text/tab-separated-values');
+}
+
 export class HttpMarkdownFileSourceAdapter implements FileSourceAdapter {
   readonly key = 'http-markdown';
   private readonly source: FileSourceRecord;
@@ -62,9 +83,8 @@ export class HttpMarkdownFileSourceAdapter implements FileSourceAdapter {
     }
 
     const contentTypeHeader = response.headers.get('content-type')?.toLowerCase() ?? '';
-    const inferredType = contentTypeHeader.includes('markdown') || path.extname(targetUrl).toLowerCase() === '.md';
-    if (!inferredType && contentTypeHeader && !contentTypeHeader.includes('text/plain')) {
-      throw new Error('Remote resource is not markdown content.');
+    if (!isAllowedTextDocument(targetUrl, contentTypeHeader)) {
+      throw new Error('Remote resource is not an allowed text document.');
     }
 
     const content = await response.text();

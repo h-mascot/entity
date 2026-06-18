@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const enforce = process.argv.includes('--enforce');
 const json = process.argv.includes('--json');
+const writeBaseline = process.argv.includes('--write-baseline') || process.argv.includes('--update-baseline');
 const now = new Date().toISOString();
 
 const scannedRoots = [
@@ -19,8 +20,10 @@ const scannedRoots = [
   'dev.sh',
   'README.md',
   'docs/config',
+  '.github/workflows',
   'entity.config.example.yaml',
   '.env.example',
+  'packages/server/.env.example',
 ].map((p) => path.join(repoRoot, p));
 
 const excludedPathParts = new Set([
@@ -119,7 +122,6 @@ const result = {
 };
 
 const reportDir = path.join(repoRoot, 'docs', 'reports');
-fs.mkdirSync(reportDir, { recursive: true });
 const reportPath = path.join(reportDir, 'private-default-scan-baseline.md');
 const byFile = new Map();
 for (const finding of findings) {
@@ -127,35 +129,42 @@ for (const finding of findings) {
   arr.push(finding);
   byFile.set(finding.file, arr);
 }
-const md = [
-  '# Private Default Scan Baseline',
-  '',
-  `Generated: ${now}`,
-  '',
-  `Scanned files: ${files.length}`,
-  `Findings: ${findings.length}`,
-  `Errors: ${counts.error || 0}`,
-  `Warnings: ${counts.warn || 0}`,
-  '',
-  'This is the baseline guardrail for Entity portability work. It intentionally reports current hardcoded private defaults without failing by default. Use `npm run scan:private-defaults -- --enforce` when the allowlist has been tightened enough to block regressions.',
-  '',
-  '## Findings by file',
-  '',
-];
-for (const [file, items] of [...byFile.entries()].sort()) {
-  md.push(`### ${file}`, '');
-  for (const item of items) {
-    md.push(`- L${item.line} [${item.severity}] ${item.id}: \`${item.excerpt.replace(/`/g, '\\`')}\``);
+if (writeBaseline) {
+  fs.mkdirSync(reportDir, { recursive: true });
+  const md = [
+    '# Private Default Scan Baseline',
+    '',
+    `Generated: ${now}`,
+    '',
+    `Scanned files: ${files.length}`,
+    `Findings: ${findings.length}`,
+    `Errors: ${counts.error || 0}`,
+    `Warnings: ${counts.warn || 0}`,
+    '',
+    'This is the baseline guardrail for Entity portability work. It intentionally reports current hardcoded private defaults without failing by default. Use `npm run scan:private-defaults -- --enforce` to block error-severity runtime defaults and `npm run scan:private-defaults -- --write-baseline` to refresh this report intentionally.',
+    '',
+    '## Findings by file',
+    '',
+  ];
+  for (const [file, items] of [...byFile.entries()].sort()) {
+    md.push(`### ${file}`, '');
+    for (const item of items) {
+      md.push(`- L${item.line} [${item.severity}] ${item.id}: \`${item.excerpt.replace(/`/g, '\\`')}\``);
+    }
+    md.push('');
   }
-  md.push('');
+  fs.writeFileSync(reportPath, md.join('\n'));
 }
-fs.writeFileSync(reportPath, md.join('\n'));
 
 if (json) {
   console.log(JSON.stringify(result, null, 2));
 } else {
   console.log(`[scan:private-defaults] scanned ${files.length} files; findings=${findings.length}; errors=${counts.error || 0}; warnings=${counts.warn || 0}`);
-  console.log(`[scan:private-defaults] report ${path.relative(repoRoot, reportPath)}`);
+  if (writeBaseline) {
+    console.log(`[scan:private-defaults] wrote ${path.relative(repoRoot, reportPath)}`);
+  } else {
+    console.log('[scan:private-defaults] baseline not rewritten (pass --write-baseline to update docs/reports/private-default-scan-baseline.md)');
+  }
 }
 
 if (enforce && findings.some((f) => f.severity === 'error')) {

@@ -10,8 +10,20 @@ function readYamlFile(filePath: string): unknown | null {
   return YAML.parse(text);
 }
 
+function resolveCandidateConfigPath(cwd: string): string {
+  let current = path.resolve(cwd);
+  for (let depth = 0; depth < 6; depth += 1) {
+    const candidate = path.join(current, 'entity.config.yaml');
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return path.join(path.resolve(cwd), 'entity.config.yaml');
+}
+
 export function resolveConfigPath(cwd = process.cwd()): string {
-  return path.resolve(process.env.ENTITY_CONFIG || path.join(cwd, 'entity.config.yaml'));
+  return path.resolve(process.env.ENTITY_CONFIG || resolveCandidateConfigPath(cwd));
 }
 
 export function resolveProfilePath(cwd = process.cwd()): string | null {

@@ -3,22 +3,35 @@ import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { detectContentType } from '../../file-types';
 import { normalizeSourceRelativePath, resolveLocalPath } from '../security';
-import type { FileSourceAdapter, SourceCapability, SourceNode } from './types';
+import type { FileSourceAdapter, SourceCapability, SourceNode, SourcePathMetadata } from './types';
 
 function toIsoTimestamp(value: Date): string {
   return value.toISOString();
 }
 
-function toNode(sourceId: string, rootPath: string, entryName: string, isDirectory: boolean, stats: fs.Stats): SourceNode {
+function toKind(stats: fs.Stats): SourcePathMetadata['kind'] {
+  if (stats.isFile()) {
+    return 'file';
+  }
+  if (stats.isDirectory()) {
+    return 'directory';
+  }
+  return 'other';
+}
+
+function toNode(sourceId: string, rootPath: string, entryName: string, stats: fs.Stats): SourceNode {
   const normalizedRoot = rootPath.replace(/\\/g, '/').replace(/\/+$/, '');
   const relativePath = normalizedRoot ? `${normalizedRoot}/${entryName}` : entryName;
+  const kind = toKind(stats);
+  const isDirectory = kind === 'directory';
 
   return {
     sourceId,
     path: relativePath,
     name: entryName,
     isDirectory,
-    size: isDirectory ? undefined : stats.size,
+    kind,
+    size: kind === 'file' ? stats.size : undefined,
     updatedAt: toIsoTimestamp(stats.mtime),
   };
 }
@@ -78,9 +91,9 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
           .map(async (entry) => {
             try {
               const entryAbsolutePath = path.join(absolutePath, entry.name);
-              const stats = await fs.promises.stat(entryAbsolutePath);
+              const stats = await fs.promises.lstat(entryAbsolutePath);
               const rootPath = normalizedRelative;
-              return toNode(this.source.id, rootPath, entry.name, entry.isDirectory(), stats);
+              return toNode(this.source.id, rootPath, entry.name, stats);
             } catch (err) {
               const code = (err as NodeJS.ErrnoException)?.code;
               if (code === 'ENOENT') {
@@ -101,6 +114,27 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
       }
       return a.name.localeCompare(b.name);
     });
+  }
+
+  async stat(relativePath: string): Promise<SourcePathMetadata> {
+    const basePath = this.source.base_path?.trim();
+    if (!basePath) {
+      throw new Error('Local source basePath is not configured.');
+    }
+
+    const normalizedRelative = normalizeSourceRelativePath(relativePath);
+    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    const stats = await fs.promises.lstat(absolutePath);
+    const name = normalizedRelative ? path.posix.basename(normalizedRelative) : path.basename(absolutePath);
+    const kind = toKind(stats);
+    return {
+      sourceId: this.source.id,
+      path: normalizedRelative,
+      name,
+      kind,
+      size: kind === 'file' ? stats.size : undefined,
+      updatedAt: toIsoTimestamp(stats.mtime),
+    };
   }
 
   async read(relativePath: string): Promise<{ content: string; contentType: string; updatedAt?: string; size?: number; isBinary?: boolean }> {

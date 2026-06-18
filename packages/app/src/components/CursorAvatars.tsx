@@ -91,12 +91,8 @@ function normalizeActorId(value: string): string {
 
 function resolveActorLabel(actorId: string): string {
   switch (normalizeActorId(actorId)) {
-    case 'ada':
-      return 'Ada';
-    case 'spock':
-      return 'Spock';
-    case 'scotty':
-      return 'Scotty';
+    case 'assistant':
+      return 'Assistant';
     case 'human':
       return 'Human';
     default:

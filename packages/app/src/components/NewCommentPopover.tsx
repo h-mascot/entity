@@ -118,7 +118,7 @@ export function NewCommentPopover({
             </button>
           </div>
           <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-            Mentions ready: type @Ada, @Spock, @Scotty
+            Mentions ready: type @Assistant, @Human
           </div>
         </div>
       </div>

@@ -40,24 +40,19 @@ export interface AgentCapabilityCard {
   verificationLabel?: string;
   capabilityLabels: string[];
   permissionLabels: string[];
+  scopeLabels: string[];
   runtimeLabel?: string;
   identityLabel?: string;
 }
 
 const MAX_CAPABILITY_LABELS = 4;
 const MAX_PERMISSION_LABELS = 4;
+const MAX_SCOPE_LABELS = 4;
 
-const DEFAULT_OWNER_BY_SLUG: Record<string, string> = {
-  ada: 'Entity Core',
-  main: 'Entity Core',
-  spock: 'Entity Research',
-  scotty: 'Entity Build',
-  geordi: 'Henry Mascot',
-  zora: 'Entity Ops',
-  midas: 'Entity Revenue',
-  uhura: 'Entity Comms',
-  book: 'Entity Docs',
-};
+// Default owner labels for well-known agent slugs.
+// Public install uses generic 'Entity' for all.
+// Enterprise-specific mappings are loaded from entity config profiles only.
+const DEFAULT_OWNER_BY_SLUG: Record<string, string> = {};
 
 function parseJsonValue(value: string | null | undefined): unknown {
   if (typeof value !== 'string' || !value.trim()) {
@@ -160,10 +155,7 @@ function resolveOwnerLabel(agent: AgentCapabilitySource, metadata: AgentCapabili
     return DEFAULT_OWNER_BY_SLUG[key];
   }
 
-  if (agent.runtime_type === 'mac') {
-    return 'Henry Mascot';
-  }
-
+  // Generic fallback: derive owner from agent slug or runtime type
   if (key) {
     return 'Entity';
   }
@@ -232,6 +224,43 @@ function resolvePermissionLabels(
   return uniqueLimited(collected, MAX_PERMISSION_LABELS);
 }
 
+function collectScopeLabels(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (typeof entry === 'string' ? normalizeLabel(entry) : ''))
+      .filter((entry): entry is string => entry.length > 0);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  const labels: string[] = [];
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const prefix = normalizeLabel(key);
+    if (rawValue === true) {
+      labels.push(prefix);
+      continue;
+    }
+    if (typeof rawValue === 'string' && rawValue.trim()) {
+      labels.push(prefix + ': ' + normalizeLabel(rawValue));
+      continue;
+    }
+    if (Array.isArray(rawValue)) {
+      for (const entry of rawValue) {
+        if (typeof entry === 'string' && entry.trim()) {
+          labels.push(prefix + ': ' + normalizeLabel(entry));
+        }
+      }
+    }
+  }
+  return labels;
+}
+
+function resolveScopeLabels(enabledGrants: ModuleGrantSource[]): string[] {
+  return uniqueLimited(enabledGrants.flatMap((grant) => collectScopeLabels(parseJsonValue(grant.scope_json))), MAX_SCOPE_LABELS);
+}
+
 function resolveRuntimeLabel(agent: AgentCapabilitySource): string | undefined {
   const parts = [agent.adapter_type, agent.runtime_type, agent.status]
     .map((value) => (typeof value === 'string' ? value.trim() : ''))
@@ -257,6 +286,7 @@ export function buildAgentCapabilityCard(input: {
 
   const capabilityLabels = resolveCapabilityLabels(metadata, enabledGrants, modulesById, modulesBySlug);
   const permissionLabels = resolvePermissionLabels(metadata, enabledGrants, modulesById);
+  const scopeLabels = resolveScopeLabels(enabledGrants);
 
   return {
     adapterType: input.agent.adapter_type ?? undefined,
@@ -267,6 +297,7 @@ export function buildAgentCapabilityCard(input: {
     verificationLabel: resolveVerificationLabel(metadata, enabledGrants.length),
     capabilityLabels,
     permissionLabels,
+    scopeLabels,
     runtimeLabel: resolveRuntimeLabel(input.agent),
     identityLabel: input.agent.description?.trim() || undefined,
   };

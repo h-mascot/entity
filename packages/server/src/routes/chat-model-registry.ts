@@ -73,16 +73,7 @@ const OPENCLAW_LOCAL_PROVIDERS = new Set([
 ]);
 
 const FALLBACK_AGENT_MODELS: Record<string, Array<Omit<ChatModelOption, 'allowed' | 'available' | 'source'>>> = {
-  ada: [
-    { id: 'openai-codex/gpt-5.5', name: 'GPT-5.5 Instant', provider: 'openai-codex', isLocal: false },
-    { id: 'anthropic/claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', isLocal: false },
-    { id: 'openai-codex/gpt-5.3-codex', name: 'GPT-5.3 Codex', provider: 'openai-codex', isLocal: false },
-    { id: 'zai/glm-5', name: 'GLM 5', provider: 'zai', isLocal: false },
-  ],
-  book: [
-    { id: 'anthropic/claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic', isLocal: false },
-    { id: 'openrouter/anthropic/claude-sonnet-4', name: 'Claude Sonnet 4 via OpenRouter', provider: 'openrouter', isLocal: false },
-  ],
+  assistant: [],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -593,7 +584,7 @@ async function loadHermesModels(agent: string, options: ChatModelRegistryOptions
 }
 
 function fallbackModelsFor(agent: string): { models: ChatModelOption[]; defaultModel?: string; source: string } {
-  const raw = FALLBACK_AGENT_MODELS[agent] ?? FALLBACK_AGENT_MODELS.ada;
+  const raw = FALLBACK_AGENT_MODELS[agent] ?? FALLBACK_AGENT_MODELS.assistant ?? [];
   const models = raw.map((model) => ({ ...model, local: model.isLocal, available: !model.isLocal, allowed: true, source: 'fallback' }));
   return { models, defaultModel: models[0]?.id, source: 'fallback' };
 }
@@ -604,7 +595,7 @@ export class ChatModelRegistry {
   constructor(private readonly options: ChatModelRegistryOptions) {}
 
   async getAgentModels(agentInput: string): Promise<AgentModelSet> {
-    const agent = normalizeAgentId(agentInput || 'ada');
+    const agent = normalizeAgentId(agentInput || 'assistant');
     const nowDate = this.options.now?.() ?? new Date();
     const now = nowDate.getTime();
     const cached = this.cache.get(agent);
@@ -662,7 +653,7 @@ export class ChatModelRegistry {
     }
 
     const perAgent: Record<string, AgentModelSet> = {};
-    for (const agent of agents.length > 0 ? agents : ['ada']) {
+    for (const agent of agents.length > 0 ? agents : ['assistant']) {
       perAgent[agent] = await this.getAgentModels(agent);
     }
 
@@ -679,7 +670,7 @@ export class ChatModelRegistry {
   }
 
   async resolveModelForAgent(agentInput: string, requestedModel?: string): Promise<{ ok: true; modelId?: string; isLocal: boolean } | { ok: false; message: string }> {
-    const agent = normalizeAgentId(agentInput || 'ada');
+    const agent = normalizeAgentId(agentInput || 'assistant');
     const set = await this.getAgentModels(agent);
     const normalized = requestedModel?.trim();
     const target = normalized && normalized !== 'auto' ? normalized : set.defaultModel;

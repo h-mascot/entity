@@ -151,6 +151,46 @@ function readNumberSetting(settings: PluginSettingsRecord, key: string, fallback
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function readConfiguredServices(settings: PluginSettingsRecord): ExternalServiceDefinition[] {
+  const raw = settings.services;
+  if (!Array.isArray(raw)) return [];
+  const services: ExternalServiceDefinition[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const service = item as Record<string, unknown>;
+    const id = typeof service.id === 'string' ? service.id.trim() : '';
+    const name = typeof service.name === 'string' ? service.name.trim() : '';
+    const appUrl = typeof service.url === 'string'
+      ? service.url.trim()
+      : typeof service.appUrl === 'string'
+        ? service.appUrl.trim()
+        : '';
+    const enabled = typeof service.enabled === 'boolean' ? service.enabled : true;
+    if (!enabled || !id || !name || !appUrl) continue;
+    const healthUrls = Array.isArray(service.healthUrls)
+      ? service.healthUrls.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim())).map((entry) => entry.trim())
+      : typeof service.healthUrl === 'string' && service.healthUrl.trim()
+        ? [service.healthUrl.trim()]
+        : [appUrl];
+    const tags = Array.isArray(service.tags)
+      ? service.tags.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim())).map((entry) => entry.trim())
+      : ['configured'];
+    services.push({
+      kind: 'external-http',
+      id,
+      name,
+      description: typeof service.description === 'string' && service.description.trim() ? service.description.trim() : 'User-configured service.',
+      category: typeof service.category === 'string' && service.category.trim() ? service.category.trim() : 'Configured services',
+      appUrl,
+      healthUrls,
+      tags,
+      host: typeof service.host === 'string' && service.host.trim() ? service.host.trim() : undefined,
+      meta: { source: 'config' },
+    });
+  }
+  return services;
+}
+
 function normalizeRuntimeBaseUrl(value = ''): string {
   return normalizeBaseUrl(value || process.env.ENTITY_BASE_URL || process.env.PUBLIC_ENTITY_BASE_URL || '');
 }
@@ -357,8 +397,8 @@ function inferServiceVisibility(entry: Pick<ServiceRegistryEntry, 'name' | 'serv
     return { visibility: 'managed', relevanceScore: 100, relevanceReason: 'Entity-managed plugin' };
   }
 
-  if (source === 'curated') {
-    return { visibility: 'managed', relevanceScore: 95, relevanceReason: 'Curated service definition' };
+  if (source === 'curated' || source === 'config') {
+    return { visibility: 'managed', relevanceScore: 95, relevanceReason: source === 'config' ? 'Configured service definition' : 'Curated service definition' };
   }
 
   if (DOMAIN_SIGNAL_PATTERN.test(signalText)) {
@@ -486,11 +526,10 @@ function buildServiceDefinitions(settings: PluginSettingsRecord, runtimeBaseUrl 
   const runtimeEntityBaseUrl = normalizeRuntimeBaseUrl(runtimeBaseUrl);
   const configuredEntityBaseUrl = readStringSetting(settings, 'entityBaseUrl', runtimeEntityBaseUrl || 'http://127.0.0.1:3000');
   const entityBaseUrl = preferRuntimeTailnetUrl(configuredEntityBaseUrl, runtimeEntityBaseUrl);
-  const configuredEnterpriseAdminUrl = readStringSetting(
-    settings,
-    'enterpriseAdminUrl',
-    entityBaseUrl ? `${getUrlProtocol(entityBaseUrl)}//${getUrlHostname(entityBaseUrl)}:3002` : 'http://127.0.0.1:3002',
-  );
+  const defaultEnterpriseAdminUrl = entityBaseUrl ? `${getUrlProtocol(entityBaseUrl)}//${getUrlHostname(entityBaseUrl)}:3002` : 'http://127.0.0.1:3002';
+  const legacyEnterpriseAdminUrl = readStringSetting(settings, 'externalAdminUrl', '') || defaultEnterpriseAdminUrl;
+  const configuredEnterpriseAdminUrl = readStringSetting(settings, 'enterpriseAdminUrl', legacyEnterpriseAdminUrl) || legacyEnterpriseAdminUrl;
+  const enterpriseAdminName = readStringSetting(settings, 'enterpriseAdminName', readStringSetting(settings, 'externalAdminName', 'Enterprise Crew Admin')) || 'Enterprise Crew Admin';
   const enterpriseAdminUrl = preferRuntimeTailnetUrl(configuredEnterpriseAdminUrl, entityBaseUrl, 3002);
 
   return [
@@ -504,10 +543,11 @@ function buildServiceDefinitions(settings: PluginSettingsRecord, runtimeBaseUrl 
       statusPath: joinUrl(entityBaseUrl, '/api/entity-linker/status'),
       tags: ['plugin', 'entity', 'linking'],
     },
+    ...readConfiguredServices(settings),
     {
       kind: 'external-http',
       id: 'enterprise-crew-admin',
-      name: 'Enterprise Crew Admin',
+      name: enterpriseAdminName,
       description: 'Standalone crew admin app linked from Entity services instead of embedded app-shell wiring.',
       category: 'Operations',
       appUrl: enterpriseAdminUrl,
@@ -517,7 +557,7 @@ function buildServiceDefinitions(settings: PluginSettingsRecord, runtimeBaseUrl 
         enterpriseAdminUrl,
       ],
       tags: ['enterprise', 'ops', 'crew-admin', 'external-app'],
-      host: 'Enterprise',
+      host: 'Entity',
       meta: {
         launchMode: 'new-tab',
         integrationMode: 'linked-service',
@@ -647,7 +687,7 @@ function toInternalRegistryEntry(definition: InternalPluginDefinition, plugin: L
       enabled: plugin?.enabled ?? false,
       loaded: plugin?.status.loaded ?? false,
       routesMounted: plugin?.status.routesMounted ?? [],
-      host: 'Ada Gateway',
+      host: 'Agent Gateway',
       source: 'internal-plugin',
     },
   };
@@ -678,7 +718,7 @@ async function toExternalRegistryEntry(
     meta: {
       appUrl: definition.appUrl,
       healthUrls: definition.healthUrls,
-      host: definition.host ?? 'Ada Gateway',
+      host: definition.host ?? 'Agent Gateway',
       source: 'curated',
       ...(definition.meta ?? {}),
     },
@@ -806,19 +846,20 @@ export async function buildServicesRegistry(
   const runtimeHost = getUrlHostname(runtimeEntityBaseUrl);
   const definitions = buildServiceDefinitions(currentPlugin.settings, runtimeEntityBaseUrl);
 
+  const macDiscoverySshTarget = readStringSetting(currentPlugin.settings, 'macDiscoverySshTarget', undefined);
   const hosts: HostDiscoveryConfig[] = [
     {
       id: 'gateway',
-      label: 'Ada Gateway',
+      label: 'Agent Gateway',
       publicHost: runtimeHost || '127.0.0.1',
       enabled: readBooleanSetting(currentPlugin.settings, 'discoverGatewayServices', true),
     },
     {
       id: 'mac',
       label: 'Mac',
-      sshTarget: readStringSetting(currentPlugin.settings, 'macDiscoverySshTarget', undefined),
+      sshTarget: macDiscoverySshTarget,
       publicHost: readStringSetting(currentPlugin.settings, 'macDiscoveryPublicHost', undefined) || '',
-      enabled: readBooleanSetting(currentPlugin.settings, 'discoverMacServices', true),
+      enabled: Boolean(macDiscoverySshTarget) && readBooleanSetting(currentPlugin.settings, 'discoverMacServices', true),
     },
   ];
 

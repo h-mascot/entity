@@ -1,60 +1,86 @@
-# Entity Configuration Example
-# Copy this file to entity.config.yaml and customize for your workspace
-#
-# Profile system: use config/profiles/${ENTITY_PROFILE}.yaml to override defaults
-
+version: 1
 profile:
-  displayName: "My Entity Workspace"
-  description: "Personal local development workspace"
-
+  displayName: Team Workspace
+  ownerName: Operations
 server:
-  host: localhost
+  host: 127.0.0.1
   port: 3000
-  cors:
-    origins:
-      - http://localhost:3000
-      - http://127.0.0.1:3000
-  db:
-    mode: LOCAL
-    path: ./data/entity-tasks.db
-
+  workspaceRoot: ./workspace
+  publicBaseUrl: http://localhost:3000
+  apiBaseUrl: http://localhost:3000
+  wsBaseUrl: ws://localhost:3000
+  databasePath: ./data/entity.sqlite
+  logPath: ./logs/entity.log
+docs:
+  allowedExtensions:
+    - md
+    - markdown
+    - txt
+    - log
+    - json
+    - jsonl
+    - yaml
+    - yml
+    - csv
+    - tsv
 agents:
-  - name: assistant
-    description: "General purpose AI assistant"
-    model: local
-    capabilities:
-      - chat
-      - code
-      - search
-
-fileSources: []
-
+  - id: assistant
+    name: Assistant
+    role: general
+    avatar: null
+    emoji: "🤖"
+    enabled: true
+    fileSources: []
+    healthUrls: []
+    workspaceRoot: null
+    gateway:
+      type: none
+      url: null
+      tokenRef: null
+fileSources:
+  - id: workspace
+    displayName: Workspace
+    type: local
+    basePath: ./workspace
+    baseUrl: null
+    enabled: true
+    icon: null
+    agentBindings:
+      - assistant
+tasks:
+  columns:
+    - todo
+    - doing
+    - review
+    - done
+  priorities:
+    - P1
+    - P2
+    - P3
+    - P4
+  defaultAssignee: assistant
+  assigneesFromAgents: true
+  projects:
+    - General
 services: []
-
-# =============================================================================
-# SERVICE DISCOVERY — Mac integration (Ollama, Entity Mac app, SSH dispatch)
-# =============================================================================
-# Uncomment and fill in your values to enable Mac-based services:
-#
-# discovery:
-#   mac:
-#     enabled: true
-#     # SSH target in user@host form (e.g. 'bob@192.168.1.50')
-#     sshTarget: null
-#     # Local Ollama server on Mac (e.g. 'http://192.168.1.50:11434')
-#     ollamaUrl: null
-#     # Entity app URL on Mac (e.g. 'http://192.168.1.50:3000')
-#     entityUrl: null
-#   # Global Ollama override (falls back to ENTITY_OLLAMA_BASE_URL env var)
-#   ollama:
-#     baseUrl: null
-#   # Geordi Swarm dispatch — Codex host and Mac home path for tilde expansion
-#   geordiSwarm:
-#     # Hostname/IP of Mac running Codex (e.g. '192.168.1.50')
-#     codexHost: null
-#     # Local home path on Mac (e.g. '/Users/bob') — used to expand ~ in repo paths
-#     macHomePath: null
-
-logging:
-  level: info
-  format: json
+providers: {}
+plugins:
+  entity-services:
+    # Public installs start with no configured private services.
+    # Add explicit services through Admin plugin settings or this config path.
+    settings:
+      entityBaseUrl: http://localhost:3000
+      externalAdminUrl: ""
+      externalAdminName: External Admin
+      services: []
+      discoverGatewayServices: false
+      discoverMacServices: false
+voice:
+  defaultProvider: browser
+  providers: {}
+deploy:
+  mode: local
+  preserveDatabase: true
+  dryRunByDefault: true
+terminal:
+  targets: []

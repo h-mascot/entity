@@ -984,7 +984,14 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
         return;
       }
 
-      socket = new WebSocket(`ws://${window.location.host}`);
+      socket = new WebSocket((() => {
+        try {
+          const u = new URL('ws://' + window.location.host);
+          const t = window.localStorage.getItem('entity-api-token');
+          if (t && t.trim()) u.searchParams.set('token', t.trim());
+          return u.toString();
+        } catch { return 'ws://' + window.location.host; }
+      })());
 
       socket.onmessage = (event) => {
         let message: TaskBoardWsMessage;

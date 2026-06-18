@@ -1,9 +1,36 @@
 import { z } from 'zod';
+import {
+  DEFAULT_ONBOARDING_BUNDLE,
+  DEFAULT_ONBOARDING_MODULE_IDS,
+} from './onboarding-modules';
 
 const NullableString = z.string().nullable();
 const StringArray = z.array(z.string());
 
-export const AgentSettingsSchema = z.object({
+function normalizeConfigId(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'assistant';
+}
+
+export const TerminalTargetSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().default('Configured terminal target'),
+  transport: z.enum(['local', 'ssh']).default('local'),
+  host: NullableString.default(null),
+  defaultDirectory: z.string().default('.'),
+});
+
+export const AgentSettingsSchema = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const agent = value as Record<string, unknown>;
+  const name = typeof agent.name === 'string' ? agent.name : '';
+  const description = typeof agent.description === 'string' ? agent.description : undefined;
+  return {
+    ...agent,
+    id: typeof agent.id === 'string' && agent.id.trim() ? agent.id : normalizeConfigId(name),
+    role: typeof agent.role === 'string' ? agent.role : description,
+  };
+}, z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   role: z.string().default('general'),
@@ -11,12 +38,14 @@ export const AgentSettingsSchema = z.object({
   emoji: NullableString.default(null),
   enabled: z.boolean().default(true),
   fileSources: StringArray.default([]),
+  healthUrls: StringArray.default([]),
+  workspaceRoot: NullableString.default(null),
   gateway: z.object({
     type: z.string().default('none'),
     url: NullableString.default(null),
     tokenRef: NullableString.default(null),
   }).default({ type: 'none', url: null, tokenRef: null }),
-});
+}));
 
 export const EntityConfigSchema = z.object({
   version: z.number().int().positive().default(1),
@@ -47,7 +76,7 @@ export const EntityConfigSchema = z.object({
     allowedExtensions: StringArray.default(['md', 'markdown', 'txt', 'log', 'json', 'jsonl', 'yaml', 'yml', 'csv', 'tsv']),
   }).default({ allowedExtensions: ['md', 'markdown', 'txt', 'log', 'json', 'jsonl', 'yaml', 'yml', 'csv', 'tsv'] }),
   agents: z.array(AgentSettingsSchema).default([
-    { id: 'assistant', name: 'Assistant', role: 'general', avatar: null, emoji: '🤖', enabled: true, fileSources: [], gateway: { type: 'none', url: null, tokenRef: null } },
+    { id: 'assistant', name: 'Assistant', role: 'general', avatar: null, emoji: '🤖', enabled: true, fileSources: [], healthUrls: [], workspaceRoot: null, gateway: { type: 'none', url: null, tokenRef: null } },
   ]),
   fileSources: z.array(z.object({
     id: z.string().min(1),
@@ -77,18 +106,18 @@ export const EntityConfigSchema = z.object({
   plugins: z.record(z.string(), z.unknown()).default({}),
   voice: z.record(z.string(), z.unknown()).default({ defaultProvider: 'browser', providers: {} }),
   deploy: z.record(z.string(), z.unknown()).default({ mode: 'local', preserveDatabase: true, dryRunByDefault: true }),
-  terminal: z.object({ targets: z.array(z.unknown()).default([]) }).default({ targets: [] }),
+  terminal: z.object({ targets: z.array(TerminalTargetSchema).default([]) }).default({ targets: [] }),
   // ── External service discovery ────────────────────────────────────────────
   discovery: z.object({
     mac: z.object({
-      enabled: z.boolean().default(true),
+      enabled: z.boolean().default(false),
       /** SSH target in user@host form, e.g. 'user@192.168.1.100' */
       sshTarget: NullableString.default(null),
       /** HTTP base of the Mac's local Ollama server */
       ollamaUrl: NullableString.default(null),
       /** HTTP base of the Entity app running on Mac */
       entityUrl: NullableString.default(null),
-    }).optional().default({ enabled: true, sshTarget: null, ollamaUrl: null, entityUrl: null }),
+    }).optional().default({ enabled: false, sshTarget: null, ollamaUrl: null, entityUrl: null }),
     ollama: z.object({
       baseUrl: NullableString.default(null),
     }).optional().default({ baseUrl: null }),
@@ -99,7 +128,7 @@ export const EntityConfigSchema = z.object({
       macHomePath: NullableString.default(null),
     }).optional().default({ codexHost: null, macHomePath: null }),
   }).optional().default({
-    mac: { enabled: true, sshTarget: null, ollamaUrl: null, entityUrl: null },
+    mac: { enabled: false, sshTarget: null, ollamaUrl: null, entityUrl: null },
     ollama: { baseUrl: null },
     geordiSwarm: { codexHost: null, macHomePath: null },
   }),
@@ -119,6 +148,9 @@ export const OnboardingStateSchema = z.object({
   defaultAiProvider: z.string().default('codex'),
   defaultAiModel: z.string().default('GPT-5.5'),
   starterPreset: z.enum(['solo', 'crew', 'open-source']).default('crew'),
+  selectedBundle: z.enum(['minimal', 'default', 'custom']).default(DEFAULT_ONBOARDING_BUNDLE),
+  selectedModules: StringArray.default([...DEFAULT_ONBOARDING_MODULE_IDS]),
+  selectedModuleConfig: z.record(z.string(), z.unknown()).default({}),
   firstAgentMode: z.enum(['assistant', 'invite', 'manual', 'skip']).default('assistant'),
   firstSourceMode: z.enum(['current-folder', 'github', 'skip']).default('current-folder'),
 });
@@ -134,6 +166,7 @@ export const OnboardingAgentSessionSchema = z.object({
   progress: z.array(z.object({
     id: z.string(),
     label: z.string(),
+    moduleId: z.string().optional(),
     status: z.enum(['pending', 'running', 'done', 'error']),
     message: z.string().optional(),
     updatedAt: z.string(),
@@ -154,7 +187,7 @@ export interface SourceMetadata {
   overriddenBy: ConfigSource | null;
 }
 
-export const SECRET_KEY_PATTERN = /(token|password|secret|api[_-]?key|credential)/i;
+export const SECRET_KEY_PATTERN = /(token|secret|password|api[_-]?key|authorization|credential|private|dsn)/i;
 
 export const BUILTIN_DEFAULT_CONFIG: EntityConfig = EntityConfigSchema.parse({});
 

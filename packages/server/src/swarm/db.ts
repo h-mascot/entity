@@ -19,7 +19,17 @@ import type {
 
 // ── Schema ──
 
-function ensureSwarmSchema(db: Database.Database): void {
+type SqliteColumnInfo = {
+  name: string;
+  notnull: 0 | 1;
+};
+
+function tableColumns(db: Database.Database, table: string): Map<string, SqliteColumnInfo> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as SqliteColumnInfo[];
+  return new Map(rows.map((row) => [row.name, row]));
+}
+
+function createSwarmTables(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS swarm_jobs (
       id            TEXT PRIMARY KEY,
@@ -43,9 +53,6 @@ function ensureSwarmSchema(db: Database.Database): void {
       completed_at  TEXT
     );
 
-    CREATE INDEX IF NOT EXISTS idx_swarm_jobs_status ON swarm_jobs(status);
-    CREATE INDEX IF NOT EXISTS idx_swarm_jobs_task   ON swarm_jobs(task_id);
-
     CREATE TABLE IF NOT EXISTS swarm_proofs (
       id            TEXT PRIMARY KEY,
       job_id        TEXT NOT NULL REFERENCES swarm_jobs(id),
@@ -62,9 +69,167 @@ function ensureSwarmSchema(db: Database.Database): void {
       proof_ref     TEXT NOT NULL DEFAULT 'proof',
       created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
+  `);
+}
 
+function ensureSwarmIndexes(db: Database.Database): void {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_swarm_jobs_status ON swarm_jobs(status);
+    CREATE INDEX IF NOT EXISTS idx_swarm_jobs_task   ON swarm_jobs(task_id);
     CREATE INDEX IF NOT EXISTS idx_swarm_proofs_job ON swarm_proofs(job_id);
   `);
+}
+
+function migrateLegacySwarmJobs(db: Database.Database): void {
+  const columns = tableColumns(db, 'swarm_jobs');
+  const requiredColumns = [
+    'title',
+    'spec',
+    'repo',
+    'branch',
+    'priority',
+    'context_file',
+    'run_handle',
+    'retry_count',
+    'max_retries',
+    'feedback',
+    'created_by',
+    'dispatched_at',
+    'completed_at',
+  ];
+  const taskIdIsLegacyRequired = columns.get('task_id')?.notnull === 1;
+  if (!taskIdIsLegacyRequired && requiredColumns.every((column) => columns.has(column))) {
+    return;
+  }
+
+  db.exec(`
+    DROP TABLE IF EXISTS swarm_jobs_legacy_migration;
+    ALTER TABLE swarm_jobs RENAME TO swarm_jobs_legacy_migration;
+
+    CREATE TABLE swarm_jobs (
+      id            TEXT PRIMARY KEY,
+      task_id       INTEGER,
+      title         TEXT NOT NULL,
+      spec          TEXT NOT NULL,
+      repo          TEXT NOT NULL,
+      branch        TEXT,
+      provider      TEXT NOT NULL DEFAULT 'acp',
+      status        TEXT NOT NULL DEFAULT 'draft',
+      priority      TEXT NOT NULL DEFAULT 'medium',
+      context_file  TEXT,
+      run_handle    TEXT,
+      retry_count   INTEGER NOT NULL DEFAULT 0,
+      max_retries   INTEGER NOT NULL DEFAULT 3,
+      feedback      TEXT,
+      created_by    TEXT,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      dispatched_at TEXT,
+      completed_at  TEXT
+    );
+
+    INSERT INTO swarm_jobs (
+      id, task_id, title, spec, repo, branch, provider, status, priority,
+      context_file, run_handle, retry_count, max_retries, feedback, created_by,
+      created_at, updated_at, dispatched_at, completed_at
+    )
+    SELECT
+      id,
+      task_id,
+      COALESCE(NULLIF(summary, ''), 'Untitled swarm job') AS title,
+      COALESCE(NULLIF(summary, ''), 'Migrated legacy swarm job') AS spec,
+      '' AS repo,
+      NULL AS branch,
+      COALESCE(NULLIF(provider, ''), 'acp') AS provider,
+      COALESCE(NULLIF(status, ''), 'queued') AS status,
+      'medium' AS priority,
+      NULL AS context_file,
+      NULL AS run_handle,
+      0 AS retry_count,
+      3 AS max_retries,
+      NULL AS feedback,
+      NULL AS created_by,
+      COALESCE(created_at, datetime('now')) AS created_at,
+      COALESCE(updated_at, datetime('now')) AS updated_at,
+      NULL AS dispatched_at,
+      NULL AS completed_at
+    FROM swarm_jobs_legacy_migration;
+
+    DROP TABLE swarm_jobs_legacy_migration;
+  `);
+}
+
+function migrateLegacySwarmProofs(db: Database.Database): void {
+  const columns = tableColumns(db, 'swarm_proofs');
+  const requiredColumns = [
+    'provider',
+    'commit_sha',
+    'branch',
+    'build_log',
+    'test_result',
+    'test_output',
+    'screenshots',
+    'artifacts',
+    'duration_sec',
+  ];
+  if (requiredColumns.every((column) => columns.has(column))) {
+    return;
+  }
+
+  db.exec(`
+    DROP TABLE IF EXISTS swarm_proofs_legacy_migration;
+    ALTER TABLE swarm_proofs RENAME TO swarm_proofs_legacy_migration;
+
+    CREATE TABLE swarm_proofs (
+      id            TEXT PRIMARY KEY,
+      job_id        TEXT NOT NULL REFERENCES swarm_jobs(id),
+      provider      TEXT NOT NULL,
+      commit_sha    TEXT,
+      branch        TEXT,
+      build_log     TEXT,
+      test_result   TEXT,
+      test_output   TEXT,
+      screenshots   TEXT,
+      artifacts     TEXT,
+      duration_sec  INTEGER,
+      proof_type    TEXT NOT NULL DEFAULT 'artifact',
+      proof_ref     TEXT NOT NULL DEFAULT 'proof',
+      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    INSERT INTO swarm_proofs (
+      id, job_id, provider, commit_sha, branch, build_log, test_result,
+      test_output, screenshots, artifacts, duration_sec, proof_type, proof_ref, created_at
+    )
+    SELECT
+      id,
+      job_id,
+      'acp' AS provider,
+      NULL AS commit_sha,
+      NULL AS branch,
+      NULL AS build_log,
+      NULL AS test_result,
+      NULL AS test_output,
+      NULL AS screenshots,
+      NULL AS artifacts,
+      NULL AS duration_sec,
+      COALESCE(NULLIF(proof_type, ''), 'artifact') AS proof_type,
+      COALESCE(NULLIF(proof_ref, ''), 'proof') AS proof_ref,
+      COALESCE(created_at, datetime('now')) AS created_at
+    FROM swarm_proofs_legacy_migration;
+
+    DROP TABLE swarm_proofs_legacy_migration;
+  `);
+}
+
+function ensureSwarmSchema(db: Database.Database): void {
+  const migrate = db.transaction(() => {
+    createSwarmTables(db);
+    migrateLegacySwarmJobs(db);
+    migrateLegacySwarmProofs(db);
+    ensureSwarmIndexes(db);
+  });
+  migrate();
 }
 
 // ── Repository ──

@@ -56,7 +56,12 @@ describe('buildAgentCapabilityCard', () => {
         metadata_json:
           '{"modules":["tasks","docs"],"owner":"Henry Mascot","verification":"Registry + grants","permissions":["approve"]}',
       }),
-      grants: [buildGrant(), buildGrant({ module_id: 'docs' })],
+      grants: [
+        buildGrant({
+          scope_json: '{"tools":["review","note"],"sources":["mission-control"]}',
+        }),
+        buildGrant({ module_id: 'docs', scope_json: '{"paths":["docs/plans"]}' }),
+      ],
       modules: MODULES,
     });
 
@@ -65,6 +70,7 @@ describe('buildAgentCapabilityCard', () => {
     expect(card.capabilityLabels).toEqual(['Mission Control', 'Docs']);
     expect(card.permissionLabels).toEqual(['Approve', 'Read', 'Assign', 'Review']);
     expect(card.runtimeLabel).toBe('Codex · Mac · Active');
+    expect(card.scopeLabels).toEqual(['Tools: Review', 'Tools: Note', 'Sources: Mission Control', 'Paths: Docs/plans']);
     expect(card.identityLabel).toBe('Engineering operator');
   });
 
@@ -80,7 +86,7 @@ describe('buildAgentCapabilityCard', () => {
       modules: MODULES,
     });
 
-    expect(card.ownerLabel).toBe('Entity Docs');
+    expect(card.ownerLabel).toBe('Entity');
     expect(card.verificationLabel).toBe('Registry + 2 grants');
     expect(card.capabilityLabels).toEqual(['Docs', 'Files']);
     expect(card.permissionLabels).toEqual(['Read', 'Write', 'Comment', 'Review']);
@@ -103,8 +109,9 @@ describe('buildAgentCapabilityCard', () => {
       modules: MODULES,
     });
 
-    expect(card.ownerLabel).toBe('Entity Research');
+    expect(card.ownerLabel).toBe('Entity');
     expect(card.permissionLabels).toEqual(['Assign', 'Triage']);
     expect(card.verificationLabel).toBe('Registry + 1 grant');
+    expect(card.scopeLabels).toEqual([]);
   });
 });
