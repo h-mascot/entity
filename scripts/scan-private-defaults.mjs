@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -52,7 +53,21 @@ const privatePatterns = [
   { id: 'clawd-workspace-name', re: /\bclawd(?:-[A-Za-z0-9_-]+)?\b/g, severity: 'warn' },
 ];
 
+const gitIgnoredFiles = (() => {
+  try {
+    const out = execSync('git ls-files --others --ignored --exclude-standard -z', {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return new Set(out.split('\0').filter(Boolean).map((rel) => path.join(repoRoot, rel)));
+  } catch {
+    return new Set();
+  }
+})();
+
 function shouldSkip(filePath) {
+  if (gitIgnoredFiles.has(filePath)) return true;
   const rel = path.relative(repoRoot, filePath);
   const parts = rel.split(path.sep);
   if (parts.some((part) => excludedPathParts.has(part))) return true;
