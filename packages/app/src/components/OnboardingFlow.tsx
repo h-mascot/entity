@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { UserProfile } from '../lib/userProfile';
 
 type AppTheme = 'dark' | 'light' | 'kitz' | 'nebula' | 'aurora' | 'paper';
@@ -703,6 +703,8 @@ export default function OnboardingFlow({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpRef = useRef<HTMLDivElement | null>(null);
   const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
   const [agentManifest, setAgentManifest] = useState<OnboardingAgentManifest | null>(null);
   const [moduleCatalog, setModuleCatalog] = useState<OnboardingModulesResponse | null>(null);
@@ -837,6 +839,23 @@ export default function OnboardingFlow({
     void loadModels();
     return () => { cancelled = true; };
   }, [apiBase]);
+
+  useEffect(() => {
+    if (!helpOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setHelpOpen(false);
+    };
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (helpRef.current && target && !helpRef.current.contains(target)) setHelpOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [helpOpen]);
 
   const selectedPreset = useMemo(
     () => PRESETS.find((preset) => preset.id === state.starterPreset) ?? PRESETS[1],
@@ -1244,10 +1263,51 @@ export default function OnboardingFlow({
         </div>
         <TopProgress step={step} isAgentRoute={isAgentRoute} />
         <div className="flex items-center gap-3">
-          <button type="button" className="onboarding-help-button">
-            <Icon name="help" className="h-5 w-5" />
-            Help
-          </button>
+          <div ref={helpRef} className="relative">
+            <button
+              type="button"
+              className="onboarding-help-button"
+              onClick={() => setHelpOpen((open) => !open)}
+              aria-haspopup="dialog"
+              aria-expanded={helpOpen}
+            >
+              <Icon name="help" className="h-5 w-5" />
+              Help
+            </button>
+            {helpOpen && (
+              <div
+                role="dialog"
+                aria-label="Setup help"
+                className="onboarding-card absolute right-0 top-[calc(100%+10px)] z-50 w-[340px] p-5 text-left shadow-[0_18px_60px_rgba(15,42,60,0.18)]"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="text-base font-semibold text-[var(--text-primary)]">Which setup path?</h2>
+                  <button
+                    type="button"
+                    className="onboarding-help-button min-h-0 px-2 py-1 text-sm text-[var(--text-muted)]"
+                    onClick={() => setHelpOpen(false)}
+                    aria-label="Close help"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="mt-4 grid gap-4">
+                  {SETUP_OPTIONS.map((option) => (
+                    <div key={option.id} className="flex gap-3">
+                      <span className="onboarding-small-icon"><Icon name={option.icon} className="h-5 w-5" /></span>
+                      <div>
+                        <div className="text-sm font-semibold text-[var(--text-primary)]">{option.title}</div>
+                        <div className="mt-1 text-xs text-[var(--text-muted)]">{option.description}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 border-t border-[var(--border-secondary)] pt-3 text-xs text-[var(--text-muted)]">
+                  You can change any choice later in Admin.
+                </div>
+              </div>
+            )}
+          </div>
           {!isAgentRoute && (
             <button type="button" onClick={() => void complete(true)} className="onboarding-action-secondary px-4 py-2" disabled={saving}>
               Skip setup
