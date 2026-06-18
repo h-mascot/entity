@@ -1,0 +1,24 @@
+{
+  "id": "entity-default",
+  "name": "Entity Default Bundle",
+  "version": "0.1.0",
+  "description": "Default install bundle for Entity-aware agents and runtimes.",
+  "plugins": [
+    {
+      "id": "entity-agent-contracts",
+      "path": "entity-agent-contracts-plugin/entity.plugin.json",
+      "required": true,
+      "reason": "Loads the required agent operating contracts for Entity FS links, source registry, MC completion, deploy discipline, and config safety."
+    },
+    {
+      "id": "entity-linker",
+      "path": "entity-linker-plugin/openclaw.plugin.json",
+      "required": false,
+      "reason": "Optional host-specific outbound message path rewriting implementation."
+    }
+  ],
+  "notes": [
+    "Plugin-specific behaviors should be separate packages and added to bundles only when the installer explicitly wants them.",
+    "Discord thread title hooks are intentionally not part of this bundle."
+  ]
+}
