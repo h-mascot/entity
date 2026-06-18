@@ -17,7 +17,7 @@ interface CodeMirrorFileViewerProps {
   rawFileUrl?: string | null;
 }
 
-type PreviewKind = 'text' | 'image' | 'pdf' | 'binary';
+type PreviewKind = 'text' | 'image' | 'pdf' | 'table' | 'binary';
 
 type LanguageKey =
   | 'markdown'
@@ -349,6 +349,97 @@ const envLanguage = StreamLanguage.define<{ inString: '"' | "'" | null }>({
 });
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif', 'tiff', 'tif']);
+const TABLE_EXTENSIONS = new Set(['csv', 'tsv']);
+const TABLE_CONTENT_TYPES = new Set(['text/csv', 'text/tab-separated-values', 'text/tsv']);
+const MAX_TABLE_ROWS = 1000;
+
+interface ParsedTable {
+  rows: string[][];
+  truncated: boolean;
+}
+
+function delimiterFor(filePath: string, contentType: string): string {
+  if (contentType === 'text/tab-separated-values' || contentType === 'text/tsv') {
+    return '\t';
+  }
+  return extensionFromPath(filePath) === 'tsv' ? '\t' : ',';
+}
+
+function parseDelimitedTable(content: string, delimiter: string): ParsedTable | null {
+  const rows: string[][] = [];
+  let field = '';
+  let record: string[] = [];
+  let inQuotes = false;
+  let truncated = false;
+
+  const pushField = () => {
+    record.push(field);
+    field = '';
+  };
+
+  const pushRecord = () => {
+    pushField();
+    rows.push(record);
+    record = [];
+  };
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+
+    if (inQuotes) {
+      if (char === '"') {
+        if (content[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += char;
+      }
+      continue;
+    }
+
+    if (char === '"' && field.length === 0) {
+      inQuotes = true;
+      continue;
+    }
+
+    if (char === delimiter) {
+      pushField();
+      continue;
+    }
+
+    if (char === '\n' || char === '\r') {
+      if (char === '\r' && content[index + 1] === '\n') {
+        index += 1;
+      }
+      pushRecord();
+      if (rows.length >= MAX_TABLE_ROWS) {
+        truncated = index < content.length - 1;
+        break;
+      }
+      continue;
+    }
+
+    field += char;
+  }
+
+  if (inQuotes) {
+    return null;
+  }
+
+  if (field.length > 0 || record.length > 0) {
+    pushRecord();
+  }
+
+  const dataRows = rows.filter((row) => !(row.length === 1 && row[0] === ''));
+  if (dataRows.length === 0) {
+    return null;
+  }
+
+  return { rows: dataRows, truncated };
+}
 
 function normalizeDetectedContentType(contentType: string | null | undefined): string {
   if (typeof contentType !== 'string') {
@@ -406,6 +497,10 @@ function resolvePreviewKind(filePath: string, contentType: string | null | undef
 
   if (normalizedType === 'application/pdf' || extension === 'pdf') {
     return 'pdf';
+  }
+
+  if (TABLE_CONTENT_TYPES.has(normalizedType) || TABLE_EXTENSIONS.has(extension)) {
+    return 'table';
   }
 
   const binaryFlag = typeof isBinary === 'boolean'
@@ -570,6 +665,12 @@ export default function CodeMirrorFileViewer({
     const extension = extensionFromPath(filePath);
     return extension ? extension.toUpperCase() : 'unknown';
   }, [filePath, normalizedContentType]);
+  const parsedTable = useMemo(() => {
+    if (previewKind !== 'table') {
+      return null;
+    }
+    return parseDelimitedTable(content, delimiterFor(filePath, normalizedContentType));
+  }, [content, filePath, normalizedContentType, previewKind]);
 
   useEffect(() => {
     if (previewKind !== 'text' || !containerRef.current) {
@@ -650,7 +751,70 @@ export default function CodeMirrorFileViewer({
     );
   }
 
+  if (previewKind === 'table' && parsedTable) {
+    const [headerRow, ...bodyRows] = parsedTable.rows;
+    return (
+      <div className="flex h-full w-full flex-col gap-3 overflow-auto p-4">
+        <div className="overflow-auto rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)]">
+          <table className="w-full border-collapse text-left text-xs">
+            <thead>
+              <tr>
+                {headerRow.map((cell, columnIndex) => (
+                  <th
+                    key={columnIndex}
+                    className="sticky top-0 border-b border-[var(--border-primary)] bg-[var(--bg-tertiary)] px-3 py-2 font-semibold text-[var(--text-primary)]"
+                  >
+                    {cell}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bodyRows.map((row, rowIndex) => (
+                <tr key={rowIndex} className="odd:bg-[var(--surface-muted)]">
+                  {headerRow.map((_, columnIndex) => (
+                    <td
+                      key={columnIndex}
+                      className="border-b border-[var(--border-primary)] px-3 py-1.5 align-top text-[var(--text-secondary)]"
+                    >
+                      {row[columnIndex] ?? ''}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--text-muted)]">
+          <span>Rows: {bodyRows.length}</span>
+          <span>Columns: {headerRow.length}</span>
+          {parsedTable.truncated ? <span>Showing first {MAX_TABLE_ROWS} rows</span> : null}
+          {formattedSize ? <span>Size: {formattedSize}</span> : null}
+          {rawFileUrl ? (
+            <a href={rawFileUrl} download={fileName} className="mc-shell-btn px-3 py-1 text-xs">
+              Download
+            </a>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (previewKind === 'table') {
+    return (
+      <div className="h-full w-full overflow-auto p-4">
+        <div className="mb-2 text-xs text-[var(--text-muted)]">
+          Could not parse {fileTypeLabel} as a table. Showing raw text.
+        </div>
+        <pre className="whitespace-pre-wrap break-words rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-3 font-mono text-xs text-[var(--text-secondary)]">
+          {content}
+        </pre>
+      </div>
+    );
+  }
+
   if (previewKind === 'pdf') {
+    // TODO: render PDFs inline with pdf.js once the dependency is approved; this iframe is an interim fallback.
     return (
       <div className="flex h-full w-full flex-col items-center gap-4 overflow-auto p-4">
         <div className="h-[70vh] w-full max-w-5xl overflow-hidden rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)]">
