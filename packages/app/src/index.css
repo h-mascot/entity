@@ -32,6 +32,7 @@
   --review-info: #3b82f6;
   --card-bg: var(--bg-secondary);
   --input-bg: var(--bg-secondary);
+  --panel-surface: #111;
   --terminal-bg: #050505;
   --body-background: var(--bg-primary);
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -67,6 +68,7 @@
   --review-info: #3b82f6;
   --card-bg: var(--bg-secondary);
   --input-bg: var(--bg-secondary);
+  --panel-surface: #ffffff;
   --terminal-bg: #f8fafc;
   --body-background: var(--bg-primary);
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -102,6 +104,7 @@
   --review-info: #3b82f6;
   --card-bg: #14141e;
   --input-bg: #14141e;
+  --panel-surface: #14141e;
   --terminal-bg: #101024;
   --body-background: #0b0b12;
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -141,6 +144,7 @@
   --review-info: #59b8ff;
   --card-bg: rgb(9 31 62 / 0.48);
   --input-bg: rgb(13 39 75 / 0.52);
+  --panel-surface: #0c2749;
   --terminal-bg: #071b34;
   --body-background:
     radial-gradient(760px circle at 11% -8%, rgb(225 154 195 / 0.34), transparent 44%),
@@ -277,6 +281,7 @@
   --review-info: #18a9c8;
   --card-bg: rgb(255 255 255 / 0.32);
   --input-bg: rgb(255 255 255 / 0.34);
+  --panel-surface: #f1fbf7;
   --terminal-bg: #eafbf4;
   --body-background:
     radial-gradient(860px circle at 12% 0%, rgb(226 255 225 / 0.86), transparent 48%),
@@ -422,6 +427,7 @@
   --review-info: #2e5fa8;
   --card-bg: #fff6e6;
   --input-bg: #fff8eb;
+  --panel-surface: #fbf0dc;
   --terminal-bg: #fff8eb;
   --terminal-foreground: #1c150d;
   --terminal-cursor: #2e5fa8;

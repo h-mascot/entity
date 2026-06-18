@@ -1900,13 +1900,13 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   return (
     <div className="fixed inset-0 z-[85] pointer-events-none">
       <div
-        className={`absolute inset-0 bg-transparent transition-opacity duration-200 ${visible ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 bg-[var(--overlay-strong)] transition-opacity duration-200 ${visible ? 'opacity-100' : 'opacity-0'}`}
         aria-hidden="true"
       />
       <div
         ref={panelRef}
         data-testid="task-detail-panel"
-        className={`pointer-events-auto absolute bottom-0 right-0 top-[45px] flex h-[calc(100%-45px)] w-full flex-col overflow-hidden border-l border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-[-10px_0_28px_rgba(0,0,0,0.22)] transition-[transform,opacity] duration-200 ease-out sm:w-[min(50vw,760px)] ${
+        className={`pointer-events-auto absolute bottom-0 right-0 top-[45px] flex h-[calc(100%-45px)] w-full flex-col overflow-hidden border-l border-[var(--border-primary)] bg-[var(--panel-surface)] shadow-[-10px_0_28px_rgba(0,0,0,0.22)] transition-[transform,opacity] duration-200 ease-out sm:w-[min(50vw,760px)] ${
           visible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
         }`}
         tabIndex={-1}
