@@ -114,6 +114,13 @@ function isLegacyStaleTask(task: Pick<TaskRecord, 'created_at' | 'updated_at' | 
   return Date.now() - candidate >= LEGACY_STALE_TASK_HOURS * 60 * 60 * 1000;
 }
 
+export function shouldValidateReviewEntryOnTransition(
+  previousColumn: string,
+  nextColumn: string,
+): boolean {
+  return nextColumn === 'review' && previousColumn !== 'review' && previousColumn !== 'done';
+}
+
 function hasLegacyDocsHost(output: string): boolean {
   return /https?:\/\/(?:100\.106\.69\.9|100\.106\.69\.9:3000|[^\s)]+:3000)\/docs\//i.test(output);
 }

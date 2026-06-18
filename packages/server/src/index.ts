@@ -58,6 +58,7 @@ import {
   getPrimaryReviewReason,
   hasAssignedOwner,
   isActiveTaskColumn,
+  shouldValidateReviewEntryOnTransition,
   validateReviewCompletion,
   validateReviewEntry,
   type AgentTriggerEvent,
@@ -2612,8 +2613,10 @@ function registerTaskRoutes(prefix: "" | "/api") {
         });
       }
 
-      const movingToReview =
-        nextColumn === "review" && existingTask.column !== "review";
+      const movingToReview = shouldValidateReviewEntryOnTransition(
+        existingTask.column,
+        nextColumn,
+      );
       const normalizedOutput = normalizeTaskOutputLinks(output) ?? undefined;
       if (movingToReview) {
         const reviewEntry = validateReviewEntry(
@@ -2933,7 +2936,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
         });
       }
 
-      if (column === "review" && existingTask.column !== "review") {
+      if (shouldValidateReviewEntryOnTransition(existingTask.column, column)) {
         const reviewEntry = validateReviewEntry(existingTask.metadata);
         if (!reviewEntry.ok) {
           return res.status(400).json({
