@@ -56,24 +56,24 @@ export async function healStuckJobs(): Promise<HealResult> {
       updateSwarmJob(job.id, {
         status: 'queued',
         retry_count: job.retry_count + 1,
-        feedback: `Auto-healed: stuck for >\${STUCK_THRESHOLD_MINUTES}min. Retry \${job.retry_count + 1}/\${job.max_retries}`,
+        feedback: `Auto-healed: stuck for >${STUCK_THRESHOLD_MINUTES}min. Retry ${job.retry_count + 1}/${job.max_retries}`,
         run_handle: undefined,
       });
       result.retriedJobs++;
-      console.log(`[healer] Re-queued stuck job \${job.id} (retry \${job.retry_count + 1}/\${job.max_retries})`);
+      console.log(`[healer] Re-queued stuck job ${job.id} (retry ${job.retry_count + 1}/${job.max_retries})`);
     } else {
       // Max retries exhausted, mark as failed
       updateSwarmJob(job.id, {
         status: 'failed',
-        feedback: `Auto-failed: stuck for >\${STUCK_THRESHOLD_MINUTES}min, max retries (\${job.max_retries}) exhausted`,
+        feedback: `Auto-failed: stuck for >${STUCK_THRESHOLD_MINUTES}min, max retries (${job.max_retries}) exhausted`,
       });
       result.failedJobs++;
-      console.log(`[healer] Failed stuck job \${job.id} (max retries exhausted)`);
+      console.log(`[healer] Failed stuck job ${job.id} (max retries exhausted)`);
     }
   }
 
   if (result.stuckJobs > 0) {
-    console.log(`[healer] Healed \${result.stuckJobs} stuck jobs: \${result.retriedJobs} retried, \${result.failedJobs} failed`);
+    console.log(`[healer] Healed ${result.stuckJobs} stuck jobs: ${result.retriedJobs} retried, ${result.failedJobs} failed`);
   }
 
   return result;
@@ -90,7 +90,7 @@ export function startHealer(): void {
     return;
   }
 
-  console.log(`[healer] Starting (interval: \${HEAL_INTERVAL_MS / 1000}s, threshold: \${STUCK_THRESHOLD_MINUTES}min)`);
+  console.log(`[healer] Starting (interval: ${HEAL_INTERVAL_MS / 1000}s, threshold: ${STUCK_THRESHOLD_MINUTES}min)`);
   
   // Run immediately on start
   healStuckJobs().catch(err => console.error('[healer] Initial heal failed:', err));
