@@ -1900,8 +1900,9 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   return (
     <div className="fixed inset-0 z-[85] pointer-events-none">
       <div
-        className={`absolute inset-0 bg-[var(--overlay-strong)] transition-opacity duration-200 ${visible ? 'opacity-100' : 'opacity-0'}`}
+        className={`pointer-events-auto absolute inset-0 bg-[var(--overlay-strong)] transition-opacity duration-200 ${visible ? 'opacity-100' : 'opacity-0'}`}
         aria-hidden="true"
+        onClick={onClose}
       />
       <div
         ref={panelRef}
