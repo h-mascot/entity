@@ -73,10 +73,15 @@ export function collectAgentMetrics(options?: {
     return buildFallbackAgentMetrics();
   }
 
-  const output = execFile('bash', [scriptPath], {
-    timeout: 10000,
-    encoding: 'utf8',
-  });
-
-  return JSON.parse(output) as AgentMetricsPayload;
+  // The script may exist but fail (missing runtime paths, non-JSON output,
+  // timeout). Degrade to fallback metrics instead of surfacing a 500.
+  try {
+    const output = execFile('bash', [scriptPath], {
+      timeout: 10000,
+      encoding: 'utf8',
+    });
+    return JSON.parse(output) as AgentMetricsPayload;
+  } catch {
+    return buildFallbackAgentMetrics();
+  }
 }

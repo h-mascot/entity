@@ -222,7 +222,7 @@ function migrateLegacySwarmProofs(db: Database.Database): void {
   `);
 }
 
-function ensureSwarmSchema(db: Database.Database): void {
+export function ensureSwarmSchema(db: Database.Database): void {
   const migrate = db.transaction(() => {
     createSwarmTables(db);
     migrateLegacySwarmJobs(db);

@@ -7,7 +7,7 @@
  */
 
 import { getEntityDatabase } from '../../../db/src/entity-db';
-import { updateSwarmJob, getSwarmJob, listSwarmJobs } from './db';
+import { updateSwarmJob, getSwarmJob, listSwarmJobs, ensureSwarmSchema } from './db';
 import type { SwarmJob } from './types';
 
 const STUCK_THRESHOLD_MINUTES = 60;
@@ -25,6 +25,9 @@ interface HealResult {
  */
 export async function healStuckJobs(): Promise<HealResult> {
   const db = getEntityDatabase();
+  // The healer can run before any swarm route has triggered schema setup, so
+  // ensure the swarm tables/columns exist before querying dispatched_at.
+  ensureSwarmSchema(db);
   const now = new Date();
   const threshold = new Date(now.getTime() - STUCK_THRESHOLD_MINUTES * 60 * 1000);
   const thresholdIso = threshold.toISOString();

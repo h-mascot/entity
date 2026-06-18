@@ -5320,7 +5320,7 @@ export default function App() {
             <TaskBoard
               viewport={viewport}
               compactShell
-              apiBase={runtime.mcApiBase}
+              apiBase={runtime.mcOrigin}
               showInsights={mcBoardTab === 'insights'}
               activeTab={mcBoardTab === 'insights' ? 'insights' : 'kanban'}
               highlightTaskId={highlightTaskId}
@@ -6208,7 +6208,7 @@ export default function App() {
             ) : (
               <TaskBoard
                 viewport="mobile"
-                apiBase={runtime.mcApiBase}
+                apiBase={runtime.mcOrigin}
                 showInsights={mcBoardTab === 'insights'}
                 activeTab={mcBoardTab === 'insights' ? 'insights' : 'kanban'}
                 highlightTaskId={highlightTaskId}

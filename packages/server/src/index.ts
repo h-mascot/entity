@@ -143,6 +143,18 @@ app.use("/api", setApiNoStoreHeaders);
 
 // API authentication — requires ENTITY_API_TOKEN env var; skips when unset (dev mode)
 app.use(createApiAuthMiddleware());
+
+// Liveness probe used by entity-doctor, deploy health checks, and the README
+// troubleshooting flow. Public (see PUBLIC_EXACT_ROUTES in middleware/api-auth).
+app.get("/api/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    service: "entity-server",
+    uptimeSeconds: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
+
 registerConfigRoutes(app);
 app.use("/api/search", createSearchRouter());
 registerDocsApiRoutes(app);

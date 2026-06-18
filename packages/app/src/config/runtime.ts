@@ -83,7 +83,6 @@ const agentNativeEditorEnabled = toBoolean(
 export const runtime = {
   apiBase,
   mcOrigin,
-  mcApiBase: `${mcOrigin}/api`,
   openclawBase,
   wsPort,
   wsUrl,
