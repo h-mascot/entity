@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react';
 import MCInsightsDashboard from './MCInsightsDashboard';
 import KanbanColumn from './KanbanColumn';
 import TaskDetailPanel from './TaskDetailPanel';
+import ReviewActionModal from './ReviewActionModal';
 import { useTaskBoard, type TaskBoardTask, type TaskColumn } from '../../hooks/useTaskBoard';
 import type { MCTab } from './MCHeader';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
 import { buildBookmarkMetadata, formatTaskProjectSummary, isTaskBookmarked } from './utils/taskHelpers';
+import { toErrorMessage } from '../../lib/http';
+import { readUserProfile } from '../../lib/userProfile';
 
 interface MCOpsViewProps {
   apiBase?: string;
@@ -100,6 +103,9 @@ export default function MCOpsView({
   const [bulkColumn, setBulkColumn] = useState<TaskColumn>('todo');
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [reviewModalTask, setReviewModalTask] = useState<TaskBoardTask | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const activeTaskDetailId = selectedTaskId ?? highlightTaskId;
   const query = globalSearch.trim().toLowerCase();
   const searchMatchedTasks = tasks.filter((task) => matchesGlobalSearch(task, query));
@@ -171,6 +177,19 @@ export default function MCOpsView({
       return;
     }
 
+    // Completing a task in Review requires a review decision — route it through
+    // the review modal instead of failing the bulk move.
+    if (bulkColumn === 'done') {
+      const reviewTask = tasks.find(
+        (candidate) => selectedTaskIds.has(candidate.id) && candidate.column === 'review',
+      );
+      if (reviewTask) {
+        setReviewError(null);
+        setReviewModalTask(reviewTask);
+        return;
+      }
+    }
+
     const ids = Array.from(selectedTaskIds);
     setBulkBusy(true);
     setBulkError(null);
@@ -235,12 +254,70 @@ export default function MCOpsView({
       return;
     }
 
+    if (task.column === 'review' && column === 'done') {
+      setReviewError(null);
+      setReviewModalTask(task);
+      setDraggedTaskId(null);
+      return;
+    }
+
     setMovingTaskId(taskId);
     try {
       await onMoveTask(taskId, column);
     } finally {
       setMovingTaskId(null);
       setDraggedTaskId(null);
+    }
+  };
+
+  const handleReviewSubmit = async (
+    action: 'accept' | 'accept_done' | 'needs_fix' | 'reject',
+    note: string,
+  ) => {
+    const task = reviewModalTask;
+    if (!task) {
+      return;
+    }
+
+    let existing: Record<string, unknown> = {};
+    try {
+      existing = task.metadata ? (JSON.parse(task.metadata) as Record<string, unknown>) : {};
+    } catch {
+      existing = {};
+    }
+
+    const reviewer = readUserProfile().displayName || 'Henry';
+    const decision = action === 'reject' ? 'rejected' : action === 'needs_fix' ? 'needs_fix' : 'accepted';
+    const nextMeta = {
+      ...existing,
+      review_type: (existing.review_type as string) || (existing.review_class as string) || 'henry',
+      review_decision: decision,
+      reviewed_by: reviewer,
+      reviewed_at: new Date().toISOString(),
+      ...(note.trim() ? { review_note: note.trim() } : {}),
+    };
+
+    setReviewBusy(true);
+    setReviewError(null);
+    try {
+      if (action === 'accept_done') {
+        await updateTask(task.id, { metadata: JSON.stringify(nextMeta), column: 'done' });
+      } else {
+        await updateTask(task.id, { metadata: JSON.stringify(nextMeta) });
+      }
+      setReviewModalTask(null);
+      setSelectedTaskIds((current) => {
+        if (!current.has(task.id)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.delete(task.id);
+        return next;
+      });
+    } catch (err) {
+      setReviewError(toErrorMessage(err, 'Could not update review.'));
+    } finally {
+      setReviewBusy(false);
     }
   };
 
@@ -424,6 +501,17 @@ export default function MCOpsView({
           onDocsLinkNavigate={onDocsLinkNavigate}
         />
       ) : null}
+      <ReviewActionModal
+        open={reviewModalTask !== null}
+        task={reviewModalTask}
+        busy={reviewBusy}
+        error={reviewError}
+        onClose={() => {
+          setReviewModalTask(null);
+          setReviewError(null);
+        }}
+        onSubmit={handleReviewSubmit}
+      />
     </div>
   );
 }
