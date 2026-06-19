@@ -6,6 +6,7 @@ import {
   inferTaskType,
   requiresReviewArtifact,
   scoreReviewVerdict,
+  isReviewGatedTask,
   shouldValidateReviewEntryOnTransition,
   validateReviewCompletion,
   validateReviewEntry,
@@ -361,6 +362,43 @@ describe('review lifecycle validation', () => {
         'Ada'
       ).ok
     ).toBe(false);
+  });
+});
+
+describe('isReviewGatedTask', () => {
+  it('treats tasks without review metadata as not gated', () => {
+    expect(isReviewGatedTask(null)).toBe(false);
+    expect(isReviewGatedTask(undefined)).toBe(false);
+    expect(isReviewGatedTask('')).toBe(false);
+    expect(isReviewGatedTask('{}')).toBe(false);
+    expect(isReviewGatedTask({})).toBe(false);
+    expect(
+      isReviewGatedTask(
+        JSON.stringify({ priority: 'P2', project: 'General', due_date: null, recurring: false })
+      )
+    ).toBe(false);
+    expect(isReviewGatedTask('not-json')).toBe(false);
+  });
+
+  it('treats tasks with an explicit review workflow signal as gated', () => {
+    expect(isReviewGatedTask(JSON.stringify({ review_type: 'peer' }))).toBe(true);
+    expect(isReviewGatedTask(JSON.stringify({ review_class: 'henry' }))).toBe(true);
+    expect(isReviewGatedTask(JSON.stringify({ reviewer: 'Book' }))).toBe(true);
+    expect(isReviewGatedTask(JSON.stringify({ review_owner: 'Book' }))).toBe(true);
+    expect(isReviewGatedTask(JSON.stringify({ review_decision: 'pending' }))).toBe(true);
+    expect(isReviewGatedTask(JSON.stringify({ henry_required: true }))).toBe(true);
+    expect(isReviewGatedTask(JSON.stringify({ requires_henry: true }))).toBe(true);
+    expect(
+      isReviewGatedTask(JSON.stringify({ review_packet: { requested_outcome: 'x' } }))
+    ).toBe(true);
+    expect(isReviewGatedTask(JSON.stringify({ review_brief: { goal: 'x' } }))).toBe(true);
+  });
+
+  it('ignores empty review workflow fields', () => {
+    expect(isReviewGatedTask(JSON.stringify({ review_type: '   ' }))).toBe(false);
+    expect(isReviewGatedTask(JSON.stringify({ reviewer: '' }))).toBe(false);
+    expect(isReviewGatedTask(JSON.stringify({ henry_required: false }))).toBe(false);
+    expect(isReviewGatedTask(JSON.stringify({ review_packet: {} }))).toBe(false);
   });
 });
 
