@@ -118,3 +118,17 @@ If you lose context (session restart, compaction, new session):
 ### When NOT to Use Plans
 - Single lookups, 1-2 step tasks, conversational Q&A
 - Keep it simple — opt-in, not opinionated (Onur's rule)
+
+---
+
+## Agent LLM provider (Azure / OpenAI-compatible)
+
+The Task Master agent — and the task-comment `@mention` responder — generate text via `getTaskAgentLanguageModel()` in `packages/server/src/agent/settings.ts`. Configure it in the UI (Admin → Task Master) or `PATCH /api/agent/settings`.
+
+- For **Azure OpenAI** (or any OpenAI-compatible endpoint), choose provider `openai-compatible`. It accepts a **Base URL** and sends both `Authorization: Bearer` and an `api-key` header (Azure auth).
+- Base URL resolves from (in order): stored value → `OPENAI_BASE_URL` / `AZURE_OPENAI_BASE_URL` / `AZURE_OPENAI_ENDPOINT` env → provider default. Use the Azure `/openai/v1` surface, e.g. `https://<resource>.openai.azure.com/openai/v1`.
+- API key resolves from the stored per-provider key or `AZURE_OPENAI_API_KEY` / `OPENAI_API_KEY` env.
+- The **model id must be the Azure deployment name**, not a generic model name. List deployments with `curl -H "api-key: $AZURE_OPENAI_API_KEY" "<resource>.openai.azure.com/openai/deployments?api-version=2023-03-15-preview"`.
+- Without a key, `@mention` replies still post a graceful "configure a model" message and task pickup still works; only the generated text is skipped.
+
+**Cloud secret caveat:** newly added Secrets are injected into the VM environment, but a long-running dev server (or its tmux server) started *before* the secret was added will not see it. Restart the dev server in a shell/tmux session that has the secret in its environment (e.g. recreate the tmux server) so `process.env` picks it up.
