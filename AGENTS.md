@@ -1,5 +1,13 @@
 # Entity — Agent Guidelines
 
+## Working Style: Maximize Parallelism
+
+- Use as many parallel sub-agents / tool calls as possible. When work is independent, launch it concurrently rather than sequentially.
+- For exploration, fan out multiple read-only `explore` sub-agents at once (one per subsystem/area).
+- For implementation, parallelize edits that touch **non-overlapping files**; serialize edits to the same shared file (e.g. `packages/server/src/index.ts`, large components) to avoid clobbering.
+- Batch independent shell/read/search calls into a single round instead of one-at-a-time.
+- Default to parallel; only fall back to sequential when there is a true data dependency between steps.
+
 ## Project Structure
 
 Monorepo with npm workspaces:
