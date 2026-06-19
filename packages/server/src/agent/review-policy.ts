@@ -482,6 +482,34 @@ export function validateReviewEntry(metadata: unknown): ReviewValidationResult {
   return { ok: true, metadata: parsed };
 }
 
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'object') return Object.keys(value as object).length > 0;
+  return Boolean(value);
+}
+
+/**
+ * A task is "review-gated" only when its metadata carries an explicit review
+ * workflow signal (review type, reviewer, decision, Henry requirement, or a
+ * review packet/brief). Ordinary tasks that never entered a review workflow
+ * must not be blocked from completion. This mirrors the frontend's
+ * `hasReviewMetadata` check so the UI and server agree on which tasks require a
+ * review completion packet before they can move to done.
+ */
+export function isReviewGatedTask(metadata: unknown): boolean {
+  const parsed = parseReviewMetadata(metadata);
+  if (!parsed) return false;
+  return (
+    hasMeaningfulValue(parsed.review_type ?? parsed.review_class) ||
+    hasMeaningfulValue(parsed.reviewer ?? parsed.review_owner) ||
+    hasMeaningfulValue(parsed.review_decision) ||
+    readBoolean(parsed.henry_required ?? parsed.requires_henry) ||
+    hasMeaningfulValue(parsed.review_packet) ||
+    hasMeaningfulValue(parsed.review_brief)
+  );
+}
+
 export function validateReviewCompletion(
   task: Pick<TaskRecord, 'metadata' | 'assignee'>,
   actor: string | null | undefined

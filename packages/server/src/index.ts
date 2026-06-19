@@ -58,6 +58,7 @@ import {
   getPrimaryReviewReason,
   hasAssignedOwner,
   isActiveTaskColumn,
+  isReviewGatedTask,
   shouldValidateReviewEntryOnTransition,
   validateReviewCompletion,
   validateReviewEntry,
@@ -2685,11 +2686,14 @@ function registerTaskRoutes(prefix: "" | "/api") {
         }
       }
 
+      const completionMetadata = metadata ?? existingTask.metadata;
       const movingToDone =
-        nextColumn === "done" && existingTask.column !== "done";
+        nextColumn === "done" &&
+        existingTask.column !== "done" &&
+        isReviewGatedTask(completionMetadata);
       if (movingToDone) {
         const completionCheck = validateReviewCompletion(
-          { ...existingTask, metadata: metadata ?? existingTask.metadata },
+          { ...existingTask, metadata: completionMetadata },
           getTaskActorFromRequest(req),
         );
         if (!completionCheck.ok) {
@@ -2979,7 +2983,11 @@ function registerTaskRoutes(prefix: "" | "/api") {
         }
       }
 
-      if (column === "done" && existingTask.column !== "done") {
+      if (
+        column === "done" &&
+        existingTask.column !== "done" &&
+        isReviewGatedTask(existingTask.metadata)
+      ) {
         const completionCheck = validateReviewCompletion(
           existingTask,
           getTaskActorFromRequest(req),
