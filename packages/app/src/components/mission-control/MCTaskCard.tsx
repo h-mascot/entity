@@ -7,6 +7,7 @@ import {
   getTaskAge,
   getTaskProjectNames,
   hasRecentTaskActivity,
+  isTaskBookmarked,
   isTransientBlocker,
   statusClass,
 } from './utils/taskHelpers';
@@ -16,6 +17,9 @@ interface MCTaskCardProps {
   isDragging?: boolean;
   isHighlighted?: boolean;
   isArchiveColumn?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (taskId: number) => void;
+  onToggleBookmark?: (taskId: number) => void;
   onDragStart: (taskId: number) => void;
   onDragEnd: () => void;
   onOpenTask?: (taskId: number) => void;
@@ -28,6 +32,9 @@ export default function MCTaskCard({
   isDragging = false,
   isHighlighted = false,
   isArchiveColumn = false,
+  isSelected = false,
+  onToggleSelect,
+  onToggleBookmark,
   onDragStart,
   onDragEnd,
   onOpenTask,
@@ -40,6 +47,7 @@ export default function MCTaskCard({
   const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
   const [savingProjects, setSavingProjects] = useState(false);
   const assignee = task.assignee || 'Unassigned';
+  const bookmarked = isTaskBookmarked(task);
   const priority = (task.priority || 'P2').toUpperCase();
   const priorityClass = `priority-${priority.toLowerCase()}`;
   const taskAge = getTaskAge(task);
@@ -59,6 +67,7 @@ export default function MCTaskCard({
 	    isWorking ? 'working' : '',
 	    isHighlighted ? 'task-highlighted' : '',
 	    isArchiveColumn ? 'task-archived' : '',
+	    isSelected ? 'task-selected' : '',
 	  ]
 	    .filter(Boolean)
 	    .join(' ');
@@ -155,7 +164,28 @@ export default function MCTaskCard({
       title={task.blocked && blockedReason ? blockedReason : task.name}
       aria-current={isHighlighted ? 'true' : undefined}
       data-testid={`mc-task-card-${task.id}`}
+      style={isSelected ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent) inset' } : undefined}
     >
+      {onToggleSelect ? (
+        <label
+          className="absolute right-2 top-2 z-10 flex cursor-pointer items-center"
+          title="Select task for bulk actions"
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={isSelected}
+            aria-label={`Select task ${task.id}`}
+            data-testid={`mc-task-select-${task.id}`}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              event.stopPropagation();
+              onToggleSelect(task.id);
+            }}
+          />
+        </label>
+      ) : null}
       {task.blocked ? <div className="blocked-indicator" aria-hidden="true">🚨</div> : null}
       {!task.blocked && isWorking ? <div className="working-indicator" aria-hidden="true" /> : null}
       {isArchiveColumn ? <div className="archive-indicator" aria-hidden="true">Archived</div> : null}
@@ -163,6 +193,25 @@ export default function MCTaskCard({
       <div className="task-kicker">
         <span>Task #{task.id}</span>
         {task.recurring ? <span className="task-kicker-pill">Recurring</span> : null}
+        {onToggleBookmark ? (
+          <button
+            type="button"
+            className="ml-auto mr-6 inline-flex items-center text-sm leading-none"
+            style={{ color: bookmarked ? '#fbbf24' : 'var(--text-muted)' }}
+            aria-pressed={bookmarked}
+            aria-label={bookmarked ? `Remove bookmark from task ${task.id}` : `Bookmark task ${task.id}`}
+            title={bookmarked ? 'Bookmarked — click to remove' : 'Bookmark this task to revisit later'}
+            data-testid={`mc-task-bookmark-${task.id}`}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onToggleBookmark(task.id);
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            {bookmarked ? '★' : '☆'}
+          </button>
+        ) : null}
       </div>
 
       <div className="task-header">

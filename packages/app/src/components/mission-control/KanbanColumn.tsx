@@ -26,6 +26,9 @@ interface KanbanColumnProps {
   onOpenTask?: (taskId: number) => void;
   onUpdateTaskProjects: (taskId: number, projectIds: number[]) => Promise<unknown>;
   projectOptions: ProjectOption[];
+  selectedTaskIds?: Set<number>;
+  onToggleSelect?: (taskId: number) => void;
+  onToggleBookmark?: (taskId: number) => void;
 }
 
 export default function KanbanColumn({
@@ -41,6 +44,9 @@ export default function KanbanColumn({
   onOpenTask,
   onUpdateTaskProjects,
   projectOptions,
+  selectedTaskIds,
+  onToggleSelect,
+  onToggleBookmark,
 }: KanbanColumnProps) {
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [visibleCount, setVisibleCount] = useState(() =>
@@ -154,6 +160,9 @@ export default function KanbanColumn({
               isDragging={draggedTaskId === task.id || movingTaskId === task.id}
               isHighlighted={highlightTaskId === task.id}
               isArchiveColumn={column === 'archive'}
+              isSelected={selectedTaskIds?.has(task.id) ?? false}
+              onToggleSelect={onToggleSelect}
+              onToggleBookmark={onToggleBookmark}
               onDragEnd={onDragEnd}
               onDragStart={onDragStart}
               onOpenTask={onOpenTask}

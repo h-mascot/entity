@@ -52,6 +52,43 @@ export function hasTaskProjectName(task: Pick<TaskBoardTask, 'project' | 'projec
   return getTaskProjectNames(task).some((name) => name.toLowerCase() === normalizedTarget);
 }
 
+function parseMetadataRecord(metadata: string | null | undefined): Record<string, unknown> {
+  if (typeof metadata !== 'string' || !metadata.trim()) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(metadata) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return {};
+  }
+  return {};
+}
+
+function readBookmarkFlag(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes';
+  }
+  return false;
+}
+
+/** Whether the task is starred/bookmarked (persisted in task metadata). */
+export function isTaskBookmarked(task: Pick<TaskBoardTask, 'metadata'>): boolean {
+  const metadata = parseMetadataRecord(task.metadata);
+  return readBookmarkFlag(metadata.bookmarked ?? metadata.starred);
+}
+
+/** Returns the task metadata as a JSON string with the bookmark flag toggled/set. */
+export function buildBookmarkMetadata(task: Pick<TaskBoardTask, 'metadata'>, bookmarked: boolean): string {
+  const metadata = parseMetadataRecord(task.metadata);
+  return JSON.stringify({ ...metadata, bookmarked });
+}
+
 export function statusClass(column: string | null | undefined, blocked?: boolean): string {
   if (blocked) return 'status-blocked';
   const normalized = (column ?? '').toLowerCase();

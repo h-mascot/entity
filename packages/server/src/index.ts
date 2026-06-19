@@ -64,6 +64,7 @@ import {
   type AgentTriggerEvent,
 } from "./agent";
 import { buildAgentCapabilityCard } from "./agent/agent-capability-card";
+import { createCommentMentionResponder } from "./agent/comment-responder";
 import { mergeRegistryAgentDisplay } from "./agent/agent-display";
 import {
   buildTaskPaginationMeta,
@@ -321,6 +322,17 @@ const taskSyncLayer = createTaskSyncLayer();
 const activityRepository = createActivityRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
+
+// Responds to @agent mentions in task comments (reads the card, replies, optional pickup).
+const commentMentionResponder = createCommentMentionResponder({
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+  listComments: (taskId) => taskCommentRepository.listComments(taskId),
+  createComment: (input) => taskCommentRepository.createComment(input),
+  updateTask: (taskId, fields) => taskSyncLayer.updateTask(taskId, fields as never),
+  listAgents: () => agentRegistryRepo.listAgents(),
+  logActivity: (input) => logActivity(input as Parameters<typeof logActivity>[0]),
+  broadcast: (message) => broadcast(message),
+});
 const entityDb = getEntityDatabase();
 const runtimeConfig = applyRuntimeConfigSeeds({ db: entityDb, fileSourceRepository });
 const runtimeConfigBaseDir = path.dirname(process.env.ENTITY_CONFIG || path.resolve(process.cwd(), 'entity.config.yaml'));
@@ -1930,6 +1942,8 @@ function registerAgentRoutes(prefix: "" | "/api") {
         model: typeof body.model === "string" ? body.model : undefined,
         apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
         clearApiKey: body.clearApiKey === true,
+        baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
+        clearBaseUrl: body.clearBaseUrl === true,
         staleThresholdHours:
           body.staleThresholdHours && typeof body.staleThresholdHours === "object"
             ? {
@@ -3330,6 +3344,10 @@ function registerTaskRoutes(prefix: "" | "/api") {
         metadata: { author, taskName: task?.name },
       });
       broadcast({ type: "task:comment", taskId: id, comment });
+
+      // If the comment @mentions an agent, let the agent read the card and reply
+      // (and optionally pick up the task). Fire-and-forget so the POST returns fast.
+      void commentMentionResponder(id, comment);
 
       return res.status(201).json(comment);
     } catch (err) {

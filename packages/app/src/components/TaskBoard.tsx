@@ -29,6 +29,7 @@ interface TaskBoardProps {
   highlightTaskId?: number | null;
   onOpenTask?: (taskId: number) => void;
   onCloseTask?: () => void;
+  onDocsLinkNavigate?: (href: string) => boolean;
   showArchiveColumn?: boolean;
   onArchiveColumnVisibilityChange?: (visible: boolean) => void;
 }
@@ -97,6 +98,7 @@ export default function TaskBoard({
   highlightTaskId = null,
   onOpenTask,
   onCloseTask,
+  onDocsLinkNavigate,
   showArchiveColumn = true,
   onArchiveColumnVisibilityChange,
 }: TaskBoardProps) {
@@ -266,6 +268,7 @@ export default function TaskBoard({
         onMoveTask={moveTask}
         onOpenTask={onOpenTask}
         onCloseTask={onCloseTask}
+        onDocsLinkNavigate={onDocsLinkNavigate}
         tasks={filteredTasks}
         showArchiveColumn={showArchiveColumn}
       />

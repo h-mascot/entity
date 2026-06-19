@@ -32,6 +32,8 @@ interface TaskAgentProviderOption {
   keyLabel: string;
   envKeys: string[];
   models: Array<{ id: string; label: string }>;
+  supportsBaseUrl?: boolean;
+  baseUrlPlaceholder?: string;
 }
 
 interface TaskAgentSettings {
@@ -39,6 +41,9 @@ interface TaskAgentSettings {
   model: string;
   apiKeyConfigured: boolean;
   apiKeySource: 'database' | 'env' | 'none';
+  baseUrl?: string | null;
+  baseUrlSource?: string;
+  supportsBaseUrl?: boolean;
   staleThresholdHours: {
     doing: number;
     review: number;
@@ -79,6 +84,8 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
   const [draftProvider, setDraftProvider] = useState('');
   const [draftModel, setDraftModel] = useState('');
   const [draftApiKey, setDraftApiKey] = useState('');
+  const [draftBaseUrl, setDraftBaseUrl] = useState('');
+  const [clearBaseUrl, setClearBaseUrl] = useState(false);
   const [draftDoingThreshold, setDraftDoingThreshold] = useState(24);
   const [draftReviewThreshold, setDraftReviewThreshold] = useState(48);
   const [draftMaxActions, setDraftMaxActions] = useState(10);
@@ -102,6 +109,8 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
     setDraftProvider(next.provider);
     setDraftModel(next.model);
     setDraftApiKey('');
+    setDraftBaseUrl(next.baseUrl ?? '');
+    setClearBaseUrl(false);
     setDraftDoingThreshold(next.staleThresholdHours.doing);
     setDraftReviewThreshold(next.staleThresholdHours.review);
     setDraftMaxActions(next.maxActionsPerScan);
@@ -146,6 +155,7 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
           model: draftModel,
           apiKey: draftApiKey,
           clearApiKey,
+          ...(selectedProvider?.supportsBaseUrl ? { baseUrl: draftBaseUrl, clearBaseUrl } : {}),
           staleThresholdHours: {
             doing: draftDoingThreshold,
             review: draftReviewThreshold,
@@ -337,6 +347,44 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
               autoComplete="off"
             />
           </label>
+          {selectedProvider?.supportsBaseUrl && (
+            <div className="md:col-span-2">
+              <label className="block text-xs text-[var(--text-secondary)]">
+                <span className="mb-1 block text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Base URL</span>
+                <input
+                  value={draftBaseUrl}
+                  onChange={(event) => {
+                    setDraftBaseUrl(event.target.value);
+                    setClearBaseUrl(false);
+                  }}
+                  className="mc-shell-input w-full px-3 py-2 text-sm text-[var(--text-primary)]"
+                  placeholder={selectedProvider?.baseUrlPlaceholder ?? 'https://api.openai.com/v1'}
+                  autoComplete="off"
+                />
+              </label>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-[var(--text-muted)]">
+                  {settings?.baseUrlSource === 'env'
+                    ? 'Using environment OPENAI_BASE_URL'
+                    : settings?.baseUrlSource === 'default'
+                      ? 'Using provider default'
+                      : ''}
+                </span>
+                {settings?.baseUrlSource === 'database' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraftBaseUrl('');
+                      setClearBaseUrl(true);
+                    }}
+                    className="mc-shell-btn px-2 py-0.5 text-[11px]"
+                  >
+                    Use default base URL
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <label className="block text-xs text-[var(--text-secondary)]">
             <span className="mb-1 block text-[11px] uppercase tracking-wider text-[var(--text-muted)]">Stale threshold (doing)</span>
             <input

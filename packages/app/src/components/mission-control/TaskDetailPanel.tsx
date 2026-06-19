@@ -14,9 +14,8 @@ import {
   normalizeProjectOption,
   type ProjectOption,
 } from './projectOptions';
-import { getCachedAgents } from '../../lib/agentRegistry';
+import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
 
-const DEFAULT_ASSIGNEE_OPTIONS = ['Assistant', 'Human'] as const;
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
 
@@ -937,6 +936,7 @@ function findDependencyName(dependency: TaskDependency, boardTasks: TaskBoardTas
 
 export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsLinkNavigate }: TaskDetailPanelProps) {
   const [userProfile] = useUserProfile();
+  const [activeAgentNames, setActiveAgentNames] = useState<string[]>([]);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const detailSectionRef = useRef<HTMLElement | null>(null);
@@ -964,6 +964,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const [attachmentPath, setAttachmentPath] = useState('');
   const [noteInput, setNoteInput] = useState('');
   const [commentInput, setCommentInput] = useState('');
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [replyTargetId, setReplyTargetId] = useState<number | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const { tasks: boardTasks, reloadTasks } = useTaskBoard({ apiBase, autoLoad: false });
@@ -1122,24 +1123,26 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     };
   }, [apiBase, taskId]);
 
-  const assigneeOptions = useMemo(() => {
-    const agents = getCachedAgents();
-    const agentNames = agents.map((a) => a.name);
-    const options = [...DEFAULT_ASSIGNEE_OPTIONS, ...agentNames, userProfile.displayName, 'Unassigned'];
-    // deduplicate while preserving order
-    const seen = new Set<string>();
-    const deduped: string[] = [];
-    for (const o of options) {
-      if (!seen.has(o)) {
-        seen.add(o);
-        deduped.push(o);
-      }
-    }
-    if (form?.assignee && !seen.has(form.assignee)) {
-      return [form.assignee, ...deduped];
-    }
-    return deduped;
-  }, [form?.assignee, userProfile.displayName]);
+  const assigneeOptions = useMemo(
+    () => composeAssigneeOptions(activeAgentNames, userProfile.displayName, form?.assignee),
+    [activeAgentNames, form?.assignee, userProfile.displayName],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchActiveAgentNames(apiBase)
+      .then((names) => {
+        if (!cancelled) {
+          setActiveAgentNames(names);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load active agents for assignee options:', error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase]);
 
   const modelOptions = useMemo(() => {
     const dynamicModels = uniqueStrings([form?.model, task?.model, ...(task?.models ?? [])]);
@@ -1227,6 +1230,99 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
       setComments(commentsResult.value.comments);
       setCommentsAvailable(commentsResult.value.available);
     }
+  };
+
+  // Keep the latest loadSupplementalData for the websocket listener without
+  // re-subscribing on every render.
+  const supplementalRef = useRef(loadSupplementalData);
+  supplementalRef.current = loadSupplementalData;
+
+  // Live-refresh this task's detail + comments when the server broadcasts
+  // changes for it (e.g. an @mentioned agent's reply or task pickup).
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    let active = true;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+
+    const connect = () => {
+      if (!active) {
+        return;
+      }
+      try {
+        const url = new URL('ws://' + window.location.host);
+        const token = window.localStorage.getItem('entity-api-token');
+        if (token && token.trim()) {
+          url.searchParams.set('token', token.trim());
+        }
+        socket = new WebSocket(url.toString());
+      } catch {
+        socket = new WebSocket('ws://' + window.location.host);
+      }
+
+      socket.onmessage = (event) => {
+        let message: { type?: string; taskId?: unknown };
+        try {
+          message = JSON.parse(String(event.data)) as { type?: string; taskId?: unknown };
+        } catch {
+          return;
+        }
+        if (Number(message.taskId) !== taskId) {
+          return;
+        }
+        if (
+          message.type === 'task:comment' ||
+          message.type === 'task:updated' ||
+          message.type === 'task:moved'
+        ) {
+          void supplementalRef.current(taskId, {
+            preserveOutput: true,
+            preserveDependencyInput: true,
+          });
+        }
+      };
+
+      socket.onclose = () => {
+        socket = null;
+        if (!active) {
+          return;
+        }
+        reconnectTimer = window.setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      active = false;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        socket.close();
+      }
+    };
+  }, [taskId]);
+
+  const mentionMatches = useMemo(() => {
+    if (mentionQuery === null) {
+      return [];
+    }
+    const query = mentionQuery.toLowerCase();
+    return activeAgentNames.filter((name) => name.toLowerCase().includes(query)).slice(0, 6);
+  }, [activeAgentNames, mentionQuery]);
+
+  const handleCommentInputChange = (value: string) => {
+    setCommentInput(value);
+    const match = value.match(/@([\w.-]*)$/);
+    setMentionQuery(match ? match[1] : null);
+  };
+
+  const applyMention = (name: string) => {
+    setCommentInput((prev) => prev.replace(/@([\w.-]*)$/, `@${name} `));
+    setMentionQuery(null);
   };
 
   const clearStaleBlockerReason = (detail: TaskDetailData) => {
@@ -2748,19 +2844,48 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                     )}
 
                     <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <input
-                        type="text"
-                        value={commentInput}
-                        onChange={(event) => setCommentInput(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            event.preventDefault();
-                            void postComment();
-                          }
-                        }}
-                        placeholder="Add a comment..."
-                        className="mc-shell-input min-w-0 flex-1 px-3 py-2 text-sm"
-                      />
+                      <div className="relative min-w-0 flex-1">
+                        <input
+                          type="text"
+                          value={commentInput}
+                          onChange={(event) => handleCommentInputChange(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape' && mentionQuery !== null) {
+                              event.preventDefault();
+                              setMentionQuery(null);
+                              return;
+                            }
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              if (mentionQuery !== null && mentionMatches.length > 0) {
+                                applyMention(mentionMatches[0]!);
+                                return;
+                              }
+                              void postComment();
+                            }
+                          }}
+                          placeholder="Add a comment... use @ to mention an agent"
+                          className="mc-shell-input w-full px-3 py-2 text-sm"
+                        />
+                        {mentionQuery !== null && mentionMatches.length > 0 ? (
+                          <div className="absolute bottom-full left-0 z-30 mb-1 w-64 overflow-hidden rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
+                            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                              Mention an agent
+                            </div>
+                            {mentionMatches.map((name) => (
+                              <button
+                                key={name}
+                                type="button"
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-tertiary)]"
+                                onClick={() => applyMention(name)}
+                              >
+                                <span aria-hidden="true">🤖</span>
+                                <span>@{name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                       <button
                         type="button"
                         className="mc-shell-btn mc-shell-btn-active px-3 py-2 text-xs font-medium text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"

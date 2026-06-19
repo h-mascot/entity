@@ -1681,39 +1681,76 @@ export default function App() {
     }
   }, [refreshOfflineQueueState, refreshStatus, reloadTasks, syncingNow]);
 
-  const navigateToDocsPath = useCallback((nextPath: string, replace = false): boolean => {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-
-    const normalized = normalizeDocsRoutePath(nextPath);
-    if (!normalized) {
-      return false;
-    }
-
-    const nextPathname = `/docs/${encodeDocsRoutePath(normalized)}`;
-    if (window.location.pathname !== nextPathname) {
-      if (replace) {
-        window.history.replaceState({ mode: 'docs' }, '', nextPathname);
-      } else {
-        window.history.pushState({ mode: 'docs' }, '', nextPathname);
+  const navigateToDocsPath = useCallback(
+    (nextPath: string, replace = false, returnTaskId?: number | null): boolean => {
+      if (typeof window === 'undefined') {
+        return false;
       }
-    }
 
-    setDocsPath(normalized);
-    return true;
-  }, []);
+      const normalized = normalizeDocsRoutePath(nextPath);
+      if (!normalized) {
+        return false;
+      }
+
+      // Preserve the originating task across doc→doc navigation unless a new
+      // origin is explicitly provided, so "back" can return to the task detail.
+      const existingState = window.history.state as { returnTaskId?: unknown } | null;
+      const inheritedReturnTaskId =
+        existingState && typeof existingState.returnTaskId === 'number' ? existingState.returnTaskId : null;
+      const nextReturnTaskId = returnTaskId !== undefined ? returnTaskId : inheritedReturnTaskId;
+      const docsState = { mode: 'docs', returnTaskId: nextReturnTaskId };
+
+      const nextPathname = `/docs/${encodeDocsRoutePath(normalized)}`;
+      if (window.location.pathname !== nextPathname) {
+        if (replace) {
+          window.history.replaceState(docsState, '', nextPathname);
+        } else {
+          window.history.pushState(docsState, '', nextPathname);
+        }
+      } else {
+        window.history.replaceState(docsState, '', nextPathname);
+      }
+
+      setDocsPath(normalized);
+      return true;
+    },
+    []
+  );
 
   const handleDocsBackToHome = useCallback(() => {
-    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
-      window.history.pushState({ mode: 'app' }, '', '/');
-    }
+    const state =
+      typeof window !== 'undefined' && window.history.state && typeof window.history.state === 'object'
+        ? (window.history.state as { returnTaskId?: unknown })
+        : null;
+    const returnTaskId = state && typeof state.returnTaskId === 'number' ? state.returnTaskId : null;
 
     setDocsPath(null);
     setDocsError(null);
     setDocsLoading(false);
     setDocsContent('');
     setDocsFilename('Document');
+
+    if (returnTaskId !== null) {
+      // Return to the task detail the doc was opened from.
+      if (typeof window !== 'undefined') {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.pathname = '/task/' + returnTaskId;
+        nextUrl.searchParams.delete('file');
+        nextUrl.searchParams.delete('source');
+        window.history.pushState({ mode: 'task', taskId: returnTaskId }, '', nextUrl.toString());
+      }
+      setCurrentSourceId(null);
+      setCurrentFile(null);
+      setMcBoardTab('kanban');
+      setSidebarTab('tasks');
+      setMobileTab('tasks');
+      setHighlightTaskId(returnTaskId);
+      return;
+    }
+
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.history.pushState({ mode: 'app' }, '', '/');
+    }
   }, []);
 
   const handleMarkdownDocsNavigation = useCallback(
@@ -1726,6 +1763,20 @@ export default function App() {
       return navigateToDocsPath(resolved);
     },
     [docsPath, navigateToDocsPath]
+  );
+
+  // Opening an output doc from a task records that task so the docs back
+  // button returns to the task detail instead of the bare board.
+  const handleTaskOutputDocsNavigation = useCallback(
+    (href: string): boolean => {
+      const resolved = resolveDocsPathFromHref(href, docsPath);
+      if (!resolved) {
+        return false;
+      }
+
+      return navigateToDocsPath(resolved, false, highlightTaskId);
+    },
+    [docsPath, highlightTaskId, navigateToDocsPath]
   );
 
   useEffect(() => {
@@ -5326,6 +5377,7 @@ export default function App() {
               highlightTaskId={highlightTaskId}
               onOpenTask={handleTaskSelect}
               onCloseTask={handleCloseTaskDetail}
+              onDocsLinkNavigate={handleTaskOutputDocsNavigation}
               searchQuery={taskSearchQuery}
               showArchiveColumn={showArchiveColumn}
               onArchiveColumnVisibilityChange={setShowArchiveColumn}
@@ -5799,6 +5851,12 @@ export default function App() {
   };
 
   if (docsModeActive && docsPath) {
+    const docsBackState =
+      typeof window !== 'undefined' && window.history.state && typeof window.history.state === 'object'
+        ? (window.history.state as { returnTaskId?: unknown })
+        : null;
+    const docsBackTaskId =
+      docsBackState && typeof docsBackState.returnTaskId === 'number' ? docsBackState.returnTaskId : null;
     return (
       <div className="entity-shell flex h-screen flex-col bg-[var(--bg-primary)] text-[var(--text-secondary)]">
         {renderInstallCta('bottom-10')}
@@ -5808,7 +5866,7 @@ export default function App() {
             onClick={handleDocsBackToHome}
             className="mc-shell-btn px-3 py-1 text-xs font-medium"
           >
-            ← Entity Home
+            {docsBackTaskId !== null ? `← Back to task #${docsBackTaskId}` : '← Entity Home'}
           </button>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-[var(--text-primary)]">
@@ -6214,6 +6272,7 @@ export default function App() {
                 highlightTaskId={highlightTaskId}
                 onOpenTask={handleTaskSelect}
                 onCloseTask={handleCloseTaskDetail}
+                onDocsLinkNavigate={handleTaskOutputDocsNavigation}
                 searchQuery={taskSearchQuery}
                 showArchiveColumn={showArchiveColumn}
                 onArchiveColumnVisibilityChange={setShowArchiveColumn}
