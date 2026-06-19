@@ -25,6 +25,23 @@ interface MCOpsViewProps {
 }
 
 type BoardColumn = TaskColumn | 'archive';
+type BoardStatusFilter = 'all' | 'active' | 'review' | 'blocked';
+
+function matchesStatusFilter(task: TaskBoardTask, filter: BoardStatusFilter): boolean {
+  switch (filter) {
+    case 'active':
+      return task.column === 'doing';
+    case 'review':
+      return task.column === 'review';
+    case 'blocked':
+      return task.blocked && task.column !== 'done';
+    case 'all':
+    default:
+      return true;
+  }
+}
+
+const BULK_MOVE_COLUMNS: TaskColumn[] = ['backlog', 'todo', 'doing', 'review', 'done'];
 
 const COLUMN_TITLES: Record<BoardColumn, string> = {
   backlog: 'Backlog',
@@ -76,6 +93,11 @@ export default function MCOpsView({
   const [movingTaskId, setMovingTaskId] = useState<number | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+  const [statusFilter, setStatusFilter] = useState<BoardStatusFilter>('all');
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(() => new Set());
+  const [bulkColumn, setBulkColumn] = useState<TaskColumn>('todo');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
   const activeTaskDetailId = selectedTaskId ?? highlightTaskId;
   const query = globalSearch.trim().toLowerCase();
   const searchMatchedTasks = tasks.filter((task) => matchesGlobalSearch(task, query));
@@ -88,18 +110,73 @@ export default function MCOpsView({
   const blockedTasksCount = filteredTasks.filter((task) => task.blocked && task.column !== 'done').length;
   const reviewTasksCount = filteredTasks.filter((task) => task.column === 'review').length;
   const summaryStateClass = blockedTasksCount > 0 ? 'state-error' : activeTasksCount > 0 ? 'state-active' : 'state-idle';
+  // Stat chips reflect totals; the status filter narrows which cards render on the board.
+  const statusVisibleTasks = filteredTasks.filter((task) => matchesStatusFilter(task, statusFilter));
   const tasksByColumn: Record<BoardColumn, TaskBoardTask[]> = {
     backlog: [],
     todo: [],
     doing: [],
     review: [],
     done: [],
-    archive: archivedTasks,
+    // Archive is orthogonal to the active/review/blocked status filters.
+    archive: statusFilter === 'all' ? archivedTasks : [],
   };
 
-  filteredTasks.forEach((task) => {
+  statusVisibleTasks.forEach((task) => {
     tasksByColumn[task.column].push(task);
   });
+
+  const selectedCount = selectedTaskIds.size;
+
+  const toggleTaskSelection = (taskId: number) => {
+    setBulkError(null);
+    setSelectedTaskIds((current) => {
+      const next = new Set(current);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedTaskIds(new Set());
+    setBulkError(null);
+  };
+
+  const handleStatusFilterClick = (next: BoardStatusFilter) => {
+    setStatusFilter((current) => (current === next ? 'all' : next));
+  };
+
+  const handleBulkMove = async () => {
+    if (selectedCount === 0 || bulkBusy) {
+      return;
+    }
+
+    const ids = Array.from(selectedTaskIds);
+    setBulkBusy(true);
+    setBulkError(null);
+    const failures: number[] = [];
+    for (const id of ids) {
+      try {
+        await onMoveTask(id, bulkColumn);
+      } catch {
+        failures.push(id);
+      }
+    }
+    setBulkBusy(false);
+
+    if (failures.length > 0) {
+      setSelectedTaskIds(new Set(failures));
+      setBulkError(
+        `Moved ${ids.length - failures.length} of ${ids.length} task(s). ${failures.length} could not be moved to ${COLUMN_TITLES[bulkColumn]}.`,
+      );
+    } else {
+      setSelectedTaskIds(new Set());
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -183,31 +260,102 @@ export default function MCOpsView({
       <div className={activeTab === 'insights' && shouldShowInsights ? 'hidden' : ''}>
         <div className="px-4 pb-3 pt-4 md:px-5">
 	          <div className={`entity-state-bar ${summaryStateClass} flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)]/80 p-2 shadow-[0_10px_28px_rgba(0,0,0,0.22)]`}>
-            <span className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)]">
+            <button
+              type="button"
+              onClick={() => handleStatusFilterClick('all')}
+              aria-pressed={statusFilter === 'all'}
+              title="Show all tasks"
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)] transition hover:border-[var(--border-secondary)] ${
+                statusFilter === 'all'
+                  ? 'border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--accent)] ring-1 ring-[var(--accent)]'
+                  : 'border-[var(--border-primary)] bg-[var(--bg-primary)]'
+              }`}
+            >
               {filteredTasks.length} tasks
-            </span>
-            {activeTasksCount > 0 ? (
-              <span className="flex items-center gap-1 rounded-lg border border-[var(--accent)]/30 bg-[var(--surface-accent)] px-3 py-1.5 text-xs font-semibold text-[var(--accent)]">
-                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
-                {activeTasksCount} active
-              </span>
-            ) : null}
-            {reviewTasksCount > 0 ? (
-              <span className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300">
-                {reviewTasksCount} review
-              </span>
-            ) : null}
-            {blockedTasksCount > 0 ? (
-              <span className="rounded-lg border border-[var(--error)]/35 bg-[var(--surface-error)] px-3 py-1.5 text-xs font-semibold text-[var(--error)]">
-                {blockedTasksCount} blocked
-              </span>
-            ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleStatusFilterClick('active')}
+              aria-pressed={statusFilter === 'active'}
+              title="Filter to active (Doing) tasks"
+              className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold text-[var(--accent)] transition hover:border-[var(--accent)] ${
+                statusFilter === 'active'
+                  ? 'border-[var(--accent)] bg-[var(--surface-accent)] ring-1 ring-[var(--accent)]'
+                  : 'border-[var(--accent)]/30 bg-[var(--surface-accent)]'
+              }`}
+            >
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
+              {activeTasksCount} active
+            </button>
+            <button
+              type="button"
+              onClick={() => handleStatusFilterClick('review')}
+              aria-pressed={statusFilter === 'review'}
+              title="Filter to tasks in Review"
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold text-amber-300 transition hover:border-amber-500 ${
+                statusFilter === 'review'
+                  ? 'border-amber-500 bg-amber-500/20 ring-1 ring-amber-500'
+                  : 'border-amber-500/30 bg-amber-500/10'
+              }`}
+            >
+              {reviewTasksCount} review
+            </button>
+            <button
+              type="button"
+              onClick={() => handleStatusFilterClick('blocked')}
+              aria-pressed={statusFilter === 'blocked'}
+              title="Filter to blocked tasks"
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold text-[var(--error)] transition hover:border-[var(--error)] ${
+                statusFilter === 'blocked'
+                  ? 'border-[var(--error)] bg-[var(--surface-error)] ring-1 ring-[var(--error)]'
+                  : 'border-[var(--error)]/35 bg-[var(--surface-error)]'
+              }`}
+            >
+              {blockedTasksCount} blocked
+            </button>
             {query ? (
               <span className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-1.5 text-xs text-[var(--text-muted)]">
                 Search: {globalSearch.trim()}
               </span>
             ) : null}
           </div>
+          {selectedCount > 0 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/40 bg-[var(--surface-accent)] p-2">
+              <span className="px-2 text-xs font-semibold text-[var(--accent)]">{selectedCount} selected</span>
+              <label className="flex items-center gap-1 text-xs text-[var(--text-secondary)]">
+                <span>Move to</span>
+                <select
+                  value={bulkColumn}
+                  onChange={(event) => setBulkColumn(event.target.value as TaskColumn)}
+                  disabled={bulkBusy}
+                  className="mc-shell-input h-8 px-2 py-1 text-xs"
+                >
+                  {BULK_MOVE_COLUMNS.map((column) => (
+                    <option key={column} value={column}>
+                      {COLUMN_TITLES[column]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => void handleBulkMove()}
+                disabled={bulkBusy}
+                className="mc-shell-btn mc-shell-btn-active px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {bulkBusy ? 'Moving...' : 'Move selected'}
+              </button>
+              <button
+                type="button"
+                onClick={clearSelection}
+                disabled={bulkBusy}
+                className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+              >
+                Clear
+              </button>
+              {bulkError ? <span className="px-2 text-xs text-[var(--error)]">{bulkError}</span> : null}
+            </div>
+          ) : null}
         </div>
         <div className="board scroll-px-4 md:scroll-px-5" data-testid="mc-react-kanban-board">
           {boardColumns.map((column) => (
@@ -223,6 +371,8 @@ export default function MCOpsView({
               onOpenTask={handleOpenTask}
               onUpdateTaskProjects={handleUpdateTaskProjects}
               projectOptions={projectOptions}
+              selectedTaskIds={selectedTaskIds}
+              onToggleSelect={toggleTaskSelection}
               tasks={tasksByColumn[column]}
               title={COLUMN_TITLES[column]}
             />
