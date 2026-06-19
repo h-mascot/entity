@@ -7,6 +7,7 @@ import {
   getTaskAge,
   getTaskProjectNames,
   hasRecentTaskActivity,
+  isTaskBookmarked,
   isTransientBlocker,
   statusClass,
 } from './utils/taskHelpers';
@@ -18,6 +19,7 @@ interface MCTaskCardProps {
   isArchiveColumn?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (taskId: number) => void;
+  onToggleBookmark?: (taskId: number) => void;
   onDragStart: (taskId: number) => void;
   onDragEnd: () => void;
   onOpenTask?: (taskId: number) => void;
@@ -32,6 +34,7 @@ export default function MCTaskCard({
   isArchiveColumn = false,
   isSelected = false,
   onToggleSelect,
+  onToggleBookmark,
   onDragStart,
   onDragEnd,
   onOpenTask,
@@ -44,6 +47,7 @@ export default function MCTaskCard({
   const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
   const [savingProjects, setSavingProjects] = useState(false);
   const assignee = task.assignee || 'Unassigned';
+  const bookmarked = isTaskBookmarked(task);
   const priority = (task.priority || 'P2').toUpperCase();
   const priorityClass = `priority-${priority.toLowerCase()}`;
   const taskAge = getTaskAge(task);
@@ -189,6 +193,25 @@ export default function MCTaskCard({
       <div className="task-kicker">
         <span>Task #{task.id}</span>
         {task.recurring ? <span className="task-kicker-pill">Recurring</span> : null}
+        {onToggleBookmark ? (
+          <button
+            type="button"
+            className="ml-auto mr-6 inline-flex items-center text-sm leading-none"
+            style={{ color: bookmarked ? '#fbbf24' : 'var(--text-muted)' }}
+            aria-pressed={bookmarked}
+            aria-label={bookmarked ? `Remove bookmark from task ${task.id}` : `Bookmark task ${task.id}`}
+            title={bookmarked ? 'Bookmarked — click to remove' : 'Bookmark this task to revisit later'}
+            data-testid={`mc-task-bookmark-${task.id}`}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onToggleBookmark(task.id);
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            {bookmarked ? '★' : '☆'}
+          </button>
+        ) : null}
       </div>
 
       <div className="task-header">

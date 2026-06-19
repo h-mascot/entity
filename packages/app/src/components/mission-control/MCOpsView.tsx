@@ -5,7 +5,7 @@ import TaskDetailPanel from './TaskDetailPanel';
 import { useTaskBoard, type TaskBoardTask, type TaskColumn } from '../../hooks/useTaskBoard';
 import type { MCTab } from './MCHeader';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
-import { formatTaskProjectSummary } from './utils/taskHelpers';
+import { buildBookmarkMetadata, formatTaskProjectSummary, isTaskBookmarked } from './utils/taskHelpers';
 
 interface MCOpsViewProps {
   apiBase?: string;
@@ -25,7 +25,7 @@ interface MCOpsViewProps {
 }
 
 type BoardColumn = TaskColumn | 'archive';
-type BoardStatusFilter = 'all' | 'active' | 'review' | 'blocked';
+type BoardStatusFilter = 'all' | 'active' | 'review' | 'blocked' | 'starred';
 
 function matchesStatusFilter(task: TaskBoardTask, filter: BoardStatusFilter): boolean {
   switch (filter) {
@@ -35,6 +35,8 @@ function matchesStatusFilter(task: TaskBoardTask, filter: BoardStatusFilter): bo
       return task.column === 'review';
     case 'blocked':
       return task.blocked && task.column !== 'done';
+    case 'starred':
+      return isTaskBookmarked(task);
     case 'all':
     default:
       return true;
@@ -109,6 +111,7 @@ export default function MCOpsView({
   const activeTasksCount = filteredTasks.filter((task) => task.column === 'doing').length;
   const blockedTasksCount = filteredTasks.filter((task) => task.blocked && task.column !== 'done').length;
   const reviewTasksCount = filteredTasks.filter((task) => task.column === 'review').length;
+  const starredTasksCount = filteredTasks.filter((task) => isTaskBookmarked(task)).length;
   const summaryStateClass = blockedTasksCount > 0 ? 'state-error' : activeTasksCount > 0 ? 'state-active' : 'state-idle';
   // Stat chips reflect totals; the status filter narrows which cards render on the board.
   const statusVisibleTasks = filteredTasks.filter((task) => matchesStatusFilter(task, statusFilter));
@@ -148,6 +151,19 @@ export default function MCOpsView({
 
   const handleStatusFilterClick = (next: BoardStatusFilter) => {
     setStatusFilter((current) => (current === next ? 'all' : next));
+  };
+
+  const handleToggleBookmark = async (taskId: number) => {
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    if (!task) {
+      return;
+    }
+    const nextBookmarked = !isTaskBookmarked(task);
+    try {
+      await updateTask(taskId, { metadata: buildBookmarkMetadata(task, nextBookmarked) });
+    } catch (error) {
+      console.error('Failed to toggle task bookmark:', error);
+    }
   };
 
   const handleBulkMove = async () => {
@@ -313,6 +329,20 @@ export default function MCOpsView({
             >
               {blockedTasksCount} blocked
             </button>
+            <button
+              type="button"
+              onClick={() => handleStatusFilterClick('starred')}
+              aria-pressed={statusFilter === 'starred'}
+              title="Filter to starred/bookmarked tasks"
+              className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold text-amber-300 transition hover:border-amber-400 ${
+                statusFilter === 'starred'
+                  ? 'border-amber-400 bg-amber-400/20 ring-1 ring-amber-400'
+                  : 'border-amber-400/30 bg-amber-400/10'
+              }`}
+            >
+              <span aria-hidden="true">★</span>
+              {starredTasksCount} starred
+            </button>
             {query ? (
               <span className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-1.5 text-xs text-[var(--text-muted)]">
                 Search: {globalSearch.trim()}
@@ -373,6 +403,7 @@ export default function MCOpsView({
               projectOptions={projectOptions}
               selectedTaskIds={selectedTaskIds}
               onToggleSelect={toggleTaskSelection}
+              onToggleBookmark={handleToggleBookmark}
               tasks={tasksByColumn[column]}
               title={COLUMN_TITLES[column]}
             />
