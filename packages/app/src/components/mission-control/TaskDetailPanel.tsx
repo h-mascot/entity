@@ -14,9 +14,8 @@ import {
   normalizeProjectOption,
   type ProjectOption,
 } from './projectOptions';
-import { getCachedAgents } from '../../lib/agentRegistry';
+import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
 
-const DEFAULT_ASSIGNEE_OPTIONS = ['Assistant', 'Human'] as const;
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
 
@@ -937,6 +936,7 @@ function findDependencyName(dependency: TaskDependency, boardTasks: TaskBoardTas
 
 export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsLinkNavigate }: TaskDetailPanelProps) {
   const [userProfile] = useUserProfile();
+  const [activeAgentNames, setActiveAgentNames] = useState<string[]>([]);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const detailSectionRef = useRef<HTMLElement | null>(null);
@@ -1122,24 +1122,26 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     };
   }, [apiBase, taskId]);
 
-  const assigneeOptions = useMemo(() => {
-    const agents = getCachedAgents();
-    const agentNames = agents.map((a) => a.name);
-    const options = [...DEFAULT_ASSIGNEE_OPTIONS, ...agentNames, userProfile.displayName, 'Unassigned'];
-    // deduplicate while preserving order
-    const seen = new Set<string>();
-    const deduped: string[] = [];
-    for (const o of options) {
-      if (!seen.has(o)) {
-        seen.add(o);
-        deduped.push(o);
-      }
-    }
-    if (form?.assignee && !seen.has(form.assignee)) {
-      return [form.assignee, ...deduped];
-    }
-    return deduped;
-  }, [form?.assignee, userProfile.displayName]);
+  const assigneeOptions = useMemo(
+    () => composeAssigneeOptions(activeAgentNames, userProfile.displayName, form?.assignee),
+    [activeAgentNames, form?.assignee, userProfile.displayName],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchActiveAgentNames(apiBase)
+      .then((names) => {
+        if (!cancelled) {
+          setActiveAgentNames(names);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load active agents for assignee options:', error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase]);
 
   const modelOptions = useMemo(() => {
     const dynamicModels = uniqueStrings([form?.model, task?.model, ...(task?.models ?? [])]);

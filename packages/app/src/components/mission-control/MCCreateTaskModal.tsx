@@ -3,8 +3,8 @@ import { toErrorMessage } from '../../lib/http';
 import type { CreateTaskPayload, TaskBoardTask, TaskColumn, TaskPriority } from '../../hooks/useTaskBoard';
 import { useUserProfile } from '../../lib/userProfile';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
+import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
 
-const AGENT_ASSIGNEE_OPTIONS = ['Assistant', 'Human'] as const;
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 const CREATE_TASK_COLUMNS = ['backlog', 'todo', 'doing'] as const;
 
@@ -63,9 +63,10 @@ export default function MCCreateTaskModal({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [userProfile] = useUserProfile();
+  const [activeAgentNames, setActiveAgentNames] = useState<string[]>([]);
   const assigneeOptions = useMemo(
-    () => [...AGENT_ASSIGNEE_OPTIONS, userProfile.displayName, 'Unassigned'],
-    [userProfile.displayName]
+    () => composeAssigneeOptions(activeAgentNames, userProfile.displayName),
+    [activeAgentNames, userProfile.displayName]
   );
 
   useEffect(() => {
@@ -149,6 +150,27 @@ export default function MCCreateTaskModal({
         if (!cancelled) {
           setLoadingProjects(false);
         }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    let cancelled = false;
+    void fetchActiveAgentNames(apiBase)
+      .then((names) => {
+        if (!cancelled) {
+          setActiveAgentNames(names);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load active agents for assignee options:', error);
       });
 
     return () => {
