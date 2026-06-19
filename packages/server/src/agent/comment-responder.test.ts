@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { AgentRegistryRecord, TaskCommentRecord, TaskRecord } from '../../../db/src';
 import {
   buildMentionPrompt,
+  parseColumnMoveIntent,
   parseMentionTokens,
+  planAction,
   resolveMentionedAgents,
   wantsPickup,
 } from './comment-responder';
@@ -120,23 +122,98 @@ describe('wantsPickup', () => {
   });
 });
 
+describe('parseColumnMoveIntent', () => {
+  it('detects an explicit move-to-column instruction', () => {
+    expect(parseColumnMoveIntent('@assistant please move this task to the review column')).toBe('review');
+    expect(parseColumnMoveIntent('move it to done')).toBe('done');
+    expect(parseColumnMoveIntent('put this in progress')).toBe('doing');
+    expect(parseColumnMoveIntent('send it back to the backlog')).toBe('backlog');
+    expect(parseColumnMoveIntent('change to to-do')).toBe('todo');
+    expect(parseColumnMoveIntent('mark it complete')).toBe('done');
+  });
+
+  it('picks the destination column when both source and target are named', () => {
+    expect(parseColumnMoveIntent('move from review to done')).toBe('done');
+  });
+
+  it('returns null without a movement verb (plain question)', () => {
+    expect(parseColumnMoveIntent('what is left for review?')).toBeNull();
+    expect(parseColumnMoveIntent('is this done yet?')).toBeNull();
+  });
+
+  it('returns null when no column keyword is present', () => {
+    expect(parseColumnMoveIntent('move quickly please')).toBeNull();
+  });
+});
+
+describe('planAction', () => {
+  it('plans a column move and self-assigns when moving to an active column unowned', () => {
+    const task = makeTask({ column: 'backlog', assignee: 'Unassigned' });
+    const action = planAction(task, '@assistant move this to doing', 'Assistant');
+    expect(action.kind).toBe('move');
+    expect(action.column).toBe('doing');
+    expect(action.assignee).toBe('Assistant');
+  });
+
+  it('does not reassign when moving to a non-active column', () => {
+    const task = makeTask({ column: 'doing', assignee: 'Ada' });
+    const action = planAction(task, 'move it to backlog', 'Assistant');
+    expect(action.kind).toBe('move');
+    expect(action.column).toBe('backlog');
+    expect(action.assignee).toBeUndefined();
+  });
+
+  it('blocks moving a review-gated task to done without an accepted review', () => {
+    const task = makeTask({
+      column: 'review',
+      assignee: 'Ada',
+      metadata: JSON.stringify({ review_type: 'peer', reviewer: 'Book', review_decision: 'pending' }),
+    });
+    const action = planAction(task, 'move this to done', 'Assistant');
+    expect(action.kind).toBe('reply');
+    expect(action.blockedReason).toMatch(/accepted review/i);
+  });
+
+  it('allows moving an ordinary (non-review) task straight to done', () => {
+    const task = makeTask({ column: 'doing', assignee: 'Ada', metadata: '{}' });
+    const action = planAction(task, 'mark this done', 'Assistant');
+    expect(action.kind).toBe('move');
+    expect(action.column).toBe('done');
+  });
+
+  it('falls back to pickup when asked to take the task', () => {
+    const task = makeTask({ column: 'backlog', assignee: 'Unassigned' });
+    const action = planAction(task, '@assistant pick this up', 'Assistant');
+    expect(action.kind).toBe('pickup');
+    expect(action.column).toBe('doing');
+    expect(action.assignee).toBe('Assistant');
+  });
+
+  it('is a plain reply for a question', () => {
+    const task = makeTask({ column: 'doing' });
+    expect(planAction(task, 'what should I do first?', 'Assistant').kind).toBe('reply');
+  });
+});
+
 describe('buildMentionPrompt', () => {
-  it('includes the card content, thread, and the triggering comment', () => {
+  it('includes the card content, thread, triggering comment, and the planned action', () => {
     const agent = { id: 'assistant', slug: 'assistant', name: 'Assistant' };
-    const trigger = makeComment({ id: 5, author: 'Henry', body: '@assistant please pick this up' });
+    const trigger = makeComment({ id: 5, author: 'Henry', body: '@assistant please move this to review' });
+    const task = makeTask({ description: 'Build CSV export for reports.', column: 'doing' });
+    const action = planAction(task, trigger.body, agent.name);
     const prompt = buildMentionPrompt(
       agent,
-      makeTask({ description: 'Build CSV export for reports.' }),
+      task,
       [makeComment({ id: 2, author: 'Ada', body: 'Started a draft.' }), trigger],
       trigger,
-      true,
+      action,
     );
 
     expect(prompt).toContain('You are Assistant');
     expect(prompt).toContain('Ship the export pipeline');
     expect(prompt).toContain('Build CSV export for reports.');
     expect(prompt).toContain('Ada: Started a draft.');
-    expect(prompt).toContain('Henry: @assistant please pick this up');
-    expect(prompt).toContain('pick up');
+    expect(prompt).toContain('Henry: @assistant please move this to review');
+    expect(prompt).toContain('review');
   });
 });
