@@ -177,6 +177,19 @@ export default function MCOpsView({
       return;
     }
 
+    // Completing a task in Review requires a review decision — route it through
+    // the review modal instead of failing the bulk move.
+    if (bulkColumn === 'done') {
+      const reviewTask = tasks.find(
+        (candidate) => selectedTaskIds.has(candidate.id) && candidate.column === 'review',
+      );
+      if (reviewTask) {
+        setReviewError(null);
+        setReviewModalTask(reviewTask);
+        return;
+      }
+    }
+
     const ids = Array.from(selectedTaskIds);
     setBulkBusy(true);
     setBulkError(null);
@@ -293,6 +306,14 @@ export default function MCOpsView({
         await updateTask(task.id, { metadata: JSON.stringify(nextMeta) });
       }
       setReviewModalTask(null);
+      setSelectedTaskIds((current) => {
+        if (!current.has(task.id)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.delete(task.id);
+        return next;
+      });
     } catch (err) {
       setReviewError(toErrorMessage(err, 'Could not update review.'));
     } finally {
