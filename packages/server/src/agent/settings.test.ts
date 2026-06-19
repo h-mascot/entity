@@ -92,6 +92,7 @@ describe('task agent settings', () => {
     expect(settings.providers.map((provider) => provider.id)).toEqual([
       'google',
       'openai',
+      'openai-compatible',
       'anthropic',
       'xai',
       'vercel-gateway',
@@ -182,5 +183,57 @@ describe('task agent settings', () => {
     expect(mocks.anthropicFactory).toHaveBeenCalledWith('claude-opus-4.6');
     expect(mocks.createGateway).not.toHaveBeenCalled();
     expect(mocks.createGoogleGenerativeAI).not.toHaveBeenCalled();
+  });
+
+  it('persists and resolves a custom base URL for the openai-compatible provider', () => {
+    const settings = updateTaskAgentSettings({
+      provider: 'openai-compatible',
+      model: 'gpt-4o',
+      apiKey: 'azure-key',
+      baseUrl: 'https://henry-keys-eastus2-2e652.openai.azure.com/openai/v1/',
+    });
+
+    expect(settings.provider).toBe('openai-compatible');
+    expect(settings.supportsBaseUrl).toBe(true);
+    // Trailing slash is stripped on normalization.
+    expect(settings.baseUrl).toBe('https://henry-keys-eastus2-2e652.openai.azure.com/openai/v1');
+    expect(settings.baseUrlSource).toBe('database');
+
+    const reloaded = getTaskAgentSettings();
+    expect(reloaded.baseUrl).toBe('https://henry-keys-eastus2-2e652.openai.azure.com/openai/v1');
+  });
+
+  it('rejects an invalid base URL', () => {
+    expect(() =>
+      updateTaskAgentSettings({ provider: 'openai-compatible', baseUrl: 'not-a-url' }),
+    ).toThrow('Base URL must be a valid http(s) URL');
+  });
+
+  it('reads the base URL from OPENAI_BASE_URL env when not stored', () => {
+    vi.stubEnv('OPENAI_BASE_URL', 'https://env-host.example.com/openai/v1');
+    updateTaskAgentSettings({ provider: 'openai-compatible', model: 'gpt-4o', apiKey: 'k' });
+
+    const settings = getTaskAgentSettings();
+    expect(settings.baseUrl).toBe('https://env-host.example.com/openai/v1');
+    expect(settings.baseUrlSource).toBe('env');
+  });
+
+  it('builds an openai-compatible model with baseURL and api-key header', () => {
+    updateTaskAgentSettings({
+      provider: 'openai-compatible',
+      model: 'gpt-4o',
+      apiKey: 'azure-key',
+      baseUrl: 'https://host.openai.azure.com/openai/v1',
+    });
+
+    const model = getTaskAgentLanguageModel();
+
+    expect(model).toBe(mocks.openaiModel);
+    expect(mocks.createOpenAI).toHaveBeenCalledWith({
+      apiKey: 'azure-key',
+      baseURL: 'https://host.openai.azure.com/openai/v1',
+      headers: { 'api-key': 'azure-key' },
+    });
+    expect(mocks.openaiFactory).toHaveBeenCalledWith('gpt-4o');
   });
 });
