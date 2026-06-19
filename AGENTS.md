@@ -118,3 +118,22 @@ If you lose context (session restart, compaction, new session):
 ### When NOT to Use Plans
 - Single lookups, 1-2 step tasks, conversational Q&A
 - Keep it simple — opt-in, not opinionated (Onur's rule)
+
+---
+
+## Cursor Cloud specific instructions
+
+The deployment/`ada-gateway`/Mac-source guidance above is for the maintainer's private prod pipeline and does NOT apply in Cursor Cloud VMs. Here you develop and verify locally; do not attempt prod deploys.
+
+### Services
+- The only long-running process for the core product is the **server** (`packages/server`, Express + WebSocket). It listens on **port 3000** and also serves the built frontend from `packages/app/dist`, so there is no separate frontend process in the default run. `@entity/db` (SQLite via `better-sqlite3`) is an in-process library, not a daemon (DB file at `./data/entity.sqlite`).
+- **ClickClack sidecar** (Go chat sidecar, port 3091) is OPTIONAL and only powers chat compatibility routing. It is NOT checked out in the cloud VM — `npm run setup` clones it to `/tmp/clickclack` from a remote, which is skipped here via `--skip-clickclack`. The core workspace (tasks/files/agents/board) works fully without it. Run the dev server with `ENTITY_CLICKCLACK_SIDECAR=0` to avoid sidecar restart noise.
+
+### Run / build / test (caveats only; standard commands are in README.md and package.json)
+- The startup script (`npm install` then `npm run setup -- --defaults --skip-clickclack`) recreates `entity.config.yaml` and `.env`, which are **gitignored** and absent on a fresh VM. `npm run dev` hard-fails without `entity.config.yaml`, so re-run setup if it's missing.
+- You must `npm run build` before running: the server serves the prebuilt `packages/app/dist`, so UI changes are NOT reflected until you rebuild the frontend (`npm --prefix packages/app run build`). For a hot-reload UI loop, run Vite separately (see README "Frontend-only development", Vite on 5173 pointing at the server on 3000).
+- Start the server directly with `ENTITY_CLICKCLACK_SIDECAR=0 PORT=3000 npm run dev`.
+- No login is required in the default local config; an initial setup wizard appears on first UI load and can be skipped via "Skip setup".
+- Server tests: `cd packages/server && npx vitest run` (colocated `*.test.ts`).
+- `npm run doctor` reports the missing ClickClack checkout as FAIL and the server as unreachable when it isn't running — both are expected in the cloud VM and do not indicate a broken core setup.
+- The root `npm test` / `npm run test:e2e` browser smoke uses an external `agent-browser` binary and a different topology (Vite on 5173, API on 3001); it is not the primary test path here — prefer the server Vitest suite plus manual browser verification on port 3000.
