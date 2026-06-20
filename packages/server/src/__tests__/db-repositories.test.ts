@@ -122,6 +122,27 @@ describe('TaskRepository', () => {
     expect(repo.getTask(task.id)).toBeUndefined();
   });
 
+  it('purges a deleted task\'s comments and activity (no orphans on id reuse)', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const commentRepo = dbMod.createTaskCommentRepository();
+    const activityRepo = dbMod.createActivityRepository();
+
+    const task = repo.createTask({ name: 'Has children' });
+    commentRepo.createComment({ task_id: task.id, body: 'orphan candidate', author: 'Ada' });
+    activityRepo.createActivity({ type: 'task_comment', action: 'Added comment', description: 'x', task_id: task.id });
+
+    expect(commentRepo.listComments(task.id).length).toBe(1);
+    expect(activityRepo.listActivitiesByTaskId(task.id).length).toBe(1);
+
+    expect(repo.deleteTask(task.id)).toBe(true);
+
+    // Child rows keyed by the task id must be gone so a future task that reuses
+    // the id does not inherit them.
+    expect(commentRepo.listComments(task.id).length).toBe(0);
+    expect(activityRepo.listActivitiesByTaskId(task.id).length).toBe(0);
+  });
+
   it('should return false when deleting non-existent task', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();

@@ -1698,6 +1698,18 @@ export function createTaskRepository(): TaskRepository {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const deleteStmt = db.prepare('DELETE FROM tasks WHERE id = ?');
+  // Child rows keyed by task_id must die with the task; otherwise they outlive
+  // it and re-attach to a future task that reuses the id (tasks.id is a plain
+  // INTEGER PRIMARY KEY, so SQLite recycles deleted ids).
+  const deleteTaskCommentsStmt = db.prepare('DELETE FROM task_comments WHERE task_id = ?');
+  const deleteTaskProjectsByTaskStmt = db.prepare('DELETE FROM task_projects WHERE task_id = ?');
+  const deleteTaskActivitiesStmt = db.prepare('DELETE FROM activities WHERE task_id = ?');
+  const deleteTaskWithChildren = db.transaction((id: number) => {
+    deleteTaskCommentsStmt.run(id);
+    deleteTaskProjectsByTaskStmt.run(id);
+    deleteTaskActivitiesStmt.run(id);
+    return deleteStmt.run(id);
+  });
 
   return {
     listTasks: () => {
@@ -1896,7 +1908,7 @@ export function createTaskRepository(): TaskRepository {
     },
 
     deleteTask: (id: number) => {
-      const result = deleteStmt.run(id);
+      const result = deleteTaskWithChildren(id);
       return result.changes > 0;
     },
   };
