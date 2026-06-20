@@ -1,0 +1,40 @@
+---
+description: Entity Phase 2 local Cursor build rules
+alwaysApply: true
+---
+
+# Entity Phase 2 — Cursor Build Rules
+
+Before taking any Entity Phase 2 Linear issue, read:
+
+- `AGENTS.md`
+- `docs/context/entity-phase-2-build-context.md`
+- `docs/specs/entity-phase-2-prd-canonical-20260620.md`
+- the parent epic and child issue body in Linear
+
+## Operating mode
+
+- Prefer local Cursor for work that needs instrumentation, browser proof, DB inspection, screenshots, or live service checks.
+- Cursor Cloud is acceptable only for isolated code/docs/test tasks that do not require local instrumentation.
+- Do not rely on Hermes skills being available in Cursor Cloud; all required context must come from repo files and Linear issue bodies.
+
+## Done standard
+
+Do not mark an issue done until:
+
+1. Relevant code/docs/tests are changed.
+2. `cd packages/server && npm run build && npx vitest run` passes for server-affecting work.
+3. `npm run build` passes when app/server/db packages are affected.
+4. UI-facing work has browser/DOM/screenshot proof.
+5. The Linear issue has a proof comment with commands and results.
+
+## Product boundaries
+
+- Entity owns the work plane. Helm owns deep runtime/admin. ClickClack owns chat primitives. Google Docs V1 is read-only by default.
+- Paperclip is a competitor/reference only; never create Paperclip internal code, module, or architecture references.
+- Curacel is pilot/design-customer context only; do not hardcode Curacel workflows.
+- Never expose secrets, credentials, model/provider config, or destructive runtime controls in Entity UI/search/API.
+
+## Testing bias
+
+For every issue, test at least one success path and one explicit degraded/negative path where applicable. Missing/unknown/degraded states must be visible, not silently coerced to healthy.

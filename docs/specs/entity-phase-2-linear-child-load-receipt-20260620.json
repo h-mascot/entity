@@ -1,0 +1,725 @@
+{
+  "project": {
+    "id": "cf971ddf-ae36-4454-bd56-2bbc7fb192ae",
+    "name": "Entity",
+    "url": "https://linear.app/theheraldlab/project/entity-ae52ac8f59f9"
+  },
+  "team": {
+    "id": "a3d99f21-1b44-4610-bfd5-86ba8507e69b",
+    "key": "THE",
+    "name": "Theherald"
+  },
+  "parent_count": 15,
+  "child_count": 75,
+  "created_count": 0,
+  "updated_count": 75,
+  "parents": [
+    {
+      "identifier": "THE-6",
+      "short": "Slice 0 inventory",
+      "url": "https://linear.app/theheraldlab/issue/THE-6/entity-phase-2-slice-0-inventory-current-entity-schema-activity-log",
+      "children": [
+        {
+          "key": "THE-6.1",
+          "id": "4b1fec2f-bc77-4a85-a5ed-ba2eb26971a1",
+          "identifier": "THE-21",
+          "title": "Inventory current schema and data model",
+          "url": "https://linear.app/theheraldlab/issue/THE-21/entity-phase-2-the-61-inventory-current-schema-and-data-model",
+          "action": "updated"
+        },
+        {
+          "key": "THE-6.2",
+          "id": "211eb341-4b83-45ea-947e-8ae57fe428ed",
+          "identifier": "THE-22",
+          "title": "Inventory activity log and provenance events",
+          "url": "https://linear.app/theheraldlab/issue/THE-22/entity-phase-2-the-62-inventory-activity-log-and-provenance-events",
+          "action": "updated"
+        },
+        {
+          "key": "THE-6.3",
+          "id": "2b1f003a-98fb-4fee-b52e-b6a37b57c0e4",
+          "identifier": "THE-23",
+          "title": "Inventory review packets, proof artifacts, and receipt-like outputs",
+          "url": "https://linear.app/theheraldlab/issue/THE-23/entity-phase-2-the-63-inventory-review-packets-proof-artifacts-and",
+          "action": "updated"
+        },
+        {
+          "key": "THE-6.4",
+          "id": "8cae7e65-9e3c-4f8a-aab0-a3dbe584319d",
+          "identifier": "THE-24",
+          "title": "Inventory integration boundaries: Helm, ClickClack, Google Docs, notifications",
+          "url": "https://linear.app/theheraldlab/issue/THE-24/entity-phase-2-the-64-inventory-integration-boundaries-helm-clickclack",
+          "action": "updated"
+        },
+        {
+          "key": "THE-6.5",
+          "id": "cf43b68c-09f1-4931-b031-3ccb1103877f",
+          "identifier": "THE-25",
+          "title": "Publish Phase 2 gap matrix and dependency map",
+          "url": "https://linear.app/theheraldlab/issue/THE-25/entity-phase-2-the-65-publish-phase-2-gap-matrix-and-dependency-map",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-7",
+      "short": "Workspace hierarchy and task accountability",
+      "url": "https://linear.app/theheraldlab/issue/THE-7/entity-phase-2-establish-org-scoped-workspace-hierarchy-and-task",
+      "children": [
+        {
+          "key": "THE-7.1",
+          "id": "68ac1c1f-b162-4f5c-b941-26db1a41586d",
+          "identifier": "THE-26",
+          "title": "Add org/team/project schema and request org-scoping seam",
+          "url": "https://linear.app/theheraldlab/issue/THE-26/entity-phase-2-the-71-add-orgteamproject-schema-and-request-org",
+          "action": "updated"
+        },
+        {
+          "key": "THE-7.2",
+          "id": "b69c4166-6dd3-4960-bad8-75537737727a",
+          "identifier": "THE-27",
+          "title": "Implement workspace hierarchy service APIs",
+          "url": "https://linear.app/theheraldlab/issue/THE-27/entity-phase-2-the-72-implement-workspace-hierarchy-service-apis",
+          "action": "updated"
+        },
+        {
+          "key": "THE-7.3",
+          "id": "381deeb7-abfa-4a3e-8dd2-07b47de070a7",
+          "identifier": "THE-28",
+          "title": "Enforce task initiator, owner, assignee, and executor accountability",
+          "url": "https://linear.app/theheraldlab/issue/THE-28/entity-phase-2-the-73-enforce-task-initiator-owner-assignee-and",
+          "action": "updated"
+        },
+        {
+          "key": "THE-7.4",
+          "id": "e36c85af-f36f-4f92-9034-67aee9530c2a",
+          "identifier": "THE-29",
+          "title": "Build workspace navigation and accountability UI",
+          "url": "https://linear.app/theheraldlab/issue/THE-29/entity-phase-2-the-74-build-workspace-navigation-and-accountability-ui",
+          "action": "updated"
+        },
+        {
+          "key": "THE-7.5",
+          "id": "5e02025a-95ee-4db4-a8de-e2f1158c71ff",
+          "identifier": "THE-30",
+          "title": "Backfill hierarchy and accountability fields safely",
+          "url": "https://linear.app/theheraldlab/issue/THE-30/entity-phase-2-the-75-backfill-hierarchy-and-accountability-fields",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-8",
+      "short": "ActivityEvent spine",
+      "url": "https://linear.app/theheraldlab/issue/THE-8/entity-phase-2-structure-activityevent-spine-and-migrate-current-event",
+      "children": [
+        {
+          "key": "THE-8.1",
+          "id": "73ebe25f-91ed-4b1e-96ff-722328b97354",
+          "identifier": "THE-31",
+          "title": "Define ActivityEvent schema, enum, and payload versioning",
+          "url": "https://linear.app/theheraldlab/issue/THE-31/entity-phase-2-the-81-define-activityevent-schema-enum-and-payload",
+          "action": "updated"
+        },
+        {
+          "key": "THE-8.2",
+          "id": "3f6191cb-7e8f-425c-a02a-0d90a7e52316",
+          "identifier": "THE-32",
+          "title": "Implement append/query ActivityEvent service",
+          "url": "https://linear.app/theheraldlab/issue/THE-32/entity-phase-2-the-82-implement-appendquery-activityevent-service",
+          "action": "updated"
+        },
+        {
+          "key": "THE-8.3",
+          "id": "621444e2-e457-4a1d-9de3-aefa10bc5eab",
+          "identifier": "THE-33",
+          "title": "Migrate existing activity payloads progressively",
+          "url": "https://linear.app/theheraldlab/issue/THE-33/entity-phase-2-the-83-migrate-existing-activity-payloads-progressively",
+          "action": "updated"
+        },
+        {
+          "key": "THE-8.4",
+          "id": "9de4ab5f-6801-42a3-947e-ad19b4e14617",
+          "identifier": "THE-34",
+          "title": "Render task activity provenance UI",
+          "url": "https://linear.app/theheraldlab/issue/THE-34/entity-phase-2-the-84-render-task-activity-provenance-ui",
+          "action": "updated"
+        },
+        {
+          "key": "THE-8.5",
+          "id": "857a6328-ff05-409a-b0c8-efb482db6e1d",
+          "identifier": "THE-35",
+          "title": "Wire ActivityEvent consumers for receipts, review, routing, and notifications",
+          "url": "https://linear.app/theheraldlab/issue/THE-35/entity-phase-2-the-85-wire-activityevent-consumers-for-receipts-review",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-9",
+      "short": "Canonical receipts",
+      "url": "https://linear.app/theheraldlab/issue/THE-9/entity-phase-2-implement-canonical-receipt-completion-contract",
+      "children": [
+        {
+          "key": "THE-9.1",
+          "id": "5fc06a20-b93c-4109-9dd3-c89463ca0d8b",
+          "identifier": "THE-36",
+          "title": "Add receipt artifact metadata and stable identity",
+          "url": "https://linear.app/theheraldlab/issue/THE-36/entity-phase-2-the-91-add-receipt-artifact-metadata-and-stable",
+          "action": "updated"
+        },
+        {
+          "key": "THE-9.2",
+          "id": "781188e7-bbc9-408d-ba95-dce81c54e5f1",
+          "identifier": "THE-37",
+          "title": "Implement synchronous receipt writer in completion transaction",
+          "url": "https://linear.app/theheraldlab/issue/THE-37/entity-phase-2-the-92-implement-synchronous-receipt-writer-in",
+          "action": "updated"
+        },
+        {
+          "key": "THE-9.3",
+          "id": "f642cee2-598e-4f2f-84d7-21f77ba969b7",
+          "identifier": "THE-38",
+          "title": "Implement receipt failure and integrity recovery states",
+          "url": "https://linear.app/theheraldlab/issue/THE-38/entity-phase-2-the-93-implement-receipt-failure-and-integrity-recovery",
+          "action": "updated"
+        },
+        {
+          "key": "THE-9.4",
+          "id": "b515af23-29fc-4bf5-8c42-a3bb976088a1",
+          "identifier": "THE-39",
+          "title": "Build receipt viewer and missing-evidence UI",
+          "url": "https://linear.app/theheraldlab/issue/THE-39/entity-phase-2-the-94-build-receipt-viewer-and-missing-evidence-ui",
+          "action": "updated"
+        },
+        {
+          "key": "THE-9.5",
+          "id": "51494efd-ef59-4a03-896f-270970edfc57",
+          "identifier": "THE-40",
+          "title": "Harden receipt immutability, path stability, and protocol docs",
+          "url": "https://linear.app/theheraldlab/issue/THE-40/entity-phase-2-the-95-harden-receipt-immutability-path-stability-and",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-10",
+      "short": "Docs/files/artifacts object model",
+      "url": "https://linear.app/theheraldlab/issue/THE-10/entity-phase-2-add-docsfilesartifacts-object-model-with-objectref",
+      "children": [
+        {
+          "key": "THE-10.1",
+          "id": "66755ece-b079-445c-93b6-d60060867fda",
+          "identifier": "THE-41",
+          "title": "Define NativeDocument, ExternalDocumentRef, EvidenceArtifact, and ObjectRef schema",
+          "url": "https://linear.app/theheraldlab/issue/THE-41/entity-phase-2-the-101-define-nativedocument-externaldocumentref",
+          "action": "updated"
+        },
+        {
+          "key": "THE-10.2",
+          "id": "5a36135a-d84c-4292-952c-35d47d0f53d1",
+          "identifier": "THE-42",
+          "title": "Implement document/artifact link services",
+          "url": "https://linear.app/theheraldlab/issue/THE-42/entity-phase-2-the-102-implement-documentartifact-link-services",
+          "action": "updated"
+        },
+        {
+          "key": "THE-10.3",
+          "id": "86962b53-040f-4bd3-925b-112bc648fa7e",
+          "identifier": "THE-43",
+          "title": "Implement native markdown storage and versioning seams",
+          "url": "https://linear.app/theheraldlab/issue/THE-43/entity-phase-2-the-103-implement-native-markdown-storage-and",
+          "action": "updated"
+        },
+        {
+          "key": "THE-10.4",
+          "id": "53a1f6cb-4068-42dc-887e-3e688ba8d921",
+          "identifier": "THE-44",
+          "title": "Build docs/files/artifacts UI distinctions",
+          "url": "https://linear.app/theheraldlab/issue/THE-44/entity-phase-2-the-104-build-docsfilesartifacts-ui-distinctions",
+          "action": "updated"
+        },
+        {
+          "key": "THE-10.5",
+          "id": "3651628d-febb-41f2-a4ff-a8fb3d7eaed1",
+          "identifier": "THE-45",
+          "title": "Migrate existing docs/artifacts and add permission tests",
+          "url": "https://linear.app/theheraldlab/issue/THE-45/entity-phase-2-the-105-migrate-existing-docsartifacts-and-add",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-11",
+      "short": "Review policy and gates",
+      "url": "https://linear.app/theheraldlab/issue/THE-11/entity-phase-2-implement-review-policy-human-gates-and-separation-of",
+      "children": [
+        {
+          "key": "THE-11.1",
+          "id": "bd02ef70-1ed4-465a-981e-1b7b44e4ceb2",
+          "identifier": "THE-46",
+          "title": "Define policy schema, risk inputs, and ExternalSideEffect",
+          "url": "https://linear.app/theheraldlab/issue/THE-46/entity-phase-2-the-111-define-policy-schema-risk-inputs-and",
+          "action": "updated"
+        },
+        {
+          "key": "THE-11.2",
+          "id": "53f91e01-2acc-4dd6-96bc-2f9741659503",
+          "identifier": "THE-47",
+          "title": "Implement layered policy resolver with reason chains",
+          "url": "https://linear.app/theheraldlab/issue/THE-47/entity-phase-2-the-112-implement-layered-policy-resolver-with-reason",
+          "action": "updated"
+        },
+        {
+          "key": "THE-11.3",
+          "id": "cde7edff-7309-4fc9-b124-6bffc59d8f55",
+          "identifier": "THE-48",
+          "title": "Implement reviewer assignment and separation-of-duties fallback",
+          "url": "https://linear.app/theheraldlab/issue/THE-48/entity-phase-2-the-113-implement-reviewer-assignment-and-separation-of",
+          "action": "updated"
+        },
+        {
+          "key": "THE-11.4",
+          "id": "78d7aeae-aea4-4ec5-997d-17e33a0b8429",
+          "identifier": "THE-49",
+          "title": "Implement review and human gate services with gate-before-done ordering",
+          "url": "https://linear.app/theheraldlab/issue/THE-49/entity-phase-2-the-114-implement-review-and-human-gate-services-with",
+          "action": "updated"
+        },
+        {
+          "key": "THE-11.5",
+          "id": "26be4c64-8d67-46a9-b297-c9d708f88feb",
+          "identifier": "THE-50",
+          "title": "Build review/gate UI panels and policy documentation",
+          "url": "https://linear.app/theheraldlab/issue/THE-50/entity-phase-2-the-115-build-reviewgate-ui-panels-and-policy",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-12",
+      "short": "Task Master routing",
+      "url": "https://linear.app/theheraldlab/issue/THE-12/entity-phase-2-implement-task-master-routing-nudges-escalation-and",
+      "children": [
+        {
+          "key": "THE-12.1",
+          "id": "c699246c-9f02-44b0-b3ca-5763d17ee7e6",
+          "identifier": "THE-51",
+          "title": "Add Task Master routing policy projections",
+          "url": "https://linear.app/theheraldlab/issue/THE-51/entity-phase-2-the-121-add-task-master-routing-policy-projections",
+          "action": "updated"
+        },
+        {
+          "key": "THE-12.2",
+          "id": "75244c84-5e83-44f1-8915-dbacb1e22cce",
+          "identifier": "THE-52",
+          "title": "Implement claim flow and double-claim protection",
+          "url": "https://linear.app/theheraldlab/issue/THE-52/entity-phase-2-the-122-implement-claim-flow-and-double-claim",
+          "action": "updated"
+        },
+        {
+          "key": "THE-12.3",
+          "id": "ca0cbc3f-04c4-4796-b67b-7b45ddda9405",
+          "identifier": "THE-53",
+          "title": "Implement nudges and owner escalation",
+          "url": "https://linear.app/theheraldlab/issue/THE-53/entity-phase-2-the-123-implement-nudges-and-owner-escalation",
+          "action": "updated"
+        },
+        {
+          "key": "THE-12.4",
+          "id": "c7ede05a-6884-4e48-8e55-fafd81f00329",
+          "identifier": "THE-54",
+          "title": "Implement auto-reassignment audit chain",
+          "url": "https://linear.app/theheraldlab/issue/THE-54/entity-phase-2-the-124-implement-auto-reassignment-audit-chain",
+          "action": "updated"
+        },
+        {
+          "key": "THE-12.5",
+          "id": "82526983-e9aa-481a-9495-3da791e73109",
+          "identifier": "THE-55",
+          "title": "Build routing state UI and routing matrix docs",
+          "url": "https://linear.app/theheraldlab/issue/THE-55/entity-phase-2-the-125-build-routing-state-ui-and-routing-matrix-docs",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-13",
+      "short": "Worktype registry and overlays",
+      "url": "https://linear.app/theheraldlab/issue/THE-13/entity-phase-2-add-worktype-registry-and-business-ops-overlays",
+      "children": [
+        {
+          "key": "THE-13.1",
+          "id": "1424e6e1-fd4f-48a6-83c4-ce3df552db5c",
+          "identifier": "THE-56",
+          "title": "Implement worktype registry schema and versioning",
+          "url": "https://linear.app/theheraldlab/issue/THE-56/entity-phase-2-the-131-implement-worktype-registry-schema-and",
+          "action": "updated"
+        },
+        {
+          "key": "THE-13.2",
+          "id": "49df73bf-0210-4de4-8483-fa9fe8a4ecaa",
+          "identifier": "THE-57",
+          "title": "Implement sales overlay",
+          "url": "https://linear.app/theheraldlab/issue/THE-57/entity-phase-2-the-132-implement-sales-overlay",
+          "action": "updated"
+        },
+        {
+          "key": "THE-13.3",
+          "id": "e85f90f3-01c4-43f6-8729-cc4c7616d44c",
+          "identifier": "THE-58",
+          "title": "Implement customer-success overlay",
+          "url": "https://linear.app/theheraldlab/issue/THE-58/entity-phase-2-the-133-implement-customer-success-overlay",
+          "action": "updated"
+        },
+        {
+          "key": "THE-13.4",
+          "id": "703c278d-b07a-4f47-afc7-6f9443bd3a1c",
+          "identifier": "THE-59",
+          "title": "Implement people/HR overlay",
+          "url": "https://linear.app/theheraldlab/issue/THE-59/entity-phase-2-the-134-implement-peoplehr-overlay",
+          "action": "updated"
+        },
+        {
+          "key": "THE-13.5",
+          "id": "b6de5e43-1b40-48a3-8eee-cf70bbb33a57",
+          "identifier": "THE-60",
+          "title": "Build worktype overlay UI, filters, and docs",
+          "url": "https://linear.app/theheraldlab/issue/THE-60/entity-phase-2-the-135-build-worktype-overlay-ui-filters-and-docs",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-14",
+      "short": "Permissions, sensitivity, and search",
+      "url": "https://linear.app/theheraldlab/issue/THE-14/entity-phase-2-build-permission-sensitivity-and-search-envelope",
+      "children": [
+        {
+          "key": "THE-14.1",
+          "id": "31b6912c-497a-423d-b28b-4c6910d04f5e",
+          "identifier": "THE-61",
+          "title": "Implement layered RBAC, ACL, and sensitivity evaluator",
+          "url": "https://linear.app/theheraldlab/issue/THE-61/entity-phase-2-the-141-implement-layered-rbac-acl-and-sensitivity",
+          "action": "updated"
+        },
+        {
+          "key": "THE-14.2",
+          "id": "469c121b-f91f-4573-8461-db18b6adc89f",
+          "identifier": "THE-62",
+          "title": "Enforce org/query permission seam across APIs",
+          "url": "https://linear.app/theheraldlab/issue/THE-62/entity-phase-2-the-142-enforce-orgquery-permission-seam-across-apis",
+          "action": "updated"
+        },
+        {
+          "key": "THE-14.3",
+          "id": "18238416-f368-46e5-b334-f694c6aa7fea",
+          "identifier": "THE-63",
+          "title": "Implement permission-safe content envelopes",
+          "url": "https://linear.app/theheraldlab/issue/THE-63/entity-phase-2-the-143-implement-permission-safe-content-envelopes",
+          "action": "updated"
+        },
+        {
+          "key": "THE-14.4",
+          "id": "a497cd50-8607-44db-aca8-43ff60be30ff",
+          "identifier": "THE-64",
+          "title": "Build global/scoped search envelope and indexers",
+          "url": "https://linear.app/theheraldlab/issue/THE-64/entity-phase-2-the-144-build-globalscoped-search-envelope-and-indexers",
+          "action": "updated"
+        },
+        {
+          "key": "THE-14.5",
+          "id": "826da3e8-f5d0-4734-8db5-8149fc027e6e",
+          "identifier": "THE-65",
+          "title": "Harden restricted snippet suppression and search UI",
+          "url": "https://linear.app/theheraldlab/issue/THE-65/entity-phase-2-the-145-harden-restricted-snippet-suppression-and",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-15",
+      "short": "Inbox and notifications",
+      "url": "https://linear.app/theheraldlab/issue/THE-15/entity-phase-2-build-entity-inbox-owner-accountability-and",
+      "children": [
+        {
+          "key": "THE-15.1",
+          "id": "500861c2-371f-44e6-84f5-bbb03337f02b",
+          "identifier": "THE-66",
+          "title": "Implement canonical notification and inbox schema",
+          "url": "https://linear.app/theheraldlab/issue/THE-66/entity-phase-2-the-151-implement-canonical-notification-and-inbox",
+          "action": "updated"
+        },
+        {
+          "key": "THE-15.2",
+          "id": "a7431cf1-8e0d-47c2-9a4b-6291af53202a",
+          "identifier": "THE-67",
+          "title": "Implement notification routing policy and delivery adapters",
+          "url": "https://linear.app/theheraldlab/issue/THE-67/entity-phase-2-the-152-implement-notification-routing-policy-and",
+          "action": "updated"
+        },
+        {
+          "key": "THE-15.3",
+          "id": "a9ec5283-96d1-4700-9f3a-2396c242160a",
+          "identifier": "THE-68",
+          "title": "Build owner accountability inbox and escalation queues",
+          "url": "https://linear.app/theheraldlab/issue/THE-68/entity-phase-2-the-153-build-owner-accountability-inbox-and-escalation",
+          "action": "updated"
+        },
+        {
+          "key": "THE-15.4",
+          "id": "9907679d-fae0-482b-89b5-57956491fe3c",
+          "identifier": "THE-69",
+          "title": "Build inbox and notification UI",
+          "url": "https://linear.app/theheraldlab/issue/THE-69/entity-phase-2-the-154-build-inbox-and-notification-ui",
+          "action": "updated"
+        },
+        {
+          "key": "THE-15.5",
+          "id": "aa2b4ab1-8999-4c25-9bf4-2739b9778963",
+          "identifier": "THE-70",
+          "title": "Document notification contracts and degraded behavior",
+          "url": "https://linear.app/theheraldlab/issue/THE-70/entity-phase-2-the-155-document-notification-contracts-and-degraded",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-16",
+      "short": "Agent Management and Helm runtime binding",
+      "url": "https://linear.app/theheraldlab/issue/THE-16/entity-phase-2-add-agent-management-surface-and-runtime-binding-status",
+      "children": [
+        {
+          "key": "THE-16.1",
+          "id": "04b74623-7a47-405c-aa05-35335a4d6674",
+          "identifier": "THE-71",
+          "title": "Define agent principal and runtime binding schema",
+          "url": "https://linear.app/theheraldlab/issue/THE-71/entity-phase-2-the-161-define-agent-principal-and-runtime-binding",
+          "action": "updated"
+        },
+        {
+          "key": "THE-16.2",
+          "id": "3173d008-14b0-44f0-9749-70aaeb1b3391",
+          "identifier": "THE-72",
+          "title": "Implement Helm status adapter and degraded runtime states",
+          "url": "https://linear.app/theheraldlab/issue/THE-72/entity-phase-2-the-162-implement-helm-status-adapter-and-degraded",
+          "action": "updated"
+        },
+        {
+          "key": "THE-16.3",
+          "id": "37c9df15-c3e4-47c4-957c-0caca43f70f4",
+          "identifier": "THE-73",
+          "title": "Build Agent Management surface",
+          "url": "https://linear.app/theheraldlab/issue/THE-73/entity-phase-2-the-163-build-agent-management-surface",
+          "action": "updated"
+        },
+        {
+          "key": "THE-16.4",
+          "id": "d5d2b41d-c745-41da-9c2e-129233d9bc39",
+          "identifier": "THE-74",
+          "title": "Implement safe light controls and Helm deep links",
+          "url": "https://linear.app/theheraldlab/issue/THE-74/entity-phase-2-the-164-implement-safe-light-controls-and-helm-deep",
+          "action": "updated"
+        },
+        {
+          "key": "THE-16.5",
+          "id": "388be279-3e83-4b88-9abc-4bdf721586d7",
+          "identifier": "THE-75",
+          "title": "Document runtime/admin boundary and provider-agnostic behavior",
+          "url": "https://linear.app/theheraldlab/issue/THE-75/entity-phase-2-the-165-document-runtimeadmin-boundary-and-provider",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-17",
+      "short": "ClickClack collaboration",
+      "url": "https://linear.app/theheraldlab/issue/THE-17/entity-phase-2-integrate-clickclack-as-degraded-safe-collaboration",
+      "children": [
+        {
+          "key": "THE-17.1",
+          "id": "fd270d04-8ee1-4606-abc9-586e8dc4d882",
+          "identifier": "THE-76",
+          "title": "Define Entity to ClickClack contract and readiness states",
+          "url": "https://linear.app/theheraldlab/issue/THE-76/entity-phase-2-the-171-define-entity-to-clickclack-contract-and",
+          "action": "updated"
+        },
+        {
+          "key": "THE-17.2",
+          "id": "08fa021c-05cd-432d-9425-127dcb3a6843",
+          "identifier": "THE-77",
+          "title": "Link ClickClack threads/channels to Entity objects with ObjectRef",
+          "url": "https://linear.app/theheraldlab/issue/THE-77/entity-phase-2-the-172-link-clickclack-threadschannels-to-entity",
+          "action": "updated"
+        },
+        {
+          "key": "THE-17.3",
+          "id": "e809134d-107a-429f-ae37-f0f45c2f6416",
+          "identifier": "THE-78",
+          "title": "Build embedded/staged chat context panel",
+          "url": "https://linear.app/theheraldlab/issue/THE-78/entity-phase-2-the-173-build-embeddedstaged-chat-context-panel",
+          "action": "updated"
+        },
+        {
+          "key": "THE-17.4",
+          "id": "17e405d9-45e9-447d-98d7-66d3d6880a8e",
+          "identifier": "THE-79",
+          "title": "Guarantee degraded ClickClack does not block core Entity flows",
+          "url": "https://linear.app/theheraldlab/issue/THE-79/entity-phase-2-the-174-guarantee-degraded-clickclack-does-not-block",
+          "action": "updated"
+        },
+        {
+          "key": "THE-17.5",
+          "id": "fa966ae9-5bfe-4d15-853f-244a0c588232",
+          "identifier": "THE-80",
+          "title": "Document ClickClack reuse, proxy, and bridge tests",
+          "url": "https://linear.app/theheraldlab/issue/THE-80/entity-phase-2-the-175-document-clickclack-reuse-proxy-and-bridge",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-18",
+      "short": "Google Docs/Drive connector V1",
+      "url": "https://linear.app/theheraldlab/issue/THE-18/entity-phase-2-implement-google-docsdrive-connector-v1-read-only",
+      "children": [
+        {
+          "key": "THE-18.1",
+          "id": "330bc20a-4e1e-4a26-93bb-cff436e8ffd2",
+          "identifier": "THE-81",
+          "title": "Define Google connector auth, scope, and readiness model",
+          "url": "https://linear.app/theheraldlab/issue/THE-81/entity-phase-2-the-181-define-google-connector-auth-scope-and",
+          "action": "updated"
+        },
+        {
+          "key": "THE-18.2",
+          "id": "48c8c232-fbc1-403f-9a22-3808c6f3ea4c",
+          "identifier": "THE-82",
+          "title": "Implement read-only Docs/Drive metadata service",
+          "url": "https://linear.app/theheraldlab/issue/THE-82/entity-phase-2-the-182-implement-read-only-docsdrive-metadata-service",
+          "action": "updated"
+        },
+        {
+          "key": "THE-18.3",
+          "id": "d7973ee3-5c8e-4b04-9448-40cf6887d2dc",
+          "identifier": "THE-83",
+          "title": "Implement external doc link and preview UI",
+          "url": "https://linear.app/theheraldlab/issue/THE-83/entity-phase-2-the-183-implement-external-doc-link-and-preview-ui",
+          "action": "updated"
+        },
+        {
+          "key": "THE-18.4",
+          "id": "08fb4e8f-4172-4762-90e3-0b59755de2e1",
+          "identifier": "THE-84",
+          "title": "Enforce restricted preview/snippet suppression",
+          "url": "https://linear.app/theheraldlab/issue/THE-84/entity-phase-2-the-184-enforce-restricted-previewsnippet-suppression",
+          "action": "updated"
+        },
+        {
+          "key": "THE-18.5",
+          "id": "2c938cea-9cee-4b18-b7cb-d24514002e0e",
+          "identifier": "THE-85",
+          "title": "Document connector posture and future write gates",
+          "url": "https://linear.app/theheraldlab/issue/THE-85/entity-phase-2-the-185-document-connector-posture-and-future-write",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-19",
+      "short": "Migration and backfill",
+      "url": "https://linear.app/theheraldlab/issue/THE-19/entity-phase-2-progressive-migrationbackfill-and-cleanup-queues",
+      "children": [
+        {
+          "key": "THE-19.1",
+          "id": "bf3fda7c-c5ef-47bb-9995-5c51b9ac5d86",
+          "identifier": "THE-86",
+          "title": "Build migration dry-run inventory report",
+          "url": "https://linear.app/theheraldlab/issue/THE-86/entity-phase-2-the-191-build-migration-dry-run-inventory-report",
+          "action": "updated"
+        },
+        {
+          "key": "THE-19.2",
+          "id": "fa05bc27-ffa5-4b58-9cf6-d5e42a696366",
+          "identifier": "THE-87",
+          "title": "Backfill required hierarchy/accountability fields with confidence",
+          "url": "https://linear.app/theheraldlab/issue/THE-87/entity-phase-2-the-192-backfill-required-hierarchyaccountability",
+          "action": "updated"
+        },
+        {
+          "key": "THE-19.3",
+          "id": "823be3cc-a1f7-46b2-b447-d9bb87039337",
+          "identifier": "THE-88",
+          "title": "Map review packets and evidence into structured artifacts/events",
+          "url": "https://linear.app/theheraldlab/issue/THE-88/entity-phase-2-the-193-map-review-packets-and-evidence-into-structured",
+          "action": "updated"
+        },
+        {
+          "key": "THE-19.4",
+          "id": "ce81add3-f5b4-480e-ae0c-67b6a8e5a8a0",
+          "identifier": "THE-89",
+          "title": "Build migration warning and cleanup queues",
+          "url": "https://linear.app/theheraldlab/issue/THE-89/entity-phase-2-the-194-build-migration-warning-and-cleanup-queues",
+          "action": "updated"
+        },
+        {
+          "key": "THE-19.5",
+          "id": "dcd045a3-51a5-4a78-b47b-db02db84440f",
+          "identifier": "THE-90",
+          "title": "Document migration runbook and rollback/non-fabrication rules",
+          "url": "https://linear.app/theheraldlab/issue/THE-90/entity-phase-2-the-195-document-migration-runbook-and-rollbacknon",
+          "action": "updated"
+        }
+      ]
+    },
+    {
+      "identifier": "THE-20",
+      "short": "Release observability and proof gates",
+      "url": "https://linear.app/theheraldlab/issue/THE-20/entity-phase-2-release-observability-feature-flags-proof-gates-and",
+      "children": [
+        {
+          "key": "THE-20.1",
+          "id": "415cecb1-b635-4111-b452-e61c743e3081",
+          "identifier": "THE-91",
+          "title": "Add feature flags and staged enforcement gates",
+          "url": "https://linear.app/theheraldlab/issue/THE-91/entity-phase-2-the-201-add-feature-flags-and-staged-enforcement-gates",
+          "action": "updated"
+        },
+        {
+          "key": "THE-20.2",
+          "id": "968bbcc6-c259-4ada-9ec4-76a39a656bc3",
+          "identifier": "THE-92",
+          "title": "Add observability for receipts, review, search, integrations, and migration",
+          "url": "https://linear.app/theheraldlab/issue/THE-92/entity-phase-2-the-202-add-observability-for-receipts-review-search",
+          "action": "updated"
+        },
+        {
+          "key": "THE-20.3",
+          "id": "f64b3743-eeca-46ed-a5ff-56feacc6621e",
+          "identifier": "THE-93",
+          "title": "Build E2E proof suite for first-session spine",
+          "url": "https://linear.app/theheraldlab/issue/THE-93/entity-phase-2-the-203-build-e2e-proof-suite-for-first-session-spine",
+          "action": "updated"
+        },
+        {
+          "key": "THE-20.4",
+          "id": "d8ddc0c6-114d-4abf-986a-c2d3d82578d4",
+          "identifier": "THE-94",
+          "title": "Run security/privacy/boundary release gate",
+          "url": "https://linear.app/theheraldlab/issue/THE-94/entity-phase-2-the-204-run-securityprivacyboundary-release-gate",
+          "action": "updated"
+        },
+        {
+          "key": "THE-20.5",
+          "id": "180a8636-f445-4c2d-a8ab-9d2e452d0c57",
+          "identifier": "THE-95",
+          "title": "Write rollback runbook and release checklist",
+          "url": "https://linear.app/theheraldlab/issue/THE-95/entity-phase-2-the-205-write-rollback-runbook-and-release-checklist",
+          "action": "updated"
+        }
+      ]
+    }
+  ],
+  "relation_count": 60,
+  "relation_errors": []
+}
