@@ -72,7 +72,7 @@ export default function MCTaskCard({
 	    .filter(Boolean)
 	    .join(' ');
 	  const taskState = task.blocked ? 'error' : isWorking ? 'active' : task.column === 'done' ? 'success' : 'idle';
-	  const statefulCardClassName = `${cardClassName} task-state-${taskState}`;
+	  const statefulCardClassName = `group ${cardClassName} task-state-${taskState}`;
 
   useEffect(() => {
     if (isHighlighted) {
@@ -163,18 +163,23 @@ export default function MCTaskCard({
       tabIndex={0}
       title={task.blocked && blockedReason ? blockedReason : task.name}
       aria-current={isHighlighted ? 'true' : undefined}
+      aria-pressed={onToggleSelect ? isSelected : undefined}
       data-testid={`mc-task-card-${task.id}`}
+      data-selected={isSelected ? 'true' : undefined}
       style={isSelected ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent) inset' } : undefined}
     >
       {onToggleSelect ? (
         <label
-          className="absolute right-2 top-2 z-10 flex cursor-pointer items-center"
-          title="Select task for bulk actions"
+          className={`absolute right-2 top-2 z-10 flex cursor-pointer items-center transition-opacity focus-within:opacity-100 group-hover:opacity-100 ${
+            isSelected ? 'opacity-100' : 'opacity-0'
+          }`}
+          title={isSelected ? 'Selected — click to deselect' : 'Select task for bulk actions'}
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         >
           <input
             type="checkbox"
+            className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
             checked={isSelected}
             aria-label={`Select task ${task.id}`}
             data-testid={`mc-task-select-${task.id}`}
