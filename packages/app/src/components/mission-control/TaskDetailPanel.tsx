@@ -15,6 +15,14 @@ import {
   type ProjectOption,
 } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
+import {
+  REVIEW_DECISION_LABELS,
+  buildReviewDecisionMetadata,
+  normalizeReviewDecision,
+  type ReviewDecision,
+} from './reviewActions';
+import { useEntityWebSocket } from '../../hooks/useEntityWebSocket';
+import { useMentionAutocomplete } from './useMentionAutocomplete';
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
@@ -818,36 +826,6 @@ function reviewPacketSummary(metadata: Record<string, unknown>): string {
   return `${outcome}${criteria > 0 ? ` / ${criteria} criterion${criteria === 1 ? '' : 'a'}` : ''}`;
 }
 
-type ReviewDecision = 'pending' | 'accepted' | 'needs_fix' | 'rejected';
-
-const REVIEW_DECISION_LABELS: Record<ReviewDecision, string> = {
-  pending: 'Pending',
-  accepted: 'Accepted',
-  needs_fix: 'Needs fix',
-  rejected: 'Rejected',
-};
-
-function normalizeReviewDecision(value: unknown): ReviewDecision {
-  const normalized = readNonEmptyString(value)?.toLowerCase().replace(/[\s-]+/g, '_');
-  if (normalized === 'accepted' || normalized === 'needs_fix' || normalized === 'rejected') {
-    return normalized;
-  }
-  return 'pending';
-}
-
-function buildReviewMetadataPatch(
-  task: TaskDetailData,
-  decision: ReviewDecision,
-  reviewer: string
-): string {
-  return JSON.stringify({
-    ...task.metadataRecord,
-    review_decision: decision,
-    reviewed_by: reviewer,
-    reviewed_at: new Date().toISOString(),
-  });
-}
-
 async function requestOptionalJson<T = unknown>(
   path: string,
   apiBase: string,
@@ -964,7 +942,6 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const [attachmentPath, setAttachmentPath] = useState('');
   const [noteInput, setNoteInput] = useState('');
   const [commentInput, setCommentInput] = useState('');
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [replyTargetId, setReplyTargetId] = useState<number | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const { tasks: boardTasks, reloadTasks } = useTaskBoard({ apiBase, autoLoad: false });
@@ -1239,91 +1216,23 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
   // Live-refresh this task's detail + comments when the server broadcasts
   // changes for it (e.g. an @mentioned agent's reply or task pickup).
-  useEffect(() => {
-    if (typeof window === 'undefined') {
+  useEntityWebSocket((message) => {
+    if (Number(message.taskId) !== taskId) {
       return;
     }
-    let active = true;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
-
-    const connect = () => {
-      if (!active) {
-        return;
-      }
-      try {
-        const url = new URL('ws://' + window.location.host);
-        const token = window.localStorage.getItem('entity-api-token');
-        if (token && token.trim()) {
-          url.searchParams.set('token', token.trim());
-        }
-        socket = new WebSocket(url.toString());
-      } catch {
-        socket = new WebSocket('ws://' + window.location.host);
-      }
-
-      socket.onmessage = (event) => {
-        let message: { type?: string; taskId?: unknown };
-        try {
-          message = JSON.parse(String(event.data)) as { type?: string; taskId?: unknown };
-        } catch {
-          return;
-        }
-        if (Number(message.taskId) !== taskId) {
-          return;
-        }
-        if (
-          message.type === 'task:comment' ||
-          message.type === 'task:updated' ||
-          message.type === 'task:moved'
-        ) {
-          void supplementalRef.current(taskId, {
-            preserveOutput: true,
-            preserveDependencyInput: true,
-          });
-        }
-      };
-
-      socket.onclose = () => {
-        socket = null;
-        if (!active) {
-          return;
-        }
-        reconnectTimer = window.setTimeout(connect, 3000);
-      };
-    };
-
-    connect();
-
-    return () => {
-      active = false;
-      if (reconnectTimer !== null) {
-        window.clearTimeout(reconnectTimer);
-      }
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-        socket.close();
-      }
-    };
-  }, [taskId]);
-
-  const mentionMatches = useMemo(() => {
-    if (mentionQuery === null) {
-      return [];
+    if (
+      message.type === 'task:comment' ||
+      message.type === 'task:updated' ||
+      message.type === 'task:moved'
+    ) {
+      void supplementalRef.current(taskId, {
+        preserveOutput: true,
+        preserveDependencyInput: true,
+      });
     }
-    const query = mentionQuery.toLowerCase();
-    return activeAgentNames.filter((name) => name.toLowerCase().includes(query)).slice(0, 6);
-  }, [activeAgentNames, mentionQuery]);
+  });
 
-  const handleCommentInputChange = (value: string) => {
-    setCommentInput(value);
-    const match = value.match(/@([\w.-]*)$/);
-    setMentionQuery(match ? match[1] : null);
-  };
-
-  const applyMention = (name: string) => {
-    setCommentInput((prev) => prev.replace(/@([\w.-]*)$/, `@${name} `));
-    setMentionQuery(null);
-  };
+  const mention = useMentionAutocomplete(activeAgentNames, setCommentInput);
 
   const clearStaleBlockerReason = (detail: TaskDetailData) => {
     const stalePatterns = [
@@ -1657,7 +1566,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     }
 
     const reviewer = userProfile.displayName || 'Reviewer';
-    const metadata = buildReviewMetadataPatch(task, decision, reviewer);
+    const metadata = buildReviewDecisionMetadata(task.metadataRecord, { decision, reviewer });
     await patchTask(
       {
         metadata,
@@ -2848,17 +2757,17 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                         <input
                           type="text"
                           value={commentInput}
-                          onChange={(event) => handleCommentInputChange(event.target.value)}
+                          onChange={(event) => mention.onChange(event.target.value)}
                           onKeyDown={(event) => {
-                            if (event.key === 'Escape' && mentionQuery !== null) {
+                            if (event.key === 'Escape' && mention.active) {
                               event.preventDefault();
-                              setMentionQuery(null);
+                              mention.close();
                               return;
                             }
                             if (event.key === 'Enter') {
                               event.preventDefault();
-                              if (mentionQuery !== null && mentionMatches.length > 0) {
-                                applyMention(mentionMatches[0]!);
+                              if (mention.active && mention.matches.length > 0) {
+                                mention.apply(mention.matches[0]!);
                                 return;
                               }
                               void postComment();
@@ -2867,17 +2776,17 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                           placeholder="Add a comment... use @ to mention an agent"
                           className="mc-shell-input w-full px-3 py-2 text-sm"
                         />
-                        {mentionQuery !== null && mentionMatches.length > 0 ? (
+                        {mention.active && mention.matches.length > 0 ? (
                           <div className="absolute bottom-full left-0 z-30 mb-1 w-64 overflow-hidden rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
                             <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
                               Mention an agent
                             </div>
-                            {mentionMatches.map((name) => (
+                            {mention.matches.map((name) => (
                               <button
                                 key={name}
                                 type="button"
                                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-tertiary)]"
-                                onClick={() => applyMention(name)}
+                                onClick={() => mention.apply(name)}
                               >
                                 <span aria-hidden="true">🤖</span>
                                 <span>@{name}</span>

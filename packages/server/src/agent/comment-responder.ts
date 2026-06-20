@@ -1,7 +1,14 @@
 import { generateText } from 'ai';
-import type { AgentRegistryRecord, TaskColumn, TaskCommentRecord, TaskRecord } from '../../../db/src';
+import type {
+  ActivityType,
+  AgentRegistryRecord,
+  TaskColumn,
+  TaskCommentRecord,
+  TaskRecord,
+  UpdateTaskInput,
+} from '../../../db/src';
 import { getTaskAgentLanguageModel, getTaskAgentSettings } from './settings';
-import { isReviewGatedTask, validateReviewCompletion } from './review-policy';
+import { hasAssignedOwner, isActiveTaskColumn, isReviewGatedTask, validateReviewCompletion } from './review-policy';
 
 const MENTION_REGEX = /@([a-z0-9][a-z0-9._-]*)/gi;
 const INACTIVE_AGENT_STATUSES = new Set(['offline', 'inactive', 'disabled', 'archived', 'retired', 'deleted']);
@@ -21,13 +28,6 @@ const COLUMN_SYNONYMS: Array<{ column: TaskColumn; pattern: RegExp }> = [
   { column: 'review', pattern: /\b(review|in[\s-]?review|for\s+review)\b/i },
   { column: 'done', pattern: /\b(done|complete[d]?|finish(?:ed)?|completed)\b/i },
 ];
-
-const ACTIVE_COLUMNS = new Set<TaskColumn>(['todo', 'doing', 'review']);
-
-function hasOwner(assignee: string | null | undefined): boolean {
-  const normalized = assignee?.trim().toLowerCase();
-  return Boolean(normalized) && normalized !== 'unassigned';
-}
 
 /**
  * Detects an explicit "move this task to <column>" instruction in a comment.
@@ -65,14 +65,11 @@ export interface CommentResponderDeps {
     author?: string;
     parent_id?: number | null;
   }) => TaskCommentRecord;
-  updateTask: (
-    taskId: number,
-    fields: { assignee?: string; column?: string },
-  ) => Promise<TaskRecord | null | undefined> | TaskRecord | null | undefined;
+  updateTask: (taskId: number, fields: UpdateTaskInput) => Promise<TaskRecord | null | undefined>;
   listAgents: () => AgentRegistryRecord[];
   logActivity: (input: {
     source: 'agent';
-    type: string;
+    type: ActivityType;
     action: string;
     description: string;
     agentName?: string;
@@ -157,7 +154,7 @@ export function planAction(task: TaskRecord, body: string, agentName: string): P
 
   if (moveTarget && moveTarget !== task.column) {
     // Active columns require an owner; assign the acting agent if none.
-    const assignee = ACTIVE_COLUMNS.has(moveTarget) && !hasOwner(task.assignee) ? agentName : undefined;
+    const assignee = isActiveTaskColumn(moveTarget) && !hasAssignedOwner(task.assignee) ? agentName : undefined;
 
     if (moveTarget === 'done' && isReviewGatedTask(task.metadata)) {
       const completion = validateReviewCompletion(task, agentName);

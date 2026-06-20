@@ -7,8 +7,9 @@ import { useTaskBoard, type TaskBoardTask, type TaskColumn } from '../../hooks/u
 import type { MCTab } from './MCHeader';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
 import { buildBookmarkMetadata, formatTaskProjectSummary, isTaskBookmarked } from './utils/taskHelpers';
-import { toErrorMessage } from '../../lib/http';
-import { readUserProfile } from '../../lib/userProfile';
+import type { ReviewAction } from './reviewActions';
+import { useReviewCompletion } from './useReviewCompletion';
+import { useBoardSelection } from './useBoardSelection';
 
 interface MCOpsViewProps {
   apiBase?: string;
@@ -99,13 +100,13 @@ export default function MCOpsView({
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
   const [statusFilter, setStatusFilter] = useState<BoardStatusFilter>('all');
-  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(() => new Set());
-  const [bulkColumn, setBulkColumn] = useState<TaskColumn>('todo');
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [reviewModalTask, setReviewModalTask] = useState<TaskBoardTask | null>(null);
-  const [reviewBusy, setReviewBusy] = useState(false);
-  const [reviewError, setReviewError] = useState<string | null>(null);
+  const review = useReviewCompletion(updateTask);
+  const selection = useBoardSelection({
+    tasks,
+    onMoveTask,
+    onNeedsReview: review.openForTask,
+    formatColumnLabel: (column) => COLUMN_TITLES[column],
+  });
   const activeTaskDetailId = selectedTaskId ?? highlightTaskId;
   const query = globalSearch.trim().toLowerCase();
   const searchMatchedTasks = tasks.filter((task) => matchesGlobalSearch(task, query));
@@ -135,26 +136,6 @@ export default function MCOpsView({
     tasksByColumn[task.column].push(task);
   });
 
-  const selectedCount = selectedTaskIds.size;
-
-  const toggleTaskSelection = (taskId: number) => {
-    setBulkError(null);
-    setSelectedTaskIds((current) => {
-      const next = new Set(current);
-      if (next.has(taskId)) {
-        next.delete(taskId);
-      } else {
-        next.add(taskId);
-      }
-      return next;
-    });
-  };
-
-  const clearSelection = () => {
-    setSelectedTaskIds(new Set());
-    setBulkError(null);
-  };
-
   const handleStatusFilterClick = (next: BoardStatusFilter) => {
     setStatusFilter((current) => (current === next ? 'all' : next));
   };
@@ -169,47 +150,6 @@ export default function MCOpsView({
       await updateTask(taskId, { metadata: buildBookmarkMetadata(task, nextBookmarked) });
     } catch (error) {
       console.error('Failed to toggle task bookmark:', error);
-    }
-  };
-
-  const handleBulkMove = async () => {
-    if (selectedCount === 0 || bulkBusy) {
-      return;
-    }
-
-    // Completing a task in Review requires a review decision — route it through
-    // the review modal instead of failing the bulk move.
-    if (bulkColumn === 'done') {
-      const reviewTask = tasks.find(
-        (candidate) => selectedTaskIds.has(candidate.id) && candidate.column === 'review',
-      );
-      if (reviewTask) {
-        setReviewError(null);
-        setReviewModalTask(reviewTask);
-        return;
-      }
-    }
-
-    const ids = Array.from(selectedTaskIds);
-    setBulkBusy(true);
-    setBulkError(null);
-    const failures: number[] = [];
-    for (const id of ids) {
-      try {
-        await onMoveTask(id, bulkColumn);
-      } catch {
-        failures.push(id);
-      }
-    }
-    setBulkBusy(false);
-
-    if (failures.length > 0) {
-      setSelectedTaskIds(new Set(failures));
-      setBulkError(
-        `Moved ${ids.length - failures.length} of ${ids.length} task(s). ${failures.length} could not be moved to ${COLUMN_TITLES[bulkColumn]}.`,
-      );
-    } else {
-      setSelectedTaskIds(new Set());
     }
   };
 
@@ -255,8 +195,7 @@ export default function MCOpsView({
     }
 
     if (task.column === 'review' && column === 'done') {
-      setReviewError(null);
-      setReviewModalTask(task);
+      review.openForTask(task);
       setDraggedTaskId(null);
       return;
     }
@@ -270,54 +209,10 @@ export default function MCOpsView({
     }
   };
 
-  const handleReviewSubmit = async (
-    action: 'accept' | 'accept_done' | 'needs_fix' | 'reject',
-    note: string,
-  ) => {
-    const task = reviewModalTask;
-    if (!task) {
-      return;
-    }
-
-    let existing: Record<string, unknown> = {};
-    try {
-      existing = task.metadata ? (JSON.parse(task.metadata) as Record<string, unknown>) : {};
-    } catch {
-      existing = {};
-    }
-
-    const reviewer = readUserProfile().displayName || 'Henry';
-    const decision = action === 'reject' ? 'rejected' : action === 'needs_fix' ? 'needs_fix' : 'accepted';
-    const nextMeta = {
-      ...existing,
-      review_type: (existing.review_type as string) || (existing.review_class as string) || 'henry',
-      review_decision: decision,
-      reviewed_by: reviewer,
-      reviewed_at: new Date().toISOString(),
-      ...(note.trim() ? { review_note: note.trim() } : {}),
-    };
-
-    setReviewBusy(true);
-    setReviewError(null);
-    try {
-      if (action === 'accept_done') {
-        await updateTask(task.id, { metadata: JSON.stringify(nextMeta), column: 'done' });
-      } else {
-        await updateTask(task.id, { metadata: JSON.stringify(nextMeta) });
-      }
-      setReviewModalTask(null);
-      setSelectedTaskIds((current) => {
-        if (!current.has(task.id)) {
-          return current;
-        }
-        const next = new Set(current);
-        next.delete(task.id);
-        return next;
-      });
-    } catch (err) {
-      setReviewError(toErrorMessage(err, 'Could not update review.'));
-    } finally {
-      setReviewBusy(false);
+  const handleReviewSubmit = async (action: ReviewAction, note: string) => {
+    const completedId = await review.submit(action, note);
+    if (completedId !== null) {
+      selection.deselect(completedId);
     }
   };
 
@@ -426,15 +321,15 @@ export default function MCOpsView({
               </span>
             ) : null}
           </div>
-          {selectedCount > 0 ? (
+          {selection.selectedCount > 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/40 bg-[var(--surface-accent)] p-2">
-              <span className="px-2 text-xs font-semibold text-[var(--accent)]">{selectedCount} selected</span>
+              <span className="px-2 text-xs font-semibold text-[var(--accent)]">{selection.selectedCount} selected</span>
               <label className="flex items-center gap-1 text-xs text-[var(--text-secondary)]">
                 <span>Move to</span>
                 <select
-                  value={bulkColumn}
-                  onChange={(event) => setBulkColumn(event.target.value as TaskColumn)}
-                  disabled={bulkBusy}
+                  value={selection.bulkColumn}
+                  onChange={(event) => selection.setBulkColumn(event.target.value as TaskColumn)}
+                  disabled={selection.bulkBusy}
                   className="mc-shell-input h-8 px-2 py-1 text-xs"
                 >
                   {BULK_MOVE_COLUMNS.map((column) => (
@@ -446,21 +341,21 @@ export default function MCOpsView({
               </label>
               <button
                 type="button"
-                onClick={() => void handleBulkMove()}
-                disabled={bulkBusy}
+                onClick={() => void selection.runBulkMove()}
+                disabled={selection.bulkBusy}
                 className="mc-shell-btn mc-shell-btn-active px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {bulkBusy ? 'Moving...' : 'Move selected'}
+                {selection.bulkBusy ? 'Moving...' : 'Move selected'}
               </button>
               <button
                 type="button"
-                onClick={clearSelection}
-                disabled={bulkBusy}
+                onClick={selection.clear}
+                disabled={selection.bulkBusy}
                 className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
               >
                 Clear
               </button>
-              {bulkError ? <span className="px-2 text-xs text-[var(--error)]">{bulkError}</span> : null}
+              {selection.bulkError ? <span className="px-2 text-xs text-[var(--error)]">{selection.bulkError}</span> : null}
             </div>
           ) : null}
         </div>
@@ -478,8 +373,8 @@ export default function MCOpsView({
               onOpenTask={handleOpenTask}
               onUpdateTaskProjects={handleUpdateTaskProjects}
               projectOptions={projectOptions}
-              selectedTaskIds={selectedTaskIds}
-              onToggleSelect={toggleTaskSelection}
+              selectedTaskIds={selection.selectedTaskIds}
+              onToggleSelect={selection.toggle}
               onToggleBookmark={handleToggleBookmark}
               tasks={tasksByColumn[column]}
               title={COLUMN_TITLES[column]}
@@ -502,14 +397,11 @@ export default function MCOpsView({
         />
       ) : null}
       <ReviewActionModal
-        open={reviewModalTask !== null}
-        task={reviewModalTask}
-        busy={reviewBusy}
-        error={reviewError}
-        onClose={() => {
-          setReviewModalTask(null);
-          setReviewError(null);
-        }}
+        open={review.task !== null}
+        task={review.task}
+        busy={review.busy}
+        error={review.error}
+        onClose={review.close}
         onSubmit={handleReviewSubmit}
       />
     </div>
