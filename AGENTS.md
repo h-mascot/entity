@@ -71,6 +71,8 @@ cd packages/server && npm run build && npx vitest run
 ## Database
 
 - SQLite via better-sqlite3
+- **Committed in-place build artifacts (footgun):** `packages/db/src/{index,task-sync,local,cloud}.js` are committed *compiled* copies that the running server resolves **before** the matching `.ts` (extensionless relative imports prefer `.js`). If you edit any of those four `.ts` files, you MUST regenerate the sibling `.js` (e.g. `npm --prefix packages/db run build` then copy `packages/db/dist/{index,task-sync,local,cloud}.js` over `packages/db/src/`) or the change will silently NOT take effect at runtime. (Other `packages/db/src/*.ts` files have no `.js` shadow and load normally.)
+- `tasks.id` is a plain `INTEGER PRIMARY KEY`, so SQLite **reuses** deleted task ids. `deleteTask` purges child rows (task_comments, task_projects, task-scoped activities) so a recycled id never inherits a previous task's data.
 - DB file: `packages/db/entity-tasks.db` — **NEVER overwrite in production**
 - Production DB is on ada-gateway, dev DB is on Mac
 - Always use `deploy.sh` for deployments (never manual rsync)
