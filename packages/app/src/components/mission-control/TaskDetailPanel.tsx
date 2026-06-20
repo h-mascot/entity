@@ -22,6 +22,7 @@ import {
   type ReviewDecision,
 } from './reviewActions';
 import { useEntityWebSocket } from '../../hooks/useEntityWebSocket';
+import { useMentionAutocomplete } from './useMentionAutocomplete';
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
@@ -941,7 +942,6 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const [attachmentPath, setAttachmentPath] = useState('');
   const [noteInput, setNoteInput] = useState('');
   const [commentInput, setCommentInput] = useState('');
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [replyTargetId, setReplyTargetId] = useState<number | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const { tasks: boardTasks, reloadTasks } = useTaskBoard({ apiBase, autoLoad: false });
@@ -1232,24 +1232,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     }
   });
 
-  const mentionMatches = useMemo(() => {
-    if (mentionQuery === null) {
-      return [];
-    }
-    const query = mentionQuery.toLowerCase();
-    return activeAgentNames.filter((name) => name.toLowerCase().includes(query)).slice(0, 6);
-  }, [activeAgentNames, mentionQuery]);
-
-  const handleCommentInputChange = (value: string) => {
-    setCommentInput(value);
-    const match = value.match(/@([\w.-]*)$/);
-    setMentionQuery(match ? match[1] : null);
-  };
-
-  const applyMention = (name: string) => {
-    setCommentInput((prev) => prev.replace(/@([\w.-]*)$/, `@${name} `));
-    setMentionQuery(null);
-  };
+  const mention = useMentionAutocomplete(activeAgentNames, setCommentInput);
 
   const clearStaleBlockerReason = (detail: TaskDetailData) => {
     const stalePatterns = [
@@ -2774,17 +2757,17 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                         <input
                           type="text"
                           value={commentInput}
-                          onChange={(event) => handleCommentInputChange(event.target.value)}
+                          onChange={(event) => mention.onChange(event.target.value)}
                           onKeyDown={(event) => {
-                            if (event.key === 'Escape' && mentionQuery !== null) {
+                            if (event.key === 'Escape' && mention.active) {
                               event.preventDefault();
-                              setMentionQuery(null);
+                              mention.close();
                               return;
                             }
                             if (event.key === 'Enter') {
                               event.preventDefault();
-                              if (mentionQuery !== null && mentionMatches.length > 0) {
-                                applyMention(mentionMatches[0]!);
+                              if (mention.active && mention.matches.length > 0) {
+                                mention.apply(mention.matches[0]!);
                                 return;
                               }
                               void postComment();
@@ -2793,17 +2776,17 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                           placeholder="Add a comment... use @ to mention an agent"
                           className="mc-shell-input w-full px-3 py-2 text-sm"
                         />
-                        {mentionQuery !== null && mentionMatches.length > 0 ? (
+                        {mention.active && mention.matches.length > 0 ? (
                           <div className="absolute bottom-full left-0 z-30 mb-1 w-64 overflow-hidden rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
                             <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
                               Mention an agent
                             </div>
-                            {mentionMatches.map((name) => (
+                            {mention.matches.map((name) => (
                               <button
                                 key={name}
                                 type="button"
                                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-tertiary)]"
-                                onClick={() => applyMention(name)}
+                                onClick={() => mention.apply(name)}
                               >
                                 <span aria-hidden="true">🤖</span>
                                 <span>@{name}</span>
