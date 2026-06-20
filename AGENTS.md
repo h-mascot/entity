@@ -71,7 +71,7 @@ cd packages/server && npm run build && npx vitest run
 ## Database
 
 - SQLite via better-sqlite3
-- **Committed in-place build artifacts (footgun):** `packages/db/src/{index,task-sync,local,cloud}.js` are committed *compiled* copies that the running server resolves **before** the matching `.ts` (extensionless relative imports prefer `.js`). If you edit any of those four `.ts` files, you MUST regenerate the sibling `.js` (e.g. `npm --prefix packages/db run build` then copy `packages/db/dist/{index,task-sync,local,cloud}.js` over `packages/db/src/`) or the change will silently NOT take effect at runtime. (Other `packages/db/src/*.ts` files have no `.js` shadow and load normally.)
+- **Keep `packages/db/src` TypeScript-only — never commit compiled `.js` there.** Previously `src/{index,task-sync,local,cloud}.js` were committed compiled copies that shadowed the `.ts` at runtime: the dev server (`ts-node`, which imports `../../db/src/...`) resolved the stale `.js` before the `.ts`, so edits to those `.ts` files silently had no effect until the `.js` was regenerated. They've been removed. The dev server now compiles the `.ts` via ts-node, and the production build emits its own db copy under `packages/server/dist/db/src/`, so neither path needs `.js` in `packages/db/src`. If you ever see `.js` reappear there, delete it.
 - `tasks.id` is a plain `INTEGER PRIMARY KEY`, so SQLite **reuses** deleted task ids. `deleteTask` purges child rows (task_comments, task_projects, task-scoped activities) so a recycled id never inherits a previous task's data.
 - DB file: `packages/db/entity-tasks.db` — **NEVER overwrite in production**
 - Production DB is on ada-gateway, dev DB is on Mac
