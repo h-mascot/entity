@@ -329,9 +329,9 @@ const commentMentionResponder = createCommentMentionResponder({
   getTask: (taskId) => taskSyncLayer.getTask(taskId),
   listComments: (taskId) => taskCommentRepository.listComments(taskId),
   createComment: (input) => taskCommentRepository.createComment(input),
-  updateTask: (taskId, fields) => taskSyncLayer.updateTask(taskId, fields as never),
+  updateTask: (taskId, fields) => taskSyncLayer.updateTask(taskId, fields),
   listAgents: () => agentRegistryRepo.listAgents(),
-  logActivity: (input) => logActivity(input as Parameters<typeof logActivity>[0]),
+  logActivity: (input) => logActivity(input),
   broadcast: (message) => broadcast(message),
 });
 const entityDb = getEntityDatabase();
