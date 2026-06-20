@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { TaskBoardTask } from '../../hooks/useTaskBoard';
 
-type ReviewAction = 'accept' | 'accept_done' | 'needs_fix' | 'reject';
+import type { ReviewAction } from './reviewActions';
 
 const DEFAULT_REVIEW_NOTE = 'Reviewed and verified this task meets its done criteria.';
 const MIN_REVIEW_NOTE_LENGTH = 20;

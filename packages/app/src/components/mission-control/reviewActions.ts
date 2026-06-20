@@ -1,5 +1,14 @@
 export type ReviewDecision = 'pending' | 'accepted' | 'needs_fix' | 'rejected';
 
+/** The actions offered by the board review modal. */
+export type ReviewAction = 'accept' | 'accept_done' | 'needs_fix' | 'reject';
+
+export function reviewActionToDecision(action: ReviewAction): ReviewDecision {
+  if (action === 'reject') return 'rejected';
+  if (action === 'needs_fix') return 'needs_fix';
+  return 'accepted';
+}
+
 export const REVIEW_DECISION_LABELS: Record<ReviewDecision, string> = {
   pending: 'Pending',
   accepted: 'Accepted',
