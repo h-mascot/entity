@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { create } from 'zustand';
+import { useEntityWebSocket } from './useEntityWebSocket';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
 import {
   cacheApiPayload,
@@ -963,96 +964,33 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
     };
   }, [autoLoad, reloadTasks]);
 
-  useEffect(() => {
-    if (!autoLoad) {
-      return;
-    }
-
-    let active = true;
-    let socket: WebSocket | null = null;
-    let reconnectTimerId: number | null = null;
-
-    const clearReconnectTimer = () => {
-      if (reconnectTimerId !== null) {
-        window.clearTimeout(reconnectTimerId);
-        reconnectTimerId = null;
-      }
-    };
-
-    const connect = () => {
-      if (!active) {
-        return;
-      }
-
-      socket = new WebSocket((() => {
-        try {
-          const u = new URL('ws://' + window.location.host);
-          const t = window.localStorage.getItem('entity-api-token');
-          if (t && t.trim()) u.searchParams.set('token', t.trim());
-          return u.toString();
-        } catch { return 'ws://' + window.location.host; }
-      })());
-
-      socket.onmessage = (event) => {
-        let message: TaskBoardWsMessage;
-        try {
-          message = JSON.parse(String(event.data)) as TaskBoardWsMessage;
-        } catch {
-          return;
-        }
-
-        switch (message.type) {
-          case 'task:updated':
-          case 'task:created': {
-            lastWsUpdateRef.current = Date.now();
-            const normalizedTask = normalizeTask(message.task);
-            if (normalizedTask) {
-              upsertTask(normalizedTask);
-            }
-            break;
+  useEntityWebSocket(
+    (rawMessage) => {
+      const message = rawMessage as TaskBoardWsMessage;
+      switch (message.type) {
+        case 'task:updated':
+        case 'task:created': {
+          lastWsUpdateRef.current = Date.now();
+          const normalizedTask = normalizeTask(message.task);
+          if (normalizedTask) {
+            upsertTask(normalizedTask);
           }
-          case 'task:deleted': {
-            lastWsUpdateRef.current = Date.now();
-            const taskId = Number(message.taskId ?? message.id);
-            if (Number.isInteger(taskId) && taskId !== 0) {
-              removeTask(taskId);
-            }
-            break;
+          break;
+        }
+        case 'task:deleted': {
+          lastWsUpdateRef.current = Date.now();
+          const taskId = Number(message.taskId ?? message.id);
+          if (Number.isInteger(taskId) && taskId !== 0) {
+            removeTask(taskId);
           }
-          default:
-            break;
+          break;
         }
-      };
-
-      socket.onclose = () => {
-        socket = null;
-        if (!active) {
-          return;
-        }
-
-        clearReconnectTimer();
-        reconnectTimerId = window.setTimeout(() => {
-          reconnectTimerId = null;
-          connect();
-        }, TASK_WS_RECONNECT_DELAY_MS);
-      };
-    };
-
-    connect();
-
-    return () => {
-      active = false;
-      clearReconnectTimer();
-      const currentSocket = socket;
-      socket = null;
-      if (
-        currentSocket &&
-        (currentSocket.readyState === WebSocket.OPEN || currentSocket.readyState === WebSocket.CONNECTING)
-      ) {
-        currentSocket.close();
+        default:
+          break;
       }
-    };
-  }, [autoLoad, removeTask, upsertTask]);
+    },
+    { enabled: autoLoad, reconnectDelayMs: TASK_WS_RECONNECT_DELAY_MS },
+  );
 
   useEffect(() => {
     if (!autoLoad) {
