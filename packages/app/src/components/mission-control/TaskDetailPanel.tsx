@@ -15,6 +15,12 @@ import {
   type ProjectOption,
 } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
+import {
+  REVIEW_DECISION_LABELS,
+  buildReviewDecisionMetadata,
+  normalizeReviewDecision,
+  type ReviewDecision,
+} from './reviewActions';
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
@@ -816,36 +822,6 @@ function reviewPacketSummary(metadata: Record<string, unknown>): string {
       ? 1
       : 0;
   return `${outcome}${criteria > 0 ? ` / ${criteria} criterion${criteria === 1 ? '' : 'a'}` : ''}`;
-}
-
-type ReviewDecision = 'pending' | 'accepted' | 'needs_fix' | 'rejected';
-
-const REVIEW_DECISION_LABELS: Record<ReviewDecision, string> = {
-  pending: 'Pending',
-  accepted: 'Accepted',
-  needs_fix: 'Needs fix',
-  rejected: 'Rejected',
-};
-
-function normalizeReviewDecision(value: unknown): ReviewDecision {
-  const normalized = readNonEmptyString(value)?.toLowerCase().replace(/[\s-]+/g, '_');
-  if (normalized === 'accepted' || normalized === 'needs_fix' || normalized === 'rejected') {
-    return normalized;
-  }
-  return 'pending';
-}
-
-function buildReviewMetadataPatch(
-  task: TaskDetailData,
-  decision: ReviewDecision,
-  reviewer: string
-): string {
-  return JSON.stringify({
-    ...task.metadataRecord,
-    review_decision: decision,
-    reviewed_by: reviewer,
-    reviewed_at: new Date().toISOString(),
-  });
 }
 
 async function requestOptionalJson<T = unknown>(
@@ -1657,7 +1633,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     }
 
     const reviewer = userProfile.displayName || 'Reviewer';
-    const metadata = buildReviewMetadataPatch(task, decision, reviewer);
+    const metadata = buildReviewDecisionMetadata(task.metadataRecord, { decision, reviewer });
     await patchTask(
       {
         metadata,

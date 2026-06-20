@@ -9,6 +9,7 @@ import { fetchProjectOptions, type ProjectOption } from './projectOptions';
 import { buildBookmarkMetadata, formatTaskProjectSummary, isTaskBookmarked } from './utils/taskHelpers';
 import { toErrorMessage } from '../../lib/http';
 import { readUserProfile } from '../../lib/userProfile';
+import { buildReviewDecisionMetadata } from './reviewActions';
 
 interface MCOpsViewProps {
   apiBase?: string;
@@ -288,22 +289,20 @@ export default function MCOpsView({
 
     const reviewer = readUserProfile().displayName || 'Henry';
     const decision = action === 'reject' ? 'rejected' : action === 'needs_fix' ? 'needs_fix' : 'accepted';
-    const nextMeta = {
-      ...existing,
-      review_type: (existing.review_type as string) || (existing.review_class as string) || 'henry',
-      review_decision: decision,
-      reviewed_by: reviewer,
-      reviewed_at: new Date().toISOString(),
-      ...(note.trim() ? { review_note: note.trim() } : {}),
-    };
+    const metadata = buildReviewDecisionMetadata(existing, {
+      decision,
+      reviewer,
+      note,
+      ensureReviewType: true,
+    });
 
     setReviewBusy(true);
     setReviewError(null);
     try {
       if (action === 'accept_done') {
-        await updateTask(task.id, { metadata: JSON.stringify(nextMeta), column: 'done' });
+        await updateTask(task.id, { metadata, column: 'done' });
       } else {
-        await updateTask(task.id, { metadata: JSON.stringify(nextMeta) });
+        await updateTask(task.id, { metadata });
       }
       setReviewModalTask(null);
       setSelectedTaskIds((current) => {
