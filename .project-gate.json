@@ -1,0 +1,67 @@
+{
+  "project": "entity-phase-2",
+  "linearProject": "Entity",
+  "receiptDir": "output/entity-phase-2/test-gate",
+  "proofCommands": [
+    "cd packages/server && npm run build && npx vitest run",
+    "npm run build",
+    "bash scripts/proof/entity-phase-2-smoke.sh"
+  ],
+  "optionalCommands": [],
+  "bannedTerms": [],
+  "privateDefaultPatterns": [
+    "AKIA[0-9A-Z]{16}",
+    "sk-[A-Za-z0-9_-]{20,}",
+    "BEGIN (RSA|OPENSSH|EC) PRIVATE KEY",
+    "api[_-]?key",
+    "secret",
+    "token"
+  ],
+  "scanExcludePaths": [
+    "docs/execution-packs/entity-phase-2-cursor-20260621/cleanup-drafts",
+    "docs/specs/entity-phase-2-linear_id_to_source_id.json"
+  ],
+  "bookReview": {
+    "required": true,
+    "mode": "packet",
+    "receiptDir": "output/entity-phase-2/book-review",
+    "sessionIdPrefix": "entity-phase-2-book-review",
+    "timeoutMs": 600000,
+    "retryAttempts": 3,
+    "retryDelayMs": 1000,
+    "sourceSessionQueries": [
+      "Entity Phase 2 Cursor execution pack source ID cleanup",
+      "Entity Phase 2 CLI Tester Book review gate",
+      "Entity Phase 2 THE-21 THE-95 approved queue"
+    ],
+    "contextLinks": [
+      "/Users/enterprise/Code/entity/AGENTS.md",
+      "/Users/enterprise/Code/entity/.cursor/rules/entity-phase-2.mdc",
+      "/Users/enterprise/Code/entity/docs/context/entity-phase-2-build-context.md",
+      "/Users/enterprise/Code/entity/docs/execution-packs/entity-phase-2-cursor-20260621/plan.md"
+    ]
+  },
+  "uiProofRequiredFor": [
+    "UI",
+    "route rendering",
+    "docs rendering",
+    "task workflows",
+    "search UI",
+    "review/gate UI",
+    "notifications UI",
+    "integration/degraded-state display"
+  ],
+  "highRiskScopes": [
+    "permissions/RBAC",
+    "review gates",
+    "receipt/proof infrastructure",
+    "agent management",
+    "Helm boundary",
+    "notifications",
+    "migration/backfill",
+    "private defaults",
+    "search permission envelope"
+  ],
+  "handoff": "linear-comment",
+  "failStop": true
+}

@@ -33,6 +33,7 @@ artifacts/
 packages/app/artifacts/
 memory/
 output/
+.cursor/run-state/
 test-results/
 
 # Local planning/proof/spec scratch files from agent runs

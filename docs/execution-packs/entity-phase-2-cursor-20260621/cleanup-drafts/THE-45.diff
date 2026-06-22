@@ -1,0 +1,10 @@
+--- a/THE-45.current.md (live fetch, len=1763)
++++ b/THE-45.proposed.md (proposed, len=2247)
+@@ anchor @@
++## Source ID
++`THE-10.5`
++Parent slice: `THE-10`
++## Mapping basis (validated 2026-06-21)
++source_id=THE-10.5 linear_id=THE-45 parent=THE-10
+
+# Body content of THE-45 continues below unchanged.
