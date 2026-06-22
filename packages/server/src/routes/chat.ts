@@ -511,6 +511,10 @@ function resolveLlmProvider(modelId?: string): LlmProvider | null {
 }
 
 async function requestLlmResponse(agent: string, content: string, modelId?: string): Promise<OpenClawReply | null> {
+  if (!agentReplyRuntimeEnabled()) {
+    return null;
+  }
+
   const provider = resolveLlmProvider(modelId);
   if (!provider) return null;
 
