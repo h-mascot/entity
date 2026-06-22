@@ -44,6 +44,7 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 | 05:31 | Step 2 | done | Read DB bootstrap, task route, review-policy, task-board metadata, file/document/token schemas. |
 | 05:36 | Step 3 | done | Created `docs/context/entity-phase-2-current-schema-inventory.md`; no source schema changes. |
 | 05:46 | Step 4 | blocked | Repo proofs pass under Node 22 with external-provider keys unset for test isolation; CLI `run` and `verify` pass, but Book receipt is packet-only `REQUESTED`/`safeToContinue=false`. |
+| 05:50 | Step 5 | blocked | Linear blocker/proof comment posted: `289c76f4-752d-4a8a-ada0-d1e7b7010579`. |
 
 ## Files Touched
 - `docs/plans/2026-06-22-entity-phase-2-the-21-inventory-plan.md` - created - compaction-safe plan for current issue.
@@ -62,7 +63,7 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 - [ ] All steps complete.
 - [x] Proof commands pass.
 - [ ] CLI Tester request/run/book-review/verify pass.
-- [ ] Linear proof comment added.
+- [x] Linear proof/blocker comment added.
 - [ ] `THE-22` identified as next candidate only after verify allows continuation.
 
 ## Blocker
