@@ -53,18 +53,42 @@ interface TaskAttachment {
   path: string;
 }
 
+interface ActivityObjectRef {
+  objectType: string;
+  objectId: string;
+  linkRole: string | null;
+}
+
+interface ActivityWarning {
+  code: string;
+  message: string;
+}
+
 interface TaskActivity {
   id: number;
   source: 'agent' | 'task';
   type: string;
+  activityEventType: string;
+  payloadVersion: number | null;
+  schemaStatus: string;
+  legacyType: string | null;
   action: string;
   description: string;
   agentName: string;
   agentEmoji: string | null;
+  actorType: string;
+  actorPrincipalId: string | null;
+  objectRefs: ActivityObjectRef[];
+  reason: string | null;
+  provenance: string | null;
+  permissionState: string;
+  degraded: boolean;
+  warnings: ActivityWarning[];
   taskColumn: string | null;
   filePath: string | null;
   metadataText: string | null;
   metadataRecord: Record<string, unknown> | null;
+  activityEventPayload: Record<string, unknown> | null;
   createdAt: string;
 }
 
@@ -307,6 +331,69 @@ function uniqueStrings(values: unknown[]): string[] {
   return result;
 }
 
+function normalizeActivityObjectRefs(value: unknown): ActivityObjectRef[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const refs: ActivityObjectRef[] = [];
+  for (const item of value) {
+    const record = toRecord(item);
+    if (!record) {
+      continue;
+    }
+
+    const objectType = readFirstString(record.object_type, record.objectType);
+    const objectId = readFirstString(record.object_id, record.objectId);
+    if (!objectType || !objectId) {
+      continue;
+    }
+
+    refs.push({
+      objectType,
+      objectId,
+      linkRole: readFirstString(record.link_role, record.linkRole),
+    });
+  }
+
+  return refs;
+}
+
+function normalizeActivityWarnings(value: unknown): ActivityWarning[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const warnings: ActivityWarning[] = [];
+  for (const item of value) {
+    const record = toRecord(item);
+    if (!record) {
+      continue;
+    }
+
+    const code = readFirstString(record.code, record.warning_code, record.type);
+    const message = readFirstString(record.message, record.description, record.reason);
+    if (!code && !message) {
+      continue;
+    }
+
+    warnings.push({
+      code: code ?? 'warning',
+      message: message ?? 'Activity payload needs review.',
+    });
+  }
+
+  return warnings;
+}
+
+function formatActivityToken(value: string): string {
+  return value.replace(/[_-]+/g, ' ');
+}
+
+function formatObjectRef(ref: ActivityObjectRef): string {
+  return `${ref.objectType}:${ref.objectId}${ref.linkRole ? ` (${ref.linkRole})` : ''}`;
+}
+
 function normalizeAttachment(raw: unknown): TaskAttachment | null {
   if (typeof raw === 'string') {
     const path = raw.trim();
@@ -440,19 +527,106 @@ function normalizeActivity(raw: unknown): TaskActivity | null {
 
   const metadataText = readNonEmptyString(record.metadata);
   const metadataRecord = parseJsonRecord(metadataText);
+  const activityEventPayload = parseJsonRecord(
+    record.activity_event_payload_json ??
+      record.activity_event_payload ??
+      metadataRecord?.activity_event_payload
+  ) ?? {};
+  const payloadData = toRecord(activityEventPayload.data);
+  const permissionState = readFirstString(
+    record.permission_state,
+    record.permissionState,
+    metadataRecord?.permission_state,
+    metadataRecord?.permissionState
+  ) ?? 'visible';
+  const restricted = permissionState !== 'visible';
+  const schemaStatus = readFirstString(
+    record.activity_event_schema_status,
+    record.activityEventSchemaStatus,
+    metadataRecord?.activity_event_schema_status,
+    metadataRecord?.activityEventSchemaStatus
+  ) ?? 'legacy_mapped';
+  const activityEventType = readFirstString(
+    record.activity_event_type,
+    record.activityEventType,
+    activityEventPayload.event_type,
+    metadataRecord?.activity_event_type,
+    metadataRecord?.activityEventType,
+    record.type
+  ) ?? 'legacy_event_observed';
+  const warnings = restricted
+    ? []
+    : normalizeActivityWarnings(activityEventPayload.warnings ?? metadataRecord?.warnings);
+  if (!restricted && schemaStatus === 'legacy_unknown') {
+    warnings.push({
+      code: 'legacy_unknown',
+      message: 'Legacy activity was preserved without enough structure to infer full provenance.',
+    });
+  }
+  const payloadVersion = normalizePositiveInteger(
+    record.activity_event_payload_version ??
+      record.activityEventPayloadVersion ??
+      activityEventPayload.version
+  );
+  const actorType = readFirstString(
+    activityEventPayload.actor_type,
+    record.actor_type,
+    record.actorType,
+    metadataRecord?.actor_type,
+    metadataRecord?.actorType
+  ) ?? 'unknown';
+  const actorPrincipalId = restricted
+    ? null
+    : readFirstString(
+        activityEventPayload.actor_principal_id,
+        record.actor_principal_id,
+        record.actorPrincipalId,
+        metadataRecord?.actor_principal_id,
+        metadataRecord?.actorPrincipalId
+      );
+  const eventPayloadForDisplay = restricted ? null : activityEventPayload;
+  const displayMetadataText = restricted
+    ? null
+    : eventPayloadForDisplay
+      ? JSON.stringify({
+          activity_event_payload: eventPayloadForDisplay,
+          legacy_metadata: metadataRecord ?? undefined,
+        }, null, 2)
+      : metadataRecord
+        ? JSON.stringify(metadataRecord, null, 2)
+        : metadataText;
 
   return {
     id,
     source: record.source === 'task' ? 'task' : 'agent',
     type: readNonEmptyString(record.type) ?? 'task_updated',
-    action: readNonEmptyString(record.action) ?? 'Updated task',
-    description: readNonEmptyString(record.description) ?? 'No details recorded.',
-    agentName: readFirstString(record.agent_name, metadataRecord?.user) ?? 'Entity',
-    agentEmoji: readNonEmptyString(record.agent_emoji),
+    activityEventType,
+    payloadVersion,
+    schemaStatus,
+    legacyType: readFirstString(record.activity_event_legacy_type, record.activityEventLegacyType, metadataRecord?.activity_event_legacy_type),
+    action: restricted ? 'Hidden by permissions' : readNonEmptyString(record.action) ?? 'Updated task',
+    description: restricted
+      ? 'Restricted activity hidden by Entity permissions.'
+      : readNonEmptyString(record.description) ?? 'No details recorded.',
+    agentName: restricted ? 'Restricted activity' : readFirstString(record.agent_name, metadataRecord?.user) ?? 'Entity',
+    agentEmoji: restricted ? null : readNonEmptyString(record.agent_emoji),
+    actorType,
+    actorPrincipalId,
+    objectRefs: restricted ? [] : normalizeActivityObjectRefs(activityEventPayload.object_refs ?? metadataRecord?.object_refs),
+    reason: restricted
+      ? null
+      : readFirstString(activityEventPayload.reason, payloadData?.reason, metadataRecord?.reason),
+    provenance: restricted
+      ? null
+      : readFirstString(activityEventPayload.provenance, payloadData?.provenance, metadataRecord?.provenance, metadataRecord?.source),
+    permissionState,
+    degraded: restricted || schemaStatus !== 'structured' || warnings.length > 0,
+    warnings,
     taskColumn: readNonEmptyString(record.task_column),
     filePath: readNonEmptyString(record.file_path),
-    metadataText: metadataRecord ? JSON.stringify(metadataRecord, null, 2) : metadataText,
+    metadataText: displayMetadataText,
     metadataRecord,
+    activityEventPayload: eventPayloadForDisplay,
     createdAt: normalizeTimestamp(record.created_at),
   };
 }
@@ -2881,7 +3055,27 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                       </div>
                     ) : (
 	                      <div className="space-y-2">
-	                        {visibleActivity.map((activity) => (
+	                        {visibleActivity.map((activity) => {
+                          const actorLabel = activity.actorPrincipalId
+                            ? `${activity.actorPrincipalId} (${formatActivityToken(activity.actorType)})`
+                            : `${formatActivityToken(activity.actorType)} actor`;
+                          const schemaLabel = activity.schemaStatus === 'structured'
+                            ? 'structured'
+                            : activity.schemaStatus === 'legacy_unknown'
+                              ? 'weak legacy event'
+                              : formatActivityToken(activity.schemaStatus);
+                          const provenanceItems = [
+                            `event: ${formatActivityToken(activity.activityEventType)}`,
+                            `actor: ${actorLabel}`,
+                            `schema: ${schemaLabel}`,
+                            activity.payloadVersion ? `payload v${activity.payloadVersion}` : null,
+                            activity.permissionState !== 'visible' ? `permission: ${formatActivityToken(activity.permissionState)}` : null,
+                            activity.reason ? `reason: ${activity.reason}` : null,
+                            activity.provenance ? `provenance: ${activity.provenance}` : null,
+                            ...activity.objectRefs.slice(0, 3).map((ref) => `object: ${formatObjectRef(ref)}`),
+                          ].filter((item): item is string => Boolean(item));
+
+                          return (
 	                          <article
 	                            key={activity.id}
 	                            className="min-w-0 overflow-hidden rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2"
@@ -2907,13 +3101,38 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                              <div className="mt-0.5 w-full min-w-0 max-w-full overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[1.35] text-[var(--text-secondary)] [overflow-wrap:anywhere]">{activity.description}</div>
 	                            </div>
 
+                              <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                                {provenanceItems.map((item) => (
+                                  <span
+                                    key={item}
+                                    className={activity.degraded ? 'rounded-full border border-amber-500/40 px-2 py-0.5 text-amber-300' : ''}
+                                  >
+                                    {item}
+                                  </span>
+                                ))}
+                              </div>
+
 	                            {activityView === 'technical' ? (
 	                            <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
-	                              {activityView === 'technical' ? <span>{activity.type.replace(/_/g, ' ')}</span> : null}
-	                              {activityView === 'technical' && activity.taskColumn ? <span>{activity.taskColumn}</span> : null}
-	                              {activityView === 'technical' && activity.filePath ? <span>{activity.filePath}</span> : null}
+	                              <span>{activity.type.replace(/_/g, ' ')}</span>
+	                              {activity.legacyType ? <span>legacy: {formatActivityToken(activity.legacyType)}</span> : null}
+	                              {activity.taskColumn ? <span>{activity.taskColumn}</span> : null}
+	                              {activity.filePath ? <span>{activity.filePath}</span> : null}
+	                              {activity.warnings.map((warning) => (
+                                  <span key={`${activity.id}-${warning.code}`} className="rounded-full border border-amber-500/40 px-2 py-0.5 text-amber-300">
+                                    {formatActivityToken(warning.code)}
+                                  </span>
+                                ))}
 	                            </div>
 	                            ) : null}
+
+                            {activityView === 'technical' && activity.warnings.length > 0 ? (
+                              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-200">
+                                {activity.warnings.map((warning) => (
+                                  <li key={`${activity.id}-${warning.code}-${warning.message}`}>{warning.message}</li>
+                                ))}
+                              </ul>
+                            ) : null}
 
                             {activityView === 'technical' && activity.metadataText ? (
                               <pre className="mt-3 overflow-x-auto rounded-lg border border-[var(--border-primary)] bg-[#0f0f0f] px-3 py-3 text-xs text-[#d1d5db]">
@@ -2921,7 +3140,8 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                               </pre>
                             ) : null}
                           </article>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
 
