@@ -140,6 +140,37 @@ interface TaskDetailData {
   models: string[];
 }
 
+interface ReceiptDisplayLink {
+  label: string;
+  href: string | null;
+  external: boolean;
+  meta: string | null;
+}
+
+interface ReceiptProofView {
+  status: string;
+  statusTone: 'ok' | 'warning' | 'error' | 'muted';
+  artifactId: string | null;
+  artifactKind: string;
+  artifactMode: 'raw' | 'curated' | 'unknown';
+  mutability: string;
+  stablePath: string | null;
+  receiptHref: string | null;
+  contentHash: string | null;
+  integrityState: string;
+  availabilityState: string;
+  createdAt: string | null;
+  evidenceSummary: string;
+  missingEvidence: boolean;
+  missingEvidenceReason: string | null;
+  evidenceLinks: ReceiptDisplayLink[];
+  outputLinks: ReceiptDisplayLink[];
+  reviewDecision: string;
+  approvalDecision: string;
+  provenance: string;
+  degradedMessages: string[];
+}
+
 interface TaskFormState {
   name: string;
   description: string;
@@ -1033,6 +1064,232 @@ function reviewPacketSummary(metadata: Record<string, unknown>): string {
   return `${outcome}${criteria > 0 ? ` / ${criteria} criterion${criteria === 1 ? '' : 'a'}` : ''}`;
 }
 
+function firstRecord(...values: unknown[]): Record<string, unknown> | null {
+  for (const value of values) {
+    const record = parseJsonRecord(value);
+    if (record) {
+      return record;
+    }
+  }
+
+  return null;
+}
+
+function formatReceiptToken(value: unknown, fallback = 'Unknown'): string {
+  const text = readNonEmptyString(value);
+  if (!text) {
+    return fallback;
+  }
+
+  return text.replace(/[_-]+/g, ' ');
+}
+
+function receiptStatusTone(status: string, integrityState: string, availabilityState: string): ReceiptProofView['statusTone'] {
+  const normalizedStatus = status.toLowerCase();
+  const normalizedIntegrity = integrityState.toLowerCase();
+  const normalizedAvailability = availabilityState.toLowerCase();
+  if (
+    normalizedStatus.includes('failed') ||
+    normalizedStatus.includes('missing') ||
+    normalizedStatus.includes('integrity') ||
+    normalizedIntegrity !== 'valid' ||
+    (normalizedAvailability !== 'available' && normalizedAvailability !== 'unknown')
+  ) {
+    return 'error';
+  }
+
+  if (normalizedStatus.includes('pending') || normalizedStatus.includes('unknown') || normalizedAvailability === 'unknown') {
+    return 'warning';
+  }
+
+  if (normalizedStatus.includes('not required')) {
+    return 'muted';
+  }
+
+  return 'ok';
+}
+
+function receiptToneClass(tone: ReceiptProofView['statusTone']): string {
+  if (tone === 'ok') {
+    return 'border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]';
+  }
+
+  if (tone === 'error') {
+    return 'border-[var(--error)]/35 bg-[var(--surface-error)] text-[var(--error)]';
+  }
+
+  if (tone === 'warning') {
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-200';
+  }
+
+  return 'border-[var(--border-primary)] bg-[var(--bg-primary)] text-[var(--text-muted)]';
+}
+
+function normalizeReceiptDisplayLink(value: unknown, meta: string | null = null): ReceiptDisplayLink | null {
+  const record = toRecord(value);
+  if (record) {
+    const rawHref = readFirstString(
+      record.href,
+      record.url,
+      record.path,
+      record.stable_path,
+      record.stablePath,
+      record.id
+    );
+    const label = readFirstString(record.label, record.title, record.name, rawHref);
+    if (!label) {
+      return null;
+    }
+
+    const href = rawHref ? normalizeTaskOutputHref(rawHref) ?? rawHref : null;
+    return {
+      label,
+      href,
+      external: href ? /^https?:\/\//i.test(href) : false,
+      meta: meta ?? readFirstString(record.kind, record.type, record.artifact_kind, record.artifactKind),
+    };
+  }
+
+  const text = readNonEmptyString(value);
+  if (!text) {
+    return null;
+  }
+
+  const href = normalizeTaskOutputHref(text) ?? text;
+  return {
+    label: text,
+    href,
+    external: /^https?:\/\//i.test(href),
+    meta,
+  };
+}
+
+function collectReceiptDisplayLinks(...values: unknown[]): ReceiptDisplayLink[] {
+  const links: ReceiptDisplayLink[] = [];
+  const seen = new Set<string>();
+
+  const add = (value: unknown, meta: string | null = null) => {
+    if (Array.isArray(value)) {
+      value.forEach((entry) => add(entry, meta));
+      return;
+    }
+
+    const link = normalizeReceiptDisplayLink(value, meta);
+    if (!link) {
+      return;
+    }
+
+    const key = `${link.label}::${link.href ?? ''}::${link.meta ?? ''}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    links.push(link);
+  };
+
+  values.forEach((value) => add(value));
+  return links;
+}
+
+function buildReceiptProofView(
+  task: TaskDetailData,
+  outputLinks: Array<{ label: string; href: string; external: boolean }>
+): ReceiptProofView | null {
+  const metadata = task.metadataRecord;
+  const receipt = firstRecord(metadata.phase2_receipt, metadata.receipt, metadata.receipt_artifact);
+  const reviewPacket = firstRecord(metadata.review_packet, metadata.review_brief);
+  const hasReceiptMetadata = Boolean(receipt || readNonEmptyString(metadata.receipt_status));
+  const doneWithoutReceipt = task.column === 'done' && !hasReceiptMetadata;
+  const receiptActivity = task.activity.find((entry) => entry.activityEventType === 'receipt_created' || entry.activityEventType === 'receipt_failed');
+
+  if (!hasReceiptMetadata && !doneWithoutReceipt && !receiptActivity) {
+    return null;
+  }
+
+  const artifactId = readFirstString(receipt?.artifact_id, receipt?.artifactId, metadata.receipt_artifact_id);
+  const artifactKind = readFirstString(receipt?.artifact_kind, receipt?.artifactKind) ?? 'raw_task_receipt';
+  const mutability = readFirstString(receipt?.mutability_policy, receipt?.mutabilityPolicy) ?? (artifactKind === 'raw_task_receipt' ? 'immutable_append_only' : 'unknown');
+  const stablePath = readFirstString(receipt?.stable_path, receipt?.stablePath);
+  const receiptHref = readFirstString(receipt?.human_path_alias, receipt?.humanPathAlias, stablePath);
+  const contentHash = readFirstString(receipt?.content_hash, receipt?.contentHash, metadata.receipt_content_hash);
+  const integrityState = readFirstString(receipt?.integrity_state, receipt?.integrityState) ?? (artifactId ? 'valid' : 'missing_body');
+  const availabilityState = readFirstString(receipt?.availability_state, receipt?.availabilityState) ?? (artifactId ? 'available' : 'unknown');
+  const rawStatus = readFirstString(
+    metadata.receipt_status,
+    receipt?.receipt_status,
+    receipt?.status,
+    artifactId ? 'created' : null,
+    doneWithoutReceipt ? 'missing_receipt' : null
+  ) ?? 'not_required_yet';
+  const status = formatReceiptToken(rawStatus, 'Unknown');
+  const evidenceLinks = collectReceiptDisplayLinks(
+    metadata.evidence_links,
+    metadata.evidence_artifacts,
+    metadata.output_artifact_ids,
+    metadata.output_artifacts,
+    reviewPacket?.evidence_links,
+    reviewPacket?.evidence_artifacts,
+    reviewPacket?.output_artifact_ids,
+    reviewPacket?.output_artifacts
+  );
+  const normalizedOutputLinks = outputLinks.map((link) => ({
+    ...link,
+    meta: link.external ? 'external output' : 'Entity output',
+  }));
+  const evidenceSummary = readFirstString(
+    metadata.evidence_summary,
+    receipt?.evidence_summary,
+    reviewPacket?.evidence_summary,
+    reviewPacket?.evidence,
+    reviewPacket?.requested_outcome,
+    outputLinks.length > 0 ? 'Output links are attached.' : null
+  ) ?? 'No evidence summary recorded.';
+  const missingEvidenceReason = readFirstString(
+    metadata.missing_evidence_reason,
+    receipt?.missing_evidence_reason,
+    reviewPacket?.missing_evidence_reason
+  );
+  const missingEvidence = normalizeBoolean(metadata.missing_evidence ?? receipt?.missing_evidence) ||
+    Boolean(missingEvidenceReason) ||
+    (task.column === 'done' && evidenceLinks.length === 0 && outputLinks.length === 0 && evidenceSummary === 'No evidence summary recorded.');
+  const degradedMessages = [
+    doneWithoutReceipt ? 'Completed task has no canonical receipt metadata.' : null,
+    missingEvidence ? missingEvidenceReason ?? 'No evidence links or output artifacts were recorded.' : null,
+    integrityState !== 'valid' ? `Integrity state is ${formatReceiptToken(integrityState)}.` : null,
+    availabilityState !== 'available' && availabilityState !== 'unknown' ? `Availability is ${formatReceiptToken(availabilityState)}.` : null,
+    readFirstString(metadata.receipt_error, receipt?.error) ? `Receipt error: ${readFirstString(metadata.receipt_error, receipt?.error)}` : null,
+  ].filter((entry): entry is string => Boolean(entry));
+
+  return {
+    status,
+    statusTone: receiptStatusTone(status, integrityState, availabilityState),
+    artifactId,
+    artifactKind: formatReceiptToken(artifactKind),
+    artifactMode: artifactKind === 'raw_task_receipt'
+      ? 'raw'
+      : artifactKind.includes('curated')
+        ? 'curated'
+        : 'unknown',
+    mutability: formatReceiptToken(mutability),
+    stablePath,
+    receiptHref,
+    contentHash,
+    integrityState: formatReceiptToken(integrityState),
+    availabilityState: formatReceiptToken(availabilityState),
+    createdAt: readFirstString(receipt?.created_at, receipt?.createdAt),
+    evidenceSummary,
+    missingEvidence,
+    missingEvidenceReason,
+    evidenceLinks,
+    outputLinks: normalizedOutputLinks,
+    reviewDecision: readFirstString(metadata.review_decision, receipt?.review_decision, receipt?.reviewDecision) ?? 'Pending',
+    approvalDecision: readFirstString(metadata.human_gate_decision, receipt?.human_gate_decision, receipt?.humanGateDecision) ?? 'Not recorded',
+    provenance: readFirstString(receipt?.provenance, metadata.provenance, metadata.source, receiptActivity?.provenance) ?? 'Entity task metadata',
+    degradedMessages,
+  };
+}
+
 type ReviewDecision = 'pending' | 'accepted' | 'needs_fix' | 'rejected';
 
 const REVIEW_DECISION_LABELS: Record<ReviewDecision, string> = {
@@ -1391,6 +1648,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
   const commentTree = useMemo(() => buildCommentTree(comments), [comments]);
   const outputLinks = useMemo(() => extractTaskOutputLinks(task?.output ?? ''), [task?.output]);
+  const receiptProof = useMemo(() => (task ? buildReceiptProofView(task, outputLinks) : null), [outputLinks, task]);
   const outputIsEmpty = task ? task.output.trim().length === 0 && outputLinks.length === 0 : true;
   const outputExpanded = !outputIsEmpty || outputSectionOpen;
   const subtasks = useMemo(() => {
@@ -2732,7 +2990,165 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                   ) : null}
 	              </section>
 
-	              <section style={{ order: 3 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
+                  {receiptProof ? (
+                    <section
+                      style={{ order: 3 }}
+                      className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+                      data-testid="task-receipt-proof-panel"
+                    >
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                            Receipt and Proof
+                          </div>
+                          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                            Canonical receipt metadata, evidence state, and artifact identity.
+                          </p>
+                        </div>
+                        <span className={`rounded-full border px-2 py-0.5 text-[11px] ${receiptToneClass(receiptProof.statusTone)}`}>
+                          {receiptProof.status}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Receipt Link</div>
+                          {receiptProof.receiptHref ? (
+                            <a
+                              href={receiptProof.receiptHref}
+                              className="mt-0.5 block break-all text-sky-300 hover:text-sky-200"
+                              data-testid="task-receipt-link"
+                            >
+                              {receiptProof.receiptHref}
+                            </a>
+                          ) : (
+                            <div className="mt-0.5 text-amber-200">No stable receipt link recorded.</div>
+                          )}
+                          {receiptProof.artifactId ? (
+                            <div className="mt-1 break-all text-[10px] text-[var(--text-muted)]">Artifact {receiptProof.artifactId}</div>
+                          ) : null}
+                        </div>
+
+                        <div
+                          className={`rounded-md border px-2 py-1.5 ${
+                            receiptProof.artifactMode === 'raw'
+                              ? 'border-sky-500/25 bg-sky-500/10'
+                              : receiptProof.artifactMode === 'curated'
+                                ? 'border-violet-500/25 bg-violet-500/10'
+                                : 'border-[var(--border-primary)] bg-[var(--bg-primary)]'
+                          }`}
+                        >
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Artifact Type</div>
+                          <div>{receiptProof.artifactMode === 'raw' ? 'Raw proof artifact' : receiptProof.artifactMode === 'curated' ? 'Curated interpretation' : 'Artifact type unknown'}</div>
+                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                            {receiptProof.artifactKind} / {receiptProof.mutability}
+                          </div>
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Integrity</div>
+                          <div data-testid="task-receipt-integrity-state">{receiptProof.integrityState}</div>
+                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">Availability: {receiptProof.availabilityState}</div>
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Provenance</div>
+                          <div>{receiptProof.provenance}</div>
+                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                            {receiptProof.createdAt ? `Created ${formatDateTime(receiptProof.createdAt)}` : 'Creation time unknown'}
+                          </div>
+                        </div>
+
+                        <div
+                          className={`rounded-md border px-2 py-1.5 sm:col-span-2 ${
+                            receiptProof.missingEvidence
+                              ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+                              : 'border-[var(--border-primary)] bg-[var(--bg-primary)]'
+                          }`}
+                          data-testid="task-receipt-missing-evidence"
+                        >
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Evidence Summary</div>
+                          <div>{receiptProof.evidenceSummary}</div>
+                          <div className="mt-1 text-[11px]">
+                            {receiptProof.missingEvidence
+                              ? `Missing evidence: ${receiptProof.missingEvidenceReason ?? 'no evidence links or output artifacts were recorded'}`
+                              : 'Missing evidence: no'}
+                          </div>
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Review</div>
+                          <div>{receiptProof.reviewDecision}</div>
+                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">Approval: {receiptProof.approvalDecision}</div>
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Content Hash</div>
+                          <div className="break-all">{receiptProof.contentHash ?? 'Not recorded'}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                            Evidence References
+                          </div>
+                          {receiptProof.evidenceLinks.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {receiptProof.evidenceLinks.map((link) => (
+                                <a
+                                  key={`${link.label}-${link.href ?? 'no-href'}`}
+                                  href={link.href ?? undefined}
+                                  target={link.external ? '_blank' : undefined}
+                                  rel={link.external ? 'noreferrer' : undefined}
+                                  className="block min-w-0 rounded border border-[var(--border-primary)] px-2 py-1.5 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <span className="block truncate">{link.label}</span>
+                                  {link.meta ? <span className="mt-0.5 block text-[10px] text-[var(--text-muted)]">{link.meta}</span> : null}
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-[var(--text-muted)]">No structured evidence references recorded.</div>
+                          )}
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                            Output Links
+                          </div>
+                          {receiptProof.outputLinks.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {receiptProof.outputLinks.map((link) => (
+                                <a
+                                  key={link.href ?? link.label}
+                                  href={link.href ?? undefined}
+                                  target={link.external ? '_blank' : undefined}
+                                  rel={link.external ? 'noreferrer' : undefined}
+                                  className="block min-w-0 rounded border border-[var(--border-primary)] px-2 py-1.5 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <span className="block truncate">{link.label}</span>
+                                  {link.meta ? <span className="mt-0.5 block text-[10px] text-[var(--text-muted)]">{link.meta}</span> : null}
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-[var(--text-muted)]">No output artifact links recorded.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {receiptProof.degradedMessages.length > 0 ? (
+                        <ul className="mt-3 list-disc space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-2 pl-6 text-xs text-amber-100">
+                          {receiptProof.degradedMessages.map((message) => (
+                            <li key={message}>{message}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </section>
+                  ) : null}
+
+	              <section style={{ order: 4 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
 	                <div className={`${outputExpanded ? 'mb-2' : ''} flex flex-wrap items-center justify-between gap-2`}>
 	                  <div className="flex min-w-0 items-center gap-2">
 	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
