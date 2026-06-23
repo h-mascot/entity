@@ -302,6 +302,17 @@ export interface NativeDocumentRecord {
   updated_at: string;
 }
 
+export interface NativeDocumentVersionRecord {
+  id: number;
+  document_id: string;
+  version: number;
+  stable_path: string;
+  content_hash: string;
+  metadata_json: string;
+  created_by_principal_id: string | null;
+  created_at: string;
+}
+
 export interface CreateNativeDocumentInput {
   id?: string;
   org_id?: string;
@@ -319,6 +330,14 @@ export interface CreateNativeDocumentInput {
   linked_object_refs?: ObjectRef[];
   created_by_principal_id?: string | null;
   metadata_json?: string;
+}
+
+export interface UpdateNativeDocumentVersionInput {
+  title?: string;
+  stable_path?: string;
+  content_hash: string;
+  metadata_json?: string;
+  updated_by_principal_id?: string | null;
 }
 
 export type ExternalDocumentConnectorType = 'google_drive' | 'google_docs' | 'other';
@@ -373,6 +392,8 @@ export interface CreateExternalDocumentRefInput {
 export interface DocumentObjectRepository {
   createNativeDocument: (input: CreateNativeDocumentInput) => NativeDocumentRecord;
   getNativeDocument: (id: string) => NativeDocumentRecord | undefined;
+  updateNativeDocumentVersion: (id: string, input: UpdateNativeDocumentVersionInput) => NativeDocumentRecord | undefined;
+  listNativeDocumentVersions: (id: string) => NativeDocumentVersionRecord[];
   linkNativeDocumentObject: (id: string, objectRef: ObjectRef) => NativeDocumentRecord | undefined;
   createExternalDocumentRef: (input: CreateExternalDocumentRefInput) => ExternalDocumentRefRecord;
   getExternalDocumentRef: (id: string) => ExternalDocumentRefRecord | undefined;
@@ -465,6 +486,17 @@ export interface EvidenceArtifactRecord {
   updated_at: string;
 }
 
+export interface EvidenceArtifactVersionRecord {
+  id: number;
+  artifact_id: string;
+  version: number;
+  stable_path: string;
+  content_hash: string;
+  metadata_json: string;
+  created_by_principal_id: string | null;
+  created_at: string;
+}
+
 export interface CreateEvidenceArtifactInput {
   id?: string;
   org_id?: string;
@@ -489,10 +521,20 @@ export interface CreateEvidenceArtifactInput {
   metadata_json?: string;
 }
 
+export interface UpdateEvidenceArtifactVersionInput {
+  title?: string;
+  stable_path?: string;
+  content_hash: string;
+  metadata_json?: string;
+  updated_by_principal_id?: string | null;
+}
+
 export interface EvidenceArtifactRepository {
   createArtifact: (input: CreateEvidenceArtifactInput) => EvidenceArtifactRecord;
   getArtifact: (id: string) => EvidenceArtifactRecord | undefined;
   listArtifactsByOriginTask: (taskId: number) => EvidenceArtifactRecord[];
+  updateArtifactVersion: (id: string, input: UpdateEvidenceArtifactVersionInput) => EvidenceArtifactRecord | undefined;
+  listArtifactVersions: (id: string) => EvidenceArtifactVersionRecord[];
   linkArtifactObject: (id: string, objectRef: ObjectRef) => EvidenceArtifactRecord | undefined;
   updateHumanPathAlias: (id: string, humanPathAlias: string | null) => EvidenceArtifactRecord | undefined;
 }
@@ -1319,6 +1361,20 @@ function bootstrap(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_org_kind ON evidence_artifacts(org_id, artifact_kind);
     CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_integrity ON evidence_artifacts(integrity_state);
 
+    CREATE TABLE IF NOT EXISTS evidence_artifact_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artifact_id TEXT NOT NULL REFERENCES evidence_artifacts(id),
+      version INTEGER NOT NULL,
+      stable_path TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_by_principal_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(artifact_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_evidence_artifact_versions_artifact ON evidence_artifact_versions(artifact_id, version);
+
     CREATE TABLE IF NOT EXISTS native_documents (
       id TEXT PRIMARY KEY,
       org_id TEXT NOT NULL DEFAULT '${DEFAULT_WORKSPACE_ORG_ID}',
@@ -1343,6 +1399,20 @@ function bootstrap(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_native_documents_org_project ON native_documents(org_id, project_id);
     CREATE INDEX IF NOT EXISTS idx_native_documents_kind ON native_documents(document_kind);
+
+    CREATE TABLE IF NOT EXISTS native_document_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id TEXT NOT NULL REFERENCES native_documents(id),
+      version INTEGER NOT NULL,
+      stable_path TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_by_principal_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(document_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_native_document_versions_document ON native_document_versions(document_id, version);
 
     CREATE TABLE IF NOT EXISTS external_document_refs (
       id TEXT PRIMARY KEY,
@@ -1801,6 +1871,36 @@ function bootstrap(db: Database.Database): void {
   if (!hasColumn(db, 'evidence_artifacts', 'linked_object_refs_json')) {
     db.exec("ALTER TABLE evidence_artifacts ADD COLUMN linked_object_refs_json TEXT NOT NULL DEFAULT '[]'");
   }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS evidence_artifact_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      artifact_id TEXT NOT NULL REFERENCES evidence_artifacts(id),
+      version INTEGER NOT NULL,
+      stable_path TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_by_principal_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(artifact_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_evidence_artifact_versions_artifact ON evidence_artifact_versions(artifact_id, version);
+
+    CREATE TABLE IF NOT EXISTS native_document_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id TEXT NOT NULL REFERENCES native_documents(id),
+      version INTEGER NOT NULL,
+      stable_path TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_by_principal_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(document_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_native_document_versions_document ON native_document_versions(document_id, version);
+  `);
 
   db.exec('CREATE INDEX IF NOT EXISTS idx_activities_event_type ON activities(activity_event_type)');
 
@@ -3376,6 +3476,19 @@ function mapNativeDocumentRow(row: Record<string, unknown>): NativeDocumentRecor
   };
 }
 
+function mapNativeDocumentVersionRow(row: Record<string, unknown>): NativeDocumentVersionRecord {
+  return {
+    id: Number(row.id),
+    document_id: String(row.document_id ?? ''),
+    version: normalizePositiveInteger(row.version) ?? 1,
+    stable_path: String(row.stable_path ?? ''),
+    content_hash: String(row.content_hash ?? ''),
+    metadata_json: normalizeJsonObjectString(row.metadata_json),
+    created_by_principal_id: normalizeBlockerReason(row.created_by_principal_id),
+    created_at: normalizeTimestamp(String(row.created_at ?? '')),
+  };
+}
+
 function mapExternalDocumentRefRow(row: Record<string, unknown>): ExternalDocumentRefRecord {
   return {
     id: String(row.id ?? ''),
@@ -3426,6 +3539,19 @@ function mapEvidenceArtifactRow(row: Record<string, unknown>): EvidenceArtifactR
     metadata_json: normalizeJsonObjectString(row.metadata_json),
     created_at: normalizeTimestamp(String(row.created_at ?? '')),
     updated_at: normalizeTimestamp(String(row.updated_at ?? row.created_at ?? '')),
+  };
+}
+
+function mapEvidenceArtifactVersionRow(row: Record<string, unknown>): EvidenceArtifactVersionRecord {
+  return {
+    id: Number(row.id),
+    artifact_id: String(row.artifact_id ?? ''),
+    version: normalizePositiveInteger(row.version) ?? 1,
+    stable_path: String(row.stable_path ?? ''),
+    content_hash: String(row.content_hash ?? ''),
+    metadata_json: normalizeJsonObjectString(row.metadata_json),
+    created_by_principal_id: normalizeBlockerReason(row.created_by_principal_id),
+    created_at: normalizeTimestamp(String(row.created_at ?? '')),
   };
 }
 
@@ -4181,9 +4307,36 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
   const db = openEntityDatabase();
   const getNativeStmt = db.prepare('SELECT * FROM native_documents WHERE id = ?');
   const getExternalStmt = db.prepare('SELECT * FROM external_document_refs WHERE id = ?');
+  const listNativeVersionsStmt = db.prepare(`
+    SELECT *
+    FROM native_document_versions
+    WHERE document_id = ?
+    ORDER BY version ASC, id ASC
+  `);
+  const insertNativeVersionStmt = db.prepare(`
+    INSERT INTO native_document_versions (
+      document_id,
+      version,
+      stable_path,
+      content_hash,
+      metadata_json,
+      created_by_principal_id,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `);
   const updateNativeRefsStmt = db.prepare(`
     UPDATE native_documents
     SET linked_object_refs_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  const updateNativeVersionStmt = db.prepare(`
+    UPDATE native_documents
+    SET title = ?,
+        stable_path = ?,
+        content_hash = ?,
+        version = ?,
+        metadata_json = ?,
+        updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
   const updateExternalRefsStmt = db.prepare(`
@@ -4241,34 +4394,43 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
 
   return {
     createNativeDocument: (input: CreateNativeDocumentInput) => {
-      const id = normalizeWorkspaceId(input.id, randomUUID());
-      const title = input.title.trim();
-      const contentHash = input.content_hash.trim();
-      if (!title) {
-        throw new Error('native document title is required');
-      }
-      if (!contentHash) {
-        throw new Error('native document content_hash is required');
-      }
+      const created = db.transaction(() => {
+        const id = normalizeWorkspaceId(input.id, randomUUID());
+        const title = input.title.trim();
+        const contentHash = input.content_hash.trim();
+        if (!title) {
+          throw new Error('native document title is required');
+        }
+        if (!contentHash) {
+          throw new Error('native document content_hash is required');
+        }
+        const version = normalizePositiveInteger(input.version) ?? 1;
+        const stablePath = input.stable_path?.trim() || `/documents/native/${id}.md`;
+        const metadataJson = normalizeJsonObjectString(input.metadata_json);
+        const createdBy = normalizeBlockerReason(input.created_by_principal_id);
 
-      createNativeStmt.run(
-        id,
-        normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
-        normalizeBlockerReason(input.team_id),
-        normalizePositiveInteger(input.project_id),
-        title,
-        normalizeNativeDocumentKind(input.document_kind),
-        input.stable_path?.trim() || `/documents/native/${id}.md`,
-        contentHash,
-        normalizeNativeDocumentMutability(input.mutability_policy),
-        normalizePositiveInteger(input.version) ?? 1,
-        normalizeNativeDocumentLifecycleState(input.lifecycle_state),
-        normalizeBlockerReason(input.sensitivity),
-        normalizeJsonObjectString(input.acl_json),
-        stringifyObjectRefs(input.linked_object_refs ?? []),
-        normalizeBlockerReason(input.created_by_principal_id),
-        normalizeJsonObjectString(input.metadata_json)
-      );
+        createNativeStmt.run(
+          id,
+          normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
+          normalizeBlockerReason(input.team_id),
+          normalizePositiveInteger(input.project_id),
+          title,
+          normalizeNativeDocumentKind(input.document_kind),
+          stablePath,
+          contentHash,
+          normalizeNativeDocumentMutability(input.mutability_policy),
+          version,
+          normalizeNativeDocumentLifecycleState(input.lifecycle_state),
+          normalizeBlockerReason(input.sensitivity),
+          normalizeJsonObjectString(input.acl_json),
+          stringifyObjectRefs(input.linked_object_refs ?? []),
+          createdBy,
+          metadataJson
+        );
+        insertNativeVersionStmt.run(id, version, stablePath, contentHash, metadataJson, createdBy);
+        return id;
+      })();
+      const id = created;
       const row = getNativeStmt.get(id) as Record<string, unknown> | undefined;
       if (!row) {
         throw new Error('Failed to create native document');
@@ -4279,6 +4441,43 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
     getNativeDocument: (id: string) => {
       const row = getNativeStmt.get(id.trim()) as Record<string, unknown> | undefined;
       return row ? mapNativeDocumentRow(row) : undefined;
+    },
+
+    updateNativeDocumentVersion: (id: string, input: UpdateNativeDocumentVersionInput) => {
+      const normalizedId = id.trim();
+      const updatedId = db.transaction(() => {
+        const currentRow = getNativeStmt.get(normalizedId) as Record<string, unknown> | undefined;
+        if (!currentRow) {
+          return undefined;
+        }
+        const current = mapNativeDocumentRow(currentRow);
+        if (current.mutability_policy !== 'editable_versioned') {
+          throw new Error('immutable native documents cannot be overwritten; create a superseding document');
+        }
+        const contentHash = input.content_hash.trim();
+        if (!contentHash) {
+          throw new Error('native document content_hash is required');
+        }
+        const title = typeof input.title === 'string' && input.title.trim() ? input.title.trim() : current.title;
+        const stablePath = input.stable_path?.trim() || current.stable_path;
+        const metadataJson = typeof input.metadata_json === 'undefined'
+          ? current.metadata_json
+          : normalizeJsonObjectString(input.metadata_json);
+        const updatedBy = normalizeBlockerReason(input.updated_by_principal_id);
+        const nextVersion = current.version + 1;
+        updateNativeVersionStmt.run(title, stablePath, contentHash, nextVersion, metadataJson, normalizedId);
+        insertNativeVersionStmt.run(normalizedId, nextVersion, stablePath, contentHash, metadataJson, updatedBy);
+        return normalizedId;
+      })();
+      if (!updatedId) {
+        return undefined;
+      }
+      const row = getNativeStmt.get(updatedId) as Record<string, unknown> | undefined;
+      return row ? mapNativeDocumentRow(row) : undefined;
+    },
+
+    listNativeDocumentVersions: (id: string) => {
+      return (listNativeVersionsStmt.all(id.trim()) as Array<Record<string, unknown>>).map(mapNativeDocumentVersionRow);
     },
 
     linkNativeDocumentObject: (id: string, objectRef: ObjectRef) => {
@@ -4354,6 +4553,12 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
 export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
   const db = openEntityDatabase();
   const getStmt = db.prepare('SELECT * FROM evidence_artifacts WHERE id = ?');
+  const listVersionsStmt = db.prepare(`
+    SELECT *
+    FROM evidence_artifact_versions
+    WHERE artifact_id = ?
+    ORDER BY version ASC, id ASC
+  `);
   const listByOriginTaskStmt = db.prepare(`
     SELECT *
     FROM evidence_artifacts
@@ -4387,6 +4592,27 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
       updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, 'markdown', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
+  const insertVersionStmt = db.prepare(`
+    INSERT INTO evidence_artifact_versions (
+      artifact_id,
+      version,
+      stable_path,
+      content_hash,
+      metadata_json,
+      created_by_principal_id,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `);
+  const updateArtifactVersionStmt = db.prepare(`
+    UPDATE evidence_artifacts
+    SET title = ?,
+        stable_path = ?,
+        content_hash = ?,
+        version = ?,
+        metadata_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
   const updateAliasStmt = db.prepare(`
     UPDATE evidence_artifacts
     SET human_path_alias = ?, updated_at = CURRENT_TIMESTAMP
@@ -4400,40 +4626,48 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
 
   return {
     createArtifact: (input: CreateEvidenceArtifactInput) => {
-      const id = normalizeWorkspaceId(input.id, randomUUID());
-      const kind = normalizeEvidenceArtifactKind(input.artifact_kind);
-      const title = input.title.trim();
-      const contentHash = input.content_hash.trim();
-      if (!title) {
-        throw new Error('evidence artifact title is required');
-      }
-      if (!contentHash) {
-        throw new Error('evidence artifact content_hash is required');
-      }
-      const mutabilityPolicy = normalizeEvidenceMutabilityPolicy(kind, input.mutability_policy);
-      const stablePath = input.stable_path?.trim() || `/artifacts/evidence/${id}.md`;
-      createStmt.run(
-        id,
-        normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
-        normalizeBlockerReason(input.team_id),
-        normalizePositiveInteger(input.project_id),
-        kind,
-        title,
-        stablePath,
-        normalizeBlockerReason(input.human_path_alias),
-        contentHash,
-        mutabilityPolicy,
-        normalizePositiveInteger(input.version) ?? 1,
-        normalizePositiveInteger(input.origin_task_id),
-        JSON.stringify(normalizeJsonNumberArray(input.source_activity_event_ids)),
-        JSON.stringify(normalizeJsonStringArray(input.source_artifact_ids)),
-        stringifyObjectRefs(input.linked_object_refs ?? []),
-        normalizeJsonObjectString(input.provenance_json),
-        normalizeEvidenceIntegrityState(input.integrity_state),
-        normalizeEvidenceAvailabilityState(input.availability_state),
-        normalizeBlockerReason(input.created_by_principal_id),
-        normalizeJsonObjectString(input.metadata_json)
-      );
+      const created = db.transaction(() => {
+        const id = normalizeWorkspaceId(input.id, randomUUID());
+        const kind = normalizeEvidenceArtifactKind(input.artifact_kind);
+        const title = input.title.trim();
+        const contentHash = input.content_hash.trim();
+        if (!title) {
+          throw new Error('evidence artifact title is required');
+        }
+        if (!contentHash) {
+          throw new Error('evidence artifact content_hash is required');
+        }
+        const mutabilityPolicy = normalizeEvidenceMutabilityPolicy(kind, input.mutability_policy);
+        const stablePath = input.stable_path?.trim() || `/artifacts/evidence/${id}.md`;
+        const version = normalizePositiveInteger(input.version) ?? 1;
+        const metadataJson = normalizeJsonObjectString(input.metadata_json);
+        const createdBy = normalizeBlockerReason(input.created_by_principal_id);
+        createStmt.run(
+          id,
+          normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
+          normalizeBlockerReason(input.team_id),
+          normalizePositiveInteger(input.project_id),
+          kind,
+          title,
+          stablePath,
+          normalizeBlockerReason(input.human_path_alias),
+          contentHash,
+          mutabilityPolicy,
+          version,
+          normalizePositiveInteger(input.origin_task_id),
+          JSON.stringify(normalizeJsonNumberArray(input.source_activity_event_ids)),
+          JSON.stringify(normalizeJsonStringArray(input.source_artifact_ids)),
+          stringifyObjectRefs(input.linked_object_refs ?? []),
+          normalizeJsonObjectString(input.provenance_json),
+          normalizeEvidenceIntegrityState(input.integrity_state),
+          normalizeEvidenceAvailabilityState(input.availability_state),
+          createdBy,
+          metadataJson
+        );
+        insertVersionStmt.run(id, version, stablePath, contentHash, metadataJson, createdBy);
+        return id;
+      })();
+      const id = created;
       const row = getStmt.get(id) as Record<string, unknown> | undefined;
       if (!row) {
         throw new Error('Failed to create evidence artifact');
@@ -4452,6 +4686,43 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
         return [];
       }
       return (listByOriginTaskStmt.all(safeTaskId) as Array<Record<string, unknown>>).map(mapEvidenceArtifactRow);
+    },
+
+    updateArtifactVersion: (id: string, input: UpdateEvidenceArtifactVersionInput) => {
+      const normalizedId = id.trim();
+      const updatedId = db.transaction(() => {
+        const currentRow = getStmt.get(normalizedId) as Record<string, unknown> | undefined;
+        if (!currentRow) {
+          return undefined;
+        }
+        const current = mapEvidenceArtifactRow(currentRow);
+        if (current.mutability_policy !== 'editable_versioned') {
+          throw new Error('immutable evidence artifacts cannot be overwritten; create a superseding artifact');
+        }
+        const contentHash = input.content_hash.trim();
+        if (!contentHash) {
+          throw new Error('evidence artifact content_hash is required');
+        }
+        const title = typeof input.title === 'string' && input.title.trim() ? input.title.trim() : current.title;
+        const stablePath = input.stable_path?.trim() || current.stable_path;
+        const metadataJson = typeof input.metadata_json === 'undefined'
+          ? current.metadata_json
+          : normalizeJsonObjectString(input.metadata_json);
+        const updatedBy = normalizeBlockerReason(input.updated_by_principal_id);
+        const nextVersion = current.version + 1;
+        updateArtifactVersionStmt.run(title, stablePath, contentHash, nextVersion, metadataJson, normalizedId);
+        insertVersionStmt.run(normalizedId, nextVersion, stablePath, contentHash, metadataJson, updatedBy);
+        return normalizedId;
+      })();
+      if (!updatedId) {
+        return undefined;
+      }
+      const row = getStmt.get(updatedId) as Record<string, unknown> | undefined;
+      return row ? mapEvidenceArtifactRow(row) : undefined;
+    },
+
+    listArtifactVersions: (id: string) => {
+      return (listVersionsStmt.all(id.trim()) as Array<Record<string, unknown>>).map(mapEvidenceArtifactVersionRow);
     },
 
     linkArtifactObject: (id: string, objectRef: ObjectRef) => {

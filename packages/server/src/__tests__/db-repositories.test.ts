@@ -678,6 +678,48 @@ describe('DocumentObjectRepository', () => {
     });
   });
 
+  it('versions editable native documents and rejects immutable native overwrites', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createDocumentObjectRepository();
+
+    repo.createNativeDocument({
+      id: 'native-version-doc',
+      title: 'Versioned native doc',
+      stable_path: '/documents/native/native-version-doc.md',
+      content_hash: 'sha256:native-v1',
+      metadata_json: JSON.stringify({ version: 1 }),
+    });
+
+    const updated = repo.updateNativeDocumentVersion('native-version-doc', {
+      content_hash: 'sha256:native-v2',
+      metadata_json: JSON.stringify({ version: 2 }),
+      updated_by_principal_id: 'human-editor',
+    });
+
+    expect(updated).toMatchObject({
+      id: 'native-version-doc',
+      version: 2,
+      stable_path: '/documents/native/native-version-doc.md',
+      content_hash: 'sha256:native-v2',
+      metadata_json: JSON.stringify({ version: 2 }),
+    });
+    expect(repo.listNativeDocumentVersions('native-version-doc')).toMatchObject([
+      { document_id: 'native-version-doc', version: 1, content_hash: 'sha256:native-v1' },
+      { document_id: 'native-version-doc', version: 2, content_hash: 'sha256:native-v2', created_by_principal_id: 'human-editor' },
+    ]);
+
+    repo.createNativeDocument({
+      id: 'native-immutable-doc',
+      title: 'Immutable native doc',
+      content_hash: 'sha256:immutable-v1',
+      mutability_policy: 'immutable',
+    });
+
+    expect(() => repo.updateNativeDocumentVersion('native-immutable-doc', {
+      content_hash: 'sha256:immutable-v2',
+    })).toThrow('immutable native documents cannot be overwritten; create a superseding document');
+  });
+
   it('plans a non-destructive migration path for vague legacy file and artifact references', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
 
@@ -830,6 +872,49 @@ describe('EvidenceArtifactRepository', () => {
     expect(() => artifactRepo.linkArtifactObject('raw-link-artifact', taskRef))
       .toThrow('immutable evidence artifacts cannot be relinked; create a superseding artifact');
     expect(artifactRepo.linkArtifactObject('curated-link-artifact', taskRef)?.linked_object_refs).toEqual([taskRef]);
+  });
+
+  it('versions editable curated artifacts and rejects immutable raw overwrites', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const artifactRepo = dbMod.createEvidenceArtifactRepository();
+
+    artifactRepo.createArtifact({
+      id: 'curated-version-artifact',
+      artifact_kind: 'curated_report',
+      title: 'Editable curated report',
+      stable_path: '/artifacts/evidence/curated-version-artifact.md',
+      content_hash: 'sha256:curated-v1',
+      mutability_policy: 'editable_versioned',
+      metadata_json: JSON.stringify({ version: 1 }),
+    });
+
+    const updated = artifactRepo.updateArtifactVersion('curated-version-artifact', {
+      content_hash: 'sha256:curated-v2',
+      metadata_json: JSON.stringify({ version: 2 }),
+      updated_by_principal_id: 'human-editor',
+    });
+
+    expect(updated).toMatchObject({
+      id: 'curated-version-artifact',
+      version: 2,
+      stable_path: '/artifacts/evidence/curated-version-artifact.md',
+      content_hash: 'sha256:curated-v2',
+    });
+    expect(artifactRepo.listArtifactVersions('curated-version-artifact')).toMatchObject([
+      { artifact_id: 'curated-version-artifact', version: 1, content_hash: 'sha256:curated-v1' },
+      { artifact_id: 'curated-version-artifact', version: 2, content_hash: 'sha256:curated-v2', created_by_principal_id: 'human-editor' },
+    ]);
+
+    artifactRepo.createArtifact({
+      id: 'raw-version-artifact',
+      artifact_kind: 'raw_task_receipt',
+      title: 'Raw receipt',
+      content_hash: 'sha256:raw-v1',
+    });
+
+    expect(() => artifactRepo.updateArtifactVersion('raw-version-artifact', {
+      content_hash: 'sha256:raw-v2',
+    })).toThrow('immutable evidence artifacts cannot be overwritten; create a superseding artifact');
   });
 });
 

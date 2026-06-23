@@ -9,9 +9,13 @@ import type {
   DocumentObjectRepository,
   EvidenceArtifactRepository,
   EvidenceArtifactRecord,
+  EvidenceArtifactVersionRecord,
   ExternalDocumentRefRecord,
   NativeDocumentRecord,
+  NativeDocumentVersionRecord,
   ObjectRef,
+  UpdateEvidenceArtifactVersionInput,
+  UpdateNativeDocumentVersionInput,
 } from '../../db/src';
 
 const now = '2026-06-23T17:20:00.000Z';
@@ -30,8 +34,10 @@ function createFakeRepos(): {
   artifactRepo: EvidenceArtifactRepository;
 } {
   const nativeDocuments = new Map<string, NativeDocumentRecord>();
+  const nativeVersions = new Map<string, NativeDocumentVersionRecord[]>();
   const externalRefs = new Map<string, ExternalDocumentRefRecord>();
   const artifacts = new Map<string, EvidenceArtifactRecord>();
+  const artifactVersions = new Map<string, EvidenceArtifactVersionRecord[]>();
 
   const documentRepo: DocumentObjectRepository = {
     createNativeDocument: (input: CreateNativeDocumentInput) => {
@@ -58,9 +64,52 @@ function createFakeRepos(): {
         updated_at: now,
       };
       nativeDocuments.set(id, record);
+      nativeVersions.set(id, [{
+        id: nativeVersions.size + 1,
+        document_id: id,
+        version: record.version,
+        stable_path: record.stable_path,
+        content_hash: record.content_hash,
+        metadata_json: record.metadata_json,
+        created_by_principal_id: record.created_by_principal_id,
+        created_at: now,
+      }]);
       return record;
     },
     getNativeDocument: (id: string) => nativeDocuments.get(id),
+    updateNativeDocumentVersion: (id: string, input: UpdateNativeDocumentVersionInput) => {
+      const current = nativeDocuments.get(id);
+      if (!current) return undefined;
+      if (current.mutability_policy !== 'editable_versioned') {
+        throw new Error('immutable native documents cannot be overwritten; create a superseding document');
+      }
+      const version = current.version + 1;
+      const updated: NativeDocumentRecord = {
+        ...current,
+        title: input.title ?? current.title,
+        stable_path: input.stable_path ?? current.stable_path,
+        content_hash: input.content_hash,
+        metadata_json: input.metadata_json ?? current.metadata_json,
+        version,
+        updated_at: now,
+      };
+      nativeDocuments.set(id, updated);
+      nativeVersions.set(id, [
+        ...(nativeVersions.get(id) ?? []),
+        {
+          id: (nativeVersions.get(id)?.length ?? 0) + 1,
+          document_id: id,
+          version,
+          stable_path: updated.stable_path,
+          content_hash: updated.content_hash,
+          metadata_json: updated.metadata_json,
+          created_by_principal_id: input.updated_by_principal_id ?? null,
+          created_at: now,
+        },
+      ]);
+      return updated;
+    },
+    listNativeDocumentVersions: (id: string) => nativeVersions.get(id) ?? [],
     linkNativeDocumentObject: (id: string, objectRef: ObjectRef) => {
       const current = nativeDocuments.get(id);
       if (!current) return undefined;
@@ -137,11 +186,54 @@ function createFakeRepos(): {
         updated_at: now,
       };
       artifacts.set(id, record);
+      artifactVersions.set(id, [{
+        id: artifactVersions.size + 1,
+        artifact_id: id,
+        version: record.version,
+        stable_path: record.stable_path,
+        content_hash: record.content_hash,
+        metadata_json: record.metadata_json,
+        created_by_principal_id: record.created_by_principal_id,
+        created_at: now,
+      }]);
       return record;
     },
     getArtifact: (id: string) => artifacts.get(id),
     listArtifactsByOriginTask: (taskId: number) =>
       Array.from(artifacts.values()).filter((entry) => entry.origin_task_id === taskId),
+    updateArtifactVersion: (id: string, input: UpdateEvidenceArtifactVersionInput) => {
+      const current = artifacts.get(id);
+      if (!current) return undefined;
+      if (current.mutability_policy !== 'editable_versioned') {
+        throw new Error('immutable evidence artifacts cannot be overwritten; create a superseding artifact');
+      }
+      const version = current.version + 1;
+      const updated: EvidenceArtifactRecord = {
+        ...current,
+        title: input.title ?? current.title,
+        stable_path: input.stable_path ?? current.stable_path,
+        content_hash: input.content_hash,
+        metadata_json: input.metadata_json ?? current.metadata_json,
+        version,
+        updated_at: now,
+      };
+      artifacts.set(id, updated);
+      artifactVersions.set(id, [
+        ...(artifactVersions.get(id) ?? []),
+        {
+          id: (artifactVersions.get(id)?.length ?? 0) + 1,
+          artifact_id: id,
+          version,
+          stable_path: updated.stable_path,
+          content_hash: updated.content_hash,
+          metadata_json: updated.metadata_json,
+          created_by_principal_id: input.updated_by_principal_id ?? null,
+          created_at: now,
+        },
+      ]);
+      return updated;
+    },
+    listArtifactVersions: (id: string) => artifactVersions.get(id) ?? [],
     linkArtifactObject: (id: string, objectRef: ObjectRef) => {
       const current = artifacts.get(id);
       if (!current) return undefined;
@@ -227,6 +319,70 @@ describe('document object routes', () => {
     expect(await readJson(readRes)).toMatchObject({ nativeDocument: { id: 'native-api-doc' } });
   });
 
+  it('versions editable native markdown documents and rejects immutable overwrites', async () => {
+    const createRes = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'versioned-native-api-doc',
+        title: 'Versioned native note',
+        content_hash: 'sha256:native-v1',
+        metadata: { version: 1 },
+      }),
+    });
+    expect(createRes.status).toBe(201);
+
+    const updateRes = await fetch(`${baseUrl}/api/document-objects/native-documents/versioned-native-api-doc`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content_hash: 'sha256:native-v2',
+        metadata: { version: 2 },
+        updated_by_principal_id: 'human-reviewer',
+      }),
+    });
+    expect(updateRes.status).toBe(200);
+    expect(await readJson(updateRes)).toMatchObject({
+      nativeDocument: {
+        id: 'versioned-native-api-doc',
+        version: 2,
+        content_hash: 'sha256:native-v2',
+        metadata_json: JSON.stringify({ version: 2 }),
+      },
+    });
+
+    const versionsRes = await fetch(`${baseUrl}/api/document-objects/native-documents/versioned-native-api-doc/versions`);
+    expect(versionsRes.status).toBe(200);
+    expect(await readJson(versionsRes)).toMatchObject({
+      versions: [
+        { version: 1, content_hash: 'sha256:native-v1' },
+        { version: 2, content_hash: 'sha256:native-v2', created_by_principal_id: 'human-reviewer' },
+      ],
+    });
+
+    const immutableCreate = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'immutable-native-api-doc',
+        title: 'Immutable native note',
+        content_hash: 'sha256:immutable-v1',
+        mutability_policy: 'immutable',
+      }),
+    });
+    expect(immutableCreate.status).toBe(201);
+
+    const immutableUpdate = await fetch(`${baseUrl}/api/document-objects/native-documents/immutable-native-api-doc`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content_hash: 'sha256:immutable-v2' }),
+    });
+    expect(immutableUpdate.status).toBe(409);
+    expect(await readJson(immutableUpdate)).toEqual({
+      error: 'immutable native documents cannot be overwritten; create a superseding document',
+    });
+  });
+
   it('links external refs as Entity references without write capability', async () => {
     const createRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs`, {
       method: 'POST',
@@ -300,6 +456,58 @@ describe('document object routes', () => {
         id: 'curated-api-artifact',
         linked_object_refs: [{ object_type: 'task', object_id: '42', link_role: 'summary' }],
       },
+    });
+  });
+
+  it('versions editable curated artifacts and blocks raw evidence overwrites', async () => {
+    const curatedRes = await fetch(`${baseUrl}/api/document-objects/evidence-artifacts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'versioned-curated-api-artifact',
+        artifact_kind: 'curated_report',
+        title: 'Editable curated report',
+        content_hash: 'sha256:curated-v1',
+        mutability_policy: 'editable_versioned',
+      }),
+    });
+    expect(curatedRes.status).toBe(201);
+
+    const updateRes = await fetch(`${baseUrl}/api/document-objects/evidence-artifacts/versioned-curated-api-artifact`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content_hash: 'sha256:curated-v2',
+        metadata: { source_artifacts: ['raw-api-artifact'] },
+        updated_by_principal_id: 'human-editor',
+      }),
+    });
+    expect(updateRes.status).toBe(200);
+    expect(await readJson(updateRes)).toMatchObject({
+      evidenceArtifact: {
+        id: 'versioned-curated-api-artifact',
+        version: 2,
+        content_hash: 'sha256:curated-v2',
+      },
+    });
+
+    const versionsRes = await fetch(`${baseUrl}/api/document-objects/evidence-artifacts/versioned-curated-api-artifact/versions`);
+    expect(versionsRes.status).toBe(200);
+    expect(await readJson(versionsRes)).toMatchObject({
+      versions: [
+        { version: 1, content_hash: 'sha256:curated-v1' },
+        { version: 2, content_hash: 'sha256:curated-v2', created_by_principal_id: 'human-editor' },
+      ],
+    });
+
+    const rawUpdate = await fetch(`${baseUrl}/api/document-objects/evidence-artifacts/raw-api-artifact`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content_hash: 'sha256:raw-v2' }),
+    });
+    expect(rawUpdate.status).toBe(409);
+    expect(await readJson(rawUpdate)).toEqual({
+      error: 'immutable evidence artifacts cannot be overwritten; create a superseding artifact',
     });
   });
 

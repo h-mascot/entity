@@ -9,6 +9,8 @@ import {
   type DocumentObjectRepository,
   type EvidenceArtifactRepository,
   type ObjectRef,
+  type UpdateEvidenceArtifactVersionInput,
+  type UpdateNativeDocumentVersionInput,
 } from '../../db/src';
 
 interface DocumentObjectRouterDeps {
@@ -113,7 +115,7 @@ function sendRouteError(res: Response, error: unknown): Response {
     return res.status(error.statusCode).json({ error: error.message });
   }
   const message = error instanceof Error ? error.message : 'Unknown error';
-  const status = message.includes('immutable evidence artifacts') ? 409 : 500;
+  const status = message.includes('immutable evidence artifacts') || message.includes('immutable native documents') ? 409 : 500;
   return res.status(status).json({ error: message });
 }
 
@@ -135,6 +137,16 @@ function parseCreateNativeDocument(body: Record<string, unknown>): CreateNativeD
     linked_object_refs: parseObjectRefs(body.linked_object_refs),
     created_by_principal_id: optionalString(body, 'created_by_principal_id'),
     metadata_json: jsonObjectString(body, 'metadata', 'metadata_json'),
+  };
+}
+
+function parseUpdateNativeDocument(body: Record<string, unknown>): UpdateNativeDocumentVersionInput {
+  return {
+    title: optionalString(body, 'title'),
+    stable_path: optionalString(body, 'stable_path'),
+    content_hash: requiredString(body, 'content_hash'),
+    metadata_json: jsonObjectString(body, 'metadata', 'metadata_json'),
+    updated_by_principal_id: optionalString(body, 'updated_by_principal_id'),
   };
 }
 
@@ -186,6 +198,16 @@ function parseCreateEvidenceArtifact(body: Record<string, unknown>): CreateEvide
   };
 }
 
+function parseUpdateEvidenceArtifact(body: Record<string, unknown>): UpdateEvidenceArtifactVersionInput {
+  return {
+    title: optionalString(body, 'title'),
+    stable_path: optionalString(body, 'stable_path'),
+    content_hash: requiredString(body, 'content_hash'),
+    metadata_json: jsonObjectString(body, 'metadata', 'metadata_json'),
+    updated_by_principal_id: optionalString(body, 'updated_by_principal_id'),
+  };
+}
+
 export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}): Router {
   const documentRepo = deps.documentRepo ?? createDocumentObjectRepository();
   const artifactRepo = deps.artifactRepo ?? createEvidenceArtifactRepository();
@@ -204,6 +226,22 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     const nativeDocument = documentRepo.getNativeDocument(req.params.id);
     if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
     return res.json({ nativeDocument });
+  });
+
+  router.patch('/native-documents/:id', (req, res) => {
+    try {
+      const nativeDocument = documentRepo.updateNativeDocumentVersion(req.params.id, parseUpdateNativeDocument(parseBody(req)));
+      if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
+      return res.json({ nativeDocument });
+    } catch (error) {
+      return sendRouteError(res, error);
+    }
+  });
+
+  router.get('/native-documents/:id/versions', (req, res) => {
+    const nativeDocument = documentRepo.getNativeDocument(req.params.id);
+    if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
+    return res.json({ versions: documentRepo.listNativeDocumentVersions(req.params.id) });
   });
 
   router.post('/native-documents/:id/links', (req, res) => {
@@ -254,6 +292,22 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     const evidenceArtifact = artifactRepo.getArtifact(req.params.id);
     if (!evidenceArtifact) return res.status(404).json({ error: 'evidence artifact not found' });
     return res.json({ evidenceArtifact });
+  });
+
+  router.patch('/evidence-artifacts/:id', (req, res) => {
+    try {
+      const evidenceArtifact = artifactRepo.updateArtifactVersion(req.params.id, parseUpdateEvidenceArtifact(parseBody(req)));
+      if (!evidenceArtifact) return res.status(404).json({ error: 'evidence artifact not found' });
+      return res.json({ evidenceArtifact });
+    } catch (error) {
+      return sendRouteError(res, error);
+    }
+  });
+
+  router.get('/evidence-artifacts/:id/versions', (req, res) => {
+    const evidenceArtifact = artifactRepo.getArtifact(req.params.id);
+    if (!evidenceArtifact) return res.status(404).json({ error: 'evidence artifact not found' });
+    return res.json({ versions: artifactRepo.listArtifactVersions(req.params.id) });
   });
 
   router.post('/evidence-artifacts/:id/links', (req, res) => {
