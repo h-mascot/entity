@@ -39,7 +39,13 @@
     ".github/workflows",
     "output",
     "evidence",
-    "artifacts"
+    "artifacts",
+    ".publishignore",
+    "CONTEXT.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "SECURITY.md",
+    "data"
   ],
   "scanExcludeDirs": [
     ".git",
