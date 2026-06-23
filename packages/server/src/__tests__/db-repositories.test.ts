@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import Database from 'better-sqlite3';
 
 // Each test suite uses a unique temp DB file via ENTITY_TASK_DB_PATH
 let tmpDbPath: string;
@@ -406,6 +407,136 @@ describe('ActivityRepository', () => {
       description: 'Imported freeform activity event',
     });
     expect(payload.task_id).toBe(7);
+  });
+
+  it('dry-runs, applies, and idempotently records known legacy ActivityEvent backfill', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const taskRepo = dbMod.createTaskRepository();
+    const activityRepo = dbMod.createActivityRepository();
+    const task = taskRepo.createTask({ name: 'Legacy Activity Task' });
+    const activity = activityRepo.createActivity({
+      source: 'task',
+      type: 'task_moved',
+      action: 'Moved task',
+      description: 'Legacy task moved event',
+      task_id: task.id,
+    });
+
+    const rawDb = new Database(tmpDbPath);
+    try {
+      rawDb.prepare(`
+        UPDATE activities
+        SET
+          activity_event_type = NULL,
+          activity_event_payload_json = NULL,
+          activity_event_schema_status = 'legacy_mapped',
+          activity_event_legacy_type = NULL,
+          metadata = NULL
+        WHERE id = ?
+      `).run(activity.id);
+
+      const dryRun = dbMod.backfillActivityEventsProgressively({ dryRun: true, db: rawDb });
+      const dryRunActivity = dryRun.activityResults.find((result) => result.activity_id === activity.id);
+      expect(dryRunActivity).toMatchObject({
+        event_type: 'status_changed',
+        schema_status: 'legacy_mapped',
+        confidence: 'high',
+        would_update: true,
+        applied: false,
+      });
+      expect(dryRun.markdown).toContain('THE-33 ActivityEvent Progressive Backfill Report');
+      expect(taskRepo.getTask(task.id)?.name).toBe('Legacy Activity Task');
+      expect(rawDb.prepare('SELECT activity_event_type FROM activities WHERE id = ?').get(activity.id))
+        .toMatchObject({ activity_event_type: null });
+
+      const applied = dbMod.backfillActivityEventsProgressively({ dryRun: false, db: rawDb });
+      const appliedActivity = applied.activityResults.find((result) => result.activity_id === activity.id);
+      expect(appliedActivity?.applied).toBe(true);
+
+      const updated = rawDb.prepare('SELECT * FROM activities WHERE id = ?').get(activity.id) as {
+        activity_event_type: string;
+        activity_event_schema_status: string;
+        activity_event_payload_json: string;
+        metadata: string;
+      };
+      expect(updated.activity_event_type).toBe('status_changed');
+      expect(updated.activity_event_schema_status).toBe('legacy_mapped');
+      expect(JSON.parse(updated.activity_event_payload_json)).toMatchObject({
+        version: dbMod.ACTIVITY_EVENT_PAYLOAD_VERSION,
+        task_id: task.id,
+        legacy: {
+          source_type: 'task_moved',
+          action: 'Moved task',
+        },
+      });
+      expect(JSON.parse(updated.metadata).phase2_activity_event_backfill).toMatchObject({
+        version: 'THE-33',
+        confidence: 'high',
+      });
+
+      const secondApply = dbMod.backfillActivityEventsProgressively({ dryRun: false, db: rawDb });
+      const secondActivity = secondApply.activityResults.find((result) => result.activity_id === activity.id);
+      expect(secondActivity?.would_update).toBe(false);
+    } finally {
+      rawDb.close();
+    }
+  });
+
+  it('flags weak legacy activity rows without rewriting them as certain structured events', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    dbMod.createActivityRepository();
+    const rawDb = new Database(tmpDbPath);
+
+    try {
+      const insert = rawDb.prepare(`
+        INSERT INTO activities (
+          source,
+          type,
+          activity_event_type,
+          activity_event_payload_json,
+          activity_event_schema_status,
+          action,
+          description,
+          metadata
+        ) VALUES ('agent', 'vendor_ping', NULL, '{bad-json', 'legacy_mapped', 'Vendor ping', 'Weak vendor activity', NULL)
+      `);
+      const result = insert.run();
+      const activityId = Number(result.lastInsertRowid);
+
+      const report = dbMod.backfillActivityEventsProgressively({ dryRun: false, db: rawDb });
+      const migrated = report.activityResults.find((entry) => entry.activity_id === activityId);
+      expect(migrated).toMatchObject({
+        event_type: 'legacy_event_observed',
+        schema_status: 'legacy_unknown',
+        confidence: 'unknown',
+        applied: true,
+      });
+      expect(migrated?.warnings.map((warning) => warning.code)).toEqual(
+        expect.arrayContaining(['legacy_event_unknown', 'missing_task_link', 'malformed_payload']),
+      );
+
+      const stored = rawDb.prepare('SELECT * FROM activities WHERE id = ?').get(activityId) as {
+        activity_event_type: string;
+        activity_event_schema_status: string;
+        activity_event_legacy_type: string;
+        activity_event_payload_json: string;
+        metadata: string;
+      };
+      expect(stored.activity_event_type).toBe('legacy_event_observed');
+      expect(stored.activity_event_schema_status).toBe('legacy_unknown');
+      expect(stored.activity_event_legacy_type).toBe('vendor_ping');
+      expect(JSON.parse(stored.activity_event_payload_json).legacy).toMatchObject({
+        source_type: 'vendor_ping',
+      });
+      expect(JSON.parse(stored.metadata).phase2_activity_event_backfill.warnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'legacy_event_unknown' }),
+          expect.objectContaining({ code: 'missing_task_link' }),
+        ]),
+      );
+    } finally {
+      rawDb.close();
+    }
   });
 
   it('should list activities by task id', async () => {

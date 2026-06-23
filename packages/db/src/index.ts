@@ -609,6 +609,63 @@ export interface TaskHierarchyBackfillOptions {
   db?: Database.Database;
 }
 
+export type ActivityBackfillConfidence = 'high' | 'medium' | 'low' | 'unknown';
+
+export type ActivityBackfillWarningCode =
+  | 'legacy_event_unknown'
+  | 'missing_task_link'
+  | 'malformed_payload';
+
+export interface ActivityBackfillInferredField {
+  activity_id: number;
+  field_name:
+    | 'activity_event_type'
+    | 'activity_event_payload_json'
+    | 'activity_event_schema_status'
+    | 'activity_event_legacy_type';
+  inferred_value: string | number | null;
+  source: 'explicit_activity_event' | 'legacy_activity_type' | 'payload_json' | 'legacy_row';
+  confidence: ActivityBackfillConfidence;
+}
+
+export interface ActivityBackfillWarning {
+  activity_id: number;
+  code: ActivityBackfillWarningCode;
+  message: string;
+  severity: 'info' | 'warning' | 'blocking_for_done';
+}
+
+export interface ActivityBackfillActivityResult {
+  activity_id: number;
+  task_id: number | null;
+  legacy_type: string;
+  event_type: ActivityEventType;
+  schema_status: ActivityEventSchemaStatus;
+  confidence: ActivityBackfillConfidence;
+  inferred_fields: ActivityBackfillInferredField[];
+  warnings: ActivityBackfillWarning[];
+  would_update: boolean;
+  applied: boolean;
+}
+
+export interface ActivityEventBackfillReport {
+  dryRun: boolean;
+  totalActivities: number;
+  activitiesNeedingUpdate: number;
+  eventsMapped: number;
+  legacyUnknown: number;
+  cleanupWarnings: number;
+  activityResults: ActivityBackfillActivityResult[];
+  rollbackNotes: string[];
+  markdown: string;
+}
+
+export interface ActivityEventBackfillOptions {
+  dryRun?: boolean;
+  limit?: number;
+  db?: Database.Database;
+}
+
 export interface SubscriptionRecord {
   id: string;
   agent_id: string;
@@ -1925,6 +1982,391 @@ export function backfillTaskHierarchyAndAccountability(
   };
 }
 
+function parseActivityMetadataForBackfill(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string' || !value.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseActivityPayloadForBackfill(value: unknown): {
+  payload: Record<string, unknown>;
+  malformed: boolean;
+} {
+  if (typeof value !== 'string' || !value.trim()) {
+    return { payload: {}, malformed: false };
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? { payload: parsed as Record<string, unknown>, malformed: false }
+      : { payload: {}, malformed: true };
+  } catch {
+    return { payload: {}, malformed: true };
+  }
+}
+
+function pushActivityBackfillField(
+  target: ActivityBackfillInferredField[],
+  activityId: number,
+  field_name: ActivityBackfillInferredField['field_name'],
+  inferred_value: ActivityBackfillInferredField['inferred_value'],
+  source: ActivityBackfillInferredField['source'],
+  confidence: ActivityBackfillConfidence
+): void {
+  target.push({
+    activity_id: activityId,
+    field_name,
+    inferred_value,
+    source,
+    confidence,
+  });
+}
+
+function pushActivityBackfillWarning(
+  target: ActivityBackfillWarning[],
+  activityId: number,
+  code: ActivityBackfillWarningCode,
+  message: string,
+  severity: ActivityBackfillWarning['severity']
+): void {
+  target.push({
+    activity_id: activityId,
+    code,
+    message,
+    severity,
+  });
+}
+
+function buildActivityBackfillProjection(row: Record<string, unknown>): {
+  legacyTypeLabel: string;
+  eventType: ActivityEventType;
+  schemaStatus: ActivityEventSchemaStatus;
+  legacyType: string | null;
+  payloadJson: string;
+  confidence: ActivityBackfillConfidence;
+  source: ActivityBackfillInferredField['source'];
+  taskId: number | null;
+  malformedPayload: boolean;
+} {
+  const activityId = Number(row.id);
+  const rawLegacyType = normalizeBlockerReason(row.type) ?? 'unknown';
+  const knownLegacyType = isKnownLegacyActivityType(rawLegacyType)
+    ? rawLegacyType.trim().toLowerCase() as ActivityType
+    : null;
+  const taskId = normalizePositiveInteger(row.task_id);
+  const agentName = normalizeBlockerReason(row.agent_name);
+  const action = String(row.action ?? '');
+  const description = String(row.description ?? '');
+  const parsedPayload = parseActivityPayloadForBackfill(row.activity_event_payload_json);
+  const normalizedExplicitEventType = normalizeActivityEventType(row.activity_event_type);
+
+  if (normalizedExplicitEventType) {
+    const payload = normalizeActivityEventPayload({
+      value: parsedPayload.payload,
+      type: knownLegacyType ?? 'message_sent',
+      action,
+      description,
+      taskId,
+      agentName,
+    });
+    return {
+      legacyTypeLabel: rawLegacyType,
+      eventType: normalizedExplicitEventType,
+      schemaStatus: normalizeActivityEventSchemaStatus(row.activity_event_schema_status),
+      legacyType: null,
+      payloadJson: JSON.stringify(payload),
+      confidence: 'high',
+      source: 'explicit_activity_event',
+      taskId,
+      malformedPayload: parsedPayload.malformed,
+    };
+  }
+
+  if (!knownLegacyType) {
+    const payload = normalizeActivityEventPayload({
+      value: parsedPayload.payload,
+      type: 'message_sent',
+      action,
+      description,
+      taskId,
+      agentName,
+    });
+    payload.legacy = {
+      source_type: rawLegacyType,
+      action,
+      description,
+    };
+    return {
+      legacyTypeLabel: rawLegacyType,
+      eventType: 'legacy_event_observed',
+      schemaStatus: 'legacy_unknown',
+      legacyType: rawLegacyType,
+      payloadJson: JSON.stringify(payload),
+      confidence: 'unknown',
+      source: 'legacy_row',
+      taskId,
+      malformedPayload: parsedPayload.malformed,
+    };
+  }
+
+  const projected = buildActivityEventProjection({
+    legacyType: knownLegacyType,
+    explicitEventType: undefined,
+    explicitSchemaStatus: undefined,
+    payload: parsedPayload.payload,
+    action,
+    description,
+    taskId,
+    agentName,
+  });
+  const eventType = projected.activity_event_type;
+  const confidence: ActivityBackfillConfidence = eventType === 'legacy_event_observed' ? 'low' : 'high';
+  return {
+    legacyTypeLabel: knownLegacyType,
+    eventType,
+    schemaStatus: eventType === 'legacy_event_observed' ? 'legacy_unknown' : 'legacy_mapped',
+    legacyType: eventType === 'legacy_event_observed' ? knownLegacyType : null,
+    payloadJson: projected.activity_event_payload_json,
+    confidence,
+    source: 'legacy_activity_type',
+    taskId,
+    malformedPayload: parsedPayload.malformed,
+  };
+}
+
+function renderActivityBackfillMarkdown(report: Omit<ActivityEventBackfillReport, 'markdown'>): string {
+  const lines = [
+    '# THE-33 ActivityEvent Progressive Backfill Report',
+    '',
+    `- Mode: ${report.dryRun ? 'dry-run' : 'apply'}`,
+    `- Total activities scanned: ${report.totalActivities}`,
+    `- Activities needing update: ${report.activitiesNeedingUpdate}`,
+    `- Events mapped: ${report.eventsMapped}`,
+    `- Legacy/weak events flagged: ${report.legacyUnknown}`,
+    `- Cleanup warnings: ${report.cleanupWarnings}`,
+    '',
+    '## Sample Results',
+  ];
+
+  const sample = report.activityResults
+    .filter((result) => result.would_update || result.warnings.length > 0)
+    .slice(0, 5);
+  if (sample.length === 0) {
+    lines.push('- No ActivityEvent backfill updates or cleanup warnings detected.');
+  } else {
+    for (const result of sample) {
+      lines.push(
+        `- Activity ${result.activity_id} (${result.legacy_type} -> ${result.event_type}): confidence=${result.confidence}, warnings=${result.warnings.length}, applied=${result.applied}`
+      );
+    }
+  }
+
+  lines.push('', '## Rollback / Non-Destructive Notes', ...report.rollbackNotes.map((note) => `- ${note}`));
+  return `${lines.join('\n')}\n`;
+}
+
+export function backfillActivityEventsProgressively(
+  options: ActivityEventBackfillOptions = {}
+): ActivityEventBackfillReport {
+  const dryRun = options.dryRun !== false;
+  const db = options.db ?? getEntityDatabase();
+  const limit = typeof options.limit === 'number' && Number.isInteger(options.limit) && options.limit > 0 ? options.limit : null;
+  const rows = db.prepare(`
+    SELECT *
+    FROM activities
+    ORDER BY id ASC
+    ${limit ? 'LIMIT ?' : ''}
+  `).all(...(limit ? [limit] : [])) as Array<Record<string, unknown>>;
+
+  const updateStmt = db.prepare(`
+    UPDATE activities
+    SET
+      activity_event_type = ?,
+      activity_event_payload_version = ?,
+      activity_event_payload_json = ?,
+      activity_event_schema_status = ?,
+      activity_event_legacy_type = ?,
+      metadata = ?
+    WHERE id = ?
+  `);
+
+  const activityResults: ActivityBackfillActivityResult[] = [];
+
+  const applyOne = (row: Record<string, unknown>): void => {
+    const activityId = Number(row.id);
+    const inferredFields: ActivityBackfillInferredField[] = [];
+    const warnings: ActivityBackfillWarning[] = [];
+    const projection = buildActivityBackfillProjection(row);
+    const currentEventType = normalizeActivityEventType(row.activity_event_type);
+    const currentSchemaStatus = normalizeActivityEventSchemaStatus(row.activity_event_schema_status);
+    const currentPayload = typeof row.activity_event_payload_json === 'string' ? row.activity_event_payload_json : '';
+    const currentLegacyType = row.activity_event_legacy_type === null || typeof row.activity_event_legacy_type === 'undefined'
+      ? null
+      : String(row.activity_event_legacy_type);
+    const alreadyStructured =
+      currentEventType !== null &&
+      currentSchemaStatus === 'structured' &&
+      !projection.malformedPayload;
+
+    if (projection.malformedPayload) {
+      pushActivityBackfillWarning(
+        warnings,
+        activityId,
+        'malformed_payload',
+        'Existing activity payload could not be parsed; backfill stores a normalized payload with legacy provenance.',
+        'warning'
+      );
+    }
+    if (projection.eventType === 'legacy_event_observed') {
+      pushActivityBackfillWarning(
+        warnings,
+        activityId,
+        'legacy_event_unknown',
+        'Legacy activity type has no confident ActivityEvent mapping and remains explicitly weak.',
+        'warning'
+      );
+    }
+    if (projection.taskId === null) {
+      pushActivityBackfillWarning(
+        warnings,
+        activityId,
+        'missing_task_link',
+        'Activity has no task link; keep it visible but do not attach fabricated task provenance.',
+        'info'
+      );
+    }
+
+    if (!alreadyStructured && currentEventType !== projection.eventType) {
+      pushActivityBackfillField(
+        inferredFields,
+        activityId,
+        'activity_event_type',
+        projection.eventType,
+        projection.source,
+        projection.confidence
+      );
+    }
+    if (!alreadyStructured && currentPayload !== projection.payloadJson) {
+      pushActivityBackfillField(
+        inferredFields,
+        activityId,
+        'activity_event_payload_json',
+        projection.payloadJson,
+        projection.malformedPayload ? 'payload_json' : projection.source,
+        projection.confidence
+      );
+    }
+    if (!alreadyStructured && currentSchemaStatus !== projection.schemaStatus) {
+      pushActivityBackfillField(
+        inferredFields,
+        activityId,
+        'activity_event_schema_status',
+        projection.schemaStatus,
+        projection.source,
+        projection.confidence
+      );
+    }
+    if (!alreadyStructured && currentLegacyType !== projection.legacyType) {
+      pushActivityBackfillField(
+        inferredFields,
+        activityId,
+        'activity_event_legacy_type',
+        projection.legacyType,
+        projection.source,
+        projection.confidence
+      );
+    }
+
+    const metadata = parseActivityMetadataForBackfill(row.metadata);
+    const existingBackfill = metadata.phase2_activity_event_backfill as { version?: unknown } | undefined;
+    const shouldRecordAudit =
+      !alreadyStructured &&
+      (inferredFields.length > 0 || warnings.length > 0 || existingBackfill?.version !== 'THE-33');
+    const nextMetadata = shouldRecordAudit
+      ? JSON.stringify({
+          ...metadata,
+          phase2_activity_event_backfill: {
+            version: 'THE-33',
+            confidence: projection.confidence,
+            inferred_fields: inferredFields.map(({ activity_id: _activityId, ...field }) => field),
+            warnings: warnings.map(({ activity_id: _activityId, ...warning }) => warning),
+          },
+        })
+      : undefined;
+    const wouldUpdate = inferredFields.length > 0 || Boolean(nextMetadata);
+
+    if (!dryRun && wouldUpdate) {
+      updateStmt.run(
+        projection.eventType,
+        ACTIVITY_EVENT_PAYLOAD_VERSION,
+        projection.payloadJson,
+        projection.schemaStatus,
+        projection.legacyType,
+        nextMetadata ?? (typeof row.metadata === 'string' ? row.metadata : null),
+        activityId
+      );
+    }
+
+    activityResults.push({
+      activity_id: activityId,
+      task_id: projection.taskId,
+      legacy_type: projection.legacyTypeLabel,
+      event_type: projection.eventType,
+      schema_status: projection.schemaStatus,
+      confidence: projection.confidence,
+      inferred_fields: inferredFields,
+      warnings,
+      would_update: wouldUpdate,
+      applied: !dryRun && wouldUpdate,
+    });
+  };
+
+  const transaction = db.transaction(() => {
+    for (const row of rows) {
+      applyOne(row);
+    }
+  });
+
+  if (dryRun) {
+    for (const row of rows) {
+      applyOne(row);
+    }
+  } else {
+    transaction();
+  }
+
+  const reportBase: Omit<ActivityEventBackfillReport, 'markdown'> = {
+    dryRun,
+    totalActivities: rows.length,
+    activitiesNeedingUpdate: activityResults.filter((result) => result.would_update).length,
+    eventsMapped: activityResults.filter((result) => result.schema_status === 'legacy_mapped').length,
+    legacyUnknown: activityResults.filter((result) => result.schema_status === 'legacy_unknown').length,
+    cleanupWarnings: activityResults.reduce((sum, result) => sum + result.warnings.length, 0),
+    activityResults,
+    rollbackNotes: [
+      'Dry-run mode performs no writes.',
+      'Apply mode updates only ActivityEvent projection columns and metadata audit fields on existing activity rows.',
+      'Weak or unknown legacy events remain visible with legacy_unknown status and warnings instead of being rewritten as certain structured history.',
+      'Re-running apply is idempotent once the THE-33 projection and metadata audit are present.',
+    ],
+  };
+
+  return {
+    ...reportBase,
+    markdown: renderActivityBackfillMarkdown(reportBase),
+  };
+}
+
 function iterateSourceRows(source: Database.Database): IterableIterator<SourceTaskRow> {
   const supportsArchived = hasColumn(source, 'tasks', 'archived');
   const supportsBlocked = hasColumn(source, 'tasks', 'blocked');
@@ -2114,6 +2556,31 @@ function normalizeActivityType(value: unknown): ActivityType {
       return normalized;
     default:
       return 'message_sent';
+  }
+}
+
+function isKnownLegacyActivityType(value: unknown): value is ActivityType {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case 'file_edit':
+    case 'tool_call':
+    case 'message_sent':
+    case 'command_run':
+    case 'research':
+    case 'thinking':
+    case 'task_created':
+    case 'task_updated':
+    case 'task_moved':
+    case 'task_completed':
+    case 'task_deleted':
+    case 'task_comment':
+      return true;
+    default:
+      return false;
   }
 }
 
