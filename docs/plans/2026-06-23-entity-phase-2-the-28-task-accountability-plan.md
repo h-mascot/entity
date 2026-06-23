@@ -4,7 +4,7 @@ Implement `THE-28` (`THE-7.3`) by enforcing task initiator, individual owner, as
 **MC Task:** THE-28
 **Created:** 2026-06-23
 **Agent:** Cursor
-**Status:** IN PROGRESS
+**Status:** BLOCKED ON BOOK REVIEW
 
 ## Context
 Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phase-2.mdc`, Phase 2 context/spec files, `.project-gate.json`, and the execution-pack plan.
@@ -20,7 +20,7 @@ Scope is task accountability validation only. Do not implement workspace navigat
 - [x] Branch `THE-28-enforce-task-accountability-validation` exists.
 - [x] Existing DB repository, task route, and test patterns are inspected.
 - [x] Implementation stays scoped to task accountability validation and compatibility notes.
-- [ ] Required proof commands and CLI Tester gates pass.
+- [ ] Required proof commands and CLI Tester gates pass. Local proof and machine gate pass; Book review is `REQUESTED/BLOCKED` after commit `ad4b511`, so `verify` is not run.
 
 ## Plan
 - [x] Step 1: Confirm issue mapping, parent, and dependency safety.
@@ -40,8 +40,8 @@ Scope is task accountability validation only. Do not implement workspace navigat
   - **Verify:** `cd packages/server && npx vitest run <focused tests>`
 - [ ] Step 6: Run proof and gate commands.
   - **Files:** proof receipts under `output/entity-phase-2/`
-  - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`, `npm run build`, `cd packages/server && npm run build && npx vitest run`, CLI Tester `request`, `run`, `book-review`, and `verify`.
-- [ ] Step 7: Commit scoped work and post Linear proof comment.
+  - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`, `npm run build`, and `cd packages/server && npm run build && npx vitest run` pass under Node v22.22.2; CLI Tester `request` and `run` pass; `book-review` is blocked with `decision=REQUESTED`, `safeToContinue=false`; `verify` is not run.
+- [x] Step 7: Commit scoped work and post Linear proof comment.
   - **Files:** changed implementation/tests/docs; local run-state remains uncommitted
   - **Verify:** `git status --short --branch`, `git log -1 --oneline`, Linear comment response.
 
@@ -51,6 +51,7 @@ Scope is task accountability validation only. Do not implement workspace navigat
 | 03:56 | Step 1 | done | Live Linear confirms `THE-28` child/source mapping and `THE-27` is Done. `THE-27` verify initially failed under Node v26 due the known better-sqlite3 ABI mismatch, then passed under Node v22.22.2. |
 | 04:02 | Step 2 | done | Existing task API enforces active-task assignee strings; DB has org/team/project seam but lacks initiator/owner/executor/taskmaster-drivable fields. |
 | 04:05 | Steps 3-5 | done | Added additive task accountability fields, route validation helpers, focused validation tests, DB compatibility test, and gap-matrix compatibility note. Focused tests and server build pass. |
+| 04:06 | Proof/gate | blocked | Full proof commands pass under Node v22.22.2. CLI Tester request/run pass. Book review is `REQUESTED`, `safeToContinue=false`; verify not run. GitNexus detect_changes reports high risk for shared task route/DB task-shape impact. Linear proof/blocker comment `243e01f0-3215-4a6d-9ec6-b3534c11f8eb` posted. |
 
 ## Files Touched
 - `docs/plans/2026-06-23-entity-phase-2-the-28-task-accountability-plan.md` - created - compaction-safe plan for current issue.
@@ -68,12 +69,13 @@ Scope is task accountability validation only. Do not implement workspace navigat
 2. Run `git status` and `git diff` to see current state.
 3. Read `.cursor/run-state/entity-phase-2.json`.
 4. Continue from the first unchecked step above.
-5. Use Node v22.22.2 for proof/gate commands unless native dependencies are rebuilt for another Node.
-6. Do not start `THE-29` until `THE-28` proof commands pass, CLI Tester `run` passes, Book review is APPROVED with `safeToContinue=true`, and CLI Tester `verify THE-28` passes with `nextChildBlocked=false`, or Henry explicitly waives the gate.
+5. Wait for Book approval or an explicit Henry-approved waiver. Run CLI Tester `verify THE-28` only if Book review is APPROVED with `safeToContinue=true`.
+6. Use Node v22.22.2 for proof/gate commands unless native dependencies are rebuilt for another Node.
+7. Do not start `THE-29` until `THE-28` proof commands pass, CLI Tester `run` passes, Book review is APPROVED with `safeToContinue=true`, and CLI Tester `verify THE-28` passes with `nextChildBlocked=false`, or Henry explicitly waives the gate.
 
 ## Done
-- [ ] All implementation/proof steps complete.
-- [ ] Proof commands pass.
+- [x] All local implementation/proof steps complete.
+- [x] Proof commands pass.
 - [ ] CLI Tester request/run/book-review/verify pass.
-- [ ] Linear proof comment added.
+- [x] Linear proof comment added.
 - [ ] `THE-29` identified as next candidate only after verify allows continuation.
