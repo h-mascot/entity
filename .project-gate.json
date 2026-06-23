@@ -26,7 +26,11 @@
     "docs/specs/",
     "docs/execution-packs/",
     "docs/plans/",
-    ".cursor/linear-live.json"
+    ".cursor/linear-live.json",
+    ".cursor/run-state/",
+    ".cursor/run-state",
+    ".cursor/entity-phase-2-autonomous-run-state.json",
+    ".cursor/the-26-pr-body.md"
   ],
   "bookReview": {
     "required": true,
