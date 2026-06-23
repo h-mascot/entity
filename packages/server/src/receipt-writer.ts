@@ -25,7 +25,7 @@ export interface CompletionReceiptDependencies {
   artifactRepository: Pick<EvidenceArtifactRepository, 'createArtifact'>;
   activityRepository: Pick<ActivityRepository, 'listActivitiesByTaskId' | 'createActivity'>;
   updateTask: (taskId: number, updates: UpdateTaskInput) => Promise<TaskRecord | undefined> | TaskRecord | undefined;
-  writeFile?: (filePath: string, body: string) => Promise<unknown>;
+  writeFile?: (filePath: string, body: string, options?: { flag?: string }) => Promise<unknown>;
   mkdir?: (dirPath: string, options?: { recursive?: boolean }) => Promise<unknown>;
   idFactory?: () => string;
   now?: () => Date;
@@ -401,7 +401,7 @@ export async function completeTaskWithReceipt(
 
   try {
     await (dependencies.mkdir ?? fs.promises.mkdir)(path.dirname(storagePath), { recursive: true });
-    await (dependencies.writeFile ?? fs.promises.writeFile)(storagePath, receiptBody);
+    await (dependencies.writeFile ?? fs.promises.writeFile)(storagePath, receiptBody, { flag: 'wx' });
   } catch (error) {
     await recordReceiptFailure(input, dependencies, actorPrincipalId, {
       status: 'failed',

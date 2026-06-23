@@ -290,6 +290,68 @@ describe('receipt writer', () => {
     expect(result.artifact.id).toBe('receipt-fixed');
   });
 
+  it('rejects raw receipt body overwrite attempts and leaves the existing body unchanged', async () => {
+    const storageRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'entity-receipt-'));
+    tempDirs.push(storageRoot);
+    const previousTask = makeTask({ column: 'review' });
+    const nextTask = makeTask({ column: 'done' });
+    const receiptPath = path.join(storageRoot, 'artifacts/evidence/receipt-fixed.md');
+    const originalBody = '# Existing immutable receipt\n';
+    await fs.promises.mkdir(path.dirname(receiptPath), { recursive: true });
+    await fs.promises.writeFile(receiptPath, originalBody);
+    const createdActivities: CreateActivityInput[] = [];
+    const updates: UpdateTaskInput[] = [];
+
+    await expect(completeTaskWithReceipt(
+      {
+        previousTask,
+        nextTask,
+        actorPrincipalId: 'reviewer-1',
+      },
+      {
+        storageRoot,
+        idFactory: () => 'receipt-fixed',
+        now: () => new Date('2026-06-23T11:00:00.000Z'),
+        artifactRepository: {
+          createArtifact: () => {
+            throw new Error('artifact should not create after overwrite rejection');
+          },
+        },
+        activityRepository: {
+          listActivitiesByTaskId: () => [makeActivity()],
+          createActivity: (input) => {
+            createdActivities.push(input);
+            return makeActivity({ id: 12, activity_event_type: 'receipt_failed' });
+          },
+        },
+        updateTask: async (_taskId, update) => {
+          updates.push(update);
+          return {
+            ...previousTask,
+            blocked: update.blocked ?? previousTask.blocked,
+            blocker_reason: update.blocker_reason ?? previousTask.blocker_reason,
+            metadata: update.metadata ?? previousTask.metadata,
+          };
+        },
+      },
+    )).rejects.toMatchObject({ code: 'EEXIST' });
+
+    await expect(fs.promises.readFile(receiptPath, 'utf8')).resolves.toBe(originalBody);
+    expect(createdActivities[0]).toMatchObject({
+      activity_event_type: 'receipt_failed',
+      task_column: 'review',
+    });
+    expect(updates[0]).toMatchObject({
+      column: 'review',
+      blocked: true,
+    });
+    expect(JSON.parse(updates[0]?.metadata ?? '{}').phase2_receipt).toMatchObject({
+      receipt_status: 'failed',
+      failure_stage: 'body_write',
+      stable_path: '/artifacts/evidence/receipt-fixed.md',
+    });
+  });
+
   it('leaves a failed receipt state and event when receipt body writing fails', async () => {
     const previousTask = makeTask({ column: 'review' });
     const nextTask = makeTask({ column: 'done' });

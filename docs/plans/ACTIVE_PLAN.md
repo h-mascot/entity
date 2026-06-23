@@ -1,5 +1,5 @@
 ## Task
-Resume the approved Entity Phase 2 child queue and work one dependency-safe child issue at a time, currently implementing `THE-39`.
+Resume the approved Entity Phase 2 child queue and work one dependency-safe child issue at a time, currently implementing `THE-40`.
 
 **MC Task:** Entity Phase 2 approved queue
 **Created:** 2026-06-23
@@ -9,9 +9,9 @@ Resume the approved Entity Phase 2 child queue and work one dependency-safe chil
 ## Context
 Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phase-2.mdc`, Phase 2 context/spec files, `.project-gate.json`, and the execution-pack plan.
 
-The approved queue is fixed (`THE-21` through `THE-95`) and cannot be reordered, expanded, or skipped without explicit approval. `THE-38` is implemented and fully verified locally: machine gate `PASS`, Book review `APPROVED` with `safeToContinue=true`, and `project-test-gate verify THE-38` exited 0 with no blockers.
+The approved queue is fixed (`THE-21` through `THE-95`) and cannot be reordered, expanded, or skipped without explicit approval. `THE-39` is implemented and fully verified locally: machine gate `PASS`, Book review `APPROVED` with `safeToContinue=true`, and `project-test-gate verify THE-39` exited 0 with no blockers after refreshing the clean-tree request baseline.
 
-The active issue is `THE-39`, source `THE-9.4`, parent `THE-9`, title `Build receipt viewer and missing-evidence UI`. Live Linear confirms it is a child issue with no children, state `Todo`, and parent `THE-9` shows `THE-36`, `THE-37`, and `THE-38` done.
+The active issue is `THE-40`, source `THE-9.5`, parent `THE-9`, title `Harden receipt immutability, path stability, and protocol docs`. Live Linear confirms it is a child issue with no children, state `Todo`, and parent `THE-9` shows `THE-36`, `THE-37`, `THE-38`, and `THE-39` done.
 
 ## Dependencies
 - [x] Required repo rules and Phase 2 context/spec files are read.
@@ -30,6 +30,11 @@ The active issue is `THE-39`, source `THE-9.4`, parent `THE-9`, title `Build rec
 - [x] `project-test-gate verify THE-38` passed with no blockers.
 - [x] Mapping table identifies `THE-39` as source `THE-9.4`, parent `THE-9`.
 - [x] Live Linear body confirms `THE-39` maps to `THE-9.4` and is a child issue.
+- [x] `THE-39` Book review receipt is `APPROVED` and `safeToContinue=true`.
+- [x] `project-test-gate verify THE-39` passed with no blockers.
+- [x] Mapping table identifies `THE-40` as source `THE-9.5`, parent `THE-9`.
+- [x] Live Linear body confirms `THE-40` maps to `THE-9.5` and is a child issue.
+- [x] Branch `THE-40-harden-receipt-immutability-path-stability-and-protocol-docs` exists before implementation.
 
 ## Plan
 - [x] Step 1: Re-read repo rules, Phase 2 context/specs, package scripts, gate config, execution pack, mapping table, run-state, and current receipts.
@@ -74,9 +79,18 @@ The active issue is `THE-39`, source `THE-9.4`, parent `THE-9`, title `Build rec
 - [x] Step 14: Implement only `THE-39`.
   - **Files:** task detail UI and focused supporting API/type/test files as needed.
   - **Verify:** task detail shows receipt status/link, evidence summary, missing evidence, output links, provenance, integrity/degraded state, and raw-vs-curated distinction.
-- [ ] Step 15: Prove `THE-39` with UI/browser evidence and gates.
+- [x] Step 15: Prove `THE-39` with UI/browser evidence and gates.
   - **Files:** `output/playwright/THE-39-*`, `output/entity-phase-2/test-gate/THE-39.*`, `output/entity-phase-2/book-review/THE-39.*`.
   - **Verify:** screenshot/DOM proof, missing-evidence proof, proof commands, request/run/book-review/verify pass before moving to `THE-40`.
+- [ ] Step 16: Inspect existing receipt immutability, path stability, and protocol docs seams for `THE-40`.
+  - **Files:** `packages/server/src/receipt-writer.ts`, `packages/server/src/receipt-writer.test.ts`, `packages/db/src/index.ts`, `docs/`.
+  - **Verify:** identify the smallest implementation path for raw overwrite rejection, move-safe receipt links, and protocol documentation.
+- [x] Step 17: Implement only `THE-40`.
+  - **Files:** receipt tests/docs and supporting source files as needed.
+  - **Verify:** raw receipt overwrite attempts are rejected, task/project/team move does not break receipt links, and docs explain receipt creation, failure, regeneration, and review usage.
+- [ ] Step 18: Prove `THE-40`, run CLI Tester request/run/book-review/verify, comment Linear, update run-state, and commit scoped work.
+  - **Files:** `output/entity-phase-2/test-gate/THE-40.*`, `output/entity-phase-2/book-review/THE-40.*`, `.cursor/run-state/entity-phase-2.json`, Linear `THE-40`.
+  - **Verify:** proof commands and all four CLI Tester steps pass with `nextChildBlocked=false`.
 
 ## Checkpoints
 | Time | Step | Status | Notes |
@@ -102,14 +116,20 @@ The active issue is `THE-39`, source `THE-9.4`, parent `THE-9`, title `Build rec
 | 14:47 | Step 14 | done | `TaskDetailPanel` renders the Receipt and Proof panel with receipt link/status, evidence summary, missing evidence, output links, provenance, integrity/degraded states, content hash, and raw-vs-curated distinction. |
 | 14:47 | Step 15 | blocked | Screenshot and DOM proof captured; smoke, root build, server build+Vitest, and CLI Tester request/run passed. Book review is packet-mode `REQUESTED` with `safeToContinue=false`; `verify THE-39` exited 1, so `THE-40` was not started. Linear blocker/proof comment: `4e4327d5-d270-4407-a2c9-61329f1eec9e`. |
 | 14:53 | Step 15 | blocked | After language cleanup, refreshed browser proof and reran proof commands plus CLI Tester request/run/book-review/verify. Machine gate remains `PASS` with scans zero; Book remains `REQUESTED`/`safeToContinue=false`; verify exits 1. |
+| 15:14 | Step 15 | done | `THE-39` Book review now records `APPROVED`/`safeToContinue=true`; refreshed clean-tree request baseline and reran `project-test-gate verify THE-39`, which passed with blockers=[]. Live Linear shows `THE-39` Done. |
+| 15:16 | Step 16 | in progress | Created branch `THE-40-harden-receipt-immutability-path-stability-and-protocol-docs`; live Linear confirms `THE-40` is child `THE-9.5`, no children, state `Todo`, and prior receipt siblings are Done. |
+| 15:19 | Step 17 | done | Receipt writer now writes raw receipt bodies with exclusive creation; focused tests cover overwrite rejection and task/project/team alias moves; protocol docs added. |
+| 15:21 | Step 18 | blocked | Focused tests, smoke, root build, server build+Vitest, CLI Tester request/run passed. Book review returned `REQUESTED`/`safeToContinue=false`; verify exited 1 with review gate blocked. Do not start `THE-41`. |
 
 ## Files Touched
-- `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-39`.
+- `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-40`.
 - `docs/plans/2026-06-23-entity-phase-2-goal-run-plan.md` - modified - dated goal-mode plan.
 - `packages/server/src/index.ts` - modified - completion routes require synchronous receipt writing before `done`.
 - `packages/server/src/receipt-writer.ts` - modified - explicit failed/integrity receipt states and metadata regeneration helper.
-- `packages/server/src/receipt-writer.test.ts` - modified - failure, orphan reconciliation, and missing-body regeneration tests.
+- `packages/server/src/receipt-writer.test.ts` - modified - failure, orphan reconciliation, missing-body regeneration, and overwrite rejection tests.
+- `packages/server/src/__tests__/db-repositories.test.ts` - modified - receipt path stability across task/project/team alias moves.
 - `packages/app/src/components/mission-control/TaskDetailPanel.tsx` - modified - receipt viewer and missing-evidence UI.
+- `docs/context/entity-phase-2-canonical-receipt-protocol.md` - created - canonical receipt protocol for creation, failure, regeneration, review usage, immutability, and path stability.
 - `output/playwright/THE-39-receipt-viewer-missing-evidence.png` - generated - browser screenshot proof.
 - `output/playwright/THE-39-receipt-viewer-dom.html` - generated - browser DOM proof.
 
@@ -119,7 +139,7 @@ The active issue is `THE-39`, source `THE-9.4`, parent `THE-9`, title `Build rec
 3. Read `.cursor/run-state/entity-phase-2.json`.
 4. Find the first unchecked step above.
 5. Use Node v22.22.x for proof/gate commands unless native dependencies are rebuilt for another Node.
-6. Continue `THE-39` from Step 15. Do not start `THE-40` until `output/entity-phase-2/book-review/THE-39.json` records `decision=APPROVED` and `safeToContinue=true`, then rerun `project-test-gate verify THE-39` successfully.
+6. Continue `THE-40` from Step 18. Do not start `THE-41` until `output/entity-phase-2/book-review/THE-40.json` records `decision=APPROVED` and `safeToContinue=true`, then rerun `project-test-gate verify THE-40` successfully.
 
 ## Done
 - [x] `THE-36` complete by current receipts and verify gate.
@@ -140,4 +160,6 @@ The active issue is `THE-39`, source `THE-9.4`, parent `THE-9`, title `Build rec
 - [x] `THE-39` live issue validation complete.
 - [x] `THE-39` implementation and UI proof complete.
 - [x] `THE-39` proof/blocker Linear comment posted.
-- [ ] `THE-39` Book review and verify complete.
+- [x] `THE-39` Book review and verify complete.
+- [x] `THE-40` implementation and machine proof complete.
+- [ ] `THE-40` Book review and verify complete.

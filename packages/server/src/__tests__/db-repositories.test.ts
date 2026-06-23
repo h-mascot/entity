@@ -620,7 +620,7 @@ describe('EvidenceArtifactRepository', () => {
     expect(artifactRepo.listArtifactsByOriginTask(task.id).map((entry) => entry.id)).toEqual(['receipt-artifact-1']);
   });
 
-  it('keeps canonical receipt identity stable when the human-friendly alias changes', async () => {
+  it('keeps canonical receipt identity stable across task, project, and team alias moves', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const task = dbMod.createTaskRepository().createTask({ name: 'Alias Move Task' });
     const artifactRepo = dbMod.createEvidenceArtifactRepository();
@@ -634,17 +634,33 @@ describe('EvidenceArtifactRepository', () => {
       origin_task_id: task.id,
     });
 
-    const moved = artifactRepo.updateHumanPathAlias(
+    const projectMoved = artifactRepo.updateHumanPathAlias(
       original.id,
       `/projects/renamed/tasks/${task.id}/receipt`,
     );
+    const teamMoved = artifactRepo.updateHumanPathAlias(
+      original.id,
+      `/teams/customer-success/projects/renamed/tasks/${task.id}/receipt`,
+    );
+    const taskMoved = artifactRepo.updateHumanPathAlias(
+      original.id,
+      `/teams/customer-success/projects/renamed/tasks/${task.id}-renamed/receipt`,
+    );
 
-    expect(moved).toMatchObject({
+    expect(projectMoved).toMatchObject({
       id: original.id,
       stable_path: original.stable_path,
       content_hash: original.content_hash,
       origin_task_id: task.id,
       human_path_alias: `/projects/renamed/tasks/${task.id}/receipt`,
+    });
+    expect(teamMoved?.stable_path).toBe(original.stable_path);
+    expect(taskMoved).toMatchObject({
+      id: original.id,
+      stable_path: original.stable_path,
+      content_hash: original.content_hash,
+      origin_task_id: task.id,
+      human_path_alias: `/teams/customer-success/projects/renamed/tasks/${task.id}-renamed/receipt`,
     });
     expect(artifactRepo.getArtifact(original.id)?.stable_path).toBe('/artifacts/evidence/receipt-artifact-2.md');
   });
