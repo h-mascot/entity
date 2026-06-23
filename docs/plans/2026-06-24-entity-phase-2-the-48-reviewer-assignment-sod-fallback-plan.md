@@ -45,6 +45,7 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 | 00:17 | Steps 1-3 | done | Added reviewer assignment result, SoD candidate skipping, owner fallback/routing problem output, and focused tests. `npm --prefix packages/db run build && cd packages/server && npx vitest run src/__tests__/db-repositories.test.ts` passed under Node v22.22.2. |
 | 00:19 | Step 4 | done | Required proof commands passed under Node v22.22.2: smoke PASS; root build PASS; server build PASS; full Vitest 59 files / 443 tests PASS. |
 | 00:22 | Step 5 | blocked | CLI Tester `request` exit 0; `run` exit 0 with status PASS/blockers []; `book-review` exit 1 with `decision=REQUESTED`, `safeToContinue=false`; `verify` exit 1. |
+| 00:25 | Step 6 | blocked | Scoped commit `7454807`; Linear blocker comment `169d3d01-3759-4e55-87b0-992ac4ca12d7`; run-state updated. Do not start `THE-49`. |
 
 ## Files Touched
 - `docs/plans/2026-06-24-entity-phase-2-the-48-reviewer-assignment-sod-fallback-plan.md` - created - compaction-safe plan for `THE-48`.
@@ -65,6 +66,6 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 - [x] Focused tests pass.
 - [x] Required proof commands pass.
 - [ ] CLI Tester request/run/book-review/verify pass with `nextChildBlocked=false`.
-- [ ] Linear proof comment posted.
-- [ ] Scoped commit created.
+- [x] Linear proof comment posted.
+- [x] Scoped commit created.
 - [ ] Run-state advanced to `THE-49`.
