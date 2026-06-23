@@ -4,7 +4,7 @@ Implement `THE-46` / `THE-11.1`: define policy schema, risk inputs, and External
 **MC Task:** Entity Phase 2 approved queue
 **Created:** 2026-06-23
 **Agent:** Cursor
-**Status:** IN PROGRESS
+**Status:** DONE
 
 ## Context
 Live Linear `THE-46` is a child issue under parent `THE-11`, source `THE-11.1`. Scope is schema/types and focused tests for review/human-gate policy inputs, including workspace/org/team/project/worktype/task/risk/trust layers and ExternalSideEffect records. Entity remains the work/collaboration/review plane; review and human gate are separate concepts.
@@ -46,6 +46,9 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 | 21:18 | Step 4 | done | `bash scripts/proof/entity-phase-2-smoke.sh`, `npm run build`, and `cd packages/server && npm run build && npx vitest run` passed under Node v22.22.2. GitNexus detect-changes reported low risk and no affected processes. |
 | 21:20 | Step 5 | blocked | CLI Tester request and run passed. Book review receipt is `BLOCKED` / `REQUESTED` with `safeToContinue=false`. `verify` reran machine proof successfully but exited non-zero because Book approval is missing. Do not start `THE-47`. |
 | 21:22 | Linear | done | Posted blocker/proof comment `07140823-6e51-45e3-836c-576e779e9043` to `THE-46`; run-state records the same blocker. |
+| 21:44 | Step 5 | blocked | Re-ran `project-test-gate verify THE-46` from clean commit `93cc039`; it still exits 1 with `private-default/secret scan found 148 hits in changed files`. Book review is approved, but verify remains a required red gate. Do not start `THE-47`. |
+| 21:47 | Linear | done | Posted latest verify blocker update to `THE-46`: `6b974782-27e8-4dc2-886b-6c73cb76df12`. |
+| 22:18 | Step 5 | waived | Live Linear has Henry comment applying the cycle 46 verify-scanner waiver: `output/entity-phase-2/audits/THE-46-verify-scanner-waiver.md`; `THE-46` is `Done`, run-state advances to `THE-47`. |
 
 ## Files Touched
 - `docs/plans/2026-06-23-entity-phase-2-the-46-policy-schema-risk-inputs-external-sideeffect-plan.md` - created - compaction-safe plan for `THE-46`.
@@ -57,15 +60,15 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 1. Re-read this file fully.
 2. Run `git status` and `git diff` to see current state.
 3. Read `.cursor/run-state/entity-phase-2.json`.
-4. Continue from the first unchecked step above.
+4. Continue with `THE-47` after rereading live Linear and creating its issue-scoped plan.
 5. Use Node v22.22.x for proof/gate commands unless native dependencies are rebuilt for another Node.
-6. Do not start `THE-47` until `THE-46` proof commands, CLI Tester run, Book review, and verify pass.
+6. Preserve the THE-46 waiver audit and Linear proof comments as the explanation for the verify scanner blocker.
 
 ## Done
-- [ ] `THE-46` implementation complete.
+- [x] `THE-46` implementation complete.
 - [x] Focused tests pass.
 - [x] Required proof commands pass.
-- [ ] CLI Tester request/run/book-review/verify pass with `nextChildBlocked=false`.
+- [x] CLI Tester request/run passed; Book review approved; verify scanner blocker waived by Henry comment and audit.
 - [x] Linear proof comment posted.
-- [ ] Scoped commit created.
-- [ ] Run-state advanced to `THE-47`.
+- [x] Scoped commit created.
+- [x] Run-state advanced to `THE-47`.
