@@ -38,6 +38,35 @@ export interface CompleteTaskWithReceiptInput {
   updates?: UpdateTaskInput;
 }
 
+type ReceiptFailureStatus = 'failed' | 'integrity_error';
+
+interface ReceiptFailureDetails {
+  status: ReceiptFailureStatus;
+  stage: 'body_write' | 'metadata_write';
+  artifactId: string;
+  stablePath: string;
+  contentHash?: string;
+  storagePath?: string;
+  error: unknown;
+  failedAt: string;
+}
+
+export interface RegenerateReceiptMetadataInput {
+  task: TaskRecord;
+  artifactId: string;
+  stablePath: string;
+  actorPrincipalId?: string | null;
+  sourceActivityEventIds?: number[];
+}
+
+export interface RegenerateReceiptMetadataDependencies {
+  storageRoot: string;
+  artifactRepository: Pick<EvidenceArtifactRepository, 'createArtifact'>;
+  updateTask: (taskId: number, updates: UpdateTaskInput) => Promise<TaskRecord | undefined> | TaskRecord | undefined;
+  readFile?: (filePath: string, encoding: BufferEncoding) => Promise<string>;
+  now?: () => Date;
+}
+
 function parseMetadata(metadata: string | null | undefined): JsonRecord {
   if (!metadata) return {};
   try {
@@ -114,6 +143,123 @@ function buildMetadataWithReceipt(
       origin_task_id: task.id,
     },
   });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function buildMetadataWithReceiptFailure(
+  existingMetadata: JsonRecord,
+  details: ReceiptFailureDetails,
+): string {
+  const phase2Receipt = existingMetadata.phase2_receipt &&
+    typeof existingMetadata.phase2_receipt === 'object' &&
+    !Array.isArray(existingMetadata.phase2_receipt)
+    ? existingMetadata.phase2_receipt as JsonRecord
+    : {};
+  const receiptError = errorMessage(details.error);
+  const reconciliationQueue = details.status === 'integrity_error'
+    ? [
+        ...(
+          Array.isArray(phase2Receipt.reconciliation_queue)
+            ? phase2Receipt.reconciliation_queue
+            : []
+        ),
+        {
+          type: 'orphaned_receipt_artifact',
+          stable_path: details.stablePath,
+          storage_path: details.storagePath,
+          content_hash: details.contentHash,
+          queued_at: details.failedAt,
+          reason: receiptError,
+        },
+      ]
+    : phase2Receipt.reconciliation_queue;
+
+  return stringifyMetadata({
+    ...existingMetadata,
+    receipt_status: details.status,
+    receipt_error: receiptError,
+    phase2_receipt: {
+      ...phase2Receipt,
+      artifact_id: details.artifactId,
+      stable_path: details.stablePath,
+      content_hash: details.contentHash,
+      receipt_status: details.status,
+      failure_stage: details.stage,
+      error: receiptError,
+      failed_at: details.failedAt,
+      ...(reconciliationQueue ? { reconciliation_queue: reconciliationQueue } : {}),
+    },
+  });
+}
+
+function createReceiptFailedActivity(
+  task: TaskRecord,
+  actorPrincipalId: string,
+  details: ReceiptFailureDetails,
+): Parameters<ActivityRepository['createActivity']>[0] {
+  return {
+    source: 'task',
+    type: 'task_updated',
+    activity_event_type: 'receipt_failed',
+    activity_event_payload: {
+      version: ACTIVITY_EVENT_PAYLOAD_VERSION,
+      actor_principal_id: actorPrincipalId,
+      actor_type: actorPrincipalId === 'unknown' ? 'unknown' : 'human',
+      task_id: task.id,
+      object_refs: [
+        { object_type: 'task', object_id: String(task.id), link_role: 'origin' },
+      ],
+      data: {
+        receipt_status: details.status,
+        failure_stage: details.stage,
+        stable_path: details.stablePath,
+        content_hash: details.contentHash,
+        error: errorMessage(details.error),
+      },
+    },
+    action: 'Receipt failed',
+    description: `Canonical task receipt failed during ${details.stage}.`,
+    agent_name: actorPrincipalId,
+    task_id: task.id,
+    task_column: task.column,
+    metadata: JSON.stringify({
+      receipt_status: details.status,
+      failure_stage: details.stage,
+      stable_path: details.stablePath,
+      content_hash: details.contentHash,
+      error: errorMessage(details.error),
+    }),
+  };
+}
+
+async function recordReceiptFailure(
+  input: CompleteTaskWithReceiptInput,
+  dependencies: CompletionReceiptDependencies,
+  actorPrincipalId: string,
+  details: ReceiptFailureDetails,
+): Promise<void> {
+  const metadata = parseMetadata(input.previousTask.metadata);
+  const failedMetadata = buildMetadataWithReceiptFailure(metadata, details);
+  try {
+    dependencies.activityRepository.createActivity(
+      createReceiptFailedActivity(input.previousTask, actorPrincipalId, details),
+    );
+  } catch {
+    // Preserve the original completion failure; recovery state is best-effort.
+  }
+  try {
+    await dependencies.updateTask(input.previousTask.id, {
+      column: input.previousTask.column,
+      blocked: true,
+      blocker_reason: `Receipt ${details.status}: ${errorMessage(details.error)}`,
+      metadata: failedMetadata,
+    });
+  } catch {
+    // Preserve the original completion failure; the API caller still sees the error.
+  }
 }
 
 export function buildCanonicalReceiptMarkdown(input: {
@@ -253,25 +399,135 @@ export async function completeTaskWithReceipt(
   });
   const storagePath = resolveStoragePath(dependencies.storageRoot, stablePath);
 
-  await (dependencies.mkdir ?? fs.promises.mkdir)(path.dirname(storagePath), { recursive: true });
-  await (dependencies.writeFile ?? fs.promises.writeFile)(storagePath, receiptBody);
+  try {
+    await (dependencies.mkdir ?? fs.promises.mkdir)(path.dirname(storagePath), { recursive: true });
+    await (dependencies.writeFile ?? fs.promises.writeFile)(storagePath, receiptBody);
+  } catch (error) {
+    await recordReceiptFailure(input, dependencies, actorPrincipalId, {
+      status: 'failed',
+      stage: 'body_write',
+      artifactId,
+      stablePath,
+      storagePath,
+      contentHash,
+      error,
+      failedAt: completedAt,
+    });
+    throw error;
+  }
 
+  let artifact: EvidenceArtifactRecord;
+  try {
+    artifact = dependencies.artifactRepository.createArtifact({
+      id: artifactId,
+      org_id: input.nextTask.org_id,
+      team_id: input.nextTask.team_id,
+      project_id: input.nextTask.project_id,
+      artifact_kind: 'raw_task_receipt',
+      title: `${input.nextTask.name} receipt`,
+      stable_path: stablePath,
+      human_path_alias: `/tasks/${input.nextTask.id}/receipt`,
+      content_hash: contentHash,
+      mutability_policy: 'immutable_append_only',
+      origin_task_id: input.nextTask.id,
+      source_activity_event_ids: sourceActivityIds(sourceEvents),
+      provenance_json: JSON.stringify({
+        source: 'entity_completion',
+        completed_at: completedAt,
+        actor_principal_id: actorPrincipalId,
+      }),
+      integrity_state: 'valid',
+      availability_state: 'available',
+      created_by_principal_id: actorPrincipalId,
+      metadata_json: JSON.stringify({
+        storage_path: storagePath,
+        previous_state: input.previousTask.column,
+        new_state: input.nextTask.column,
+      }),
+    });
+
+    dependencies.activityRepository.createActivity({
+      source: 'task',
+      type: 'task_completed',
+      activity_event_type: 'receipt_created',
+      activity_event_payload: {
+        version: ACTIVITY_EVENT_PAYLOAD_VERSION,
+        actor_principal_id: actorPrincipalId,
+        actor_type: actorPrincipalId === 'unknown' ? 'unknown' : 'human',
+        task_id: input.nextTask.id,
+        object_refs: [
+          { object_type: 'task', object_id: String(input.nextTask.id), link_role: 'origin' },
+          { object_type: 'evidence_artifact', object_id: artifact.id, link_role: 'receipt' },
+        ],
+        data: {
+          content_hash: artifact.content_hash,
+          stable_path: artifact.stable_path,
+        },
+      },
+      action: 'Receipt created',
+      description: 'Canonical task receipt was written before completion.',
+      agent_name: actorPrincipalId,
+      task_id: input.nextTask.id,
+      task_column: input.previousTask.column,
+      metadata: JSON.stringify({ artifact_id: artifact.id, content_hash: artifact.content_hash }),
+    });
+
+    const completedTask = await dependencies.updateTask(input.nextTask.id, {
+      ...input.updates,
+      column: 'done',
+      metadata: buildMetadataWithReceipt(input.nextTask, metadata, artifact),
+    });
+    if (!completedTask) {
+      throw new Error('task completion failed after receipt creation');
+    }
+
+    return { task: completedTask, artifact, receiptBody };
+  } catch (error) {
+    await recordReceiptFailure(input, dependencies, actorPrincipalId, {
+      status: 'integrity_error',
+      stage: 'metadata_write',
+      artifactId,
+      stablePath,
+      storagePath,
+      contentHash,
+      error,
+      failedAt: completedAt,
+    });
+    throw error;
+  }
+}
+
+export async function regenerateReceiptMetadataFromBody(
+  input: RegenerateReceiptMetadataInput,
+  dependencies: RegenerateReceiptMetadataDependencies,
+): Promise<CompletionReceiptResult> {
+  const storagePath = resolveStoragePath(dependencies.storageRoot, input.stablePath);
+  let receiptBody: string;
+  try {
+    receiptBody = await (dependencies.readFile ?? fs.promises.readFile)(storagePath, 'utf8');
+  } catch (error) {
+    throw new Error(`receipt body missing; cannot regenerate metadata: ${errorMessage(error)}`);
+  }
+  const actorPrincipalId = input.actorPrincipalId?.trim() || 'unknown';
+  const regeneratedAt = (dependencies.now?.() ?? new Date()).toISOString();
+  const contentHash = hashCanonicalReceiptMarkdown(receiptBody);
+  const metadata = parseMetadata(input.task.metadata);
   const artifact = dependencies.artifactRepository.createArtifact({
-    id: artifactId,
-    org_id: input.nextTask.org_id,
-    team_id: input.nextTask.team_id,
-    project_id: input.nextTask.project_id,
+    id: input.artifactId,
+    org_id: input.task.org_id,
+    team_id: input.task.team_id,
+    project_id: input.task.project_id,
     artifact_kind: 'raw_task_receipt',
-    title: `${input.nextTask.name} receipt`,
-    stable_path: stablePath,
-    human_path_alias: `/tasks/${input.nextTask.id}/receipt`,
+    title: `${input.task.name} receipt`,
+    stable_path: input.stablePath,
+    human_path_alias: `/tasks/${input.task.id}/receipt`,
     content_hash: contentHash,
     mutability_policy: 'immutable_append_only',
-    origin_task_id: input.nextTask.id,
-    source_activity_event_ids: sourceActivityIds(sourceEvents),
+    origin_task_id: input.task.id,
+    source_activity_event_ids: input.sourceActivityEventIds ?? [],
     provenance_json: JSON.stringify({
-      source: 'entity_completion',
-      completed_at: completedAt,
+      source: 'receipt_metadata_regeneration',
+      regenerated_at: regeneratedAt,
       actor_principal_id: actorPrincipalId,
     }),
     integrity_state: 'valid',
@@ -279,45 +535,14 @@ export async function completeTaskWithReceipt(
     created_by_principal_id: actorPrincipalId,
     metadata_json: JSON.stringify({
       storage_path: storagePath,
-      previous_state: input.previousTask.column,
-      new_state: input.nextTask.column,
+      regenerated_at: regeneratedAt,
     }),
   });
-
-  dependencies.activityRepository.createActivity({
-    source: 'task',
-    type: 'task_completed',
-    activity_event_type: 'receipt_created',
-    activity_event_payload: {
-      version: ACTIVITY_EVENT_PAYLOAD_VERSION,
-      actor_principal_id: actorPrincipalId,
-      actor_type: actorPrincipalId === 'unknown' ? 'unknown' : 'human',
-      task_id: input.nextTask.id,
-      object_refs: [
-        { object_type: 'task', object_id: String(input.nextTask.id), link_role: 'origin' },
-        { object_type: 'evidence_artifact', object_id: artifact.id, link_role: 'receipt' },
-      ],
-      data: {
-        content_hash: artifact.content_hash,
-        stable_path: artifact.stable_path,
-      },
-    },
-    action: 'Receipt created',
-    description: 'Canonical task receipt was written before completion.',
-    agent_name: actorPrincipalId,
-    task_id: input.nextTask.id,
-    task_column: input.previousTask.column,
-    metadata: JSON.stringify({ artifact_id: artifact.id, content_hash: artifact.content_hash }),
+  const task = await dependencies.updateTask(input.task.id, {
+    metadata: buildMetadataWithReceipt(input.task, metadata, artifact),
   });
-
-  const completedTask = await dependencies.updateTask(input.nextTask.id, {
-    ...input.updates,
-    column: 'done',
-    metadata: buildMetadataWithReceipt(input.nextTask, metadata, artifact),
-  });
-  if (!completedTask) {
-    throw new Error('task completion failed after receipt creation');
+  if (!task) {
+    throw new Error('task metadata regeneration failed');
   }
-
-  return { task: completedTask, artifact, receiptBody };
+  return { task, artifact, receiptBody };
 }

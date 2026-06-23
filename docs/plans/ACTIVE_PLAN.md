@@ -1,5 +1,5 @@
 ## Task
-Resume the approved Entity Phase 2 child queue and work one dependency-safe child issue at a time, currently stopped on `THE-37`.
+Resume the approved Entity Phase 2 child queue and work one dependency-safe child issue at a time, currently implementing `THE-38`.
 
 **MC Task:** Entity Phase 2 approved queue
 **Created:** 2026-06-23
@@ -9,9 +9,9 @@ Resume the approved Entity Phase 2 child queue and work one dependency-safe chil
 ## Context
 Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phase-2.mdc`, Phase 2 context/spec files, `.project-gate.json`, and the execution-pack plan.
 
-The approved queue is fixed (`THE-21` through `THE-95`) and cannot be reordered, expanded, or skipped without explicit approval. `THE-37` implementation, proof commands, machine gate, Book review, and verify gate now pass. The next step is to commit the scoped `THE-37` work, then validate live `THE-38` before implementation.
+The approved queue is fixed (`THE-21` through `THE-95`) and cannot be reordered, expanded, or skipped without explicit approval. `THE-37` is implemented, committed, Book-approved, verified, and commented in Linear. The active branch is `THE-38-implement-receipt-failure-and-integrity-recovery-states`.
 
-The active issue is `THE-37`, source `THE-9.2`, parent `THE-9`, title `Implement synchronous receipt writer in completion transaction`. Live Linear confirms it is a child issue with no children, state `Todo`, and blocker text satisfied by completed Slice 0 and prior receipt metadata work.
+The active issue is `THE-38`, source `THE-9.3`, parent `THE-9`, title `Implement receipt failure and integrity recovery states`. Live Linear confirms it is a child issue with no children, state `Todo`, and blocker text satisfied by completed Slice 0 plus prior receipt metadata/writer work.
 
 ## Dependencies
 - [x] Required repo rules and Phase 2 context/spec files are read.
@@ -23,6 +23,9 @@ The active issue is `THE-37`, source `THE-9.2`, parent `THE-9`, title `Implement
 - [x] Branch for `THE-37` exists before implementation.
 - [x] `THE-37` Book review receipt is `APPROVED` and `safeToContinue=true`.
 - [x] `project-test-gate verify THE-37` passed after Book review approval.
+- [x] Mapping table identifies `THE-38` as source `THE-9.3`, parent `THE-9`.
+- [x] Live Linear body confirms `THE-38` maps to `THE-9.3` and is a child issue.
+- [x] Branch for `THE-38` exists before implementation.
 
 ## Plan
 - [x] Step 1: Re-read repo rules, Phase 2 context/specs, package scripts, gate config, execution pack, mapping table, run-state, and current receipts.
@@ -49,9 +52,18 @@ The active issue is `THE-37`, source `THE-9.2`, parent `THE-9`, title `Implement
 - [x] Step 8: Update local run-state and Linear proof comment for `THE-37`.
   - **Files:** `.cursor/run-state/entity-phase-2.json`, Linear `THE-37`.
   - **Verify:** Linear follow-up includes branch, files changed, commands/exit codes, proof paths, gate receipt, Book review receipt, and blocker.
-- [ ] Step 9: Create/switch to `THE-38` branch and validate live issue before implementation.
+- [x] Step 9: Create/switch to `THE-38` branch and validate live issue before implementation.
   - **Files:** Linear `THE-38`, Linear `THE-9`, `.cursor/run-state/entity-phase-2.json`.
   - **Verify:** `THE-38` is a child issue, dependency-safe, mapped to `THE-9.3`, and branch exists before implementation.
+- [x] Step 10: Inspect receipt failure, metadata integrity, and regeneration seams.
+  - **Files:** `packages/server/src/receipt-writer.ts`, `packages/server/src/index.ts`, `packages/db/src/index.ts`, existing receipt/artifact tests.
+  - **Verify:** identify smallest `THE-38` implementation path for failed body writes, metadata failures after body write, orphan reconciliation, and metadata regeneration without rewriting bodies.
+- [x] Step 11: Implement only `THE-38`.
+  - **Files:** `packages/server/src/receipt-writer.ts`, `packages/server/src/receipt-writer.test.ts`.
+  - **Verify:** body write failure leaves task non-done with `receipt_status=failed` and event; metadata failure after body write leaves task non-done with `receipt_status=integrity_error` and reconciliation queue; regeneration refuses missing body and never rewrites the body.
+- [ ] Step 12: Run proof commands and CLI Tester gates for `THE-38`.
+  - **Files:** `output/entity-phase-2/test-gate/THE-38.*`, `output/entity-phase-2/book-review/THE-38.*`.
+  - **Verify:** proof commands, request, and run pass; Book review currently returns `REQUESTED`/`safeToContinue=false`, so verify has not run and `THE-39` is blocked.
 
 ## Checkpoints
 | Time | Step | Status | Notes |
@@ -68,13 +80,15 @@ The active issue is `THE-37`, source `THE-9.2`, parent `THE-9`, title `Implement
 | 13:38 | Step 8 | done | Linear blocker follow-up posted: `0ddad8f8-b5d7-482f-a9f3-c3398ae38294`. |
 | 14:16 | Step 7 | done | Current local receipts now show `THE-37` Book review `APPROVED`/`safeToContinue=true`; test gate has `reviewGateStatus=PASS` and `nextChildBlocked=false`. |
 | 14:18 | Step 8 | done | Scoped `THE-37` commit created: `cf3a34d`. Final Linear proof update posted: `ee799ee6-759f-4d18-a6ff-3cd1a0414744`. |
+| 14:20 | Step 9 | done | Created branch `THE-38-implement-receipt-failure-and-integrity-recovery-states`; live Linear confirms child `THE-9.3`, no children, state `Todo`; parent `THE-9` shows `THE-36` and `THE-37` done. |
+| 14:24 | Step 12 | blocked | Focused receipt tests passed (6 tests), required proof commands passed (58 files / 419 tests), CLI Tester request/run passed, GitNexus low risk. Book review returned `REQUESTED`/`safeToContinue=false`; verify was not run. |
 
 ## Files Touched
-- `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-37`.
+- `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-38`.
 - `docs/plans/2026-06-23-entity-phase-2-goal-run-plan.md` - modified - dated goal-mode plan.
 - `packages/server/src/index.ts` - modified - completion routes require synchronous receipt writing before `done`.
-- `packages/server/src/receipt-writer.ts` - created - receipt body/hash/artifact/activity writer.
-- `packages/server/src/receipt-writer.test.ts` - created - receipt snapshot, success, and write-failure tests.
+- `packages/server/src/receipt-writer.ts` - modified - explicit failed/integrity receipt states and metadata regeneration helper.
+- `packages/server/src/receipt-writer.test.ts` - modified - failure, orphan reconciliation, and missing-body regeneration tests.
 
 ## Resume Instructions
 1. Re-read this file fully.
@@ -82,7 +96,7 @@ The active issue is `THE-37`, source `THE-9.2`, parent `THE-9`, title `Implement
 3. Read `.cursor/run-state/entity-phase-2.json`.
 4. Find the first unchecked step above.
 5. Use Node v22.22.x for proof/gate commands unless native dependencies are rebuilt for another Node.
-6. Commit the scoped `THE-37` work before switching to `THE-38`; do not implement `THE-38` until its live Linear body and parent are validated.
+6. Do not start `THE-39` until `THE-38` Book review is approved and `project-test-gate verify THE-38` passes with `nextChildBlocked=false`, or Henry explicitly waives the gate.
 
 ## Done
 - [x] `THE-36` complete by current receipts and verify gate.
@@ -95,4 +109,7 @@ The active issue is `THE-37`, source `THE-9.2`, parent `THE-9`, title `Implement
 - [x] Linear follow-up comment added for the fresh blocker.
 - [x] Next queue candidate identified only after verify allows continuation.
 - [x] `THE-37` scoped commit created.
-- [ ] `THE-38` branch created and live issue validation complete.
+- [x] `THE-38` branch created and live issue validation complete.
+- [x] `THE-38` implementation complete.
+- [x] `THE-38` proof commands and machine gate pass.
+- [ ] `THE-38` Book review, verify, commit, and Linear comment complete.

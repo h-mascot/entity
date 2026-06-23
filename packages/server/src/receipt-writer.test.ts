@@ -13,6 +13,7 @@ import {
   buildCanonicalReceiptMarkdown,
   completeTaskWithReceipt,
   hashCanonicalReceiptMarkdown,
+  regenerateReceiptMetadataFromBody,
 } from './receipt-writer';
 
 let tempDirs: string[] = [];
@@ -289,12 +290,11 @@ describe('receipt writer', () => {
     expect(result.artifact.id).toBe('receipt-fixed');
   });
 
-  it('does not complete the task when receipt body writing fails', async () => {
+  it('leaves a failed receipt state and event when receipt body writing fails', async () => {
     const previousTask = makeTask({ column: 'review' });
     const nextTask = makeTask({ column: 'done' });
-    const updateTask = async () => {
-      throw new Error('task should not update');
-    };
+    const createdActivities: CreateActivityInput[] = [];
+    const updates: UpdateTaskInput[] = [];
 
     await expect(completeTaskWithReceipt(
       {
@@ -317,12 +317,182 @@ describe('receipt writer', () => {
         },
         activityRepository: {
           listActivitiesByTaskId: () => [makeActivity()],
-          createActivity: () => {
-            throw new Error('activity should not create');
+          createActivity: (input) => {
+            createdActivities.push(input);
+            return makeActivity({ id: 12, activity_event_type: 'receipt_failed' });
           },
         },
-        updateTask,
+        updateTask: async (_taskId, update) => {
+          updates.push(update);
+          return {
+            ...previousTask,
+            blocked: update.blocked ?? previousTask.blocked,
+            blocker_reason: update.blocker_reason ?? previousTask.blocker_reason,
+            metadata: update.metadata ?? previousTask.metadata,
+          };
+        },
       },
     )).rejects.toThrow('disk full');
+    expect(createdActivities[0]).toMatchObject({
+      activity_event_type: 'receipt_failed',
+      task_id: 42,
+      task_column: 'review',
+    });
+    expect(updates[0]).toMatchObject({
+      column: 'review',
+      blocked: true,
+    });
+    const metadata = JSON.parse(updates[0]?.metadata ?? '{}');
+    expect(metadata.receipt_status).toBe('failed');
+    expect(metadata.phase2_receipt).toMatchObject({
+      receipt_status: 'failed',
+      failure_stage: 'body_write',
+      stable_path: '/artifacts/evidence/receipt-fixed.md',
+    });
+  });
+
+  it('keeps the task non-done and queues orphan reconciliation when metadata creation fails after body write', async () => {
+    const storageRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'entity-receipt-'));
+    tempDirs.push(storageRoot);
+    const previousTask = makeTask({ column: 'review' });
+    const nextTask = makeTask({ column: 'done' });
+    const createdActivities: CreateActivityInput[] = [];
+    const updates: UpdateTaskInput[] = [];
+
+    await expect(completeTaskWithReceipt(
+      {
+        previousTask,
+        nextTask,
+        actorPrincipalId: 'reviewer-1',
+      },
+      {
+        storageRoot,
+        idFactory: () => 'receipt-fixed',
+        now: () => new Date('2026-06-23T11:00:00.000Z'),
+        artifactRepository: {
+          createArtifact: () => {
+            throw new Error('db unavailable');
+          },
+        },
+        activityRepository: {
+          listActivitiesByTaskId: () => [makeActivity()],
+          createActivity: (input) => {
+            createdActivities.push(input);
+            return makeActivity({ id: 12, activity_event_type: 'receipt_failed' });
+          },
+        },
+        updateTask: async (_taskId, update) => {
+          updates.push(update);
+          return {
+            ...previousTask,
+            blocked: update.blocked ?? previousTask.blocked,
+            blocker_reason: update.blocker_reason ?? previousTask.blocker_reason,
+            metadata: update.metadata ?? previousTask.metadata,
+          };
+        },
+      },
+    )).rejects.toThrow('db unavailable');
+
+    const receiptPath = path.join(storageRoot, 'artifacts/evidence/receipt-fixed.md');
+    await expect(fs.promises.readFile(receiptPath, 'utf8')).resolves.toContain('## Provenance');
+    expect(createdActivities.map((activity) => activity.activity_event_type)).toEqual(['receipt_failed']);
+    expect(updates[0]).toMatchObject({
+      column: 'review',
+      blocked: true,
+    });
+    const metadata = JSON.parse(updates[0]?.metadata ?? '{}');
+    expect(metadata.receipt_status).toBe('integrity_error');
+    expect(metadata.phase2_receipt).toMatchObject({
+      receipt_status: 'integrity_error',
+      failure_stage: 'metadata_write',
+      stable_path: '/artifacts/evidence/receipt-fixed.md',
+    });
+    expect(metadata.phase2_receipt.reconciliation_queue[0]).toMatchObject({
+      type: 'orphaned_receipt_artifact',
+      stable_path: '/artifacts/evidence/receipt-fixed.md',
+    });
+  });
+
+  it('regenerates metadata from an existing body without rewriting it', async () => {
+    const storageRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'entity-receipt-'));
+    tempDirs.push(storageRoot);
+    const task = makeTask({ column: 'done' });
+    const receiptBody = buildCanonicalReceiptMarkdown({
+      task,
+      previousTask: makeTask({ column: 'review' }),
+      artifactId: 'receipt-fixed',
+      stablePath: '/artifacts/evidence/receipt-fixed.md',
+      contentHash: 'sha256:fixed',
+      completedAt: '2026-06-23T11:00:00.000Z',
+      actorPrincipalId: 'reviewer-1',
+      sourceEventIds: [11],
+    });
+    const receiptPath = path.join(storageRoot, 'artifacts/evidence/receipt-fixed.md');
+    await fs.promises.mkdir(path.dirname(receiptPath), { recursive: true });
+    await fs.promises.writeFile(receiptPath, receiptBody);
+    const updates: UpdateTaskInput[] = [];
+
+    const result = await regenerateReceiptMetadataFromBody(
+      {
+        task,
+        artifactId: 'receipt-fixed',
+        stablePath: '/artifacts/evidence/receipt-fixed.md',
+        actorPrincipalId: 'reviewer-1',
+        sourceActivityEventIds: [11],
+      },
+      {
+        storageRoot,
+        now: () => new Date('2026-06-23T11:30:00.000Z'),
+        artifactRepository: {
+          createArtifact: (input) => makeArtifact({
+            id: input.id ?? 'missing',
+            stable_path: input.stable_path ?? '',
+            human_path_alias: input.human_path_alias ?? null,
+            content_hash: input.content_hash,
+            origin_task_id: input.origin_task_id ?? null,
+            source_activity_event_ids: input.source_activity_event_ids ?? [],
+          }),
+        },
+        updateTask: async (_taskId, update) => {
+          updates.push(update);
+          return {
+            ...task,
+            metadata: update.metadata ?? task.metadata,
+          };
+        },
+      },
+    );
+
+    expect(result.receiptBody).toBe(receiptBody);
+    expect(result.artifact.content_hash).toBe(hashCanonicalReceiptMarkdown(receiptBody));
+    expect(JSON.parse(updates[0]?.metadata ?? '{}').phase2_receipt).toMatchObject({
+      artifact_id: 'receipt-fixed',
+      stable_path: '/artifacts/evidence/receipt-fixed.md',
+      content_hash: result.artifact.content_hash,
+    });
+    await expect(fs.promises.readFile(receiptPath, 'utf8')).resolves.toBe(receiptBody);
+  });
+
+  it('refuses metadata regeneration when the immutable body is missing', async () => {
+    const task = makeTask({ column: 'done' });
+
+    await expect(regenerateReceiptMetadataFromBody(
+      {
+        task,
+        artifactId: 'receipt-fixed',
+        stablePath: '/artifacts/evidence/receipt-fixed.md',
+      },
+      {
+        storageRoot: '/tmp/entity-receipt-missing-body-test',
+        artifactRepository: {
+          createArtifact: () => {
+            throw new Error('artifact should not create');
+          },
+        },
+        updateTask: async () => {
+          throw new Error('task should not update');
+        },
+      },
+    )).rejects.toThrow('receipt body missing; cannot regenerate metadata');
   });
 });
