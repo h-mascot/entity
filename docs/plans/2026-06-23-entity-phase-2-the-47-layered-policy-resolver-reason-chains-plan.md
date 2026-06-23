@@ -45,6 +45,7 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 | 22:20 | Step 1 | done | Existing `TaskPolicyInputEnvelope`, `ExternalSideEffect`, review state, and human gate state live in `packages/db/src/index.ts`; tests are in `packages/server/src/__tests__/db-repositories.test.ts`. |
 | 22:23 | Steps 2-4 | done | Added `resolveTaskPolicy`, policy resolution result/reason types, and resolver matrix tests. Focused DB test initially failed under Node 26 ABI mismatch, then passed under Node v22.22.2. Required proof commands passed: smoke, root build, server build + full Vitest (59 files / 440 tests). GitNexus detect-changes risk low, no affected processes. |
 | 22:26 | Step 5 | blocked | CLI Tester `request` and `run` passed with banned/private scans at 0. `book-review` returned `REQUESTED` / `safeToContinue=false`; `verify` exits non-zero because Book review is missing/blocked. Do not start `THE-48`. |
+| 22:28 | Linear | done | Posted proof/blocker comment `ae1f3693-a68b-4f30-845d-30a2cf150933` to `THE-47`; run-state records the Book review blocker. |
 
 ## Files Touched
 - `docs/plans/2026-06-23-entity-phase-2-the-47-layered-policy-resolver-reason-chains-plan.md` - created - compaction-safe plan for `THE-47`.
@@ -65,6 +66,6 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 - [x] Focused tests pass.
 - [x] Required proof commands pass.
 - [ ] CLI Tester request/run/book-review/verify pass with `nextChildBlocked=false`.
-- [ ] Linear proof comment posted.
+- [x] Linear proof comment posted.
 - [x] Scoped save-point commit created.
 - [ ] Run-state advanced to `THE-48`.
