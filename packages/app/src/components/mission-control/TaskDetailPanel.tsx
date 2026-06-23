@@ -171,6 +171,24 @@ interface ReceiptProofView {
   degradedMessages: string[];
 }
 
+interface DocumentObjectView {
+  id: string;
+  objectType: 'native_document' | 'external_document_ref' | 'evidence_artifact';
+  displayKind: 'native' | 'external' | 'raw_proof' | 'curated' | 'unknown';
+  label: string;
+  title: string;
+  href: string | null;
+  externalHref: boolean;
+  sourceLabel: string;
+  canonicality: string;
+  mutability: string;
+  status: string;
+  statusTone: ReceiptProofView['statusTone'];
+  objectRefs: ActivityObjectRef[];
+  restricted: boolean;
+  degradedMessages: string[];
+}
+
 interface TaskFormState {
   name: string;
   description: string;
@@ -1075,6 +1093,244 @@ function firstRecord(...values: unknown[]): Record<string, unknown> | null {
   return null;
 }
 
+function recordArrayFrom(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => parseJsonRecord(entry)).filter((entry): entry is Record<string, unknown> => entry !== null);
+  }
+
+  const record = parseJsonRecord(value);
+  if (!record) {
+    return [];
+  }
+
+  if (Array.isArray(record.nodes)) {
+    return record.nodes.map((entry) => parseJsonRecord(entry)).filter((entry): entry is Record<string, unknown> => entry !== null);
+  }
+
+  return [record];
+}
+
+function collectDocumentRecords(
+  hint: DocumentObjectView['displayKind'] | 'evidence',
+  ...values: unknown[]
+): Array<{ hint: DocumentObjectView['displayKind'] | 'evidence'; record: Record<string, unknown> }> {
+  return values.flatMap((value) => recordArrayFrom(value).map((record) => ({ hint, record })));
+}
+
+function parseMetadataJson(record: Record<string, unknown>): Record<string, unknown> {
+  return parseJsonRecord(record.metadata_json ?? record.metadata) ?? {};
+}
+
+function normalizeObjectRefsFromRecord(record: Record<string, unknown>): ActivityObjectRef[] {
+  const refs = normalizeActivityObjectRefs(
+    record.linked_object_refs ??
+      record.linkedObjectRefs ??
+      record.object_refs ??
+      record.objectRefs ??
+      (record.object_ref || record.objectRef ? [record.object_ref ?? record.objectRef] : undefined)
+  );
+  const linkRole = readFirstString(record.link_role, record.linkRole);
+  const objectType = readFirstString(record.object_type, record.objectType);
+  const objectId = readFirstString(record.object_id, record.objectId);
+  if (refs.length === 0 && linkRole && objectType && objectId) {
+    return [{ objectType, objectId, linkRole }];
+  }
+  return refs;
+}
+
+function inferDocumentObjectKind(
+  record: Record<string, unknown>,
+  hint: DocumentObjectView['displayKind'] | 'evidence'
+): DocumentObjectView['displayKind'] {
+  if (hint !== 'evidence') {
+    return hint;
+  }
+
+  const objectType = readFirstString(record.object_type, record.objectType, record.kind, record.type)?.toLowerCase();
+  const artifactKind = readFirstString(record.artifact_kind, record.artifactKind)?.toLowerCase();
+  if (objectType === 'native_document') return 'native';
+  if (objectType === 'external_document_ref') return 'external';
+  if (artifactKind === 'curated_report' || artifactKind === 'rollup' || artifactKind === 'generated_summary') return 'curated';
+  if (artifactKind === 'raw_task_receipt' || artifactKind === 'review_packet' || artifactKind === 'output_receipt' || artifactKind === 'audit_trail') return 'raw_proof';
+  return 'unknown';
+}
+
+function displayKindLabel(kind: DocumentObjectView['displayKind']): string {
+  if (kind === 'native') return 'Entity-native markdown';
+  if (kind === 'external') return 'External document ref';
+  if (kind === 'raw_proof') return 'Raw proof artifact';
+  if (kind === 'curated') return 'Curated interpretation';
+  return 'Document/artifact object';
+}
+
+function documentObjectToneClass(tone: ReceiptProofView['statusTone']): string {
+  return receiptToneClass(tone);
+}
+
+function isRestrictedDocumentObject(record: Record<string, unknown>, metadata: Record<string, unknown>): boolean {
+  const permissionState = readFirstString(
+    record.permission_state,
+    record.permissionState,
+    record.entity_permission_state,
+    metadata.permission_state,
+    metadata.visibility_state
+  )?.toLowerCase();
+  if (!permissionState) {
+    return false;
+  }
+  return permissionState !== 'visible' && permissionState !== 'allowed';
+}
+
+function buildDocumentObjectView(
+  taskId: number,
+  hint: DocumentObjectView['displayKind'] | 'evidence',
+  record: Record<string, unknown>
+): DocumentObjectView | null {
+  const metadata = parseMetadataJson(record);
+  const displayKind = inferDocumentObjectKind(record, hint);
+  const objectType: DocumentObjectView['objectType'] =
+    displayKind === 'native'
+      ? 'native_document'
+      : displayKind === 'external'
+        ? 'external_document_ref'
+        : 'evidence_artifact';
+  const restricted = isRestrictedDocumentObject(record, metadata);
+  const id = readFirstString(record.id, record.object_id, record.objectId, record.artifact_id, record.artifactId);
+  const rawTitle = readFirstString(record.title, record.name, record.label, metadata.title, id);
+  if (!id) {
+    return null;
+  }
+  const title = restricted ? 'Restricted object' : rawTitle ?? id;
+  const rawHref = readFirstString(
+    record.external_url,
+    record.externalUrl,
+    record.external_canonical_url,
+    record.externalCanonicalUrl,
+    record.human_path_alias,
+    record.humanPathAlias,
+    record.stable_path,
+    record.stablePath,
+    record.storage_path,
+    record.storagePath,
+    record.href,
+    record.url
+  );
+  const href = restricted || !rawHref ? null : normalizeTaskOutputHref(rawHref) ?? rawHref;
+  const authState = readFirstString(record.auth_state, record.authState, metadata.auth_state);
+  const readinessState = readFirstString(record.readiness_state, record.readinessState, metadata.readiness_state);
+  const integrityState = readFirstString(record.integrity_state, record.integrityState, metadata.integrity_state);
+  const availabilityState = readFirstString(record.availability_state, record.availabilityState, metadata.availability_state);
+  const canonicality = readFirstString(record.canonicality, metadata.canonicality) ??
+    (displayKind === 'external' ? 'linked_context_only' : displayKind === 'native' ? 'entity_native' : 'entity_proof');
+  const mutability = readFirstString(record.mutability_policy, record.mutabilityPolicy, metadata.mutability_policy) ??
+    (displayKind === 'raw_proof' ? 'immutable_append_only' : displayKind === 'curated' || displayKind === 'native' ? 'editable_versioned' : 'reference_only');
+  const objectRefs = normalizeObjectRefsFromRecord(record);
+  const hasTaskRef = objectRefs.some((ref) => ref.objectType === 'task' && ref.objectId === String(taskId));
+  const refs = objectRefs.length > 0
+    ? objectRefs
+    : [{ objectType: 'task', objectId: String(taskId), linkRole: readFirstString(record.link_role, record.linkRole) ?? 'linked_context' }];
+  const degradedMessages = [
+    restricted ? 'Restricted by Entity permissions. Snippets and previews are hidden.' : null,
+    displayKind === 'external' && authState && !['authorized', 'ready'].includes(authState.toLowerCase())
+      ? `Connector auth is ${formatReceiptToken(authState)}.`
+      : null,
+    displayKind === 'external' && readinessState && !['ready', 'live'].includes(readinessState.toLowerCase())
+      ? `Connector readiness is ${formatReceiptToken(readinessState)}.`
+      : null,
+    integrityState && integrityState.toLowerCase() !== 'valid' ? `Integrity state is ${formatReceiptToken(integrityState)}.` : null,
+    availabilityState && !['available', 'unknown'].includes(availabilityState.toLowerCase())
+      ? `Availability is ${formatReceiptToken(availabilityState)}.`
+      : null,
+    !hasTaskRef && objectRefs.length > 0 ? 'Linked through a non-task ObjectRef.' : null,
+  ].filter((entry): entry is string => Boolean(entry));
+  const statusTone: ReceiptProofView['statusTone'] = restricted || degradedMessages.length > 0
+    ? 'warning'
+    : displayKind === 'raw_proof' || displayKind === 'native' || displayKind === 'curated'
+      ? 'ok'
+      : 'muted';
+
+  return {
+    id,
+    objectType,
+    displayKind,
+    label: displayKindLabel(displayKind),
+    title,
+    href,
+    externalHref: href ? /^https?:\/\//i.test(href) : false,
+    sourceLabel: displayKind === 'external'
+      ? formatReceiptToken(readFirstString(record.connector_type, record.connectorType, 'external connector'))
+      : displayKind === 'native'
+        ? 'Entity-owned markdown'
+        : displayKind === 'raw_proof'
+          ? 'Entity proof trail'
+          : displayKind === 'curated'
+            ? 'Entity curated report'
+            : 'Entity object',
+    canonicality: formatReceiptToken(canonicality),
+    mutability: formatReceiptToken(mutability),
+    status: restricted
+      ? 'Restricted'
+      : formatReceiptToken(readFirstString(authState, readinessState, integrityState, availabilityState, 'available')),
+    statusTone,
+    objectRefs: refs,
+    restricted,
+    degradedMessages,
+  };
+}
+
+function buildTaskDocumentObjectViews(task: TaskDetailData, receiptProof: ReceiptProofView | null): DocumentObjectView[] {
+  const metadata = task.metadataRecord;
+  const grouped = firstRecord(
+    metadata.phase2_document_objects,
+    metadata.document_objects,
+    metadata.docs_files_artifacts,
+    metadata.docsArtifacts
+  ) ?? {};
+  const reviewPacket = firstRecord(metadata.review_packet, metadata.review_brief);
+  const entries = [
+    ...collectDocumentRecords('native', metadata.native_documents, metadata.nativeDocuments, grouped.native_documents, grouped.nativeDocuments),
+    ...collectDocumentRecords('external', metadata.external_document_refs, metadata.externalDocumentRefs, grouped.external_document_refs, grouped.externalDocumentRefs),
+    ...collectDocumentRecords('evidence', metadata.evidence_artifacts, metadata.evidenceArtifacts, grouped.evidence_artifacts, grouped.evidenceArtifacts, reviewPacket?.evidence_artifacts),
+    ...collectDocumentRecords('evidence', metadata.curated_artifacts, metadata.curatedArtifacts, grouped.curated_artifacts, grouped.curatedArtifacts),
+    ...collectDocumentRecords('evidence', metadata.document_artifacts, metadata.documentArtifacts, grouped.artifacts),
+    ...collectDocumentRecords('evidence', grouped.objects, grouped.nodes),
+  ];
+
+  if (receiptProof?.artifactId) {
+    entries.push({
+      hint: 'evidence',
+      record: {
+        id: receiptProof.artifactId,
+        title: 'Canonical receipt',
+        artifact_kind: 'raw_task_receipt',
+        stable_path: receiptProof.receiptHref ?? receiptProof.stablePath,
+        content_hash: receiptProof.contentHash,
+        mutability_policy: 'immutable_append_only',
+        integrity_state: receiptProof.integrityState,
+        availability_state: receiptProof.availabilityState,
+        linked_object_refs: [{ object_type: 'task', object_id: String(task.id), link_role: 'receipt' }],
+      },
+    });
+  }
+
+  const views: DocumentObjectView[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const view = buildDocumentObjectView(task.id, entry.hint, entry.record);
+    if (!view) {
+      continue;
+    }
+    const key = `${view.objectType}:${view.id}:${view.objectRefs.map((ref) => ref.linkRole ?? '').join(',')}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    views.push(view);
+  }
+
+  return views;
+}
+
 function formatReceiptToken(value: unknown, fallback = 'Unknown'): string {
   const text = readNonEmptyString(value);
   if (!text) {
@@ -1649,6 +1905,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const commentTree = useMemo(() => buildCommentTree(comments), [comments]);
   const outputLinks = useMemo(() => extractTaskOutputLinks(task?.output ?? ''), [task?.output]);
   const receiptProof = useMemo(() => (task ? buildReceiptProofView(task, outputLinks) : null), [outputLinks, task]);
+  const documentObjectViews = useMemo(() => (task ? buildTaskDocumentObjectViews(task, receiptProof) : []), [receiptProof, task]);
   const outputIsEmpty = task ? task.output.trim().length === 0 && outputLinks.length === 0 : true;
   const outputExpanded = !outputIsEmpty || outputSectionOpen;
   const subtasks = useMemo(() => {
@@ -3148,7 +3405,123 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                     </section>
                   ) : null}
 
-	              <section style={{ order: 4 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
+                  {documentObjectViews.length > 0 ? (
+                    <section
+                      style={{ order: 4 }}
+                      className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+                      data-testid="task-document-object-panel"
+                    >
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                            Docs, Files, and Artifacts
+                          </div>
+                          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                            External refs, Entity-native markdown, raw proof, and curated interpretation are labeled separately.
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-0.5 text-[11px] text-[var(--text-muted)]">
+                          {documentObjectViews.length} object{documentObjectViews.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-2 lg:grid-cols-2">
+                        {documentObjectViews.map((object) => (
+                          <article
+                            key={`${object.objectType}-${object.id}-${object.objectRefs.map((ref) => ref.linkRole ?? 'link').join('-')}`}
+                            className={`rounded-md border px-3 py-2 text-xs ${
+                              object.displayKind === 'external'
+                                ? 'border-amber-500/25 bg-amber-500/10'
+                                : object.displayKind === 'native'
+                                  ? 'border-emerald-500/25 bg-emerald-500/10'
+                                  : object.displayKind === 'raw_proof'
+                                    ? 'border-sky-500/25 bg-sky-500/10'
+                                    : object.displayKind === 'curated'
+                                      ? 'border-violet-500/25 bg-violet-500/10'
+                                      : 'border-[var(--border-primary)] bg-[var(--bg-primary)]'
+                            }`}
+                            data-testid="task-document-object-card"
+                            data-object-kind={object.displayKind}
+                          >
+                            <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                                  {object.label}
+                                </div>
+                                {object.href ? (
+                                  <a
+                                    href={object.href}
+                                    target={object.externalHref ? '_blank' : undefined}
+                                    rel={object.externalHref ? 'noreferrer' : undefined}
+                                    className="mt-0.5 block truncate text-sm font-medium text-sky-300 hover:text-sky-200"
+                                  >
+                                    {object.title}
+                                  </a>
+                                ) : (
+                                  <div className="mt-0.5 truncate text-sm font-medium text-[var(--text-primary)]">
+                                    {object.title}
+                                  </div>
+                                )}
+                              </div>
+                              <span className={`rounded-full border px-2 py-0.5 text-[10px] ${documentObjectToneClass(object.statusTone)}`}>
+                                {object.status}
+                              </span>
+                            </div>
+
+                            <div className="grid gap-1.5 text-[11px] text-[var(--text-secondary)] sm:grid-cols-2">
+                              <div>
+                                <span className="text-[var(--text-muted)]">Source: </span>
+                                {object.sourceLabel}
+                              </div>
+                              <div>
+                                <span className="text-[var(--text-muted)]">Canonicality: </span>
+                                {object.canonicality}
+                              </div>
+                              <div>
+                                <span className="text-[var(--text-muted)]">Mutability: </span>
+                                {object.mutability}
+                              </div>
+                              <div className="break-all">
+                                <span className="text-[var(--text-muted)]">ID: </span>
+                                {object.restricted ? 'Hidden' : object.id}
+                              </div>
+                            </div>
+
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {object.objectRefs.map((ref) => (
+                                <span
+                                  key={`${ref.objectType}-${ref.objectId}-${ref.linkRole ?? 'link'}`}
+                                  className="rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]"
+                                  data-testid="task-document-object-link-role"
+                                >
+                                  {ref.linkRole ?? 'linked'} to {ref.objectType}:{ref.objectId}
+                                </span>
+                              ))}
+                            </div>
+
+                            {object.restricted ? (
+                              <div
+                                className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100"
+                                data-testid="task-document-object-placeholder"
+                              >
+                                Restricted by Entity permissions. Snippets and previews are hidden.
+                              </div>
+                            ) : null}
+
+                            {object.degradedMessages.length > 0 ? (
+                              <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] text-amber-100">
+                                {object.degradedMessages.map((message) => (
+                                  <li key={message}>{message}</li>
+                                ))}
+                              </ul>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+
+	              <section style={{ order: 5 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
 	                <div className={`${outputExpanded ? 'mb-2' : ''} flex flex-wrap items-center justify-between gap-2`}>
 	                  <div className="flex min-w-0 items-center gap-2">
 	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
