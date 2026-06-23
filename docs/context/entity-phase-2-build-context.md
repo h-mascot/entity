@@ -19,6 +19,8 @@ Read these before taking any Entity Phase 2 Linear issue:
 6. `docs/specs/entity-phase-2-parent-epic-spine-20260620.md` — original 15 parent epics.
 7. `docs/specs/entity-phase-2-linear-issue-map-20260620.md` — full Linear parent/child graph after load.
 
+After Slice 0 completes, downstream implementation tickets should also use `docs/context/entity-phase-2-current-state-gap-matrix.md` as the consolidated current-state gap and dependency reference.
+
 ## Product boundaries that must not drift
 
 - Entity is the work plane / workspace OS: orgs, teams, projects, tasks, docs, files, artifacts, receipts, review, gates, activity, search, permissions, notifications, object links, and workspace context.
