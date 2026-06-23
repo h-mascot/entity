@@ -450,6 +450,11 @@ describe('TaskRepository', () => {
           "source": "task",
           "value": 48,
         },
+        {
+          "decision": "reviewer_assignment",
+          "source": "task_projection",
+          "value": "team-reviewer",
+        },
       ]
     `);
   });
@@ -491,7 +496,174 @@ describe('TaskRepository', () => {
       { source: 'agent_trust', decision: 'review_required', value: true },
       { source: 'external_side_effect', decision: 'review_required', value: true },
       { source: 'external_side_effect', decision: 'human_gate_required', value: true },
+      { source: 'task_projection', decision: 'reviewer_routing_problem', value: null },
     ]);
+  });
+
+  it('assigns the initiator as reviewer when separation-of-duties allows it', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Initiator reviewer fixture',
+      created_by_principal_id: 'creator-1',
+      initiator_principal_id: 'requester-1',
+      owner_principal_id: 'owner-1',
+      owner_principal_type: 'human',
+      executor_principal_id: 'agent-1',
+      review_required: true,
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          task: {
+            submitted_by_principal_id: 'agent-1',
+            assignee_principal_id: 'agent-1',
+          },
+          risk: { risk_level: 'low' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const resolution = dbMod.resolveTaskPolicy(dbMod.buildTaskPolicyInputEnvelope(task));
+
+    expect(resolution.reviewer_principal_id).toBe('requester-1');
+    expect(resolution.reviewer_assignment).toMatchObject({
+      reviewer_principal_id: 'requester-1',
+      assignment_mode: 'initiator',
+      routing_problem: false,
+      skipped_candidates: [],
+    });
+    expect(resolution.reason_chain.map(({ decision, value }) => ({ decision, value }))).toContainEqual({
+      decision: 'reviewer_assignment',
+      value: 'requester-1',
+    });
+  });
+
+  it('skips self-review candidates and falls back to the same-team reviewer pool', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Reviewer pool fallback fixture',
+      created_by_principal_id: 'creator-1',
+      initiator_principal_id: 'agent-1',
+      owner_principal_id: 'owner-1',
+      owner_principal_type: 'human',
+      executor_principal_id: 'agent-1',
+      review_required: true,
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          team: {
+            reviewer_pool_principal_ids: ['agent-1', 'reviewer-1'],
+          },
+          task: {
+            submitted_by_principal_id: 'agent-1',
+            assignee_principal_id: 'agent-1',
+          },
+          risk: { risk_level: 'low' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const resolution = dbMod.resolveTaskPolicy(dbMod.buildTaskPolicyInputEnvelope(task));
+
+    expect(resolution.reviewer_principal_id).toBe('reviewer-1');
+    expect(resolution.reviewer_assignment).toMatchObject({
+      reviewer_principal_id: 'reviewer-1',
+      assignment_mode: 'reviewer_pool',
+      routing_problem: false,
+      skipped_candidates: [
+        {
+          principal_id: 'agent-1',
+          role: 'initiator',
+          reason: 'initiator is also the assignee',
+        },
+        {
+          principal_id: 'agent-1',
+          role: 'reviewer_pool',
+          reason: 'reviewer_pool candidate is also the assignee',
+        },
+      ],
+    });
+    expect(resolution.reason_chain.map(({ source, decision, value }) => ({ source, decision, value }))).toEqual(
+      expect.arrayContaining([
+        { source: 'task_projection', decision: 'reviewer_candidate_skipped', value: 'agent-1' },
+        { source: 'task_projection', decision: 'reviewer_assignment', value: 'reviewer-1' },
+      ]),
+    );
+  });
+
+  it('falls back to owner or reports a routing problem when no reviewer is eligible', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const ownerFallbackTask = repo.createTask({
+      name: 'Owner reviewer fallback fixture',
+      created_by_principal_id: 'creator-1',
+      initiator_principal_id: 'agent-1',
+      owner_principal_id: 'owner-1',
+      owner_principal_type: 'human',
+      executor_principal_id: 'agent-1',
+      review_required: true,
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          team: {
+            reviewer_pool_principal_ids: ['agent-1'],
+          },
+          task: {
+            submitted_by_principal_id: 'agent-1',
+            assignee_principal_id: 'agent-1',
+          },
+          risk: { risk_level: 'low' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const ownerFallback = dbMod.resolveTaskPolicy(dbMod.buildTaskPolicyInputEnvelope(ownerFallbackTask));
+    expect(ownerFallback.reviewer_assignment).toMatchObject({
+      reviewer_principal_id: 'owner-1',
+      assignment_mode: 'owner',
+      routing_problem: false,
+    });
+
+    const noEligibleTask = repo.createTask({
+      name: 'Reviewer routing problem fixture',
+      created_by_principal_id: 'creator-1',
+      initiator_principal_id: 'agent-1',
+      owner_principal_id: 'agent-1',
+      owner_principal_type: 'agent',
+      executor_principal_id: 'agent-1',
+      review_required: true,
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          team: {
+            reviewer_pool_principal_ids: ['agent-1'],
+          },
+          task: {
+            submitted_by_principal_id: 'agent-1',
+            assignee_principal_id: 'agent-1',
+          },
+          risk: { risk_level: 'low' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const noEligible = dbMod.resolveTaskPolicy(dbMod.buildTaskPolicyInputEnvelope(noEligibleTask));
+    expect(noEligible.reviewer_principal_id).toBeNull();
+    expect(noEligible.reviewer_assignment).toMatchObject({
+      reviewer_principal_id: null,
+      assignment_mode: 'routing_problem',
+      routing_problem: true,
+      routing_problem_reason: 'no eligible reviewer found for separation-of-duties policy',
+    });
+    expect(noEligible.reason_chain.map(({ source, decision, value }) => ({ source, decision, value }))).toContainEqual({
+      source: 'task_projection',
+      decision: 'reviewer_routing_problem',
+      value: null,
+    });
   });
 
   it('should list tasks', async () => {

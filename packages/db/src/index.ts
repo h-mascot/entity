@@ -71,6 +71,14 @@ export interface ExternalSideEffect {
 
 export interface TaskPolicyInputEnvelope {
   layers: Record<PolicyInputLayer, Record<string, unknown>>;
+  principals: {
+    created_by_principal_id: string | null;
+    initiator_principal_id: string | null;
+    owner_principal_id: string | null;
+    assignee_principal_id: string | null;
+    executor_principal_id: string | null;
+    submitted_by_principal_id: string | null;
+  };
   review: {
     required: boolean;
     state: ReviewPolicyState;
@@ -89,6 +97,9 @@ export type PolicyReasonDecision =
   | 'human_gate_required'
   | 'human_gate_requirement_retained'
   | 'reviewer_target'
+  | 'reviewer_candidate_skipped'
+  | 'reviewer_assignment'
+  | 'reviewer_routing_problem'
   | 'approver_target'
   | 'taskmaster_drivable'
   | 'stall_threshold'
@@ -102,11 +113,29 @@ export interface PolicyReasonChainEntry {
   reason: string;
 }
 
+export type ReviewerAssignmentMode = 'not_required' | 'initiator' | 'reviewer_pool' | 'owner' | 'routing_problem';
+export type ReviewerCandidateRole = 'initiator' | 'reviewer_pool' | 'owner';
+
+export interface ReviewerSkippedCandidate {
+  principal_id: string;
+  role: ReviewerCandidateRole;
+  reason: string;
+}
+
+export interface ReviewerAssignmentResult {
+  reviewer_principal_id: string | null;
+  assignment_mode: ReviewerAssignmentMode;
+  routing_problem: boolean;
+  routing_problem_reason: string | null;
+  skipped_candidates: ReviewerSkippedCandidate[];
+}
+
 export interface TaskPolicyResolution {
   review_required: boolean;
   human_gate_required: boolean;
   reviewer_principal_id: string | null;
   approver_principal_id: string | null;
+  reviewer_assignment: ReviewerAssignmentResult;
   taskmaster_drivable: boolean;
   stall_threshold_hours: number | null;
   auto_reassign_after_hours: number | null;
@@ -1746,6 +1775,11 @@ export function buildTaskPolicyInputEnvelope(
     | 'org_id'
     | 'team_id'
     | 'project_id'
+    | 'created_by_principal_id'
+    | 'initiator_principal_id'
+    | 'owner_principal_id'
+    | 'executor_principal_id'
+    | 'assignee'
     | 'worktype'
     | 'column'
     | 'risk_level'
@@ -1759,6 +1793,16 @@ export function buildTaskPolicyInputEnvelope(
   >
 ): TaskPolicyInputEnvelope {
   const storedLayers = readTaskPolicyLayers(task.policy_inputs_json);
+  const taskLayer = {
+    task_id: task.id,
+    lifecycle_state: task.column,
+    created_by_principal_id: task.created_by_principal_id ?? null,
+    initiator_principal_id: task.initiator_principal_id ?? null,
+    owner_principal_id: task.owner_principal_id ?? null,
+    assignee_principal_id: task.assignee ?? null,
+    executor_principal_id: task.executor_principal_id ?? null,
+    ...(storedLayers.task ?? {}),
+  };
   return {
     layers: {
       workspace: storedLayers.workspace ?? { org_id: task.org_id ?? DEFAULT_WORKSPACE_ORG_ID },
@@ -1766,12 +1810,20 @@ export function buildTaskPolicyInputEnvelope(
       team: storedLayers.team ?? { team_id: task.team_id ?? DEFAULT_WORKSPACE_TEAM_ID },
       project: storedLayers.project ?? { project_id: task.project_id ?? null },
       worktype: storedLayers.worktype ?? { worktype: task.worktype ?? 'general' },
-      task: storedLayers.task ?? { task_id: task.id, lifecycle_state: task.column },
+      task: taskLayer,
       risk: storedLayers.risk ?? {
         risk_level: task.risk_level ?? 'low',
         external_side_effect_count: parseExternalSideEffects(task.external_side_effects_json).length,
       },
       agent_trust: storedLayers.agent_trust ?? { trust_level: task.agent_trust_level ?? 'unknown' },
+    },
+    principals: {
+      created_by_principal_id: readPolicyString(taskLayer, ['created_by_principal_id', 'created_by']) ?? null,
+      initiator_principal_id: readPolicyString(taskLayer, ['initiator_principal_id', 'initiator']) ?? null,
+      owner_principal_id: readPolicyString(taskLayer, ['owner_principal_id', 'owner']) ?? null,
+      assignee_principal_id: readPolicyString(taskLayer, ['assignee_principal_id', 'assignee']) ?? null,
+      executor_principal_id: readPolicyString(taskLayer, ['executor_principal_id', 'executor']) ?? null,
+      submitted_by_principal_id: readPolicyString(taskLayer, ['submitted_by_principal_id', 'submitted_by']) ?? null,
     },
     review: {
       required: Boolean(task.review_required),
@@ -1797,6 +1849,20 @@ function readPolicyString(layer: Record<string, unknown>, keys: string[]): strin
     }
   }
   return null;
+}
+
+function readPolicyStringArray(layer: Record<string, unknown>, keys: string[]): string[] {
+  for (const key of keys) {
+    const value = layer[key];
+    if (Array.isArray(value)) {
+      return normalizeJsonStringArray(value);
+    }
+    const singleValue = normalizeBlockerReason(value);
+    if (singleValue) {
+      return [singleValue];
+    }
+  }
+  return [];
 }
 
 function readPolicyPositiveNumber(layer: Record<string, unknown>, keys: string[]): number | null {
@@ -1853,6 +1919,140 @@ function sideEffectNeedsHumanGate(sideEffect: ExternalSideEffect): boolean {
     sideEffect.sensitivity === 'security' ||
     sideEffect.sensitivity === 'production' ||
     sideEffect.sensitivity === 'workspace_restricted';
+}
+
+function normalizeReviewerCandidate(value: unknown): string | null {
+  const normalized = isAssignablePrincipal(value);
+  if (!normalized || isLegacyPrincipalMarker(normalized, ['legacy-unknown', 'legacy-owner', 'legacy-system', 'system', 'unknown'])) {
+    return null;
+  }
+  return normalized;
+}
+
+function buildReviewerPoolCandidates(envelope: TaskPolicyInputEnvelope, fallbackReviewer: string | null): string[] {
+  const teamLayer = envelope.layers.team ?? {};
+  const teamPool = readPolicyStringArray(teamLayer, [
+    'capable_reviewer_principal_ids',
+    'reviewer_pool_principal_ids',
+    'reviewer_pool',
+    'eligible_reviewer_principal_ids',
+  ]);
+  if (teamPool.length > 0) {
+    return teamPool;
+  }
+  return fallbackReviewer ? [fallbackReviewer] : [];
+}
+
+function candidateSkipReason(
+  candidate: string,
+  role: ReviewerCandidateRole,
+  principals: TaskPolicyInputEnvelope['principals'],
+): string | null {
+  const assignee = normalizeReviewerCandidate(principals.assignee_principal_id);
+  const executor = normalizeReviewerCandidate(principals.executor_principal_id);
+  const submittedBy = normalizeReviewerCandidate(principals.submitted_by_principal_id);
+  const createdBy = normalizeReviewerCandidate(principals.created_by_principal_id);
+
+  if (role === 'initiator') {
+    if (candidate === assignee) {
+      return 'initiator is also the assignee';
+    }
+    if (candidate === executor) {
+      return 'initiator is also the executor';
+    }
+    if (candidate === submittedBy) {
+      return 'initiator is also submitted_by';
+    }
+    return null;
+  }
+
+  if (candidate === assignee) {
+    return `${role} candidate is also the assignee`;
+  }
+  if (candidate === executor) {
+    return `${role} candidate is also the executor`;
+  }
+  if (candidate === submittedBy) {
+    return `${role} candidate is also submitted_by`;
+  }
+  if (candidate === createdBy) {
+    return `${role} candidate is also created_by`;
+  }
+  return null;
+}
+
+function resolveReviewerAssignment(
+  envelope: TaskPolicyInputEnvelope,
+  reviewRequired: boolean,
+  fallbackReviewer: string | null,
+  pushReason: (
+    source: PolicyReasonSource,
+    decision: PolicyReasonDecision,
+    value: PolicyReasonChainEntry['value'],
+    reason: string,
+  ) => void,
+): ReviewerAssignmentResult {
+  if (!reviewRequired) {
+    return {
+      reviewer_principal_id: fallbackReviewer,
+      assignment_mode: 'not_required',
+      routing_problem: false,
+      routing_problem_reason: null,
+      skipped_candidates: [],
+    };
+  }
+
+  const skippedCandidates: ReviewerSkippedCandidate[] = [];
+  const candidates: Array<{ principal_id: string | null; role: ReviewerCandidateRole }> = [
+    { principal_id: normalizeReviewerCandidate(envelope.principals.initiator_principal_id), role: 'initiator' },
+    ...buildReviewerPoolCandidates(envelope, fallbackReviewer).map((principalId) => ({
+      principal_id: normalizeReviewerCandidate(principalId),
+      role: 'reviewer_pool' as const,
+    })),
+    { principal_id: normalizeReviewerCandidate(envelope.principals.owner_principal_id), role: 'owner' },
+  ];
+
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate.principal_id) {
+      continue;
+    }
+    const duplicateKey = `${candidate.role}:${candidate.principal_id}`;
+    if (seen.has(duplicateKey)) {
+      continue;
+    }
+    seen.add(duplicateKey);
+
+    const skipReason = candidateSkipReason(candidate.principal_id, candidate.role, envelope.principals);
+    if (skipReason) {
+      skippedCandidates.push({
+        principal_id: candidate.principal_id,
+        role: candidate.role,
+        reason: skipReason,
+      });
+      pushReason('task_projection', 'reviewer_candidate_skipped', candidate.principal_id, skipReason);
+      continue;
+    }
+
+    pushReason('task_projection', 'reviewer_assignment', candidate.principal_id, `${candidate.role} selected as reviewer`);
+    return {
+      reviewer_principal_id: candidate.principal_id,
+      assignment_mode: candidate.role,
+      routing_problem: false,
+      routing_problem_reason: null,
+      skipped_candidates: skippedCandidates,
+    };
+  }
+
+  const routingProblemReason = 'no eligible reviewer found for separation-of-duties policy';
+  pushReason('task_projection', 'reviewer_routing_problem', null, routingProblemReason);
+  return {
+    reviewer_principal_id: null,
+    assignment_mode: 'routing_problem',
+    routing_problem: true,
+    routing_problem_reason: routingProblemReason,
+    skipped_candidates: skippedCandidates,
+  };
 }
 
 export function resolveTaskPolicy(envelope: TaskPolicyInputEnvelope): TaskPolicyResolution {
@@ -1974,11 +2174,15 @@ export function resolveTaskPolicy(envelope: TaskPolicyInputEnvelope): TaskPolicy
     }
   });
 
+  const reviewerAssignment = resolveReviewerAssignment(envelope, reviewRequired, reviewerPrincipalId, pushReason);
+  reviewerPrincipalId = reviewerAssignment.reviewer_principal_id;
+
   return {
     review_required: reviewRequired,
     human_gate_required: humanGateRequired,
     reviewer_principal_id: reviewerPrincipalId,
     approver_principal_id: approverPrincipalId,
+    reviewer_assignment: reviewerAssignment,
     taskmaster_drivable: taskmasterDrivable,
     stall_threshold_hours: stallThresholdHours,
     auto_reassign_after_hours: autoReassignAfterHours,
