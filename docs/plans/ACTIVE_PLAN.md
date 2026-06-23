@@ -58,7 +58,7 @@ The active issue is `THE-36`, source `THE-9.1`, parent `THE-9`, title `Add recei
 | 09:52 | Step 4 | done | Existing receipt references are ActivityEvent/task metadata only; no dedicated EvidenceArtifact metadata model existed. |
 | 09:54 | Step 5 | done | Added EvidenceArtifact metadata schema/repository with stable path, alias, hash, mutability, origin task, integrity, and availability fields. |
 | 09:55 | Step 6 | done | Focused DB repository tests pass after rebuilding `@entity/db`: 36 tests passed. |
-| 09:57 | Step 7 | blocked | Smoke, root build, server build+Vitest, CLI Tester request, and CLI Tester run passed. Book review returned `REQUESTED`/`safeToContinue=false`; verify was not run. |
+| 09:59 | Step 7 | blocked | Final smoke, root build, server build+Vitest (57 files / 413 tests), CLI Tester request, and CLI Tester run passed. Book review returned `REQUESTED`/`safeToContinue=false`; verify was not run. |
 | 09:58 | Step 8 | done | Linear proof/blocker comment posted: `95a76385-75d1-42be-a01e-a66e835e87aa`. |
 
 ## Files Touched
