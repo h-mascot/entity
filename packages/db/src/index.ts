@@ -16,6 +16,14 @@ export interface TaskRecord {
   org_id?: string;
   team_id?: string;
   project_id?: number | null;
+  created_by_principal_id?: string | null;
+  initiator_principal_id?: string | null;
+  initiator_type?: string | null;
+  owner_principal_id?: string | null;
+  owner_principal_type?: string | null;
+  executor_principal_id?: string | null;
+  assignment_state?: string | null;
+  taskmaster_drivable?: boolean;
   name: string;
   description: string | null;
   brief: string | null;
@@ -45,6 +53,14 @@ export interface CreateTaskInput {
   org_id?: string;
   team_id?: string;
   project_id?: number | null;
+  created_by_principal_id?: string;
+  initiator_principal_id?: string;
+  initiator_type?: string;
+  owner_principal_id?: string;
+  owner_principal_type?: string;
+  executor_principal_id?: string;
+  assignment_state?: string;
+  taskmaster_drivable?: boolean;
   name: string;
   description?: string;
   brief?: string;
@@ -175,6 +191,14 @@ export interface UpdateTaskInput {
   org_id?: string;
   team_id?: string;
   project_id?: number | null;
+  created_by_principal_id?: string;
+  initiator_principal_id?: string;
+  initiator_type?: string;
+  owner_principal_id?: string;
+  owner_principal_type?: string;
+  executor_principal_id?: string;
+  assignment_state?: string;
+  taskmaster_drivable?: boolean;
   name?: string;
   description?: string;
   brief?: string;
@@ -684,6 +708,14 @@ function bootstrap(db: Database.Database): void {
       org_id TEXT NOT NULL DEFAULT '${DEFAULT_WORKSPACE_ORG_ID}',
       team_id TEXT NOT NULL DEFAULT '${DEFAULT_WORKSPACE_TEAM_ID}',
       project_id INTEGER,
+      created_by_principal_id TEXT DEFAULT 'legacy-system',
+      initiator_principal_id TEXT DEFAULT 'legacy-unknown',
+      initiator_type TEXT DEFAULT 'unknown',
+      owner_principal_id TEXT DEFAULT 'legacy-owner',
+      owner_principal_type TEXT DEFAULT 'unknown',
+      executor_principal_id TEXT,
+      assignment_state TEXT DEFAULT 'unassigned',
+      taskmaster_drivable INTEGER NOT NULL DEFAULT 0,
       name TEXT NOT NULL,
       description TEXT,
       column TEXT NOT NULL DEFAULT 'backlog',
@@ -1254,6 +1286,38 @@ function ensureWorkspaceScopeSchema(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN project_id INTEGER');
   }
 
+  if (!hasColumn(db, 'tasks', 'created_by_principal_id')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN created_by_principal_id TEXT DEFAULT 'legacy-system'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'initiator_principal_id')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN initiator_principal_id TEXT DEFAULT 'legacy-unknown'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'initiator_type')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN initiator_type TEXT DEFAULT 'unknown'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'owner_principal_id')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN owner_principal_id TEXT DEFAULT 'legacy-owner'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'owner_principal_type')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN owner_principal_type TEXT DEFAULT 'unknown'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'executor_principal_id')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN executor_principal_id TEXT');
+  }
+
+  if (!hasColumn(db, 'tasks', 'assignment_state')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN assignment_state TEXT DEFAULT 'unassigned'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'taskmaster_drivable')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN taskmaster_drivable INTEGER NOT NULL DEFAULT 0');
+  }
+
   if (!hasColumn(db, 'projects', 'org_id')) {
     db.exec(`ALTER TABLE projects ADD COLUMN org_id TEXT DEFAULT '${DEFAULT_WORKSPACE_ORG_ID}'`);
   }
@@ -1278,6 +1342,34 @@ function ensureWorkspaceScopeSchema(db: Database.Database): void {
     UPDATE tasks
     SET team_id = '${DEFAULT_WORKSPACE_TEAM_ID}'
     WHERE team_id IS NULL OR trim(team_id) = '';
+
+    UPDATE tasks
+    SET created_by_principal_id = 'legacy-system'
+    WHERE created_by_principal_id IS NULL OR trim(created_by_principal_id) = '';
+
+    UPDATE tasks
+    SET initiator_principal_id = 'legacy-unknown'
+    WHERE initiator_principal_id IS NULL OR trim(initiator_principal_id) = '';
+
+    UPDATE tasks
+    SET initiator_type = 'unknown'
+    WHERE initiator_type IS NULL OR trim(initiator_type) = '';
+
+    UPDATE tasks
+    SET owner_principal_id = 'legacy-owner'
+    WHERE owner_principal_id IS NULL OR trim(owner_principal_id) = '';
+
+    UPDATE tasks
+    SET owner_principal_type = 'unknown'
+    WHERE owner_principal_type IS NULL OR trim(owner_principal_type) = '';
+
+    UPDATE tasks
+    SET assignment_state = CASE
+      WHEN assignee IS NOT NULL AND trim(assignee) <> '' AND lower(trim(assignee)) <> 'unassigned' THEN 'assigned'
+      WHEN taskmaster_drivable = 1 THEN 'unassigned'
+      ELSE 'routing_problem'
+    END
+    WHERE assignment_state IS NULL OR trim(assignment_state) = '';
 
     UPDATE projects
     SET org_id = '${DEFAULT_WORKSPACE_ORG_ID}'
@@ -1449,6 +1541,14 @@ function mapTaskRow(row: Record<string, unknown>): TaskRecord {
     org_id: normalizeWorkspaceId(row.org_id, DEFAULT_WORKSPACE_ORG_ID),
     team_id: normalizeWorkspaceId(row.team_id, DEFAULT_WORKSPACE_TEAM_ID),
     project_id: normalizePositiveInteger(row.project_id),
+    created_by_principal_id: normalizeBlockerReason(row.created_by_principal_id) ?? 'legacy-system',
+    initiator_principal_id: normalizeBlockerReason(row.initiator_principal_id) ?? 'legacy-unknown',
+    initiator_type: normalizeBlockerReason(row.initiator_type) ?? 'unknown',
+    owner_principal_id: normalizeBlockerReason(row.owner_principal_id) ?? 'legacy-owner',
+    owner_principal_type: normalizeBlockerReason(row.owner_principal_type) ?? 'unknown',
+    executor_principal_id: normalizeBlockerReason(row.executor_principal_id),
+    assignment_state: normalizeBlockerReason(row.assignment_state) ?? 'unassigned',
+    taskmaster_drivable: normalizeBlocked(row.taskmaster_drivable),
     name: String(row.name ?? ''),
     description: row.description === null ? null : String(row.description ?? ''),
     brief: row.brief === null ? null : String(row.brief ?? ''),
@@ -2018,6 +2118,14 @@ export function createTaskRepository(): TaskRepository {
       org_id,
       team_id,
       project_id,
+      created_by_principal_id,
+      initiator_principal_id,
+      initiator_type,
+      owner_principal_id,
+      owner_principal_type,
+      executor_principal_id,
+      assignment_state,
+      taskmaster_drivable,
       name,
       description,
       brief,
@@ -2041,7 +2149,7 @@ export function createTaskRepository(): TaskRepository {
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const deleteStmt = db.prepare('DELETE FROM tasks WHERE id = ?');
 
@@ -2070,10 +2178,31 @@ export function createTaskRepository(): TaskRepository {
           : 'backlog';
       const estimateHours = normalizeNullableNumber(input.estimate_hours);
       const timeSpent = normalizeNullableNumber(input.time_spent);
+      const hasIndividualAssignee =
+        typeof input.assignee === 'string' &&
+        input.assignee.trim() &&
+        input.assignee.trim().toLowerCase() !== 'unassigned';
+      const hasExecutor = Boolean(input.executor_principal_id?.trim());
+      const taskmasterDrivable = normalizeBlocked(input.taskmaster_drivable);
+      const assignmentState =
+        input.assignment_state?.trim() ||
+        (hasIndividualAssignee || hasExecutor
+          ? 'assigned'
+          : taskmasterDrivable
+            ? 'unassigned'
+            : 'routing_problem');
       const result = createStmt.run(
         normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
         normalizeWorkspaceId(input.team_id, DEFAULT_WORKSPACE_TEAM_ID),
         normalizePositiveInteger(input.project_id),
+        input.created_by_principal_id?.trim() || 'legacy-system',
+        input.initiator_principal_id?.trim() || 'legacy-unknown',
+        input.initiator_type?.trim() || 'unknown',
+        input.owner_principal_id?.trim() || 'legacy-owner',
+        input.owner_principal_type?.trim() || 'unknown',
+        input.executor_principal_id?.trim() || null,
+        assignmentState,
+        taskmasterDrivable ? 1 : 0,
         taskName,
         input.description?.trim() || null,
         input.brief?.trim() || null,
@@ -2228,6 +2357,46 @@ export function createTaskRepository(): TaskRepository {
       if (typeof updates.project_id !== 'undefined') {
         fields.push('project_id = ?');
         values.push(normalizePositiveInteger(updates.project_id));
+      }
+
+      if (typeof updates.created_by_principal_id === 'string') {
+        fields.push('created_by_principal_id = ?');
+        values.push(updates.created_by_principal_id.trim() || 'legacy-system');
+      }
+
+      if (typeof updates.initiator_principal_id === 'string') {
+        fields.push('initiator_principal_id = ?');
+        values.push(updates.initiator_principal_id.trim() || 'legacy-unknown');
+      }
+
+      if (typeof updates.initiator_type === 'string') {
+        fields.push('initiator_type = ?');
+        values.push(updates.initiator_type.trim() || 'unknown');
+      }
+
+      if (typeof updates.owner_principal_id === 'string') {
+        fields.push('owner_principal_id = ?');
+        values.push(updates.owner_principal_id.trim() || 'legacy-owner');
+      }
+
+      if (typeof updates.owner_principal_type === 'string') {
+        fields.push('owner_principal_type = ?');
+        values.push(updates.owner_principal_type.trim() || 'unknown');
+      }
+
+      if (typeof updates.executor_principal_id === 'string') {
+        fields.push('executor_principal_id = ?');
+        values.push(updates.executor_principal_id.trim() || null);
+      }
+
+      if (typeof updates.assignment_state === 'string') {
+        fields.push('assignment_state = ?');
+        values.push(updates.assignment_state.trim() || 'routing_problem');
+      }
+
+      if (typeof updates.taskmaster_drivable !== 'undefined') {
+        fields.push('taskmaster_drivable = ?');
+        values.push(normalizeBlocked(updates.taskmaster_drivable) ? 1 : 0);
       }
 
       if (fields.length === 0) {

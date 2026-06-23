@@ -110,6 +110,12 @@ Use these as migration sources, each with explicit source/confidence metadata:
 
 Do not use these inputs to invent certainty. Missing owner, unknown initiator, missing assignee, weak activity structure, missing receipt, ambiguous project/team, and uncertain permission mapping must remain warnings or cleanup items until resolved.
 
+## Task Accountability Compatibility Note
+
+`THE-28` adds additive task accountability fields for initiator, owner, executor, assignment state, and Task-Master-drivable state. New task API writes enforce initiator and individual owner, reject team ownership as final task ownership, and require active executable work to have an individual assignee/executor or explicit Task-Master-drivable unassigned state.
+
+Legacy repository-created or historical tasks remain readable. When historical rows do not have accountable principals yet, Entity exposes compatibility markers such as `legacy-unknown`, `legacy-owner`, `unknown`, and `routing_problem` rather than fabricating certainty. `THE-30` and later migration/backfill tickets remain responsible for safe inference, confidence/provenance, and cleanup queues.
+
 ## Open Product and Architecture Decisions
 
 These are not confirmed gaps; they are decisions that later tickets must resolve or keep configurable:

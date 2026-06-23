@@ -59,6 +59,36 @@ describe('TaskRepository', () => {
     expect(fetched!.name).toBe('Test Task');
   });
 
+  it('keeps legacy repository-created tasks visible with accountability compatibility markers', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const legacyTask = repo.createTask({ name: 'Legacy Compatible Task' });
+
+    expect(legacyTask.initiator_principal_id).toBe('legacy-unknown');
+    expect(legacyTask.initiator_type).toBe('unknown');
+    expect(legacyTask.owner_principal_id).toBe('legacy-owner');
+    expect(legacyTask.owner_principal_type).toBe('unknown');
+    expect(legacyTask.assignment_state).toBe('routing_problem');
+    expect(legacyTask.taskmaster_drivable).toBe(false);
+
+    const updated = repo.updateTask(legacyTask.id, {
+      initiator_principal_id: 'requester-1',
+      owner_principal_id: 'owner-1',
+      owner_principal_type: 'human',
+      executor_principal_id: 'agent-1',
+      assignment_state: 'assigned',
+    });
+
+    expect(updated).toMatchObject({
+      initiator_principal_id: 'requester-1',
+      owner_principal_id: 'owner-1',
+      owner_principal_type: 'human',
+      executor_principal_id: 'agent-1',
+      assignment_state: 'assigned',
+    });
+  });
+
   it('should list tasks', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();

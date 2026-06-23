@@ -82,6 +82,11 @@ import {
   syncTaskProjectAssignments,
   taskHasProjectName,
 } from "./task-projects";
+import {
+  parseTaskAccountabilityForCreate,
+  parseTaskAccountabilityUpdates,
+  validateTaskAccountability,
+} from "./task-accountability";
 import { PluginHookEmitter } from "./plugins/hooks";
 import {
   ensurePluginMigrationTable,
@@ -2290,6 +2295,14 @@ function registerTaskRoutes(prefix: "" | "/api") {
       return res.status(400).json({ error: "name required" });
     }
 
+    const accountability = parseTaskAccountabilityForCreate(
+      req.body as Record<string, unknown>,
+      getTaskActorFromRequest(req),
+    );
+    if ("error" in accountability) {
+      return res.status(400).json(accountability);
+    }
+
     const requestedColumn =
       typeof column === "string" ? column.trim().toLowerCase() : "backlog";
     const requestedAssignee = typeof assignee === "string" ? assignee : null;
@@ -2299,13 +2312,17 @@ function registerTaskRoutes(prefix: "" | "/api") {
       normalizeBlockedInput(createAnyway) ??
       false;
 
-    if (
-      isActiveTaskColumn(requestedColumn) &&
-      !hasAssignedOwner(requestedAssignee)
-    ) {
+    const accountabilityCheck = validateTaskAccountability({
+      column: requestedColumn,
+      assignee: requestedAssignee,
+      executor_principal_id: accountability.executor_principal_id,
+      taskmaster_drivable: accountability.taskmaster_drivable,
+      owner_principal_type: accountability.owner_principal_type,
+    });
+    if (!accountabilityCheck.ok) {
       return res.status(400).json({
-        error: "Active task requires assignee",
-        message: "Tasks in Todo, Doing, or Review must have an assignee.",
+        error: accountabilityCheck.error,
+        message: accountabilityCheck.message,
       });
     }
 
@@ -2406,6 +2423,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
         description,
         column,
         assignee,
+        ...accountability,
         blocked: normalizeBlockedInput(blocked),
         blocker_reason: normalizeBlockerReasonInput(blocker_reason),
         project: requestedProjectLabel,
@@ -2530,6 +2548,9 @@ function registerTaskRoutes(prefix: "" | "/api") {
       if (!existingTask) {
         return res.status(404).json({ error: "task not found" });
       }
+      const accountabilityUpdates = parseTaskAccountabilityUpdates(
+        req.body as Record<string, unknown>,
+      );
 
       let requestedProjectIds: number[] | undefined;
       let requestedProjectLabel = project;
@@ -2628,19 +2649,40 @@ function registerTaskRoutes(prefix: "" | "/api") {
           : existingTask.column;
       const nextAssignee =
         typeof assignee === "string" ? assignee : existingTask.assignee;
+      const nextExecutor =
+        typeof accountabilityUpdates.executor_principal_id === "string"
+          ? accountabilityUpdates.executor_principal_id
+          : existingTask.executor_principal_id;
+      const nextTaskmasterDrivable =
+        typeof accountabilityUpdates.taskmaster_drivable === "boolean"
+          ? accountabilityUpdates.taskmaster_drivable
+          : Boolean(existingTask.taskmaster_drivable);
+      const nextOwnerPrincipalType =
+        typeof accountabilityUpdates.owner_principal_type === "string"
+          ? accountabilityUpdates.owner_principal_type
+          : existingTask.owner_principal_type;
       const existingTaskIsOwnerlessActive =
         isActiveTaskColumn(existingTask.column) &&
-        !hasAssignedOwner(existingTask.assignee);
+        !hasAssignedOwner(existingTask.assignee) &&
+        !hasAssignedOwner(existingTask.executor_principal_id ?? null) &&
+        !existingTask.taskmaster_drivable;
+      const accountabilityCheck = validateTaskAccountability({
+        column: nextColumn,
+        assignee: nextAssignee,
+        executor_principal_id: nextExecutor,
+        taskmaster_drivable: nextTaskmasterDrivable,
+        owner_principal_type: nextOwnerPrincipalType,
+      });
       if (
-        isActiveTaskColumn(nextColumn) &&
-        !hasAssignedOwner(nextAssignee) &&
+        !accountabilityCheck.ok &&
         (!existingTaskIsOwnerlessActive ||
           assignee !== undefined ||
-          column !== undefined)
+          column !== undefined ||
+          Object.keys(accountabilityUpdates).length > 0)
       ) {
         return res.status(400).json({
-          error: "Active task requires assignee",
-          message: "Tasks in Todo, Doing, or Review must have an assignee.",
+          error: accountabilityCheck.error,
+          message: accountabilityCheck.message,
         });
       }
 
@@ -2729,6 +2771,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
         description,
         column,
         assignee,
+        ...accountabilityUpdates,
         blocked: normalizeBlockedInput(blocked),
         blocker_reason: normalizeBlockerReasonInput(blocker_reason),
         project: requestedProjectLabel,
@@ -2796,7 +2839,9 @@ function registerTaskRoutes(prefix: "" | "/api") {
           (!responseTask.output || !responseTask.output.trim());
         const activeWithoutOwner =
           isActiveTaskColumn(responseTask.column) &&
-          !hasAssignedOwner(responseTask.assignee);
+          !hasAssignedOwner(responseTask.assignee) &&
+          !hasAssignedOwner(responseTask.executor_principal_id ?? null) &&
+          !responseTask.taskmaster_drivable;
         if (movedToReview) {
           void taskAgent.handleTaskMovedToReview(responseTask).catch((err) => {
             const message =
@@ -2959,14 +3004,17 @@ function registerTaskRoutes(prefix: "" | "/api") {
         return res.status(404).json({ error: "task not found" });
       }
 
-      if (
-        isActiveTaskColumn(column) &&
-        !hasAssignedOwner(existingTask.assignee)
-      ) {
+      const accountabilityCheck = validateTaskAccountability({
+        column,
+        assignee: existingTask.assignee,
+        executor_principal_id: existingTask.executor_principal_id,
+        taskmaster_drivable: existingTask.taskmaster_drivable,
+        owner_principal_type: existingTask.owner_principal_type,
+      });
+      if (!accountabilityCheck.ok) {
         return res.status(400).json({
-          error: "Active task requires assignee",
-          message:
-            "Tasks in Todo, Doing, or Review must have an assignee before they can be moved.",
+          error: accountabilityCheck.error,
+          message: accountabilityCheck.message,
         });
       }
 

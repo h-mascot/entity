@@ -74,6 +74,8 @@ function normalizeProjectRecord(raw: unknown): ProjectRecord | null {
 
   return {
     id,
+    org_id: typeof row.org_id === 'string' && row.org_id.trim() ? row.org_id.trim() : undefined,
+    team_id: typeof row.team_id === 'string' && row.team_id.trim() ? row.team_id.trim() : undefined,
     name,
     color: typeof row.color === 'string' && row.color.trim() ? row.color.trim() : null,
     created_at: normalizeTimestamp(row.created_at),
@@ -103,6 +105,42 @@ function normalizeTaskRecord(raw: unknown): TaskRecord | null {
 
   return {
     id,
+    org_id: typeof row.org_id === 'string' && row.org_id.trim() ? row.org_id.trim() : undefined,
+    team_id: typeof row.team_id === 'string' && row.team_id.trim() ? row.team_id.trim() : undefined,
+    project_id: Number.isInteger(Number(row.project_id)) && Number(row.project_id) > 0 ? Number(row.project_id) : null,
+    created_by_principal_id:
+      typeof row.created_by_principal_id === 'string' && row.created_by_principal_id.trim()
+        ? row.created_by_principal_id.trim()
+        : 'legacy-system',
+    initiator_principal_id:
+      typeof row.initiator_principal_id === 'string' && row.initiator_principal_id.trim()
+        ? row.initiator_principal_id.trim()
+        : 'legacy-unknown',
+    initiator_type:
+      typeof row.initiator_type === 'string' && row.initiator_type.trim() ? row.initiator_type.trim() : 'unknown',
+    owner_principal_id:
+      typeof row.owner_principal_id === 'string' && row.owner_principal_id.trim()
+        ? row.owner_principal_id.trim()
+        : 'legacy-owner',
+    owner_principal_type:
+      typeof row.owner_principal_type === 'string' && row.owner_principal_type.trim()
+        ? row.owner_principal_type.trim()
+        : 'unknown',
+    executor_principal_id:
+      typeof row.executor_principal_id === 'string' && row.executor_principal_id.trim()
+        ? row.executor_principal_id.trim()
+        : null,
+    assignment_state:
+      typeof row.assignment_state === 'string' && row.assignment_state.trim() ? row.assignment_state.trim() : 'unassigned',
+    taskmaster_drivable:
+      typeof row.taskmaster_drivable === 'boolean'
+        ? row.taskmaster_drivable
+        : typeof row.taskmaster_drivable === 'number'
+          ? row.taskmaster_drivable !== 0
+          : typeof row.taskmaster_drivable === 'string'
+            ? row.taskmaster_drivable.trim().toLowerCase() === '1' ||
+              row.taskmaster_drivable.trim().toLowerCase() === 'true'
+            : false,
     name,
     description: typeof row.description === 'string' ? row.description : null,
     brief: typeof row.brief === 'string' ? row.brief : null,
