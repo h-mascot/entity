@@ -4,7 +4,7 @@ Resume the approved Entity Phase 2 child queue and work one dependency-safe chil
 **MC Task:** Entity Phase 2 approved queue
 **Created:** 2026-06-23
 **Agent:** Cursor
-**Status:** IN PROGRESS
+**Status:** BLOCKED
 
 ## Context
 Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phase-2.mdc`, Phase 2 context/spec files, `.project-gate.json`, and the execution-pack plan.
@@ -43,8 +43,8 @@ The active issue is `THE-35`, source `THE-8.5`, parent `THE-8`, title `Wire Acti
   - **Verify:** focused tests cover required ActivityEvent consumer behavior and degraded/deferred cases.
 - [ ] Step 7: Run proof commands and CLI Tester gates for `THE-35`.
   - **Files:** `output/entity-phase-2/test-gate/THE-35.*`, `output/entity-phase-2/book-review/THE-35.*`.
-  - **Verify:** smoke, root build, server build+Vitest passed; CLI Tester request/run/book-review/verify all pass before moving to `THE-36`.
-- [ ] Step 8: Update local run-state and Linear proof comment for `THE-35`.
+  - **Verify:** smoke, root build, server build+Vitest, and CLI Tester request/run passed on commit `2c97a603d6f1f590d9632229a18700a9b37e1167`; Book review is `REQUESTED` with `safeToContinue=false`, so verify has not run and `THE-36` is blocked.
+- [x] Step 8: Update local run-state and Linear proof comment for `THE-35`.
   - **Files:** `.cursor/run-state/entity-phase-2.json`, Linear `THE-35`.
   - **Verify:** Linear proof comment includes branch, files changed, commands/exit codes, proof paths, gate receipt, Book review receipt, and blockers if any.
 
@@ -57,6 +57,8 @@ The active issue is `THE-35`, source `THE-8.5`, parent `THE-8`, title `Wire Acti
 | 09:17 | Step 4 | done | Existing ActivityEvent service, TaskAgent action path, task mutation logging, and receipt/review/routing/notification gaps inspected. |
 | 09:23 | Step 5 | done | Added receipt consumer summary, consumer append mapper, TaskAgent action mapper, object-ref preservation, and TaskAgent canonical event writes. |
 | 09:25 | Step 6 | done | Focused `activity-events` and TaskAgent tests pass; server build passes under Node 22. |
+| 09:17Z | Step 7 | blocked | Required proof commands and CLI Tester run passed on commit `2c97a603d6f1f590d9632229a18700a9b37e1167`; Book review receipt is `REQUESTED`/`safeToContinue=false`, so verify was not run. |
+| 09:18Z | Step 8 | done | Linear comment `91ae94aa-7b02-45c8-bcf3-846e9d8b5ba9` posted with proof paths and blocker. |
 
 ## Files Touched
 - `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-35`.
@@ -80,7 +82,7 @@ The active issue is `THE-35`, source `THE-8.5`, parent `THE-8`, title `Wire Acti
 - [x] `THE-35` live Linear validation complete.
 - [x] `THE-35` implementation complete.
 - [x] Focused tests and fixture receipts complete.
-- [ ] Proof commands pass.
+- [x] Proof commands pass.
 - [ ] CLI Tester request/run/book-review/verify pass.
-- [ ] Linear proof comment added.
+- [x] Linear proof comment added.
 - [ ] Next queue candidate identified only after verify allows continuation.
