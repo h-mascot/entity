@@ -37,7 +37,7 @@ The active issue is `THE-33`, source `THE-8.3`, parent `THE-8`, title `Migrate e
   - **Verify:** legacy event fixture tests cover known mapping, weak-event warnings, old-task visibility, idempotency, and rollback/dry-run behavior.
 - [ ] Step 5: Run proof commands and CLI Tester gates for `THE-33`.
   - **Files:** `output/entity-phase-2/test-gate/THE-33.*`, `output/entity-phase-2/book-review/THE-33.*`.
-  - **Verify:** smoke, root build, server build+Vitest passed; CLI Tester request/run/book-review/verify still pending.
+  - **Verify:** smoke, root build, server build+Vitest passed; CLI Tester request/run passed; Book review is `REQUESTED` with `safeToContinue=false`; verify was not run.
 - [ ] Step 6: Update local run-state and Linear proof comment for `THE-33`.
   - **Files:** `.cursor/run-state/entity-phase-2.json`, Linear `THE-33`.
   - **Verify:** Linear proof comment includes branch, files changed, commands/exit codes, proof paths, gate receipt, Book review receipt, and blockers if any.
@@ -51,6 +51,7 @@ The active issue is `THE-33`, source `THE-8.3`, parent `THE-8`, title `Migrate e
 | 07:24 | Step 4 | in progress | Branch `THE-33-migrate-existing-activity-payloads-progressively` created; code search next. |
 | 07:32 | Step 4 | done | Added progressive ActivityEvent backfill report/apply helper and fixture tests for mapped and weak legacy events. |
 | 07:34 | Step 5 | in progress | Focused DB tests, server build+Vitest, root build, and smoke passed under Node 22; CLI Tester next. |
+| 07:52 | Step 5 | blocked | CLI Tester request/run passed; Book review returned `REQUESTED` with `safeToContinue=false`; verify not run and `THE-34` not started. Linear proof/blocker comment posted: `afa9f47a-fae8-40ce-ad65-c560d3ff3afe`. |
 
 ## Files Touched
 - `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-33`.
@@ -73,6 +74,6 @@ The active issue is `THE-33`, source `THE-8.3`, parent `THE-8`, title `Migrate e
 - [x] `THE-33` live Linear validation complete.
 - [x] `THE-33` implementation complete.
 - [x] Proof commands pass.
-- [ ] CLI Tester request/run/book-review/verify pass.
-- [ ] Linear proof comment added.
+- [ ] CLI Tester request/run/book-review/verify pass; currently blocked at Book review.
+- [x] Linear proof comment added.
 - [ ] Next queue candidate identified only after verify allows continuation.
