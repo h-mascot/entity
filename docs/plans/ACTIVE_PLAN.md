@@ -4,7 +4,7 @@ Implement `THE-27` (`THE-7.2`) by exposing workspace hierarchy service APIs for 
 **MC Task:** THE-27
 **Created:** 2026-06-23
 **Agent:** Cursor
-**Status:** IN PROGRESS
+**Status:** BLOCKED ON BOOK REVIEW
 
 ## Context
 Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phase-2.mdc`, Phase 2 context/spec files, `.project-gate.json`, and the execution-pack plan.
@@ -20,7 +20,7 @@ Scope is the workspace hierarchy service/API layer only: create/read/update/list
 - [x] Branch `THE-27-implement-workspace-hierarchy-service-apis` exists.
 - [x] Existing DB repository, route, request context, and test patterns are inspected.
 - [x] Implementation stays scoped to hierarchy service APIs and focused API tests.
-- [ ] Required proof commands and CLI Tester gates pass. Local proof and machine gate pass; Book review is `REQUESTED/BLOCKED` from the pre-commit packet and must be rerun after commit.
+- [ ] Required proof commands and CLI Tester gates pass. Local proof and machine gate pass; Book review is `REQUESTED/BLOCKED` after commit `ddf68e1`, so `verify` is not run.
 
 ## Plan
 - [x] Step 1: Confirm issue mapping, parent, and dependency safety.
@@ -40,8 +40,8 @@ Scope is the workspace hierarchy service/API layer only: create/read/update/list
   - **Verify:** `git status --short --branch`
 - [ ] Step 6: Run proof and gate commands.
   - **Files:** proof receipts under `output/entity-phase-2/`
-  - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`, `npm run build`, and `cd packages/server && npm run build && npx vitest run` pass under Node v22.22.3; CLI Tester `request` and `run` pass; pre-commit `book-review` is blocked with `decision=REQUESTED`, `safeToContinue=false`; rerun after commit before `verify`.
-- [ ] Step 7: Commit scoped work and post Linear proof comment.
+  - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`, `npm run build`, and `cd packages/server && npm run build && npx vitest run` pass under Node v22.22.3; CLI Tester `request` and `run` pass; post-commit `book-review` is blocked with `decision=REQUESTED`, `safeToContinue=false`; `verify` is not run.
+- [x] Step 7: Commit scoped work and post Linear proof comment.
   - **Files:** changed implementation/tests/docs; local state remains uncommitted
   - **Verify:** `git status --short --branch`, `git log -1 --oneline`, Linear comment response
 
@@ -51,6 +51,7 @@ Scope is the workspace hierarchy service/API layer only: create/read/update/list
 | 03:24 | Step 1 | done | Live Linear confirms `THE-27` child/source mapping and `THE-26` Done; receipts show Book APPROVED and gate PASS. |
 | 03:18 | Steps 2-4 | done | Added scoped workspace hierarchy router, repository read/update helpers, and focused API tests. Focused route tests plus DB/server builds pass. |
 | 03:21 | Proof/gate | blocked | Node v26 proof failed with known `better-sqlite3` ABI mismatch; rerun under Node v22.22.3 passed smoke/root build/server build/full Vitest. CLI Tester request/run passed, but pre-commit Book review returned `REQUESTED`, `safeToContinue=false`; verify not run. |
+| 03:23 | Commit/gate | blocked | Scoped commit `ddf68e1` created. CLI Tester request/run rerun against commit and passed; Book review remained `REQUESTED`, `safeToContinue=false`; verify not run. Linear proof/blocker comment `2f7143c9-b115-46e9-a3cf-4b6612fad67a` posted. |
 
 ## Files Touched
 - `docs/plans/2026-06-23-entity-phase-2-the-27-workspace-apis-plan.md` - created - compaction-safe plan for current issue.
@@ -65,12 +66,12 @@ Scope is the workspace hierarchy service/API layer only: create/read/update/list
 2. Run `git status` and `git diff` to see current state.
 3. Read `.cursor/run-state/entity-phase-2.json`.
 4. Continue from the first unchecked step above.
-5. If commit exists, rerun CLI Tester `request`, `run`, `book-review`, then `verify` only if Book review is APPROVED with `safeToContinue=true`.
+5. Wait for Book approval or an explicit Henry-approved waiver. Run CLI Tester `verify THE-27` only if Book review is APPROVED with `safeToContinue=true`.
 6. Do not start `THE-28` until `THE-27` proof commands pass, CLI Tester `run` passes, Book review is APPROVED with `safeToContinue=true`, and CLI Tester `verify THE-27` passes with `nextChildBlocked=false`, or Henry explicitly waives the gate.
 
 ## Done
 - [x] All local implementation/proof steps complete.
 - [x] Proof commands pass.
 - [ ] CLI Tester request/run/book-review/verify pass.
-- [ ] Linear proof comment added.
+- [x] Linear proof comment added.
 - [ ] `THE-28` identified as next candidate only after verify allows continuation.
