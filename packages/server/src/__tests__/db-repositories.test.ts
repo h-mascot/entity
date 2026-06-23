@@ -279,6 +279,221 @@ describe('TaskRepository', () => {
     })).toThrow('requested_actor_principal_id');
   });
 
+  it('resolves low-risk policy inputs without adding review or human gate requirements', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Low-risk resolver fixture',
+      risk_level: 'low',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          workspace: { notification_routes: ['inbox'] },
+          worktype: { reviewer_principal_id: 'reviewer-1' },
+          risk: { risk_level: 'low' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const resolution = dbMod.resolveTaskPolicy(dbMod.buildTaskPolicyInputEnvelope(task));
+
+    expect(resolution).toMatchObject({
+      review_required: false,
+      human_gate_required: false,
+      reviewer_principal_id: 'reviewer-1',
+      approver_principal_id: null,
+      taskmaster_drivable: false,
+      notification_routes: ['inbox'],
+    });
+    expect(resolution.reason_chain.map(({ source, decision, value }) => ({ source, decision, value }))).toEqual([
+      { source: 'workspace', decision: 'notification_route', value: ['inbox'] },
+      { source: 'worktype', decision: 'reviewer_target', value: 'reviewer-1' },
+    ]);
+  });
+
+  it('preserves mandatory higher-layer review and human gate requirements with stable reasons', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Mandatory policy resolver fixture',
+      risk_level: 'low',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          workspace: {
+            review_required: true,
+            human_gate_required: true,
+            reviewer_principal_id: 'workspace-reviewer',
+            notification_routes: ['inbox'],
+            stall_threshold_hours: 48,
+          },
+          org: {
+            review_required: false,
+            human_gate_required: false,
+            notification_routes: ['email'],
+            stall_threshold_hours: 24,
+          },
+          team: {
+            reviewer_principal_id: 'team-reviewer',
+          },
+          project: {
+            approver_principal_id: 'project-approver',
+          },
+          worktype: {
+            taskmaster_drivable: true,
+            auto_reassign_after_hours: 72,
+          },
+          task: {
+            taskmaster_drivable: false,
+            auto_reassign_after_hours: 48,
+          },
+          risk: { risk_level: 'low' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const resolution = dbMod.resolveTaskPolicy(dbMod.buildTaskPolicyInputEnvelope(task));
+
+    expect(resolution).toMatchObject({
+      review_required: true,
+      human_gate_required: true,
+      reviewer_principal_id: 'team-reviewer',
+      approver_principal_id: 'project-approver',
+      taskmaster_drivable: false,
+      stall_threshold_hours: 24,
+      auto_reassign_after_hours: 48,
+      notification_routes: ['inbox', 'email'],
+    });
+    expect(resolution.reason_chain.map(({ source, decision, value }) => ({ source, decision, value }))).toMatchInlineSnapshot(`
+      [
+        {
+          "decision": "review_required",
+          "source": "workspace",
+          "value": true,
+        },
+        {
+          "decision": "human_gate_required",
+          "source": "workspace",
+          "value": true,
+        },
+        {
+          "decision": "reviewer_target",
+          "source": "workspace",
+          "value": "workspace-reviewer",
+        },
+        {
+          "decision": "stall_threshold",
+          "source": "workspace",
+          "value": 48,
+        },
+        {
+          "decision": "notification_route",
+          "source": "workspace",
+          "value": [
+            "inbox",
+          ],
+        },
+        {
+          "decision": "review_requirement_retained",
+          "source": "org",
+          "value": true,
+        },
+        {
+          "decision": "human_gate_requirement_retained",
+          "source": "org",
+          "value": true,
+        },
+        {
+          "decision": "stall_threshold",
+          "source": "org",
+          "value": 24,
+        },
+        {
+          "decision": "notification_route",
+          "source": "org",
+          "value": [
+            "inbox",
+            "email",
+          ],
+        },
+        {
+          "decision": "reviewer_target",
+          "source": "team",
+          "value": "team-reviewer",
+        },
+        {
+          "decision": "approver_target",
+          "source": "project",
+          "value": "project-approver",
+        },
+        {
+          "decision": "taskmaster_drivable",
+          "source": "worktype",
+          "value": true,
+        },
+        {
+          "decision": "auto_reassignment_threshold",
+          "source": "worktype",
+          "value": 72,
+        },
+        {
+          "decision": "taskmaster_drivable",
+          "source": "task",
+          "value": false,
+        },
+        {
+          "decision": "auto_reassignment_threshold",
+          "source": "task",
+          "value": 48,
+        },
+      ]
+    `);
+  });
+
+  it('escalates review and human gate requirements from risk, trust, and external side effects', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Escalated resolver fixture',
+      risk_level: 'critical',
+      agent_trust_level: 'low',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          risk: { risk_level: 'critical' },
+          agent_trust: { trust_level: 'low' },
+        },
+      }),
+      external_side_effects_json: JSON.stringify([
+        {
+          type: 'crm_update',
+          target_system: 'salesforce',
+          risk_level: 'high',
+          sensitivity: 'customer',
+          required_gate: true,
+          requested_actor_principal_id: 'agent-1',
+          resolution_state: 'gate_pending',
+        },
+      ]),
+    });
+
+    const resolution = dbMod.resolveTaskPolicy(dbMod.buildTaskPolicyInputEnvelope(task));
+
+    expect(resolution.review_required).toBe(true);
+    expect(resolution.human_gate_required).toBe(true);
+    expect(resolution.reason_chain.map(({ source, decision, value }) => ({ source, decision, value }))).toEqual([
+      { source: 'risk', decision: 'review_required', value: true },
+      { source: 'risk', decision: 'human_gate_required', value: true },
+      { source: 'agent_trust', decision: 'review_required', value: true },
+      { source: 'external_side_effect', decision: 'review_required', value: true },
+      { source: 'external_side_effect', decision: 'human_gate_required', value: true },
+    ]);
+  });
+
   it('should list tasks', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();

@@ -82,6 +82,38 @@ export interface TaskPolicyInputEnvelope {
   external_side_effects: ExternalSideEffect[];
 }
 
+export type PolicyReasonSource = PolicyInputLayer | 'task_projection' | 'external_side_effect';
+export type PolicyReasonDecision =
+  | 'review_required'
+  | 'review_requirement_retained'
+  | 'human_gate_required'
+  | 'human_gate_requirement_retained'
+  | 'reviewer_target'
+  | 'approver_target'
+  | 'taskmaster_drivable'
+  | 'stall_threshold'
+  | 'auto_reassignment_threshold'
+  | 'notification_route';
+
+export interface PolicyReasonChainEntry {
+  source: PolicyReasonSource;
+  decision: PolicyReasonDecision;
+  value: boolean | number | string | string[] | null;
+  reason: string;
+}
+
+export interface TaskPolicyResolution {
+  review_required: boolean;
+  human_gate_required: boolean;
+  reviewer_principal_id: string | null;
+  approver_principal_id: string | null;
+  taskmaster_drivable: boolean;
+  stall_threshold_hours: number | null;
+  auto_reassign_after_hours: number | null;
+  notification_routes: string[];
+  reason_chain: PolicyReasonChainEntry[];
+}
+
 export interface TaskRecord {
   id: number;
   org_id?: string;
@@ -1750,6 +1782,208 @@ export function buildTaskPolicyInputEnvelope(
       state: task.human_gate_state ?? 'not_required',
     },
     external_side_effects: parseExternalSideEffects(task.external_side_effects_json),
+  };
+}
+
+function readPolicyBoolean(layer: Record<string, unknown>, key: string): boolean | undefined {
+  return Object.prototype.hasOwnProperty.call(layer, key) ? normalizeBlocked(layer[key]) : undefined;
+}
+
+function readPolicyString(layer: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = normalizeBlockerReason(layer[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readPolicyPositiveNumber(layer: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = normalizePositiveInteger(layer[key]);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readPolicyRoutes(layer: Record<string, unknown>): string[] {
+  if (Array.isArray(layer.notification_routes)) {
+    return normalizeJsonStringArray(layer.notification_routes);
+  }
+
+  const singleRoute = normalizeBlockerReason(layer.notification_route);
+  return singleRoute ? [singleRoute] : [];
+}
+
+function appendUnique(values: string[], nextValues: string[]): string[] {
+  const seen = new Set(values);
+  const result = [...values];
+  for (const value of nextValues) {
+    if (!seen.has(value)) {
+      seen.add(value);
+      result.push(value);
+    }
+  }
+  return result;
+}
+
+function preferLowerPositive(current: number | null, next: number): number {
+  return current === null ? next : Math.min(current, next);
+}
+
+function isHighRisk(value: unknown): boolean {
+  return value === 'high' || value === 'critical';
+}
+
+function isCriticalRisk(value: unknown): boolean {
+  return value === 'critical';
+}
+
+function sideEffectNeedsHumanGate(sideEffect: ExternalSideEffect): boolean {
+  if (sideEffect.required_gate || sideEffect.risk_level === 'critical') {
+    return true;
+  }
+
+  return sideEffect.sensitivity === 'people' ||
+    sideEffect.sensitivity === 'legal' ||
+    sideEffect.sensitivity === 'financial' ||
+    sideEffect.sensitivity === 'security' ||
+    sideEffect.sensitivity === 'production' ||
+    sideEffect.sensitivity === 'workspace_restricted';
+}
+
+export function resolveTaskPolicy(envelope: TaskPolicyInputEnvelope): TaskPolicyResolution {
+  const reasonChain: PolicyReasonChainEntry[] = [];
+  let reviewRequired = envelope.review.required;
+  let humanGateRequired = envelope.human_gate.required;
+  let reviewerPrincipalId: string | null = null;
+  let approverPrincipalId: string | null = null;
+  let taskmasterDrivable = false;
+  let stallThresholdHours: number | null = null;
+  let autoReassignAfterHours: number | null = null;
+  let notificationRoutes: string[] = [];
+
+  const pushReason = (
+    source: PolicyReasonSource,
+    decision: PolicyReasonDecision,
+    value: PolicyReasonChainEntry['value'],
+    reason: string,
+  ) => {
+    reasonChain.push({ source, decision, value, reason });
+  };
+
+  const requireReview = (source: PolicyReasonSource, reason: string) => {
+    if (!reviewRequired) {
+      reviewRequired = true;
+    }
+    pushReason(source, 'review_required', true, reason);
+  };
+
+  const requireHumanGate = (source: PolicyReasonSource, reason: string) => {
+    if (!humanGateRequired) {
+      humanGateRequired = true;
+    }
+    pushReason(source, 'human_gate_required', true, reason);
+  };
+
+  if (reviewRequired) {
+    pushReason('task_projection', 'review_required', true, 'stored task review state already requires review');
+  }
+  if (humanGateRequired) {
+    pushReason('task_projection', 'human_gate_required', true, 'stored task human gate state already requires approval');
+  }
+
+  for (const layerName of POLICY_INPUT_LAYERS) {
+    const layer = envelope.layers[layerName] ?? {};
+    const reviewFlag = readPolicyBoolean(layer, 'review_required');
+    const humanGateFlag = readPolicyBoolean(layer, 'human_gate_required');
+
+    if (reviewFlag === true) {
+      requireReview(layerName, `${layerName} layer requires review`);
+    } else if (reviewFlag === false && reviewRequired) {
+      pushReason(layerName, 'review_requirement_retained', true, `${layerName} layer cannot bypass an existing review requirement`);
+    }
+
+    if (humanGateFlag === true) {
+      requireHumanGate(layerName, `${layerName} layer requires human gate`);
+    } else if (humanGateFlag === false && humanGateRequired) {
+      pushReason(layerName, 'human_gate_requirement_retained', true, `${layerName} layer cannot bypass an existing human gate requirement`);
+    }
+
+    const reviewer = readPolicyString(layer, ['reviewer_principal_id', 'reviewer_target_principal_id', 'reviewer_target']);
+    if (reviewer) {
+      reviewerPrincipalId = reviewer;
+      pushReason(layerName, 'reviewer_target', reviewer, `${layerName} layer sets reviewer target`);
+    }
+
+    const approver = readPolicyString(layer, ['approver_principal_id', 'approver_target_principal_id', 'approver_target']);
+    if (approver) {
+      approverPrincipalId = approver;
+      pushReason(layerName, 'approver_target', approver, `${layerName} layer sets approver target`);
+    }
+
+    const taskmasterFlag = readPolicyBoolean(layer, 'taskmaster_drivable');
+    if (typeof taskmasterFlag !== 'undefined') {
+      taskmasterDrivable = taskmasterFlag;
+      pushReason(layerName, 'taskmaster_drivable', taskmasterFlag, `${layerName} layer sets Task Master drivability`);
+    }
+
+    const stallThreshold = readPolicyPositiveNumber(layer, ['stall_threshold_hours', 'nudge_after_hours']);
+    if (stallThreshold !== null) {
+      stallThresholdHours = preferLowerPositive(stallThresholdHours, stallThreshold);
+      pushReason(layerName, 'stall_threshold', stallThresholdHours, `${layerName} layer contributes stall threshold`);
+    }
+
+    const autoReassignThreshold = readPolicyPositiveNumber(layer, ['auto_reassign_after_hours', 'auto_reassignment_after_hours']);
+    if (autoReassignThreshold !== null) {
+      autoReassignAfterHours = preferLowerPositive(autoReassignAfterHours, autoReassignThreshold);
+      pushReason(layerName, 'auto_reassignment_threshold', autoReassignAfterHours, `${layerName} layer contributes auto-reassignment threshold`);
+    }
+
+    const routes = readPolicyRoutes(layer);
+    if (routes.length > 0) {
+      notificationRoutes = appendUnique(notificationRoutes, routes);
+      pushReason(layerName, 'notification_route', notificationRoutes, `${layerName} layer contributes notification route`);
+    }
+  }
+
+  const riskLayer = envelope.layers.risk ?? {};
+  const riskLevel = normalizePolicyRiskLevel(riskLayer.risk_level ?? riskLayer.level);
+  if (isHighRisk(riskLevel)) {
+    requireReview('risk', `${riskLevel} risk escalates review requirement`);
+  }
+  if (isCriticalRisk(riskLevel)) {
+    requireHumanGate('risk', 'critical risk escalates human gate requirement');
+  }
+
+  const trustLayer = envelope.layers.agent_trust ?? {};
+  const trustLevel = normalizeAgentTrustLevel(trustLayer.trust_level ?? trustLayer.level);
+  if (trustLevel === 'unknown' || trustLevel === 'low') {
+    requireReview('agent_trust', `${trustLevel} agent trust requires review`);
+  }
+
+  envelope.external_side_effects.forEach((sideEffect, index) => {
+    if (isHighRisk(sideEffect.risk_level) || sideEffect.required_gate || sideEffect.resolution_state === 'gate_pending') {
+      requireReview('external_side_effect', `external side effect ${index + 1} requires review`);
+    }
+    if (sideEffectNeedsHumanGate(sideEffect) || sideEffect.resolution_state === 'gate_pending') {
+      requireHumanGate('external_side_effect', `external side effect ${index + 1} requires human gate`);
+    }
+  });
+
+  return {
+    review_required: reviewRequired,
+    human_gate_required: humanGateRequired,
+    reviewer_principal_id: reviewerPrincipalId,
+    approver_principal_id: approverPrincipalId,
+    taskmaster_drivable: taskmasterDrivable,
+    stall_threshold_hours: stallThresholdHours,
+    auto_reassign_after_hours: autoReassignAfterHours,
+    notification_routes: notificationRoutes,
+    reason_chain: reasonChain,
   };
 }
 
