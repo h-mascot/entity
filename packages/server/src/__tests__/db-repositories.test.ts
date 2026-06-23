@@ -652,6 +652,32 @@ describe('DocumentObjectRepository', () => {
     })).toThrow('ObjectRef requires object_type, object_id, and link_role');
   });
 
+  it('links native documents and external refs to objects without duplicating ObjectRefs', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createDocumentObjectRepository();
+    const task = dbMod.createTaskRepository().createTask({ name: 'Document Link Task' });
+    const objectRef = { object_type: 'task', object_id: String(task.id), link_role: 'source_context' };
+
+    repo.createNativeDocument({
+      id: 'native-link-doc',
+      title: 'Native linked note',
+      content_hash: 'sha256:native-link',
+    });
+    repo.createExternalDocumentRef({
+      id: 'external-link-doc',
+      connector_type: 'google_docs',
+      external_url: 'https://docs.example.test/document/abc',
+      title: 'External linked note',
+    });
+
+    expect(repo.linkNativeDocumentObject('native-link-doc', objectRef)?.linked_object_refs).toEqual([objectRef]);
+    expect(repo.linkNativeDocumentObject('native-link-doc', objectRef)?.linked_object_refs).toEqual([objectRef]);
+    expect(repo.linkExternalDocumentObject('external-link-doc', objectRef)?.linked_object_refs).toEqual([objectRef]);
+    expect(repo.getExternalDocumentRef('external-link-doc')).toMatchObject({
+      canonicality: 'unknown',
+    });
+  });
+
   it('plans a non-destructive migration path for vague legacy file and artifact references', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
 
@@ -779,6 +805,31 @@ describe('EvidenceArtifactRepository', () => {
       content_hash: 'sha256:mutable-raw',
       mutability_policy: 'editable_versioned',
     })).toThrow('raw task receipt artifacts must be immutable_append_only');
+  });
+
+  it('allows curated artifact links but rejects post-creation links on immutable raw evidence', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const artifactRepo = dbMod.createEvidenceArtifactRepository();
+    const task = dbMod.createTaskRepository().createTask({ name: 'Evidence Link Task' });
+    const taskRef = { object_type: 'task', object_id: String(task.id), link_role: 'proof' };
+
+    artifactRepo.createArtifact({
+      id: 'raw-link-artifact',
+      artifact_kind: 'raw_task_receipt',
+      title: 'Raw receipt',
+      content_hash: 'sha256:raw-link',
+    });
+    artifactRepo.createArtifact({
+      id: 'curated-link-artifact',
+      artifact_kind: 'curated_report',
+      title: 'Curated report',
+      content_hash: 'sha256:curated-link',
+      mutability_policy: 'editable_versioned',
+    });
+
+    expect(() => artifactRepo.linkArtifactObject('raw-link-artifact', taskRef))
+      .toThrow('immutable evidence artifacts cannot be relinked; create a superseding artifact');
+    expect(artifactRepo.linkArtifactObject('curated-link-artifact', taskRef)?.linked_object_refs).toEqual([taskRef]);
   });
 });
 

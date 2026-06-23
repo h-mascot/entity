@@ -373,8 +373,10 @@ export interface CreateExternalDocumentRefInput {
 export interface DocumentObjectRepository {
   createNativeDocument: (input: CreateNativeDocumentInput) => NativeDocumentRecord;
   getNativeDocument: (id: string) => NativeDocumentRecord | undefined;
+  linkNativeDocumentObject: (id: string, objectRef: ObjectRef) => NativeDocumentRecord | undefined;
   createExternalDocumentRef: (input: CreateExternalDocumentRefInput) => ExternalDocumentRefRecord;
   getExternalDocumentRef: (id: string) => ExternalDocumentRefRecord | undefined;
+  linkExternalDocumentObject: (id: string, objectRef: ObjectRef) => ExternalDocumentRefRecord | undefined;
 }
 
 export type LegacyDocumentReferenceConfidence = 'high' | 'medium' | 'low' | 'unknown';
@@ -491,6 +493,7 @@ export interface EvidenceArtifactRepository {
   createArtifact: (input: CreateEvidenceArtifactInput) => EvidenceArtifactRecord;
   getArtifact: (id: string) => EvidenceArtifactRecord | undefined;
   listArtifactsByOriginTask: (taskId: number) => EvidenceArtifactRecord[];
+  linkArtifactObject: (id: string, objectRef: ObjectRef) => EvidenceArtifactRecord | undefined;
   updateHumanPathAlias: (id: string, humanPathAlias: string | null) => EvidenceArtifactRecord | undefined;
 }
 
@@ -1173,6 +1176,17 @@ function normalizeObjectRefsJson(value: unknown): ObjectRef[] {
 
 function stringifyObjectRefs(value: unknown): string {
   return JSON.stringify(normalizeObjectRefs(value));
+}
+
+function appendObjectRef(current: ObjectRef[], objectRef: ObjectRef): ObjectRef[] {
+  const normalized = normalizeObjectRefs([objectRef])[0];
+  const existing = normalizeObjectRefs(current);
+  const hasRef = existing.some((entry) =>
+    entry.object_type === normalized.object_type &&
+    entry.object_id === normalized.object_id &&
+    entry.link_role === normalized.link_role
+  );
+  return hasRef ? existing : [...existing, normalized];
 }
 
 function normalizeSlug(value: unknown, fallback: string): string {
@@ -4167,6 +4181,16 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
   const db = openEntityDatabase();
   const getNativeStmt = db.prepare('SELECT * FROM native_documents WHERE id = ?');
   const getExternalStmt = db.prepare('SELECT * FROM external_document_refs WHERE id = ?');
+  const updateNativeRefsStmt = db.prepare(`
+    UPDATE native_documents
+    SET linked_object_refs_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  const updateExternalRefsStmt = db.prepare(`
+    UPDATE external_document_refs
+    SET linked_object_refs_json = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
   const createNativeStmt = db.prepare(`
     INSERT INTO native_documents (
       id,
@@ -4257,6 +4281,18 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
       return row ? mapNativeDocumentRow(row) : undefined;
     },
 
+    linkNativeDocumentObject: (id: string, objectRef: ObjectRef) => {
+      const normalizedId = id.trim();
+      const current = getNativeStmt.get(normalizedId) as Record<string, unknown> | undefined;
+      if (!current) {
+        return undefined;
+      }
+      const refs = appendObjectRef(mapNativeDocumentRow(current).linked_object_refs, objectRef);
+      updateNativeRefsStmt.run(JSON.stringify(refs), normalizedId);
+      const row = getNativeStmt.get(normalizedId) as Record<string, unknown> | undefined;
+      return row ? mapNativeDocumentRow(row) : undefined;
+    },
+
     createExternalDocumentRef: (input: CreateExternalDocumentRefInput) => {
       const id = normalizeWorkspaceId(input.id, randomUUID());
       const title = input.title.trim();
@@ -4298,6 +4334,18 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
 
     getExternalDocumentRef: (id: string) => {
       const row = getExternalStmt.get(id.trim()) as Record<string, unknown> | undefined;
+      return row ? mapExternalDocumentRefRow(row) : undefined;
+    },
+
+    linkExternalDocumentObject: (id: string, objectRef: ObjectRef) => {
+      const normalizedId = id.trim();
+      const current = getExternalStmt.get(normalizedId) as Record<string, unknown> | undefined;
+      if (!current) {
+        return undefined;
+      }
+      const refs = appendObjectRef(mapExternalDocumentRefRow(current).linked_object_refs, objectRef);
+      updateExternalRefsStmt.run(JSON.stringify(refs), normalizedId);
+      const row = getExternalStmt.get(normalizedId) as Record<string, unknown> | undefined;
       return row ? mapExternalDocumentRefRow(row) : undefined;
     },
   };
@@ -4342,6 +4390,11 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
   const updateAliasStmt = db.prepare(`
     UPDATE evidence_artifacts
     SET human_path_alias = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  const updateLinkedRefsStmt = db.prepare(`
+    UPDATE evidence_artifacts
+    SET linked_object_refs_json = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
 
@@ -4399,6 +4452,22 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
         return [];
       }
       return (listByOriginTaskStmt.all(safeTaskId) as Array<Record<string, unknown>>).map(mapEvidenceArtifactRow);
+    },
+
+    linkArtifactObject: (id: string, objectRef: ObjectRef) => {
+      const normalizedId = id.trim();
+      const currentRow = getStmt.get(normalizedId) as Record<string, unknown> | undefined;
+      if (!currentRow) {
+        return undefined;
+      }
+      const current = mapEvidenceArtifactRow(currentRow);
+      if (current.mutability_policy !== 'editable_versioned') {
+        throw new Error('immutable evidence artifacts cannot be relinked; create a superseding artifact');
+      }
+      const refs = appendObjectRef(current.linked_object_refs, objectRef);
+      updateLinkedRefsStmt.run(JSON.stringify(refs), normalizedId);
+      const row = getStmt.get(normalizedId) as Record<string, unknown> | undefined;
+      return row ? mapEvidenceArtifactRow(row) : undefined;
     },
 
     updateHumanPathAlias: (id: string, humanPathAlias: string | null) => {

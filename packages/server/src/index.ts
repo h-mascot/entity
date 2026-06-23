@@ -17,6 +17,7 @@ import {
   addTaskProject,
   createActivityRepository,
   createCrew,
+  createDocumentObjectRepository,
   createEvidenceArtifactRepository,
   createProject,
   createRoadmap,
@@ -116,6 +117,7 @@ import {
   buildConfiguredAgentWorkspaces,
 } from "./config/runtime";
 import { registerDocsApiRoutes } from "./routes/docs";
+import { createDocumentObjectRouter } from "./document-objects";
 import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
@@ -300,8 +302,14 @@ const wss = new WebSocketServer({
 const agentRegistryRepo = createAgentRegistryRepository();
 const moduleRegistryRepo = createModuleRegistryRepository();
 const workspaceRepo = createWorkspaceScopeRepository();
+const documentObjectRepository = createDocumentObjectRepository();
+const evidenceArtifactRepository = createEvidenceArtifactRepository();
 app.use("/api", createWorkspaceRouter({ workspaceRepo }));
 app.use("/api", createAgentRegistryRouter({ agentRegistryRepo, moduleRegistryRepo }));
+app.use("/api/document-objects", createDocumentObjectRouter({
+  documentRepo: documentObjectRepository,
+  artifactRepo: evidenceArtifactRepository,
+}));
 wss.on("connection", (ws) => {
   wsClients.add(ws);
   terminalBridge.handleSocketConnection(ws);
@@ -339,7 +347,6 @@ function broadcast(data: unknown) {
 
 const taskSyncLayer = createTaskSyncLayer();
 const activityRepository = createActivityRepository();
-const evidenceArtifactRepository = createEvidenceArtifactRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
 const activityEventService = createActivityEventService({
