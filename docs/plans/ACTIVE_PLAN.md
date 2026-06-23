@@ -4,12 +4,12 @@ Resume the approved Entity Phase 2 child queue and work one dependency-safe chil
 **MC Task:** Entity Phase 2 approved queue
 **Created:** 2026-06-23
 **Agent:** Cursor
-**Status:** IN_PROGRESS
+**Status:** BLOCKED
 
 ## Context
 Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phase-2.mdc`, Phase 2 context/spec files, `.project-gate.json`, and the execution-pack plan.
 
-The approved queue is fixed (`THE-21` through `THE-95`) and cannot be reordered, expanded, or skipped without explicit approval. `THE-37` is implemented, committed, Book-approved, verified, and commented in Linear. The active branch is `THE-38-implement-receipt-failure-and-integrity-recovery-states`.
+The approved queue is fixed (`THE-21` through `THE-95`) and cannot be reordered, expanded, or skipped without explicit approval. `THE-38` is implemented, machine-proven, committed, and commented in Linear, but Book review returned `REQUESTED` with `safeToContinue=false`, so `THE-39` cannot start.
 
 The active issue is `THE-38`, source `THE-9.3`, parent `THE-9`, title `Implement receipt failure and integrity recovery states`. Live Linear confirms it is a child issue with no children, state `Todo`, and blocker text satisfied by completed Slice 0 plus prior receipt metadata/writer work.
 
@@ -82,6 +82,7 @@ The active issue is `THE-38`, source `THE-9.3`, parent `THE-9`, title `Implement
 | 14:18 | Step 8 | done | Scoped `THE-37` commit created: `cf3a34d`. Final Linear proof update posted: `ee799ee6-759f-4d18-a6ff-3cd1a0414744`. |
 | 14:20 | Step 9 | done | Created branch `THE-38-implement-receipt-failure-and-integrity-recovery-states`; live Linear confirms child `THE-9.3`, no children, state `Todo`; parent `THE-9` shows `THE-36` and `THE-37` done. |
 | 14:24 | Step 12 | blocked | Focused receipt tests passed (6 tests), required proof commands passed (58 files / 419 tests), CLI Tester request/run passed, GitNexus low risk. Book review returned `REQUESTED`/`safeToContinue=false`; verify was not run. |
+| 14:25 | Step 12 | blocked | Scoped implementation commit created: `e3db8ab`. Linear proof/blocker comment posted: `9b547170-449c-4b15-9b31-97fbc182d4c1`. |
 
 ## Files Touched
 - `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-38`.
@@ -112,4 +113,5 @@ The active issue is `THE-38`, source `THE-9.3`, parent `THE-9`, title `Implement
 - [x] `THE-38` branch created and live issue validation complete.
 - [x] `THE-38` implementation complete.
 - [x] `THE-38` proof commands and machine gate pass.
-- [ ] `THE-38` Book review, verify, commit, and Linear comment complete.
+- [x] `THE-38` implementation commit and Linear blocker comment complete.
+- [ ] `THE-38` Book review and verify pass.
