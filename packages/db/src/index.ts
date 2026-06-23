@@ -143,6 +143,28 @@ export interface TaskPolicyResolution {
   reason_chain: PolicyReasonChainEntry[];
 }
 
+export type ReviewGateActorType = 'human' | 'agent' | 'system' | 'workflow' | 'unknown';
+export type TaskReviewDecision = 'accepted' | 'request_fix';
+export type TaskHumanGateDecision = 'approved' | 'rejected';
+
+export type ReviewGateMutationResult =
+  | {
+      ok: true;
+      updates: UpdateTaskInput;
+      metadata: Record<string, unknown>;
+      reviewer_principal_id?: string | null;
+      approver_principal_id?: string | null;
+      decision: TaskReviewDecision | TaskHumanGateDecision | 'pending';
+    }
+  | {
+      ok: false;
+      status: number;
+      code: string;
+      message: string;
+      reviewer_principal_id?: string | null;
+      approver_principal_id?: string | null;
+    };
+
 export interface TaskRecord {
   id: number;
   org_id?: string;
@@ -2188,6 +2210,279 @@ export function resolveTaskPolicy(envelope: TaskPolicyInputEnvelope): TaskPolicy
     auto_reassign_after_hours: autoReassignAfterHours,
     notification_routes: notificationRoutes,
     reason_chain: reasonChain,
+  };
+}
+
+function readTaskMetadataRecord(metadata: unknown): Record<string, unknown> {
+  return parseJsonObject(metadata);
+}
+
+function writeTaskMetadataRecord(metadata: Record<string, unknown>): string {
+  return JSON.stringify(metadata);
+}
+
+function normalizeActorPrincipal(value: unknown): string | null {
+  return normalizeReviewerCandidate(value);
+}
+
+function normalizeReviewGateActorType(value: unknown): ReviewGateActorType {
+  return value === 'human' ||
+    value === 'agent' ||
+    value === 'system' ||
+    value === 'workflow'
+    ? value
+    : 'unknown';
+}
+
+function isSamePrincipal(left: unknown, right: unknown): boolean {
+  const normalizedLeft = normalizeActorPrincipal(left);
+  const normalizedRight = normalizeActorPrincipal(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+function buildReviewGateMetadata(
+  task: TaskRecord,
+  updates: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...readTaskMetadataRecord(task.metadata),
+    ...updates,
+  };
+}
+
+function resolvedApproverPrincipalId(
+  task: TaskRecord,
+  resolution: TaskPolicyResolution,
+): string | null {
+  const explicitApprover = normalizeActorPrincipal(resolution.approver_principal_id);
+  if (explicitApprover) {
+    return explicitApprover;
+  }
+  if (task.owner_principal_type === 'human') {
+    return normalizeActorPrincipal(task.owner_principal_id);
+  }
+  return null;
+}
+
+export function buildTaskReviewDecisionUpdates(input: {
+  task: TaskRecord;
+  actor_principal_id: string;
+  decision: TaskReviewDecision;
+  reason?: string | null;
+  decided_at?: string;
+}): ReviewGateMutationResult {
+  const actor = normalizeActorPrincipal(input.actor_principal_id);
+  if (!actor) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'review_actor_required',
+      message: 'review decision requires an eligible actor principal',
+    };
+  }
+
+  const resolution = resolveTaskPolicy(buildTaskPolicyInputEnvelope(input.task));
+  if (!input.task.review_required && !resolution.review_required) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'review_not_required',
+      message: 'task does not require review',
+    };
+  }
+
+  const reviewerPrincipalId = normalizeActorPrincipal(resolution.reviewer_principal_id);
+  if (!reviewerPrincipalId) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'reviewer_routing_problem',
+      message: resolution.reviewer_assignment.routing_problem_reason ??
+        'task has no eligible reviewer',
+      reviewer_principal_id: null,
+    };
+  }
+
+  if (actor !== reviewerPrincipalId) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'reviewer_not_eligible',
+      message: 'review decision requires the assigned eligible reviewer',
+      reviewer_principal_id: reviewerPrincipalId,
+    };
+  }
+
+  const now = input.decided_at ?? new Date().toISOString();
+  const metadata = buildReviewGateMetadata(input.task, {
+    review_required: true,
+    reviewer: reviewerPrincipalId,
+    reviewer_principal_id: reviewerPrincipalId,
+    review_decision: input.decision,
+    review_decision_reason: input.reason?.trim() || null,
+    review_decided_by: actor,
+    review_decided_at: now,
+  });
+
+  return {
+    ok: true,
+    reviewer_principal_id: reviewerPrincipalId,
+    decision: input.decision,
+    metadata,
+    updates: {
+      review_required: true,
+      review_state: input.decision,
+      metadata: writeTaskMetadataRecord(metadata),
+    },
+  };
+}
+
+export function buildTaskHumanGateRequestUpdates(input: {
+  task: TaskRecord;
+  actor_principal_id: string;
+  reason?: string | null;
+  requested_at?: string;
+}): ReviewGateMutationResult {
+  const actor = normalizeActorPrincipal(input.actor_principal_id);
+  if (!actor) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'human_gate_actor_required',
+      message: 'human gate request requires an actor principal',
+    };
+  }
+
+  const resolution = resolveTaskPolicy(buildTaskPolicyInputEnvelope(input.task));
+  const approverPrincipalId = resolvedApproverPrincipalId(input.task, resolution);
+  const now = input.requested_at ?? new Date().toISOString();
+  const metadata = buildReviewGateMetadata(input.task, {
+    human_gate_required: true,
+    approver: approverPrincipalId,
+    approver_principal_id: approverPrincipalId,
+    human_gate_decision: null,
+    human_gate_reason: input.reason?.trim() || null,
+    human_gate_requested_by: actor,
+    human_gate_requested_at: now,
+  });
+
+  return {
+    ok: true,
+    approver_principal_id: approverPrincipalId,
+    decision: 'pending',
+    metadata,
+    updates: {
+      human_gate_required: true,
+      human_gate_state: 'pending',
+      metadata: writeTaskMetadataRecord(metadata),
+    },
+  };
+}
+
+export function buildTaskHumanGateDecisionUpdates(input: {
+  task: TaskRecord;
+  actor_principal_id: string;
+  actor_type: ReviewGateActorType;
+  decision: TaskHumanGateDecision;
+  reason?: string | null;
+  decided_at?: string;
+}): ReviewGateMutationResult {
+  const actor = normalizeActorPrincipal(input.actor_principal_id);
+  if (!actor) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'human_gate_actor_required',
+      message: 'human gate decision requires an actor principal',
+    };
+  }
+
+  const actorType = normalizeReviewGateActorType(input.actor_type);
+  if (actorType !== 'human') {
+    return {
+      ok: false,
+      status: 403,
+      code: 'human_gate_human_approver_required',
+      message: 'human gate decision requires a human approver',
+    };
+  }
+
+  const resolution = resolveTaskPolicy(buildTaskPolicyInputEnvelope(input.task));
+  if (!input.task.human_gate_required && !resolution.human_gate_required) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'human_gate_not_required',
+      message: 'task does not require a human gate',
+    };
+  }
+
+  if (input.task.human_gate_state !== 'pending') {
+    return {
+      ok: false,
+      status: 409,
+      code: 'human_gate_not_pending',
+      message: 'human gate can only be decided while pending',
+    };
+  }
+
+  const approverPrincipalId = resolvedApproverPrincipalId(input.task, resolution);
+  if (approverPrincipalId && !isSamePrincipal(actor, approverPrincipalId)) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'human_gate_approver_not_eligible',
+      message: 'human gate decision requires the assigned human approver',
+      approver_principal_id: approverPrincipalId,
+    };
+  }
+
+  const now = input.decided_at ?? new Date().toISOString();
+  const metadata = buildReviewGateMetadata(input.task, {
+    human_gate_required: true,
+    approver: approverPrincipalId ?? actor,
+    approver_principal_id: approverPrincipalId ?? actor,
+    human_gate_decision: input.decision,
+    human_gate_reason: input.reason?.trim() || null,
+    human_gate_decided_by: actor,
+    human_gate_decided_at: now,
+  });
+
+  return {
+    ok: true,
+    approver_principal_id: approverPrincipalId ?? actor,
+    decision: input.decision,
+    metadata,
+    updates: {
+      human_gate_required: true,
+      human_gate_state: input.decision,
+      metadata: writeTaskMetadataRecord(metadata),
+    },
+  };
+}
+
+export function validateTaskDoneReviewGateState(task: TaskRecord): ReviewGateMutationResult {
+  if (task.review_required && task.review_state !== 'accepted') {
+    return {
+      ok: false,
+      status: 409,
+      code: 'review_unresolved_before_done',
+      message: 'required review must be accepted before task completion',
+    };
+  }
+  if (task.human_gate_required && task.human_gate_state !== 'approved') {
+    return {
+      ok: false,
+      status: 409,
+      code: 'human_gate_unresolved_before_done',
+      message: 'required human gate must be approved before task completion',
+    };
+  }
+  return {
+    ok: true,
+    decision: 'accepted',
+    metadata: readTaskMetadataRecord(task.metadata),
+    updates: {},
   };
 }
 

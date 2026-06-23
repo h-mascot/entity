@@ -91,6 +91,34 @@ function readBooleanLabel(value: unknown): string {
   return value === true ? 'yes' : value === false ? 'no' : 'not recorded';
 }
 
+function readReviewRequiredLabel(task: TaskRecord, metadata: JsonRecord): string {
+  return readBooleanLabel(metadata.review_required ?? task.review_required ?? Boolean(metadata.review_type ?? metadata.review_class));
+}
+
+function readHumanGateRequiredLabel(task: TaskRecord, metadata: JsonRecord): string {
+  return readBooleanLabel(metadata.human_gate_required ?? task.human_gate_required ?? metadata.henry_required ?? metadata.requires_henry);
+}
+
+function readResolvedReviewDecision(task: TaskRecord, metadata: JsonRecord): string {
+  const metadataDecision = readString(metadata.review_decision, '');
+  if (metadataDecision && metadataDecision !== 'pending') {
+    return metadataDecision;
+  }
+  return task.review_state === 'accepted' || task.review_state === 'request_fix'
+    ? task.review_state
+    : '';
+}
+
+function readResolvedHumanGateDecision(task: TaskRecord, metadata: JsonRecord): string {
+  const metadataDecision = readString(metadata.human_gate_decision ?? metadata.gate_decision, '');
+  if (metadataDecision && metadataDecision !== 'pending') {
+    return metadataDecision;
+  }
+  return task.human_gate_state === 'approved' || task.human_gate_state === 'rejected'
+    ? task.human_gate_state
+    : '';
+}
+
 function readArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -335,15 +363,15 @@ export function buildCanonicalReceiptMarkdown(input: {
     markdownList(outputArtifacts),
     '',
     '## Review',
-    `- Review Required: ${readBooleanLabel(metadata.review_required ?? Boolean(metadata.review_type ?? metadata.review_class))}`,
-    `- Reviewer: ${readString(metadata.reviewer ?? metadata.review_owner)}`,
-    `- Decision: ${readString(metadata.review_decision)}`,
+    `- Review Required: ${readReviewRequiredLabel(task, metadata)}`,
+    `- Reviewer: ${readString(metadata.reviewer ?? metadata.reviewer_principal_id ?? metadata.review_owner)}`,
+    `- Decision: ${readString(readResolvedReviewDecision(task, metadata))}`,
     `- Decision Reason: ${readString(metadata.review_note ?? metadata.review_decision_reason)}`,
     '',
     '## Human Gate',
-    `- Human Gate Required: ${readBooleanLabel(metadata.human_gate_required ?? metadata.henry_required ?? metadata.requires_henry)}`,
+    `- Human Gate Required: ${readHumanGateRequiredLabel(task, metadata)}`,
     `- Approver: ${readString(metadata.approver ?? metadata.approver_principal_id)}`,
-    `- Decision: ${readString(metadata.human_gate_decision ?? metadata.gate_decision)}`,
+    `- Decision: ${readString(readResolvedHumanGateDecision(task, metadata))}`,
     `- Gate Reason: ${readString(metadata.human_gate_reason ?? metadata.gate_reason)}`,
     '',
     '## Routing / Execution History',

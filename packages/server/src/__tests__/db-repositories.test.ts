@@ -666,6 +666,72 @@ describe('TaskRepository', () => {
     });
   });
 
+  it('blocks done while required review or human gate decisions are unresolved', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const task = repo.createTask({
+      name: 'Gate before done fixture',
+      created_by_principal_id: 'creator-1',
+      initiator_principal_id: 'agent-1',
+      owner_principal_id: 'owner-1',
+      owner_principal_type: 'human',
+      executor_principal_id: 'agent-1',
+      assignee: 'agent-1',
+      column: 'review',
+      review_required: true,
+      review_state: 'pending',
+      human_gate_required: true,
+      human_gate_state: 'pending',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          team: { reviewer_pool_principal_ids: ['reviewer-1'] },
+          project: { approver_principal_id: 'approver-1' },
+          task: {
+            assignee_principal_id: 'agent-1',
+            submitted_by_principal_id: 'agent-1',
+          },
+        },
+      }),
+    });
+
+    expect(dbMod.validateTaskDoneReviewGateState(task)).toMatchObject({
+      ok: false,
+      code: 'review_unresolved_before_done',
+    });
+
+    const reviewed = dbMod.buildTaskReviewDecisionUpdates({
+      task,
+      actor_principal_id: 'reviewer-1',
+      decision: 'accepted',
+      reason: 'evidence checked',
+      decided_at: '2026-06-24T00:01:00.000Z',
+    });
+    expect(reviewed).toMatchObject({ ok: true });
+    const afterReview = repo.updateTask(task.id, reviewed.ok ? reviewed.updates : {});
+    expect(afterReview).toMatchObject({ review_state: 'accepted' });
+    expect(dbMod.validateTaskDoneReviewGateState(afterReview!)).toMatchObject({
+      ok: false,
+      code: 'human_gate_unresolved_before_done',
+    });
+
+    const approved = dbMod.buildTaskHumanGateDecisionUpdates({
+      task: afterReview!,
+      actor_principal_id: 'approver-1',
+      actor_type: 'human',
+      decision: 'approved',
+      reason: 'approved before completion',
+      decided_at: '2026-06-24T00:02:00.000Z',
+    });
+    expect(approved).toMatchObject({ ok: true });
+    const afterGate = repo.updateTask(task.id, approved.ok ? approved.updates : {});
+
+    expect(dbMod.validateTaskDoneReviewGateState(afterGate!)).toMatchObject({ ok: true });
+    expect(JSON.parse(afterGate?.metadata ?? '{}')).toMatchObject({
+      review_decision: 'accepted',
+      human_gate_decision: 'approved',
+    });
+  });
+
   it('should list tasks', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();

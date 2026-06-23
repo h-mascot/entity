@@ -216,6 +216,58 @@ describe('receipt writer', () => {
     `);
   });
 
+  it('renders only resolved review and human gate decisions from task state', () => {
+    const previousTask = makeTask({ column: 'review' });
+    const completedTask = makeTask({
+      column: 'done',
+      review_required: true,
+      review_state: 'accepted',
+      human_gate_required: true,
+      human_gate_state: 'approved',
+      metadata: JSON.stringify({
+        reviewer_principal_id: 'reviewer-1',
+        approver_principal_id: 'approver-1',
+        review_decision_reason: 'matches done criteria',
+        human_gate_reason: 'approved before customer send',
+      }),
+    });
+
+    const receipt = buildCanonicalReceiptMarkdown({
+      task: completedTask,
+      previousTask,
+      artifactId: 'receipt-fixed',
+      stablePath: '/artifacts/evidence/receipt-fixed.md',
+      contentHash: 'sha256:fixed',
+      completedAt: '2026-06-23T11:00:00.000Z',
+      actorPrincipalId: 'reviewer-1',
+    });
+
+    expect(receipt).toContain('- Review Required: yes');
+    expect(receipt).toContain('- Decision: accepted');
+    expect(receipt).toContain('- Human Gate Required: yes');
+    expect(receipt).toContain('- Approver: approver-1');
+    expect(receipt).toContain('- Decision: approved');
+
+    const pendingGateReceipt = buildCanonicalReceiptMarkdown({
+      task: makeTask({
+        column: 'review',
+        human_gate_required: true,
+        human_gate_state: 'pending',
+        metadata: JSON.stringify({
+          human_gate_required: true,
+          human_gate_decision: 'pending',
+        }),
+      }),
+      previousTask,
+      artifactId: 'receipt-pending',
+      stablePath: '/artifacts/evidence/receipt-pending.md',
+      contentHash: 'sha256:pending',
+      completedAt: '2026-06-23T11:00:00.000Z',
+    });
+    expect(pendingGateReceipt).toContain('## Human Gate');
+    expect(pendingGateReceipt).not.toContain('- Decision: pending');
+  });
+
   it('writes receipt body and metadata before completing the task', async () => {
     const storageRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'entity-receipt-'));
     tempDirs.push(storageRoot);

@@ -39,6 +39,7 @@ import {
   removeTaskProject,
   TASK_COLUMNS,
   updateRoadmapItem,
+  validateTaskDoneReviewGateState,
   type ActivityEventPayload,
   type ActivityEventType,
   type ActivityType,
@@ -121,6 +122,7 @@ import { createDocumentObjectRouter } from "./document-objects";
 import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
+import { createTaskReviewGateRouter } from "./routes/task-review-gates";
 import {
   buildTaskMutationActivityEvent,
   createActivityEventRouter,
@@ -2809,6 +2811,15 @@ function registerTaskRoutes(prefix: "" | "/api") {
       const movingToDone =
         nextColumn === "done" &&
         existingTask.column !== "done";
+      if (movingToDone) {
+        const reviewGateState = validateTaskDoneReviewGateState(existingTask);
+        if (!reviewGateState.ok) {
+          return res.status(reviewGateState.status).json({
+            error: reviewGateState.code,
+            message: reviewGateState.message,
+          });
+        }
+      }
       if (movingToDone && isReviewGatedTask(completionMetadata)) {
         const completionCheck = validateReviewCompletion(
           { ...existingTask, metadata: completionMetadata },
@@ -3151,6 +3162,19 @@ function registerTaskRoutes(prefix: "" | "/api") {
               evidenceStatus: reviewAssessment.evidenceStatus,
               reasons: reviewAssessment.reasons,
             },
+          });
+        }
+      }
+
+      if (
+        column === "done" &&
+        existingTask.column !== "done"
+      ) {
+        const reviewGateState = validateTaskDoneReviewGateState(existingTask);
+        if (!reviewGateState.ok) {
+          return res.status(reviewGateState.status).json({
+            error: reviewGateState.code,
+            message: reviewGateState.message,
           });
         }
       }
@@ -5805,6 +5829,18 @@ registerActivityRoutes("");
 registerActivityRoutes("/api");
 registerTaskRoutes("");
 registerTaskRoutes("/api");
+app.use("/tasks", createTaskReviewGateRouter({
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+  updateTask: (taskId, updates) => taskSyncLayer.updateTask(taskId, updates),
+  activityRepository,
+  defaultActor: getDefaultTaskActor(),
+}));
+app.use("/api/tasks", createTaskReviewGateRouter({
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+  updateTask: (taskId, updates) => taskSyncLayer.updateTask(taskId, updates),
+  activityRepository,
+  defaultActor: getDefaultTaskActor(),
+}));
 registerStrategicRoutes("");
 registerStrategicRoutes("/api");
 if (!AGENT_NATIVE_EDITOR_ENABLED) {
