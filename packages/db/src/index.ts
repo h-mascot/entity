@@ -419,6 +419,52 @@ export interface LegacyFileArtifactReferenceMigration {
   warnings: string[];
 }
 
+export interface DocumentArtifactMigrationCandidate extends LegacyFileArtifactReferenceMigration {
+  source_id: string;
+  task_id: number | null;
+  target_object_type: DocumentObjectType | 'cleanup_warning';
+  would_create: boolean;
+  applied: false;
+}
+
+export interface DocumentArtifactMigrationReport {
+  dryRun: true;
+  totalCandidates: number;
+  classifiedCandidates: number;
+  cleanupWarnings: number;
+  existingObjectCounts: Record<DocumentObjectType, number>;
+  candidates: DocumentArtifactMigrationCandidate[];
+  rollbackNotes: string[];
+  markdown: string;
+}
+
+export interface DocumentArtifactMigrationOptions {
+  db?: Database.Database;
+  limit?: number;
+}
+
+export interface DocumentObjectPreviewInput {
+  object_type: DocumentObjectType;
+  title: string;
+  snippet?: string | null;
+  content?: string | null;
+  sensitivity?: string | null;
+  acl_json?: string | null;
+  entity_visibility_policy_json?: string | null;
+  auth_state?: ExternalDocumentAuthState | string | null;
+  readiness_state?: ExternalDocumentReadinessState | string | null;
+  can_preview?: boolean;
+}
+
+export interface DocumentObjectPreviewEnvelope {
+  object_type: DocumentObjectType;
+  title: string;
+  permission_state: 'allowed' | 'restricted' | 'degraded';
+  snippet: string | null;
+  content: string | null;
+  reasons: string[];
+}
+
 export function planLegacyFileArtifactReferenceMigration(
   input: LegacyFileArtifactReferenceInput
 ): LegacyFileArtifactReferenceMigration {
@@ -457,6 +503,284 @@ export function planLegacyFileArtifactReferenceMigration(
     object_ref: objectRef,
     confidence,
     warnings,
+  };
+}
+
+function countRowsIfTableExists(db: Database.Database, table: string): number {
+  const exists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+  if (!exists) {
+    return 0;
+  }
+  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number };
+  return Number(row.count) || 0;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function firstStringValue(record: Record<string, unknown>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = normalizeBlockerReason(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string' || !value.trim()) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isPlainObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+type DocumentArtifactMigrationDraftInput = LegacyFileArtifactReferenceInput & { source_id: string };
+
+function pushLegacyMigrationInput(
+  target: DocumentArtifactMigrationDraftInput[],
+  input: DocumentArtifactMigrationDraftInput
+): void {
+  if (normalizeBlockerReason(input.legacy_value)) {
+    target.push(input);
+  }
+}
+
+function collectReviewPacketMigrationInputs(
+  target: DocumentArtifactMigrationDraftInput[],
+  taskId: number,
+  sourceId: string,
+  metadata: Record<string, unknown>
+): void {
+  const reviewPacket = metadata.review_packet;
+  if (!isPlainObject(reviewPacket)) {
+    return;
+  }
+
+  pushLegacyMigrationInput(target, {
+    source_table: 'tasks',
+    source_field: 'metadata.review_packet.output_artifact',
+    legacy_value: firstStringValue(reviewPacket, ['output_artifact', 'outputArtifact', 'artifact_path', 'artifactPath']),
+    task_id: taskId,
+    link_role: 'output_artifact',
+    source_id: sourceId,
+  });
+
+  const evidence = reviewPacket.evidence;
+  if (!Array.isArray(evidence)) {
+    return;
+  }
+
+  evidence.forEach((entry, index) => {
+    const legacyValue = typeof entry === 'string'
+      ? entry
+      : isPlainObject(entry)
+        ? firstStringValue(entry, ['artifact', 'path', 'url', 'href', 'file_path'])
+        : null;
+    pushLegacyMigrationInput(target, {
+      source_table: 'tasks',
+      source_field: `metadata.review_packet.evidence[${index}]`,
+      legacy_value: legacyValue,
+      task_id: taskId,
+      link_role: 'evidence',
+      source_id: sourceId,
+    });
+  });
+}
+
+function buildDocumentArtifactMigrationMarkdown(report: Omit<DocumentArtifactMigrationReport, 'markdown'>): string {
+  const lines = [
+    '# THE-45 Document/Artifact Migration Dry-Run Report',
+    '',
+    '- Mode: dry-run',
+    `- Total candidates: ${report.totalCandidates}`,
+    `- Classified candidates: ${report.classifiedCandidates}`,
+    `- Cleanup warnings: ${report.cleanupWarnings}`,
+    `- Existing NativeDocuments: ${report.existingObjectCounts.native_document}`,
+    `- Existing ExternalDocumentRefs: ${report.existingObjectCounts.external_document_ref}`,
+    `- Existing EvidenceArtifacts: ${report.existingObjectCounts.evidence_artifact}`,
+    '',
+    '## Sample Results',
+  ];
+
+  const sample = report.candidates.filter((candidate) => candidate.object_ref || candidate.warnings.length > 0).slice(0, 5);
+  if (sample.length === 0) {
+    lines.push('- No legacy document or artifact references detected.');
+  } else {
+    for (const candidate of sample) {
+      lines.push(
+        `- ${candidate.source_table}.${candidate.source_field}#${candidate.source_id}: target=${candidate.target_object_type}, confidence=${candidate.confidence}, warnings=${candidate.warnings.length}, applied=${candidate.applied}`
+      );
+    }
+  }
+
+  lines.push('', '## Rollback / Non-Destructive Notes', ...report.rollbackNotes.map((note) => `- ${note}`));
+  return `${lines.join('\n')}\n`;
+}
+
+export function dryRunDocumentArtifactObjectMigration(
+  options: DocumentArtifactMigrationOptions = {}
+): DocumentArtifactMigrationReport {
+  const db = options.db ?? getEntityDatabase();
+  const limit = typeof options.limit === 'number' && Number.isInteger(options.limit) && options.limit > 0 ? options.limit : null;
+  const migrationInputs: DocumentArtifactMigrationDraftInput[] = [];
+
+  const taskSelects = [
+    'id',
+    hasColumn(db, 'tasks', 'name') ? 'name' : "'' AS name",
+    hasColumn(db, 'tasks', 'output') ? 'output' : 'NULL AS output',
+    hasColumn(db, 'tasks', 'metadata') ? 'metadata' : 'NULL AS metadata',
+  ];
+  const taskRows = db.prepare(`
+    SELECT ${taskSelects.join(', ')}
+    FROM tasks
+    ORDER BY id ASC
+    ${limit ? 'LIMIT ?' : ''}
+  `).all(...(limit ? [limit] : [])) as Array<Record<string, unknown>>;
+
+  for (const row of taskRows) {
+    const taskId = normalizePositiveInteger(row.id);
+    if (!taskId) {
+      continue;
+    }
+    const baseInput = {
+      source_table: 'tasks',
+      task_id: taskId,
+      source_id: String(taskId),
+    };
+    pushLegacyMigrationInput(migrationInputs, {
+      ...baseInput,
+      source_field: 'output',
+      legacy_value: normalizeBlockerReason(row.output),
+      link_role: 'output',
+    });
+
+    collectReviewPacketMigrationInputs(migrationInputs, taskId, String(taskId), parseJsonObject(row.metadata));
+  }
+
+  const activityLimitSql = limit ? 'LIMIT ?' : '';
+  const activityRows = db.prepare(`
+    SELECT id, task_id, file_path
+    FROM activities
+    WHERE file_path IS NOT NULL AND trim(file_path) <> ''
+    ORDER BY id ASC
+    ${activityLimitSql}
+  `).all(...(limit ? [limit] : [])) as Array<Record<string, unknown>>;
+
+  for (const row of activityRows) {
+    const activityId = normalizePositiveInteger(row.id);
+    if (!activityId) {
+      continue;
+    }
+    pushLegacyMigrationInput(migrationInputs, {
+      source_table: 'activities',
+      source_field: 'file_path',
+      legacy_value: normalizeBlockerReason(row.file_path),
+      task_id: normalizePositiveInteger(row.task_id),
+      link_role: 'activity_file',
+      source_id: String(activityId),
+    });
+  }
+
+  const candidates = migrationInputs.map((input): DocumentArtifactMigrationCandidate => {
+    const planned = planLegacyFileArtifactReferenceMigration(input);
+    const targetObjectType = planned.object_ref && (DOCUMENT_OBJECT_TYPES as readonly string[]).includes(planned.object_ref.object_type)
+      ? planned.object_ref.object_type as DocumentObjectType
+      : 'cleanup_warning';
+    return {
+      ...planned,
+      source_id: input.source_id,
+      task_id: normalizePositiveInteger(input.task_id),
+      target_object_type: targetObjectType,
+      would_create: Boolean(planned.object_ref),
+      applied: false,
+    };
+  });
+
+  const reportBase: Omit<DocumentArtifactMigrationReport, 'markdown'> = {
+    dryRun: true,
+    totalCandidates: candidates.length,
+    classifiedCandidates: candidates.filter((candidate) => candidate.object_ref).length,
+    cleanupWarnings: candidates.reduce((sum, candidate) => sum + candidate.warnings.length, 0),
+    existingObjectCounts: {
+      native_document: countRowsIfTableExists(db, 'native_documents'),
+      external_document_ref: countRowsIfTableExists(db, 'external_document_refs'),
+      evidence_artifact: countRowsIfTableExists(db, 'evidence_artifacts'),
+    },
+    candidates,
+    rollbackNotes: [
+      'Dry-run mode performs no writes.',
+      'Legacy references are classified into ObjectRef targets only when the existing value carries enough signal.',
+      'Ambiguous values remain cleanup warnings instead of fabricated NativeDocument, ExternalDocumentRef, or EvidenceArtifact records.',
+      'Re-running the dry run is idempotent because it reads existing rows and does not update tasks, activities, or document object tables.',
+    ],
+  };
+
+  return {
+    ...reportBase,
+    markdown: buildDocumentArtifactMigrationMarkdown(reportBase),
+  };
+}
+
+function previewPolicyObject(value: string | null | undefined): Record<string, unknown> {
+  return parseJsonObject(value);
+}
+
+export function buildDocumentObjectPreviewEnvelope(input: DocumentObjectPreviewInput): DocumentObjectPreviewEnvelope {
+  const reasons: string[] = [];
+  const acl = previewPolicyObject(input.acl_json);
+  const visibility = previewPolicyObject(input.entity_visibility_policy_json);
+  const sensitivity = normalizeBlockerReason(input.sensitivity)?.toLowerCase() ?? '';
+  const readinessState = normalizeBlockerReason(input.readiness_state)?.toLowerCase() ?? '';
+  const authState = normalizeBlockerReason(input.auth_state)?.toLowerCase() ?? '';
+  const restricted =
+    input.can_preview === false ||
+    acl.restricted === true ||
+    visibility.restricted === true ||
+    visibility.allow_preview === false ||
+    ['people', 'hr', 'legal', 'financial', 'security', 'production', 'confidential'].some((marker) => sensitivity.includes(marker));
+
+  if (restricted) {
+    reasons.push('preview_restricted_by_entity_policy');
+    return {
+      object_type: input.object_type,
+      title: input.title,
+      permission_state: 'restricted',
+      snippet: null,
+      content: null,
+      reasons,
+    };
+  }
+
+  const degradedExternalRef =
+    input.object_type === 'external_document_ref' &&
+    ((authState && authState !== 'authorized') || (readinessState && readinessState !== 'ready'));
+
+  if (degradedExternalRef) {
+    reasons.push('external_document_preview_degraded');
+    return {
+      object_type: input.object_type,
+      title: input.title,
+      permission_state: 'degraded',
+      snippet: null,
+      content: null,
+      reasons,
+    };
+  }
+
+  return {
+    object_type: input.object_type,
+    title: input.title,
+    permission_state: 'allowed',
+    snippet: normalizeBlockerReason(input.snippet),
+    content: normalizeBlockerReason(input.content),
+    reasons,
   };
 }
 

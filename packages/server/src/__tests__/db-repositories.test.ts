@@ -745,6 +745,126 @@ describe('DocumentObjectRepository', () => {
       warnings: ['ambiguous_document_reference', 'missing_task_context'],
     });
   });
+
+  it('dry-runs existing docs and artifacts into target object types without mutating rows', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const taskRepo = dbMod.createTaskRepository();
+    const activityRepo = dbMod.createActivityRepository();
+    const documentRepo = dbMod.createDocumentObjectRepository();
+    const artifactRepo = dbMod.createEvidenceArtifactRepository();
+
+    const task = taskRepo.createTask({
+      name: 'Legacy docs migration candidate',
+      output: '/documents/native/legacy-summary.md',
+      metadata: JSON.stringify({
+        review_packet: {
+          output_artifact: '/artifacts/evidence/receipt-legacy.md',
+          evidence: [
+            'external:https://docs.example.test/customer-plan',
+            'loose-upload.txt',
+          ],
+        },
+      }),
+    });
+    activityRepo.createActivity({
+      type: 'file_edit',
+      action: 'Attached proof file',
+      description: 'Legacy activity file path',
+      task_id: task.id,
+      file_path: '/artifacts/evidence/activity-proof.md',
+    });
+    documentRepo.createNativeDocument({
+      id: 'existing-native-doc',
+      title: 'Existing native doc',
+      content_hash: 'sha256:existing-native',
+    });
+    documentRepo.createExternalDocumentRef({
+      id: 'existing-external-ref',
+      connector_type: 'google_docs',
+      external_url: 'https://docs.example.test/existing-external-ref',
+      title: 'Existing external ref',
+    });
+    artifactRepo.createArtifact({
+      id: 'existing-evidence-artifact',
+      title: 'Existing artifact',
+      content_hash: 'sha256:existing-artifact',
+    });
+
+    const beforeTask = taskRepo.getTask(task.id);
+    const dryRun = dbMod.dryRunDocumentArtifactObjectMigration();
+    const secondDryRun = dbMod.dryRunDocumentArtifactObjectMigration();
+    const afterTask = taskRepo.getTask(task.id);
+
+    expect(afterTask?.metadata).toBe(beforeTask?.metadata);
+    expect(afterTask?.output).toBe(beforeTask?.output);
+    expect(dryRun).toMatchObject({
+      dryRun: true,
+      totalCandidates: 5,
+      classifiedCandidates: 4,
+      existingObjectCounts: {
+        native_document: 1,
+        external_document_ref: 1,
+        evidence_artifact: 1,
+      },
+    });
+    expect(dryRun.candidates.map((candidate) => candidate.target_object_type)).toEqual(
+      expect.arrayContaining(['native_document', 'external_document_ref', 'evidence_artifact', 'cleanup_warning']),
+    );
+    expect(dryRun.candidates.every((candidate) => candidate.applied === false)).toBe(true);
+    expect(dryRun.candidates.find((candidate) => candidate.legacy_value === 'loose-upload.txt')).toMatchObject({
+      target_object_type: 'cleanup_warning',
+      warnings: ['ambiguous_document_reference'],
+    });
+    expect(secondDryRun.candidates).toEqual(dryRun.candidates);
+    expect(dryRun.markdown).toContain('THE-45 Document/Artifact Migration Dry-Run Report');
+  });
+
+  it('suppresses restricted and degraded document-object previews before snippets can leak', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+
+    expect(dbMod.buildDocumentObjectPreviewEnvelope({
+      object_type: 'native_document',
+      title: 'Open account note',
+      snippet: 'Renewal summary',
+      content: 'Customer-safe details',
+      sensitivity: 'customer',
+      acl_json: JSON.stringify({ restricted: false }),
+    })).toMatchObject({
+      permission_state: 'allowed',
+      snippet: 'Renewal summary',
+      content: 'Customer-safe details',
+      reasons: [],
+    });
+
+    expect(dbMod.buildDocumentObjectPreviewEnvelope({
+      object_type: 'evidence_artifact',
+      title: 'People workflow proof',
+      snippet: 'Payroll adjustment details',
+      content: 'Payroll adjustment details',
+      sensitivity: 'people',
+      acl_json: JSON.stringify({ restricted: true }),
+    })).toMatchObject({
+      permission_state: 'restricted',
+      snippet: null,
+      content: null,
+      reasons: ['preview_restricted_by_entity_policy'],
+    });
+
+    expect(dbMod.buildDocumentObjectPreviewEnvelope({
+      object_type: 'external_document_ref',
+      title: 'External account plan',
+      snippet: 'External doc snippet',
+      content: 'External doc content',
+      auth_state: 'expired',
+      readiness_state: 'degraded',
+      entity_visibility_policy_json: JSON.stringify({ allow_preview: true }),
+    })).toMatchObject({
+      permission_state: 'degraded',
+      snippet: null,
+      content: null,
+      reasons: ['external_document_preview_degraded'],
+    });
+  });
 });
 
 describe('EvidenceArtifactRepository', () => {
