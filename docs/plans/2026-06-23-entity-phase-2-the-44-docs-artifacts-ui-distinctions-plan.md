@@ -50,7 +50,7 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 | 19:35 | Step 1 | done | Fresh branch created from verified `THE-43` HEAD; task panel and document object metadata paths inspected. |
 | 19:34 | Steps 2-5 | done | Added task panel document-object cards for native markdown, external refs, raw proof, curated interpretation, ObjectRef roles, and restricted/degraded placeholders. Browser proof captured at `output/playwright/THE-44-docs-artifacts-ui-distinctions.png` and `output/playwright/THE-44-docs-artifacts-ui-distinctions-dom.md`. |
 | 19:36 | Step 6 | done | `bash scripts/proof/entity-phase-2-smoke.sh`, `npm run build`, and `cd packages/server && npm run build && npx vitest run` passed under Node v22.22.3. GitNexus detect-changes run; shared UI component impact noted. |
-| 19:40 | Steps 7-8 | blocked | CLI Tester request and run passed, but Book review returned `REQUESTED` / `safeToContinue=false`; `verify` exited 1 with `reviewGateStatus=BLOCKED`, `nextChildBlocked=true`. Linear proof/blocker comment posted: `9eac52a3-179a-4961-a074-097dabb80532`. Do not start `THE-45` until Book approval plus verify PASS, or explicit waiver. |
+| 19:40 | Steps 7-8 | blocked | CLI Tester request and run passed, but Book review returned `REQUESTED` / `safeToContinue=false`; `verify` exited 1 with `reviewGateStatus=BLOCKED`, `nextChildBlocked=true`. Linear proof/blocker comment posted: `9eac52a3-179a-4961-a074-097dabb80532`. Scoped implementation commit: `0b8ed7b`. Do not start `THE-45` until Book approval plus verify PASS, or explicit waiver. |
 
 ## Files Touched
 - `docs/plans/2026-06-23-entity-phase-2-the-44-docs-artifacts-ui-distinctions-plan.md` - created - compaction-safe plan for `THE-44`.
@@ -74,5 +74,5 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 - [x] Required proof commands pass.
 - [ ] CLI Tester request/run/book-review/verify pass with `nextChildBlocked=false`.
 - [x] Linear proof/blocker comment posted.
-- [ ] Scoped save-point commit created.
+- [x] Scoped save-point commit created.
 - [ ] Run-state advanced to `THE-45`.
