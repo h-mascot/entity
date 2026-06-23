@@ -246,6 +246,197 @@ export type EvidenceArtifactMutabilityPolicy = 'immutable_append_only' | 'editab
 export type EvidenceArtifactIntegrityState = 'valid' | 'missing_body' | 'hash_mismatch' | 'metadata_mismatch' | 'unknown';
 export type EvidenceArtifactAvailabilityState = 'available' | 'missing_body' | 'unavailable' | 'pending' | 'unknown';
 
+export const DOCUMENT_OBJECT_TYPES = [
+  'native_document',
+  'external_document_ref',
+  'evidence_artifact',
+] as const;
+
+export type DocumentObjectType = (typeof DOCUMENT_OBJECT_TYPES)[number];
+
+export const OBJECT_REF_KNOWN_TYPES = [
+  'org',
+  'team',
+  'project',
+  'task',
+  'goal',
+  'plan',
+  'spec',
+  'review',
+  'receipt',
+  'activity_event',
+  ...DOCUMENT_OBJECT_TYPES,
+] as const;
+
+export type ObjectRefKnownType = (typeof OBJECT_REF_KNOWN_TYPES)[number];
+
+export interface ObjectRef {
+  object_type: string;
+  object_id: string;
+  link_role: string;
+}
+
+export type NativeDocumentKind = 'note' | 'spec' | 'report' | 'internal_doc' | 'generated_markdown' | 'fallback_doc';
+export type NativeDocumentMutabilityPolicy = 'editable_versioned' | 'immutable';
+export type NativeDocumentLifecycleState = 'draft' | 'active' | 'archived' | 'superseded';
+
+export interface NativeDocumentRecord {
+  id: string;
+  org_id: string;
+  team_id: string | null;
+  project_id: number | null;
+  title: string;
+  document_kind: NativeDocumentKind;
+  body_format: 'markdown';
+  stable_path: string;
+  content_hash: string;
+  mutability_policy: NativeDocumentMutabilityPolicy;
+  version: number;
+  lifecycle_state: NativeDocumentLifecycleState;
+  sensitivity: string | null;
+  acl_json: string;
+  linked_object_refs: ObjectRef[];
+  created_by_principal_id: string | null;
+  metadata_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateNativeDocumentInput {
+  id?: string;
+  org_id?: string;
+  team_id?: string | null;
+  project_id?: number | null;
+  title: string;
+  document_kind?: NativeDocumentKind;
+  stable_path?: string;
+  content_hash: string;
+  mutability_policy?: NativeDocumentMutabilityPolicy;
+  version?: number;
+  lifecycle_state?: NativeDocumentLifecycleState;
+  sensitivity?: string | null;
+  acl_json?: string;
+  linked_object_refs?: ObjectRef[];
+  created_by_principal_id?: string | null;
+  metadata_json?: string;
+}
+
+export type ExternalDocumentConnectorType = 'google_drive' | 'google_docs' | 'other';
+export type ExternalDocumentAuthState = 'authorized' | 'expired' | 'insufficient_scope' | 'revoked' | 'unknown';
+export type ExternalDocumentReadinessState = 'ready' | 'degraded' | 'unavailable' | 'unknown';
+export type ExternalDocumentCanonicality = 'external_canonical' | 'entity_reference_only' | 'unknown';
+
+export interface ExternalDocumentRefRecord {
+  id: string;
+  org_id: string;
+  connector_type: ExternalDocumentConnectorType;
+  external_id: string | null;
+  external_url: string | null;
+  title: string;
+  external_mime_type: string | null;
+  external_canonical_url: string | null;
+  auth_state: ExternalDocumentAuthState;
+  readiness_state: ExternalDocumentReadinessState;
+  capabilities_json: string;
+  canonicality: ExternalDocumentCanonicality;
+  last_indexed_at: string | null;
+  last_checked_at: string | null;
+  entity_visibility_policy_json: string;
+  external_permission_summary: string | null;
+  linked_object_refs: ObjectRef[];
+  metadata_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateExternalDocumentRefInput {
+  id?: string;
+  org_id?: string;
+  connector_type: ExternalDocumentConnectorType;
+  external_id?: string | null;
+  external_url?: string | null;
+  title: string;
+  external_mime_type?: string | null;
+  external_canonical_url?: string | null;
+  auth_state?: ExternalDocumentAuthState;
+  readiness_state?: ExternalDocumentReadinessState;
+  capabilities_json?: string;
+  canonicality?: ExternalDocumentCanonicality;
+  last_indexed_at?: string | null;
+  last_checked_at?: string | null;
+  entity_visibility_policy_json?: string;
+  external_permission_summary?: string | null;
+  linked_object_refs?: ObjectRef[];
+  metadata_json?: string;
+}
+
+export interface DocumentObjectRepository {
+  createNativeDocument: (input: CreateNativeDocumentInput) => NativeDocumentRecord;
+  getNativeDocument: (id: string) => NativeDocumentRecord | undefined;
+  createExternalDocumentRef: (input: CreateExternalDocumentRefInput) => ExternalDocumentRefRecord;
+  getExternalDocumentRef: (id: string) => ExternalDocumentRefRecord | undefined;
+}
+
+export type LegacyDocumentReferenceConfidence = 'high' | 'medium' | 'low' | 'unknown';
+
+export interface LegacyFileArtifactReferenceInput {
+  source_table: string;
+  source_field: string;
+  legacy_value: string | null | undefined;
+  task_id?: number | null;
+  link_role?: string;
+}
+
+export interface LegacyFileArtifactReferenceMigration {
+  source_table: string;
+  source_field: string;
+  legacy_value: string | null;
+  object_ref: ObjectRef | null;
+  confidence: LegacyDocumentReferenceConfidence;
+  warnings: string[];
+}
+
+export function planLegacyFileArtifactReferenceMigration(
+  input: LegacyFileArtifactReferenceInput
+): LegacyFileArtifactReferenceMigration {
+  const legacyValue = normalizeBlockerReason(input.legacy_value);
+  const linkRole = normalizeBlockerReason(input.link_role) ?? 'legacy_reference';
+  const warnings: string[] = [];
+  let objectRef: ObjectRef | null = null;
+  let confidence: LegacyDocumentReferenceConfidence = 'unknown';
+
+  if (!legacyValue) {
+    warnings.push('missing_legacy_reference');
+  } else if (legacyValue.startsWith('/artifacts/evidence/') || legacyValue.startsWith('evidence_artifact:')) {
+    const objectId = legacyValue.replace(/^evidence_artifact:/, '').replace(/^\/artifacts\/evidence\//, '').replace(/\.md$/, '');
+    objectRef = { object_type: 'evidence_artifact', object_id: objectId, link_role: linkRole };
+    confidence = objectId ? 'medium' : 'low';
+  } else if (legacyValue.startsWith('external:') || /^https?:\/\//.test(legacyValue)) {
+    objectRef = { object_type: 'external_document_ref', object_id: legacyValue.replace(/^external:/, ''), link_role: linkRole };
+    confidence = 'medium';
+  } else if (legacyValue.startsWith('/documents/native/') || legacyValue.startsWith('native_document:')) {
+    const objectId = legacyValue.replace(/^native_document:/, '').replace(/^\/documents\/native\//, '').replace(/\.md$/, '');
+    objectRef = { object_type: 'native_document', object_id: objectId, link_role: linkRole };
+    confidence = objectId ? 'medium' : 'low';
+  } else {
+    warnings.push('ambiguous_document_reference');
+    confidence = 'low';
+  }
+
+  if (!normalizePositiveInteger(input.task_id)) {
+    warnings.push('missing_task_context');
+  }
+
+  return {
+    source_table: input.source_table,
+    source_field: input.source_field,
+    legacy_value: legacyValue,
+    object_ref: objectRef,
+    confidence,
+    warnings,
+  };
+}
+
 export interface EvidenceArtifactRecord {
   id: string;
   org_id: string;
@@ -262,6 +453,7 @@ export interface EvidenceArtifactRecord {
   origin_task_id: number | null;
   source_activity_event_ids: number[];
   source_artifact_ids: string[];
+  linked_object_refs: ObjectRef[];
   provenance_json: string;
   integrity_state: EvidenceArtifactIntegrityState;
   availability_state: EvidenceArtifactAvailabilityState;
@@ -287,6 +479,7 @@ export interface CreateEvidenceArtifactInput {
   origin_task_id?: number | null;
   source_activity_event_ids?: number[];
   source_artifact_ids?: string[];
+  linked_object_refs?: ObjectRef[];
   provenance_json?: string;
   integrity_state?: EvidenceArtifactIntegrityState;
   availability_state?: EvidenceArtifactAvailabilityState;
@@ -353,11 +546,7 @@ export type ActivityEventType = (typeof ACTIVITY_EVENT_TYPES)[number];
 export type ActivityEventActorType = 'human' | 'agent' | 'system' | 'workflow' | 'unknown';
 export type ActivityEventSchemaStatus = 'structured' | 'legacy_mapped' | 'legacy_unknown';
 
-export interface ActivityEventObjectRef {
-  object_type: string;
-  object_id: string;
-  link_role?: string;
-}
+export type ActivityEventObjectRef = ObjectRef;
 
 export interface ActivityEventPayload {
   version: typeof ACTIVITY_EVENT_PAYLOAD_VERSION;
@@ -940,6 +1129,52 @@ function normalizeJsonNumberArray(value: unknown): number[] {
     .filter((entry): entry is number => entry !== null);
 }
 
+function isObjectRefRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+export function normalizeObjectRefs(value: unknown): ObjectRef[] {
+  if (typeof value === 'undefined' || value === null) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error('linked object refs must be an array');
+  }
+
+  return value.map((entry, index) => {
+    if (!isObjectRefRecord(entry)) {
+      throw new Error(`object ref at index ${index} must be an object`);
+    }
+
+    const objectType = normalizeBlockerReason(entry.object_type);
+    const objectId = normalizeBlockerReason(entry.object_id);
+    const linkRole = normalizeBlockerReason(entry.link_role);
+
+    if (!objectType || !objectId || !linkRole) {
+      throw new Error('ObjectRef requires object_type, object_id, and link_role');
+    }
+
+    return {
+      object_type: objectType,
+      object_id: objectId,
+      link_role: linkRole,
+    };
+  });
+}
+
+function normalizeObjectRefsJson(value: unknown): ObjectRef[] {
+  try {
+    return normalizeObjectRefs(parseJsonArray(value));
+  } catch {
+    return [];
+  }
+}
+
+function stringifyObjectRefs(value: unknown): string {
+  return JSON.stringify(normalizeObjectRefs(value));
+}
+
 function normalizeSlug(value: unknown, fallback: string): string {
   const raw = normalizeBlockerReason(value) ?? fallback;
   const slug = raw
@@ -1069,6 +1304,57 @@ function bootstrap(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_origin_task ON evidence_artifacts(origin_task_id);
     CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_org_kind ON evidence_artifacts(org_id, artifact_kind);
     CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_integrity ON evidence_artifacts(integrity_state);
+
+    CREATE TABLE IF NOT EXISTS native_documents (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL DEFAULT '${DEFAULT_WORKSPACE_ORG_ID}',
+      team_id TEXT,
+      project_id INTEGER,
+      title TEXT NOT NULL,
+      document_kind TEXT NOT NULL DEFAULT 'internal_doc',
+      body_format TEXT NOT NULL DEFAULT 'markdown',
+      stable_path TEXT NOT NULL UNIQUE,
+      content_hash TEXT NOT NULL,
+      mutability_policy TEXT NOT NULL DEFAULT 'editable_versioned',
+      version INTEGER NOT NULL DEFAULT 1,
+      lifecycle_state TEXT NOT NULL DEFAULT 'active',
+      sensitivity TEXT,
+      acl_json TEXT NOT NULL DEFAULT '{}',
+      linked_object_refs_json TEXT NOT NULL DEFAULT '[]',
+      created_by_principal_id TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_native_documents_org_project ON native_documents(org_id, project_id);
+    CREATE INDEX IF NOT EXISTS idx_native_documents_kind ON native_documents(document_kind);
+
+    CREATE TABLE IF NOT EXISTS external_document_refs (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL DEFAULT '${DEFAULT_WORKSPACE_ORG_ID}',
+      connector_type TEXT NOT NULL,
+      external_id TEXT,
+      external_url TEXT,
+      title TEXT NOT NULL,
+      external_mime_type TEXT,
+      external_canonical_url TEXT,
+      auth_state TEXT NOT NULL DEFAULT 'unknown',
+      readiness_state TEXT NOT NULL DEFAULT 'unknown',
+      capabilities_json TEXT NOT NULL DEFAULT '{"read":true,"index":true,"link":true,"preview":true,"write":false}',
+      canonicality TEXT NOT NULL DEFAULT 'unknown',
+      last_indexed_at TEXT,
+      last_checked_at TEXT,
+      entity_visibility_policy_json TEXT NOT NULL DEFAULT '{}',
+      external_permission_summary TEXT,
+      linked_object_refs_json TEXT NOT NULL DEFAULT '[]',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_external_document_refs_org_connector ON external_document_refs(org_id, connector_type);
+    CREATE INDEX IF NOT EXISTS idx_external_document_refs_external_id ON external_document_refs(connector_type, external_id);
 
     CREATE TABLE IF NOT EXISTS agent_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1496,6 +1782,10 @@ function bootstrap(db: Database.Database): void {
 
   if (!hasColumn(db, 'activities', 'activity_event_legacy_type')) {
     db.exec('ALTER TABLE activities ADD COLUMN activity_event_legacy_type TEXT');
+  }
+
+  if (!hasColumn(db, 'evidence_artifacts', 'linked_object_refs_json')) {
+    db.exec("ALTER TABLE evidence_artifacts ADD COLUMN linked_object_refs_json TEXT NOT NULL DEFAULT '[]'");
   }
 
   db.exec('CREATE INDEX IF NOT EXISTS idx_activities_event_type ON activities(activity_event_type)');
@@ -2996,6 +3286,107 @@ function normalizeEvidenceAvailabilityState(value: unknown): EvidenceArtifactAva
     : 'available';
 }
 
+function normalizeNativeDocumentKind(value: unknown): NativeDocumentKind {
+  return value === 'note' ||
+    value === 'spec' ||
+    value === 'report' ||
+    value === 'generated_markdown' ||
+    value === 'fallback_doc'
+    ? value
+    : 'internal_doc';
+}
+
+function normalizeNativeDocumentMutability(value: unknown): NativeDocumentMutabilityPolicy {
+  return value === 'immutable' ? 'immutable' : 'editable_versioned';
+}
+
+function normalizeNativeDocumentLifecycleState(value: unknown): NativeDocumentLifecycleState {
+  return value === 'draft' || value === 'archived' || value === 'superseded' ? value : 'active';
+}
+
+function normalizeExternalConnectorType(value: unknown): ExternalDocumentConnectorType {
+  return value === 'google_drive' || value === 'google_docs' ? value : 'other';
+}
+
+function normalizeExternalAuthState(value: unknown): ExternalDocumentAuthState {
+  return value === 'authorized' ||
+    value === 'expired' ||
+    value === 'insufficient_scope' ||
+    value === 'revoked'
+    ? value
+    : 'unknown';
+}
+
+function normalizeExternalReadinessState(value: unknown): ExternalDocumentReadinessState {
+  return value === 'ready' || value === 'degraded' || value === 'unavailable' ? value : 'unknown';
+}
+
+function normalizeExternalCanonicality(value: unknown): ExternalDocumentCanonicality {
+  return value === 'external_canonical' || value === 'entity_reference_only' ? value : 'unknown';
+}
+
+function normalizeNullableTimestamp(value: unknown): string | null {
+  const normalized = normalizeBlockerReason(value);
+  return normalized ? normalizeTimestamp(normalized) : null;
+}
+
+function defaultExternalCapabilitiesJson(value: unknown): string {
+  const normalized = normalizeJsonObjectString(value);
+  if (normalized !== '{}') {
+    return normalized;
+  }
+  return JSON.stringify({ read: true, index: true, link: true, preview: true, write: false });
+}
+
+function mapNativeDocumentRow(row: Record<string, unknown>): NativeDocumentRecord {
+  return {
+    id: String(row.id ?? ''),
+    org_id: normalizeWorkspaceId(row.org_id, DEFAULT_WORKSPACE_ORG_ID),
+    team_id: normalizeBlockerReason(row.team_id),
+    project_id: normalizePositiveInteger(row.project_id),
+    title: String(row.title ?? ''),
+    document_kind: normalizeNativeDocumentKind(row.document_kind),
+    body_format: 'markdown',
+    stable_path: String(row.stable_path ?? ''),
+    content_hash: String(row.content_hash ?? ''),
+    mutability_policy: normalizeNativeDocumentMutability(row.mutability_policy),
+    version: normalizePositiveInteger(row.version) ?? 1,
+    lifecycle_state: normalizeNativeDocumentLifecycleState(row.lifecycle_state),
+    sensitivity: normalizeBlockerReason(row.sensitivity),
+    acl_json: normalizeJsonObjectString(row.acl_json),
+    linked_object_refs: normalizeObjectRefsJson(row.linked_object_refs_json),
+    created_by_principal_id: normalizeBlockerReason(row.created_by_principal_id),
+    metadata_json: normalizeJsonObjectString(row.metadata_json),
+    created_at: normalizeTimestamp(String(row.created_at ?? '')),
+    updated_at: normalizeTimestamp(String(row.updated_at ?? row.created_at ?? '')),
+  };
+}
+
+function mapExternalDocumentRefRow(row: Record<string, unknown>): ExternalDocumentRefRecord {
+  return {
+    id: String(row.id ?? ''),
+    org_id: normalizeWorkspaceId(row.org_id, DEFAULT_WORKSPACE_ORG_ID),
+    connector_type: normalizeExternalConnectorType(row.connector_type),
+    external_id: normalizeBlockerReason(row.external_id),
+    external_url: normalizeBlockerReason(row.external_url),
+    title: String(row.title ?? ''),
+    external_mime_type: normalizeBlockerReason(row.external_mime_type),
+    external_canonical_url: normalizeBlockerReason(row.external_canonical_url),
+    auth_state: normalizeExternalAuthState(row.auth_state),
+    readiness_state: normalizeExternalReadinessState(row.readiness_state),
+    capabilities_json: defaultExternalCapabilitiesJson(row.capabilities_json),
+    canonicality: normalizeExternalCanonicality(row.canonicality),
+    last_indexed_at: normalizeNullableTimestamp(row.last_indexed_at),
+    last_checked_at: normalizeNullableTimestamp(row.last_checked_at),
+    entity_visibility_policy_json: normalizeJsonObjectString(row.entity_visibility_policy_json),
+    external_permission_summary: normalizeBlockerReason(row.external_permission_summary),
+    linked_object_refs: normalizeObjectRefsJson(row.linked_object_refs_json),
+    metadata_json: normalizeJsonObjectString(row.metadata_json),
+    created_at: normalizeTimestamp(String(row.created_at ?? '')),
+    updated_at: normalizeTimestamp(String(row.updated_at ?? row.created_at ?? '')),
+  };
+}
+
 function mapEvidenceArtifactRow(row: Record<string, unknown>): EvidenceArtifactRecord {
   return {
     id: String(row.id ?? ''),
@@ -3013,6 +3404,7 @@ function mapEvidenceArtifactRow(row: Record<string, unknown>): EvidenceArtifactR
     origin_task_id: normalizePositiveInteger(row.origin_task_id),
     source_activity_event_ids: normalizeJsonNumberArray(parseJsonArray(row.source_activity_event_ids_json)),
     source_artifact_ids: normalizeJsonStringArray(parseJsonArray(row.source_artifact_ids_json)),
+    linked_object_refs: normalizeObjectRefsJson(row.linked_object_refs_json),
     provenance_json: normalizeJsonObjectString(row.provenance_json),
     integrity_state: normalizeEvidenceIntegrityState(row.integrity_state),
     availability_state: normalizeEvidenceAvailabilityState(row.availability_state),
@@ -3771,6 +4163,146 @@ export function createTaskRepository(): TaskRepository {
   };
 }
 
+export function createDocumentObjectRepository(): DocumentObjectRepository {
+  const db = openEntityDatabase();
+  const getNativeStmt = db.prepare('SELECT * FROM native_documents WHERE id = ?');
+  const getExternalStmt = db.prepare('SELECT * FROM external_document_refs WHERE id = ?');
+  const createNativeStmt = db.prepare(`
+    INSERT INTO native_documents (
+      id,
+      org_id,
+      team_id,
+      project_id,
+      title,
+      document_kind,
+      body_format,
+      stable_path,
+      content_hash,
+      mutability_policy,
+      version,
+      lifecycle_state,
+      sensitivity,
+      acl_json,
+      linked_object_refs_json,
+      created_by_principal_id,
+      metadata_json,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'markdown', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `);
+  const createExternalStmt = db.prepare(`
+    INSERT INTO external_document_refs (
+      id,
+      org_id,
+      connector_type,
+      external_id,
+      external_url,
+      title,
+      external_mime_type,
+      external_canonical_url,
+      auth_state,
+      readiness_state,
+      capabilities_json,
+      canonicality,
+      last_indexed_at,
+      last_checked_at,
+      entity_visibility_policy_json,
+      external_permission_summary,
+      linked_object_refs_json,
+      metadata_json,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `);
+
+  return {
+    createNativeDocument: (input: CreateNativeDocumentInput) => {
+      const id = normalizeWorkspaceId(input.id, randomUUID());
+      const title = input.title.trim();
+      const contentHash = input.content_hash.trim();
+      if (!title) {
+        throw new Error('native document title is required');
+      }
+      if (!contentHash) {
+        throw new Error('native document content_hash is required');
+      }
+
+      createNativeStmt.run(
+        id,
+        normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
+        normalizeBlockerReason(input.team_id),
+        normalizePositiveInteger(input.project_id),
+        title,
+        normalizeNativeDocumentKind(input.document_kind),
+        input.stable_path?.trim() || `/documents/native/${id}.md`,
+        contentHash,
+        normalizeNativeDocumentMutability(input.mutability_policy),
+        normalizePositiveInteger(input.version) ?? 1,
+        normalizeNativeDocumentLifecycleState(input.lifecycle_state),
+        normalizeBlockerReason(input.sensitivity),
+        normalizeJsonObjectString(input.acl_json),
+        stringifyObjectRefs(input.linked_object_refs ?? []),
+        normalizeBlockerReason(input.created_by_principal_id),
+        normalizeJsonObjectString(input.metadata_json)
+      );
+      const row = getNativeStmt.get(id) as Record<string, unknown> | undefined;
+      if (!row) {
+        throw new Error('Failed to create native document');
+      }
+      return mapNativeDocumentRow(row);
+    },
+
+    getNativeDocument: (id: string) => {
+      const row = getNativeStmt.get(id.trim()) as Record<string, unknown> | undefined;
+      return row ? mapNativeDocumentRow(row) : undefined;
+    },
+
+    createExternalDocumentRef: (input: CreateExternalDocumentRefInput) => {
+      const id = normalizeWorkspaceId(input.id, randomUUID());
+      const title = input.title.trim();
+      const externalId = normalizeBlockerReason(input.external_id);
+      const externalUrl = normalizeBlockerReason(input.external_url);
+      if (!title) {
+        throw new Error('external document title is required');
+      }
+      if (!externalId && !externalUrl) {
+        throw new Error('external document ref requires external_id or external_url');
+      }
+
+      createExternalStmt.run(
+        id,
+        normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
+        normalizeExternalConnectorType(input.connector_type),
+        externalId,
+        externalUrl,
+        title,
+        normalizeBlockerReason(input.external_mime_type),
+        normalizeBlockerReason(input.external_canonical_url),
+        normalizeExternalAuthState(input.auth_state),
+        normalizeExternalReadinessState(input.readiness_state),
+        defaultExternalCapabilitiesJson(input.capabilities_json),
+        normalizeExternalCanonicality(input.canonicality),
+        normalizeNullableTimestamp(input.last_indexed_at),
+        normalizeNullableTimestamp(input.last_checked_at),
+        normalizeJsonObjectString(input.entity_visibility_policy_json),
+        normalizeBlockerReason(input.external_permission_summary),
+        stringifyObjectRefs(input.linked_object_refs ?? []),
+        normalizeJsonObjectString(input.metadata_json)
+      );
+      const row = getExternalStmt.get(id) as Record<string, unknown> | undefined;
+      if (!row) {
+        throw new Error('Failed to create external document ref');
+      }
+      return mapExternalDocumentRefRow(row);
+    },
+
+    getExternalDocumentRef: (id: string) => {
+      const row = getExternalStmt.get(id.trim()) as Record<string, unknown> | undefined;
+      return row ? mapExternalDocumentRefRow(row) : undefined;
+    },
+  };
+}
+
 export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
   const db = openEntityDatabase();
   const getStmt = db.prepare('SELECT * FROM evidence_artifacts WHERE id = ?');
@@ -3797,6 +4329,7 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
       origin_task_id,
       source_activity_event_ids_json,
       source_artifact_ids_json,
+      linked_object_refs_json,
       provenance_json,
       integrity_state,
       availability_state,
@@ -3804,7 +4337,7 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
       metadata_json,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'markdown', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, 'markdown', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const updateAliasStmt = db.prepare(`
     UPDATE evidence_artifacts
@@ -3841,6 +4374,7 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
         normalizePositiveInteger(input.origin_task_id),
         JSON.stringify(normalizeJsonNumberArray(input.source_activity_event_ids)),
         JSON.stringify(normalizeJsonStringArray(input.source_artifact_ids)),
+        stringifyObjectRefs(input.linked_object_refs ?? []),
         normalizeJsonObjectString(input.provenance_json),
         normalizeEvidenceIntegrityState(input.integrity_state),
         normalizeEvidenceAvailabilityState(input.availability_state),
