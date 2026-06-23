@@ -17,6 +17,7 @@ import {
   addTaskProject,
   createActivityRepository,
   createCrew,
+  createEvidenceArtifactRepository,
   createProject,
   createRoadmap,
   createRoadmapItem,
@@ -123,6 +124,7 @@ import {
   createActivityEventRouter,
   createActivityEventService,
 } from "./activity-events";
+import { completeTaskWithReceipt } from "./receipt-writer";
 import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
@@ -337,6 +339,7 @@ function broadcast(data: unknown) {
 
 const taskSyncLayer = createTaskSyncLayer();
 const activityRepository = createActivityRepository();
+const evidenceArtifactRepository = createEvidenceArtifactRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
 const activityEventService = createActivityEventService({
@@ -1054,6 +1057,33 @@ function logActivity(input: {
     console.error("[Activity] Failed to log activity:", message);
     return null;
   }
+}
+
+function withReceiptArtifactRef(
+  payload: ActivityEventPayload,
+  artifactId: string | null | undefined,
+  contentHash?: string,
+): ActivityEventPayload {
+  if (!artifactId) return payload;
+  const objectRefs = Array.isArray(payload.object_refs)
+    ? [...payload.object_refs]
+    : [];
+  objectRefs.push({
+    object_type: "evidence_artifact",
+    object_id: artifactId,
+    link_role: "receipt",
+  });
+  return {
+    ...payload,
+    object_refs: objectRefs,
+    data: {
+      ...(payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+        ? payload.data
+        : {}),
+      receipt_artifact_id: artifactId,
+      receipt_content_hash: contentHash,
+    },
+  };
 }
 
 const taskAgent = new TaskAgent({
@@ -2771,9 +2801,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
       const completionMetadata = metadata ?? existingTask.metadata;
       const movingToDone =
         nextColumn === "done" &&
-        existingTask.column !== "done" &&
-        isReviewGatedTask(completionMetadata);
-      if (movingToDone) {
+        existingTask.column !== "done";
+      if (movingToDone && isReviewGatedTask(completionMetadata)) {
         const completionCheck = validateReviewCompletion(
           { ...existingTask, metadata: completionMetadata },
           getTaskActorFromRequest(req),
@@ -2788,7 +2817,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
         }
       }
 
-      const task = await taskSyncLayer.updateTask(id, {
+      const taskUpdates = {
         name,
         description,
         column,
@@ -2809,7 +2838,42 @@ function registerTaskRoutes(prefix: "" | "/api") {
         recurring: normalizeBlockedInput(recurring),
         recurring_config,
         model,
-      });
+      };
+
+      let receiptArtifactId: string | null = null;
+      let receiptContentHash: string | undefined;
+      const task = movingToDone
+        ? (await completeTaskWithReceipt(
+            {
+              previousTask: existingTask,
+              nextTask: {
+                ...existingTask,
+                name: typeof name === "string" ? name.trim() : existingTask.name,
+                description: description ?? existingTask.description,
+                column: "done",
+                assignee: nextAssignee ?? null,
+                executor_principal_id: nextExecutor ?? null,
+                assignment_state:
+                  accountabilityUpdates.assignment_state ?? existingTask.assignment_state,
+                metadata: completionMetadata,
+                output: normalizedOutput ?? existingTask.output,
+                project: requestedProjectLabel ?? existingTask.project,
+              },
+              actorPrincipalId: getTaskActorFromRequest(req),
+              updates: taskUpdates,
+            },
+            {
+              storageRoot: WORKSPACE,
+              artifactRepository: evidenceArtifactRepository,
+              activityRepository,
+              updateTask: (taskId, updates) => taskSyncLayer.updateTask(taskId, updates),
+            },
+          ).then((result) => {
+            receiptArtifactId = result.artifact.id;
+            receiptContentHash = result.artifact.content_hash;
+            return result.task;
+          }))
+        : await taskSyncLayer.updateTask(id, taskUpdates);
 
       if (!task) {
         return res.status(404).json({ error: "task not found" });
@@ -2840,11 +2904,16 @@ function registerTaskRoutes(prefix: "" | "/api") {
         task: responseTask,
         actorPrincipalId: getTaskActorFromRequest(req),
       });
+      const activityEventPayload = withReceiptArtifactRef(
+        activityEvent.payload,
+        receiptArtifactId,
+        receiptContentHash,
+      );
       logActivity({
         source: "task",
         type: becameDone ? "task_completed" : "task_updated",
         activityEventType: activityEvent.eventType,
-        activityEventPayload: activityEvent.payload,
+        activityEventPayload: activityEventPayload,
         action: becameDone ? "Completed task" : "Updated task",
         description: `${responseTask.name} in ${capitalizeColumn(responseTask.column)}.`,
         agentName: responseTask.assignee || undefined,
@@ -3098,7 +3167,31 @@ function registerTaskRoutes(prefix: "" | "/api") {
         }
       }
 
-      const task = await taskSyncLayer.moveTask(id, column);
+      let receiptArtifactId: string | null = null;
+      let receiptContentHash: string | undefined;
+      const task = column === "done" && existingTask.column !== "done"
+        ? (await completeTaskWithReceipt(
+            {
+              previousTask: existingTask,
+              nextTask: {
+                ...existingTask,
+                column: "done",
+              },
+              actorPrincipalId: getTaskActorFromRequest(req),
+              updates: { column: "done" },
+            },
+            {
+              storageRoot: WORKSPACE,
+              artifactRepository: evidenceArtifactRepository,
+              activityRepository,
+              updateTask: (taskId, updates) => taskSyncLayer.updateTask(taskId, updates),
+            },
+          ).then((result) => {
+            receiptArtifactId = result.artifact.id;
+            receiptContentHash = result.artifact.content_hash;
+            return result.task;
+          }))
+        : await taskSyncLayer.moveTask(id, column);
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
@@ -3109,11 +3202,16 @@ function registerTaskRoutes(prefix: "" | "/api") {
         task,
         actorPrincipalId: getTaskActorFromRequest(req),
       });
+      const activityEventPayload = withReceiptArtifactRef(
+        activityEvent.payload,
+        receiptArtifactId,
+        receiptContentHash,
+      );
       logActivity({
         source: "task",
         type: task.column === "done" ? "task_completed" : "task_moved",
         activityEventType: activityEvent.eventType,
-        activityEventPayload: activityEvent.payload,
+        activityEventPayload: activityEventPayload,
         action: task.column === "done" ? "Completed task" : "Moved task",
         description: `${task.name} moved to ${capitalizeColumn(task.column)}.`,
         agentName: task.assignee || undefined,
