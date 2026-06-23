@@ -376,6 +376,12 @@ export interface CreateProjectInput {
   lifecycle_state?: string;
 }
 
+export interface UpdateProjectInput {
+  name?: string;
+  color?: string | null;
+  lifecycle_state?: string;
+}
+
 export interface OrgRecord {
   id: string;
   name: string;
@@ -389,6 +395,13 @@ export interface OrgRecord {
 export interface CreateOrgInput {
   id?: string;
   name: string;
+  slug?: string;
+  status?: string;
+  deployment_mode?: string;
+}
+
+export interface UpdateOrgInput {
+  name?: string;
   slug?: string;
   status?: string;
   deployment_mode?: string;
@@ -411,6 +424,12 @@ export interface CreateTeamInput {
   status?: string;
 }
 
+export interface UpdateTeamInput {
+  name?: string;
+  slug?: string;
+  status?: string;
+}
+
 export interface OrgQueryContext {
   orgId: string;
   teamId?: string;
@@ -423,11 +442,17 @@ export interface OrgScopedTaskRepository extends TaskRepository {
 
 export interface WorkspaceScopeRepository {
   listOrgs: () => OrgRecord[];
+  getOrg: (orgId: string) => OrgRecord | undefined;
   createOrg: (input: CreateOrgInput) => OrgRecord;
+  updateOrg: (orgId: string, updates: UpdateOrgInput) => OrgRecord | undefined;
   listTeams: (context: OrgQueryContext) => TeamRecord[];
+  getTeam: (context: OrgQueryContext, teamId: string) => TeamRecord | undefined;
   createTeam: (context: OrgQueryContext, input: CreateTeamInput) => TeamRecord;
+  updateTeam: (context: OrgQueryContext, teamId: string, updates: UpdateTeamInput) => TeamRecord | undefined;
   listProjects: (context: OrgQueryContext) => ProjectRecord[];
+  getProject: (context: OrgQueryContext, projectId: number) => ProjectRecord | undefined;
   createProject: (context: OrgQueryContext, input: CreateProjectInput) => ProjectRecord;
+  updateProject: (context: OrgQueryContext, projectId: number, updates: UpdateProjectInput) => ProjectRecord | undefined;
   getTaskProjects: (context: OrgQueryContext, taskId: number) => ProjectRecord[];
   addTaskProject: (context: OrgQueryContext, taskId: number, projectId: number) => boolean;
   removeTaskProject: (context: OrgQueryContext, taskId: number, projectId: number) => boolean;
@@ -2369,6 +2394,11 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
     ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const getOrgStmt = db.prepare('SELECT * FROM orgs WHERE id = ?');
+  const updateOrgStmt = db.prepare(`
+    UPDATE orgs
+    SET name = ?, slug = ?, status = ?, deployment_mode = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
   const listTeamsStmt = db.prepare(`
     SELECT * FROM teams
     WHERE org_id = ?
@@ -2386,6 +2416,11 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
     ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const getTeamStmt = db.prepare('SELECT * FROM teams WHERE id = ? AND org_id = ?');
+  const updateTeamStmt = db.prepare(`
+    UPDATE teams
+    SET name = ?, slug = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND org_id = ?
+  `);
   const listProjectsStmt = db.prepare(`
     SELECT * FROM projects
     WHERE org_id = ? AND (? IS NULL OR team_id = ?)
@@ -2402,6 +2437,12 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
     ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
   const getProjectStmt = db.prepare('SELECT * FROM projects WHERE id = ? AND org_id = ?');
+  const getProjectInTeamStmt = db.prepare('SELECT * FROM projects WHERE id = ? AND org_id = ? AND team_id = ?');
+  const updateProjectStmt = db.prepare(`
+    UPDATE projects
+    SET name = ?, color = ?, lifecycle_state = ?
+    WHERE id = ? AND org_id = ? AND (? IS NULL OR team_id = ?)
+  `);
   const getTaskInOrgStmt = db.prepare('SELECT id FROM tasks WHERE id = ? AND org_id = ?');
   const listTaskProjectsStmt = db.prepare(`
     SELECT
@@ -2436,6 +2477,12 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
       return rows.map(mapOrgRow);
     },
 
+    getOrg: (orgId: string) => {
+      const id = normalizeWorkspaceId(orgId);
+      const row = getOrgStmt.get(id) as Record<string, unknown> | undefined;
+      return row ? mapOrgRow(row) : undefined;
+    },
+
     createOrg: (input: CreateOrgInput) => {
       const name = input.name.trim();
       if (!name) {
@@ -2458,10 +2505,40 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
       return mapOrgRow(row);
     },
 
+    updateOrg: (orgId: string, updates: UpdateOrgInput) => {
+      const id = normalizeWorkspaceId(orgId);
+      const existing = getOrgStmt.get(id) as Record<string, unknown> | undefined;
+      if (!existing) {
+        return undefined;
+      }
+
+      const current = mapOrgRow(existing);
+      const name = typeof updates.name === 'string' ? updates.name.trim() : current.name;
+      if (!name) {
+        throw new Error('org name is required');
+      }
+      updateOrgStmt.run(
+        name,
+        typeof updates.slug === 'string' ? normalizeSlug(updates.slug, name) : current.slug,
+        normalizeBlockerReason(updates.status) ?? current.status,
+        normalizeBlockerReason(updates.deployment_mode) ?? current.deployment_mode,
+        id
+      );
+      const row = getOrgStmt.get(id) as Record<string, unknown> | undefined;
+      return row ? mapOrgRow(row) : undefined;
+    },
+
     listTeams: (context: OrgQueryContext) => {
       const { orgId } = normalizeOrgQueryContext(context);
       const rows = listTeamsStmt.all(orgId) as Array<Record<string, unknown>>;
       return rows.map(mapTeamRow);
+    },
+
+    getTeam: (context: OrgQueryContext, teamId: string) => {
+      const { orgId } = normalizeOrgQueryContext(context);
+      const id = normalizeWorkspaceId(teamId);
+      const row = getTeamStmt.get(id, orgId) as Record<string, unknown> | undefined;
+      return row ? mapTeamRow(row) : undefined;
     },
 
     createTeam: (context: OrgQueryContext, input: CreateTeamInput) => {
@@ -2487,10 +2564,47 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
       return mapTeamRow(row);
     },
 
+    updateTeam: (context: OrgQueryContext, teamId: string, updates: UpdateTeamInput) => {
+      const { orgId } = normalizeOrgQueryContext(context);
+      const id = normalizeWorkspaceId(teamId);
+      const existing = getTeamStmt.get(id, orgId) as Record<string, unknown> | undefined;
+      if (!existing) {
+        return undefined;
+      }
+
+      const current = mapTeamRow(existing);
+      const name = typeof updates.name === 'string' ? updates.name.trim() : current.name;
+      if (!name) {
+        throw new Error('team name is required');
+      }
+      updateTeamStmt.run(
+        name,
+        typeof updates.slug === 'string' ? normalizeSlug(updates.slug, name) : current.slug,
+        normalizeBlockerReason(updates.status) ?? current.status,
+        id,
+        orgId
+      );
+      const row = getTeamStmt.get(id, orgId) as Record<string, unknown> | undefined;
+      return row ? mapTeamRow(row) : undefined;
+    },
+
     listProjects: (context: OrgQueryContext) => {
       const { orgId, teamId } = normalizeOrgQueryContext(context);
       const rows = listProjectsStmt.all(orgId, teamId ?? null, teamId ?? null) as Array<Record<string, unknown>>;
       return rows.map(mapProjectRow);
+    },
+
+    getProject: (context: OrgQueryContext, projectId: number) => {
+      const { orgId, teamId } = normalizeOrgQueryContext(context);
+      const safeProjectId = normalizePositiveInteger(projectId);
+      if (!safeProjectId) {
+        throw new Error('project id must be a positive integer');
+      }
+
+      const row = teamId
+        ? getProjectInTeamStmt.get(safeProjectId, orgId, teamId)
+        : getProjectStmt.get(safeProjectId, orgId);
+      return row ? mapProjectRow(row as Record<string, unknown>) : undefined;
     },
 
     createProject: (context: OrgQueryContext, input: CreateProjectInput) => {
@@ -2514,6 +2628,40 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
       }
 
       return mapProjectRow(row);
+    },
+
+    updateProject: (context: OrgQueryContext, projectId: number, updates: UpdateProjectInput) => {
+      const { orgId, teamId } = normalizeOrgQueryContext(context);
+      const safeProjectId = normalizePositiveInteger(projectId);
+      if (!safeProjectId) {
+        throw new Error('project id must be a positive integer');
+      }
+
+      const existing = teamId
+        ? getProjectInTeamStmt.get(safeProjectId, orgId, teamId)
+        : getProjectStmt.get(safeProjectId, orgId);
+      if (!existing) {
+        return undefined;
+      }
+
+      const current = mapProjectRow(existing as Record<string, unknown>);
+      const name = typeof updates.name === 'string' ? updates.name.trim() : current.name;
+      if (!name) {
+        throw new Error('project name is required');
+      }
+      updateProjectStmt.run(
+        name,
+        typeof updates.color === 'undefined' ? current.color : normalizeBlockerReason(updates.color),
+        normalizeBlockerReason(updates.lifecycle_state) ?? current.lifecycle_state ?? 'active',
+        safeProjectId,
+        orgId,
+        teamId ?? null,
+        teamId ?? null
+      );
+      const row = teamId
+        ? getProjectInTeamStmt.get(safeProjectId, orgId, teamId)
+        : getProjectStmt.get(safeProjectId, orgId);
+      return row ? mapProjectRow(row as Record<string, unknown>) : undefined;
     },
 
     getTaskProjects: (context: OrgQueryContext, taskId: number) => {

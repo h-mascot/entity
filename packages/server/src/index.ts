@@ -20,6 +20,7 @@ import {
   createProject,
   createRoadmap,
   createRoadmapItem,
+  createWorkspaceScopeRepository,
   createTaskCommentRepository,
   deleteProject,
   deleteRoadmap,
@@ -109,6 +110,7 @@ import {
 import { registerDocsApiRoutes } from "./routes/docs";
 import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
+import { createWorkspaceRouter } from "./routes/workspace";
 import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
@@ -283,6 +285,8 @@ const wss = new WebSocketServer({
 });
 const agentRegistryRepo = createAgentRegistryRepository();
 const moduleRegistryRepo = createModuleRegistryRepository();
+const workspaceRepo = createWorkspaceScopeRepository();
+app.use("/api", createWorkspaceRouter({ workspaceRepo }));
 app.use("/api", createAgentRegistryRouter({ agentRegistryRepo, moduleRegistryRepo }));
 wss.on("connection", (ws) => {
   wsClients.add(ws);

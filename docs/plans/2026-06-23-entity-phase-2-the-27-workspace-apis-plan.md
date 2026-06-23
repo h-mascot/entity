@@ -43,7 +43,7 @@ Scope is the workspace hierarchy service/API layer only: create/read/update/list
   - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`, `npm run build`, and `cd packages/server && npm run build && npx vitest run` pass under Node v22.22.3; CLI Tester `request` and `run` pass; pre-commit `book-review` is blocked with `decision=REQUESTED`, `safeToContinue=false`; rerun after commit before `verify`.
 - [ ] Step 7: Commit scoped work and post Linear proof comment.
   - **Files:** changed implementation/tests/docs; local state remains uncommitted
-  - **Verify:** `git status --short --branch`, `git log -1 --oneline`, Linear comment response
+  - **Verify:** `git status --short --branch`, `git log -1 --oneline`, Linear comment response.
 
 ## Checkpoints
 | Time | Step | Status | Notes |
