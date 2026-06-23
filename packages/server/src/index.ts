@@ -37,6 +37,8 @@ import {
   removeTaskProject,
   TASK_COLUMNS,
   updateRoadmapItem,
+  type ActivityEventPayload,
+  type ActivityEventType,
   type ActivityType,
   type TaskRecord,
   type UpdateRoadmapItemInput,
@@ -116,6 +118,11 @@ import { registerDocsApiRoutes } from "./routes/docs";
 import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
+import {
+  buildTaskMutationActivityEvent,
+  createActivityEventRouter,
+  createActivityEventService,
+} from "./activity-events";
 import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
@@ -332,6 +339,10 @@ const taskSyncLayer = createTaskSyncLayer();
 const activityRepository = createActivityRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
+const activityEventService = createActivityEventService({
+  activityRepository,
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+});
 
 // Responds to @agent mentions in task comments (reads the card, replies, optional pickup).
 const commentMentionResponder = createCommentMentionResponder({
@@ -1009,6 +1020,8 @@ function mergeTaskMetadataWithParentLink(
 function logActivity(input: {
   source: "agent" | "task";
   type: ActivityType;
+  activityEventType?: ActivityEventType | string;
+  activityEventPayload?: Partial<ActivityEventPayload> | Record<string, unknown>;
   action: string;
   description: string;
   agentName?: string;
@@ -1022,6 +1035,8 @@ function logActivity(input: {
     const activity = activityRepository.createActivity({
       source: input.source,
       type: input.type,
+      activity_event_type: input.activityEventType,
+      activity_event_payload: input.activityEventPayload,
       action: input.action,
       description: input.description,
       agent_name: input.agentName || "Entity",
@@ -2450,10 +2465,17 @@ function registerTaskRoutes(prefix: "" | "/api") {
         responseTask = (await taskSyncLayer.getTask(task.id)) ?? task;
       }
 
+      const activityEvent = buildTaskMutationActivityEvent({
+        action: "create",
+        task: responseTask,
+        actorPrincipalId: getTaskActorFromRequest(req),
+      });
       logActivity({
         source: "task",
         type:
           responseTask.column === "done" ? "task_completed" : "task_created",
+        activityEventType: activityEvent.eventType,
+        activityEventPayload: activityEvent.payload,
         action:
           responseTask.column === "done" ? "Completed task" : "Created task",
         description: `${responseTask.name} in ${capitalizeColumn(responseTask.column)}.`,
@@ -2812,9 +2834,17 @@ function registerTaskRoutes(prefix: "" | "/api") {
 
       const becameDone =
         existingTask.column !== "done" && responseTask.column === "done";
+      const activityEvent = buildTaskMutationActivityEvent({
+        action: "update",
+        previousTask: existingTask,
+        task: responseTask,
+        actorPrincipalId: getTaskActorFromRequest(req),
+      });
       logActivity({
         source: "task",
         type: becameDone ? "task_completed" : "task_updated",
+        activityEventType: activityEvent.eventType,
+        activityEventPayload: activityEvent.payload,
         action: becameDone ? "Completed task" : "Updated task",
         description: `${responseTask.name} in ${capitalizeColumn(responseTask.column)}.`,
         agentName: responseTask.assignee || undefined,
@@ -3073,9 +3103,17 @@ function registerTaskRoutes(prefix: "" | "/api") {
         return res.status(404).json({ error: "task not found" });
       }
 
+      const activityEvent = buildTaskMutationActivityEvent({
+        action: "move",
+        previousTask: existingTask,
+        task,
+        actorPrincipalId: getTaskActorFromRequest(req),
+      });
       logActivity({
         source: "task",
         type: task.column === "done" ? "task_completed" : "task_moved",
+        activityEventType: activityEvent.eventType,
+        activityEventPayload: activityEvent.payload,
         action: task.column === "done" ? "Completed task" : "Moved task",
         description: `${task.name} moved to ${capitalizeColumn(task.column)}.`,
         agentName: task.assignee || undefined,
@@ -3125,9 +3163,16 @@ function registerTaskRoutes(prefix: "" | "/api") {
       }
 
       if (task) {
+        const activityEvent = buildTaskMutationActivityEvent({
+          action: "delete",
+          task,
+          actorPrincipalId: getTaskActorFromRequest(req),
+        });
         logActivity({
           source: "task",
           type: "task_deleted",
+          activityEventType: activityEvent.eventType,
+          activityEventPayload: activityEvent.payload,
           action: "Deleted task",
           description: `${task.name} removed from ${capitalizeColumn(task.column)}.`,
           agentName: task.assignee || undefined,
@@ -5649,6 +5694,8 @@ registerRuntimeRoutes("");
 registerRuntimeRoutes("/api");
 registerAgentRoutes("");
 registerAgentRoutes("/api");
+app.use(createActivityEventRouter(activityEventService));
+app.use("/api", createActivityEventRouter(activityEventService));
 registerActivityRoutes("");
 registerActivityRoutes("/api");
 registerTaskRoutes("");
