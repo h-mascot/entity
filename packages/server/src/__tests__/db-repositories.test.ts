@@ -443,4 +443,41 @@ describe('Strategic Repository (Roadmaps, Projects, History)', () => {
 
     expect(() => dbMod.addTaskHistory(1, '')).toThrow('field is required');
   });
+
+  it('enforces org-scoped task and project query helpers', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const workspaceRepo = dbMod.createWorkspaceScopeRepository();
+
+    const defaultOrg = workspaceRepo.listOrgs().find((org) => org.id === dbMod.DEFAULT_WORKSPACE_ORG_ID);
+    expect(defaultOrg?.name).toBe('Default Workspace');
+    expect(workspaceRepo.listTeams({ orgId: dbMod.DEFAULT_WORKSPACE_ORG_ID })[0]?.id)
+      .toBe(dbMod.DEFAULT_WORKSPACE_TEAM_ID);
+
+    const orgA = workspaceRepo.createOrg({ id: 'org-a', name: 'Org A' });
+    const orgB = workspaceRepo.createOrg({ id: 'org-b', name: 'Org B' });
+    const teamA = workspaceRepo.createTeam({ orgId: orgA.id }, { id: 'team-a', name: 'Team A' });
+    const teamB = workspaceRepo.createTeam({ orgId: orgB.id }, { id: 'team-b', name: 'Team B' });
+    const scopeA = { orgId: orgA.id, teamId: teamA.id };
+    const scopeB = { orgId: orgB.id, teamId: teamB.id };
+
+    const projectA = workspaceRepo.createProject(scopeA, { name: 'Org A Project' });
+    const projectB = workspaceRepo.createProject(scopeB, { name: 'Org B Project' });
+    expect(workspaceRepo.listProjects(scopeA).map((project) => project.name)).toContain('Org A Project');
+    expect(workspaceRepo.listProjects(scopeA).map((project) => project.name)).not.toContain('Org B Project');
+
+    const tasksA = dbMod.createOrgScopedTaskRepository(scopeA);
+    const tasksB = dbMod.createOrgScopedTaskRepository(scopeB);
+    const taskA = tasksA.createTask({ name: 'Scoped A', project_id: projectA.id });
+    const taskB = tasksB.createTask({ name: 'Scoped B', project_id: projectB.id });
+
+    expect(tasksA.getTask(taskA.id)?.name).toBe('Scoped A');
+    expect(tasksA.getTask(taskB.id)).toBeUndefined();
+    expect(tasksA.listTasks().map((task) => task.name)).toEqual(['Scoped A']);
+
+    expect(workspaceRepo.addTaskProject(scopeA, taskA.id, projectA.id)).toBe(true);
+    expect(workspaceRepo.addTaskProject(scopeA, taskA.id, projectB.id)).toBe(false);
+    expect(workspaceRepo.addTaskProject(scopeB, taskA.id, projectB.id)).toBe(false);
+    expect(workspaceRepo.getTaskProjects(scopeA, taskA.id).map((project) => project.id)).toEqual([projectA.id]);
+    expect(workspaceRepo.getTaskProjects(scopeB, taskA.id)).toEqual([]);
+  });
 });
