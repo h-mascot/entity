@@ -482,6 +482,63 @@ export interface WorkspaceScopeRepository {
   removeTaskProject: (context: OrgQueryContext, taskId: number, projectId: number) => boolean;
 }
 
+export type TaskBackfillConfidence = 'high' | 'medium' | 'low' | 'unknown';
+
+export type TaskBackfillWarningCode =
+  | 'missing_owner'
+  | 'unknown_initiator'
+  | 'missing_project'
+  | 'missing_assignee';
+
+export interface TaskBackfillInferredField {
+  task_id: number;
+  field_name:
+    | 'org_id'
+    | 'team_id'
+    | 'project_id'
+    | 'initiator_principal_id'
+    | 'initiator_type'
+    | 'owner_principal_id'
+    | 'owner_principal_type'
+    | 'assignment_state';
+  inferred_value: string | number | boolean | null;
+  source: 'project_link' | 'created_by' | 'assignee' | 'task_state';
+  confidence: TaskBackfillConfidence;
+}
+
+export interface TaskBackfillWarning {
+  task_id: number;
+  code: TaskBackfillWarningCode;
+  message: string;
+  severity: 'info' | 'warning' | 'blocking_for_execution' | 'blocking_for_done';
+}
+
+export interface TaskBackfillTaskResult {
+  task_id: number;
+  title: string;
+  inferred_fields: TaskBackfillInferredField[];
+  warnings: TaskBackfillWarning[];
+  would_update: boolean;
+  applied: boolean;
+}
+
+export interface TaskHierarchyBackfillReport {
+  dryRun: boolean;
+  totalTasks: number;
+  tasksNeedingUpdate: number;
+  fieldsInferred: number;
+  cleanupWarnings: number;
+  taskResults: TaskBackfillTaskResult[];
+  rollbackNotes: string[];
+  markdown: string;
+}
+
+export interface TaskHierarchyBackfillOptions {
+  dryRun?: boolean;
+  limit?: number;
+  db?: Database.Database;
+}
+
 export interface SubscriptionRecord {
   id: string;
   agent_id: string;
@@ -1415,6 +1472,360 @@ function openEntityDatabase(): Database.Database {
     ensureTaskSchema(db);
     ensureWorkspaceScopeSchema(db);
   });
+}
+
+const TASK_BACKFILL_VERSION = 'THE-30';
+
+type TaskBackfillRow = Record<string, unknown> & {
+  id: number;
+  name?: string;
+  org_id?: string | null;
+  team_id?: string | null;
+  project_id?: number | null;
+  linked_project_id?: number | null;
+  linked_project_org_id?: string | null;
+  linked_project_team_id?: string | null;
+  created_by_principal_id?: string | null;
+  initiator_principal_id?: string | null;
+  initiator_type?: string | null;
+  owner_principal_id?: string | null;
+  owner_principal_type?: string | null;
+  executor_principal_id?: string | null;
+  assignment_state?: string | null;
+  taskmaster_drivable?: number | boolean | string | null;
+  column?: string | null;
+  assignee?: string | null;
+  metadata?: string | null;
+};
+
+function isLegacyPrincipalMarker(value: unknown, markers: readonly string[]): boolean {
+  const normalized = normalizeBlockerReason(value)?.toLowerCase();
+  return !normalized || markers.includes(normalized);
+}
+
+function isAssignablePrincipal(value: unknown): string | null {
+  const normalized = normalizeBlockerReason(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const lowered = normalized.toLowerCase();
+  if (lowered === 'unassigned' || lowered === 'none' || lowered === 'unknown') {
+    return null;
+  }
+
+  return normalized;
+}
+
+function isBackfillExecutableColumn(value: unknown): boolean {
+  const column = normalizeBlockerReason(value)?.toLowerCase();
+  return column === 'todo' || column === 'doing' || column === 'review';
+}
+
+function parseTaskMetadataForBackfill(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string' || !value.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function pushBackfillField(
+  target: TaskBackfillInferredField[],
+  taskId: number,
+  field_name: TaskBackfillInferredField['field_name'],
+  inferred_value: TaskBackfillInferredField['inferred_value'],
+  source: TaskBackfillInferredField['source'],
+  confidence: TaskBackfillConfidence
+): void {
+  target.push({
+    task_id: taskId,
+    field_name,
+    inferred_value,
+    source,
+    confidence,
+  });
+}
+
+function pushBackfillWarning(
+  target: TaskBackfillWarning[],
+  taskId: number,
+  code: TaskBackfillWarningCode,
+  message: string,
+  severity: TaskBackfillWarning['severity']
+): void {
+  target.push({
+    task_id: taskId,
+    code,
+    message,
+    severity,
+  });
+}
+
+function renderTaskBackfillMarkdown(report: Omit<TaskHierarchyBackfillReport, 'markdown'>): string {
+  const lines = [
+    '# THE-30 Task Hierarchy/Accountability Backfill Report',
+    '',
+    `- Mode: ${report.dryRun ? 'dry-run' : 'apply'}`,
+    `- Total tasks scanned: ${report.totalTasks}`,
+    `- Tasks needing update: ${report.tasksNeedingUpdate}`,
+    `- Inferred fields: ${report.fieldsInferred}`,
+    `- Cleanup warnings: ${report.cleanupWarnings}`,
+    '',
+    '## Sample Results',
+  ];
+
+  const sample = report.taskResults.filter((result) => result.would_update || result.warnings.length > 0).slice(0, 5);
+  if (sample.length === 0) {
+    lines.push('- No backfill updates or cleanup warnings detected.');
+  } else {
+    for (const result of sample) {
+      lines.push(`- Task ${result.task_id} (${result.title}): ${result.inferred_fields.length} inferred field(s), ${result.warnings.length} warning(s), applied=${result.applied}`);
+    }
+  }
+
+  lines.push('', '## Rollback / Non-Destructive Notes', ...report.rollbackNotes.map((note) => `- ${note}`));
+  return `${lines.join('\n')}\n`;
+}
+
+export function backfillTaskHierarchyAndAccountability(
+  options: TaskHierarchyBackfillOptions = {}
+): TaskHierarchyBackfillReport {
+  const dryRun = options.dryRun !== false;
+  const db = options.db ?? getEntityDatabase();
+  const limit = typeof options.limit === 'number' && Number.isInteger(options.limit) && options.limit > 0 ? options.limit : null;
+  const rows = db.prepare(`
+    SELECT
+      t.*,
+      (
+        SELECT p.id
+        FROM task_projects tp
+        INNER JOIN projects p ON p.id = tp.project_id AND p.org_id = tp.org_id
+        WHERE tp.task_id = t.id
+        ORDER BY p.id ASC
+        LIMIT 1
+      ) AS linked_project_id,
+      (
+        SELECT p.org_id
+        FROM task_projects tp
+        INNER JOIN projects p ON p.id = tp.project_id AND p.org_id = tp.org_id
+        WHERE tp.task_id = t.id
+        ORDER BY p.id ASC
+        LIMIT 1
+      ) AS linked_project_org_id,
+      (
+        SELECT p.team_id
+        FROM task_projects tp
+        INNER JOIN projects p ON p.id = tp.project_id AND p.org_id = tp.org_id
+        WHERE tp.task_id = t.id
+        ORDER BY p.id ASC
+        LIMIT 1
+      ) AS linked_project_team_id
+    FROM tasks t
+    ORDER BY t.id ASC
+    ${limit ? 'LIMIT ?' : ''}
+  `).all(...(limit ? [limit] : [])) as TaskBackfillRow[];
+
+  const updateStmt = db.prepare(`
+    UPDATE tasks
+    SET
+      org_id = COALESCE(?, org_id),
+      team_id = COALESCE(?, team_id),
+      project_id = COALESCE(?, project_id),
+      initiator_principal_id = COALESCE(?, initiator_principal_id),
+      initiator_type = COALESCE(?, initiator_type),
+      owner_principal_id = COALESCE(?, owner_principal_id),
+      owner_principal_type = COALESCE(?, owner_principal_type),
+      assignment_state = COALESCE(?, assignment_state),
+      metadata = COALESCE(?, metadata),
+      updated_at = CASE
+        WHEN ? = 1 THEN CURRENT_TIMESTAMP
+        ELSE updated_at
+      END
+    WHERE id = ?
+  `);
+
+  const taskResults: TaskBackfillTaskResult[] = [];
+
+  const applyOne = (row: TaskBackfillRow): void => {
+    const taskId = Number(row.id);
+    const inferredFields: TaskBackfillInferredField[] = [];
+    const warnings: TaskBackfillWarning[] = [];
+    const updates: Partial<Record<TaskBackfillInferredField['field_name'], string | number | null>> = {};
+    const linkedProjectId = normalizePositiveInteger(row.linked_project_id);
+    const linkedProjectOrgId = normalizeBlockerReason(row.linked_project_org_id);
+    const linkedProjectTeamId = normalizeBlockerReason(row.linked_project_team_id);
+    const currentProjectId = normalizePositiveInteger(row.project_id);
+
+    if (!normalizeBlockerReason(row.org_id) && linkedProjectOrgId) {
+      updates.org_id = linkedProjectOrgId;
+      pushBackfillField(inferredFields, taskId, 'org_id', linkedProjectOrgId, 'project_link', 'high');
+    }
+
+    if (!normalizeBlockerReason(row.team_id) && linkedProjectTeamId) {
+      updates.team_id = linkedProjectTeamId;
+      pushBackfillField(inferredFields, taskId, 'team_id', linkedProjectTeamId, 'project_link', 'high');
+    }
+
+    if (!currentProjectId && linkedProjectId) {
+      updates.project_id = linkedProjectId;
+      pushBackfillField(inferredFields, taskId, 'project_id', linkedProjectId, 'project_link', 'high');
+    } else if (!currentProjectId) {
+      pushBackfillWarning(
+        warnings,
+        taskId,
+        'missing_project',
+        'No linked project could be inferred; leave project cleanup explicit.',
+        'warning'
+      );
+    }
+
+    if (isLegacyPrincipalMarker(row.initiator_principal_id, ['legacy-unknown', 'unknown'])) {
+      const createdBy = isAssignablePrincipal(row.created_by_principal_id);
+      if (createdBy && !isLegacyPrincipalMarker(createdBy, ['legacy-system', 'system', 'unknown'])) {
+        updates.initiator_principal_id = createdBy;
+        updates.initiator_type = 'human';
+        pushBackfillField(inferredFields, taskId, 'initiator_principal_id', createdBy, 'created_by', 'medium');
+        pushBackfillField(inferredFields, taskId, 'initiator_type', 'human', 'created_by', 'medium');
+      } else {
+        pushBackfillWarning(
+          warnings,
+          taskId,
+          'unknown_initiator',
+          'No non-legacy initiator source is available; keep initiator as cleanup work.',
+          'warning'
+        );
+      }
+    }
+
+    if (isLegacyPrincipalMarker(row.owner_principal_id, ['legacy-owner', 'unknown'])) {
+      const assignee = isAssignablePrincipal(row.assignee);
+      if (assignee) {
+        updates.owner_principal_id = assignee;
+        updates.owner_principal_type = 'human';
+        pushBackfillField(inferredFields, taskId, 'owner_principal_id', assignee, 'assignee', 'medium');
+        pushBackfillField(inferredFields, taskId, 'owner_principal_type', 'human', 'assignee', 'medium');
+      } else {
+        pushBackfillWarning(
+          warnings,
+          taskId,
+          'missing_owner',
+          'No individual owner can be inferred without fabricating certainty.',
+          'blocking_for_execution'
+        );
+      }
+    }
+
+    if (
+      !normalizeBlockerReason(row.assignment_state) ||
+      normalizeBlockerReason(row.assignment_state)?.toLowerCase() === 'unassigned'
+    ) {
+      const assignee = isAssignablePrincipal(row.assignee);
+      const executor = isAssignablePrincipal(row.executor_principal_id);
+      if (assignee || executor) {
+        updates.assignment_state = 'assigned';
+        pushBackfillField(inferredFields, taskId, 'assignment_state', 'assigned', 'task_state', 'medium');
+      }
+    }
+
+    if (
+      isBackfillExecutableColumn(row.column) &&
+      !isAssignablePrincipal(row.assignee) &&
+      !isAssignablePrincipal(row.executor_principal_id) &&
+      !normalizeBlocked(row.taskmaster_drivable)
+    ) {
+      pushBackfillWarning(
+        warnings,
+        taskId,
+        'missing_assignee',
+        'Executable task has no individual assignee/executor and is not marked Task-Master-drivable.',
+        'blocking_for_execution'
+      );
+    }
+
+    const metadata = parseTaskMetadataForBackfill(row.metadata);
+    const existingBackfill = metadata.phase2_backfill as { version?: unknown } | undefined;
+    const nextBackfill = {
+      version: TASK_BACKFILL_VERSION,
+      inferred_fields: inferredFields.map(({ task_id: _taskId, ...field }) => field),
+      warnings: warnings.map(({ task_id: _taskId, ...warning }) => warning),
+    };
+    const nextMetadata =
+      existingBackfill?.version === TASK_BACKFILL_VERSION && inferredFields.length === 0
+        ? undefined
+        : JSON.stringify({
+            ...metadata,
+            phase2_backfill: nextBackfill,
+          });
+    const hasFieldUpdates = Object.keys(updates).length > 0;
+    const wouldUpdate = hasFieldUpdates || Boolean(nextMetadata);
+
+    if (!dryRun && wouldUpdate) {
+      updateStmt.run(
+        updates.org_id ?? null,
+        updates.team_id ?? null,
+        updates.project_id ?? null,
+        updates.initiator_principal_id ?? null,
+        updates.initiator_type ?? null,
+        updates.owner_principal_id ?? null,
+        updates.owner_principal_type ?? null,
+        updates.assignment_state ?? null,
+        nextMetadata ?? null,
+        hasFieldUpdates ? 1 : 0,
+        taskId
+      );
+    }
+
+    taskResults.push({
+      task_id: taskId,
+      title: String(row.name ?? ''),
+      inferred_fields: inferredFields,
+      warnings,
+      would_update: wouldUpdate,
+      applied: !dryRun && wouldUpdate,
+    });
+  };
+
+  const transaction = db.transaction(() => {
+    for (const row of rows) {
+      applyOne(row);
+    }
+  });
+
+  if (dryRun) {
+    for (const row of rows) {
+      applyOne(row);
+    }
+  } else {
+    transaction();
+  }
+
+  const reportBase: Omit<TaskHierarchyBackfillReport, 'markdown'> = {
+    dryRun,
+    totalTasks: rows.length,
+    tasksNeedingUpdate: taskResults.filter((result) => result.would_update).length,
+    fieldsInferred: taskResults.reduce((sum, result) => sum + result.inferred_fields.length, 0),
+    cleanupWarnings: taskResults.reduce((sum, result) => sum + result.warnings.length, 0),
+    taskResults,
+    rollbackNotes: [
+      'Dry-run mode performs no writes.',
+      'Apply mode only updates task hierarchy/accountability columns when a conservative source exists.',
+      'Unresolved owner, initiator, project, or assignee data is recorded as cleanup warnings instead of fabricated values.',
+      'Applied inferences are recorded in tasks.metadata.phase2_backfill for audit and can be manually reverted from the report before stricter migration enforcement.',
+    ],
+  };
+
+  return {
+    ...reportBase,
+    markdown: renderTaskBackfillMarkdown(reportBase),
+  };
 }
 
 function iterateSourceRows(source: Database.Database): IterableIterator<SourceTaskRow> {

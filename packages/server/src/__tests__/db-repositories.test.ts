@@ -89,6 +89,93 @@ describe('TaskRepository', () => {
     });
   });
 
+  it('dry-runs then applies conservative hierarchy and accountability backfill', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const workspace = dbMod.createWorkspaceScopeRepository();
+    const project = workspace.createProject(
+      { orgId: dbMod.DEFAULT_WORKSPACE_ORG_ID, teamId: dbMod.DEFAULT_WORKSPACE_TEAM_ID },
+      { name: 'Backfill Project' },
+    );
+    const task = repo.createTask({
+      name: 'Backfill Candidate',
+      column: 'todo',
+      assignee: 'Ada',
+      created_by_principal_id: 'requester-1',
+    });
+    workspace.addTaskProject(
+      { orgId: dbMod.DEFAULT_WORKSPACE_ORG_ID, teamId: dbMod.DEFAULT_WORKSPACE_TEAM_ID },
+      task.id,
+      project.id,
+    );
+
+    const dryRun = dbMod.backfillTaskHierarchyAndAccountability({ dryRun: true });
+    const dryRunTask = dryRun.taskResults.find((result) => result.task_id === task.id);
+    expect(dryRunTask?.applied).toBe(false);
+    expect(dryRunTask?.inferred_fields.map((field) => field.field_name)).toEqual(
+      expect.arrayContaining(['project_id', 'initiator_principal_id', 'owner_principal_id', 'owner_principal_type']),
+    );
+    expect(repo.getTask(task.id)).toMatchObject({
+      project_id: null,
+      initiator_principal_id: 'legacy-unknown',
+      owner_principal_id: 'legacy-owner',
+    });
+
+    const applied = dbMod.backfillTaskHierarchyAndAccountability({ dryRun: false });
+    const appliedTask = applied.taskResults.find((result) => result.task_id === task.id);
+    expect(appliedTask?.applied).toBe(true);
+
+    const updated = repo.getTask(task.id);
+    expect(updated).toMatchObject({
+      project_id: project.id,
+      initiator_principal_id: 'requester-1',
+      initiator_type: 'human',
+      owner_principal_id: 'Ada',
+      owner_principal_type: 'human',
+      assignment_state: 'assigned',
+    });
+    const metadata = JSON.parse(updated?.metadata ?? '{}') as {
+      phase2_backfill?: { version?: string; inferred_fields?: Array<{ field_name: string; confidence: string }> };
+    };
+    expect(metadata.phase2_backfill?.version).toBe('THE-30');
+    expect(metadata.phase2_backfill?.inferred_fields).toContainEqual(
+      expect.objectContaining({ field_name: 'owner_principal_id', confidence: 'medium' }),
+    );
+
+    const secondApply = dbMod.backfillTaskHierarchyAndAccountability({ dryRun: false });
+    const secondTask = secondApply.taskResults.find((result) => result.task_id === task.id);
+    expect(secondTask?.would_update).toBe(false);
+  });
+
+  it('keeps unresolved hierarchy and accountability fields as cleanup warnings', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const task = repo.createTask({ name: 'Needs Cleanup', column: 'doing' });
+
+    const report = dbMod.backfillTaskHierarchyAndAccountability({ dryRun: false });
+    const result = report.taskResults.find((entry) => entry.task_id === task.id);
+
+    expect(result?.warnings.map((warning) => warning.code)).toEqual(
+      expect.arrayContaining(['missing_project', 'unknown_initiator', 'missing_owner', 'missing_assignee']),
+    );
+    expect(result?.inferred_fields).toEqual([]);
+
+    const unchanged = repo.getTask(task.id);
+    expect(unchanged).toMatchObject({
+      project_id: null,
+      initiator_principal_id: 'legacy-unknown',
+      owner_principal_id: 'legacy-owner',
+      assignment_state: 'routing_problem',
+    });
+    const metadata = JSON.parse(unchanged?.metadata ?? '{}') as {
+      phase2_backfill?: { warnings?: Array<{ code: string; severity: string }> };
+    };
+    expect(metadata.phase2_backfill?.warnings).toContainEqual(
+      expect.objectContaining({ code: 'missing_owner', severity: 'blocking_for_execution' }),
+    );
+    expect(report.markdown).toContain('Cleanup warnings');
+  });
+
   it('should list tasks', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();
