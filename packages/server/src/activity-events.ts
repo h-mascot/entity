@@ -43,6 +43,32 @@ export interface ActivityEventAppendInput {
   metadata?: Record<string, unknown>;
 }
 
+type ActivityObjectRef = NonNullable<ActivityEventPayload['object_refs']>[number];
+
+export type ActivityEventConsumerKind = 'receipt' | 'review' | 'routing' | 'notification';
+
+export interface ActivityEventConsumerSummaryEntry {
+  id: number;
+  eventType: ActivityEventType;
+  action: string;
+  description: string;
+  actorPrincipalId: string | null;
+  createdAt: string;
+  degraded: boolean;
+}
+
+export interface ActivityEventReceiptConsumerSummary {
+  taskId: number | null;
+  sourceEventIds: number[];
+  routingHistory: ActivityEventConsumerSummaryEntry[];
+  reviewHistory: ActivityEventConsumerSummaryEntry[];
+  humanGateHistory: ActivityEventConsumerSummaryEntry[];
+  notificationHistory: ActivityEventConsumerSummaryEntry[];
+  receiptArtifacts: ActivityEventConsumerSummaryEntry[];
+  degradedEvents: ActivityEventConsumerSummaryEntry[];
+  missingConsumers: ActivityEventConsumerKind[];
+}
+
 export interface ActivityEventQueryContext {
   orgId?: string;
 }
@@ -93,6 +119,199 @@ function legacyTypeForEvent(eventType: ActivityEventType): ActivityType {
     default:
       return 'task_updated';
   }
+}
+
+const ROUTING_EVENT_TYPES = new Set<ActivityEventType>([
+  'assignment_changed',
+  'taskmaster_claimed',
+  'nudge_sent',
+  'owner_escalated',
+  'auto_reassigned',
+  'status_changed',
+  'completion_accepted',
+]);
+
+const REVIEW_EVENT_TYPES = new Set<ActivityEventType>([
+  'submission_created',
+  'review_requested',
+  'review_decision',
+]);
+
+const HUMAN_GATE_EVENT_TYPES = new Set<ActivityEventType>([
+  'human_gate_requested',
+  'human_gate_decision',
+]);
+
+const RECEIPT_EVENT_TYPES = new Set<ActivityEventType>([
+  'artifact_linked',
+  'receipt_created',
+  'receipt_failed',
+]);
+
+function isActivityObjectRef(value: unknown): value is ActivityObjectRef {
+  return Boolean(value) &&
+    typeof value === 'object' &&
+    typeof (value as { object_type?: unknown }).object_type === 'string' &&
+    typeof (value as { object_id?: unknown }).object_id === 'string';
+}
+
+function mergeObjectRefs(taskId: number, objectRefs: unknown): ActivityObjectRef[] {
+  const merged = new Map<string, ActivityObjectRef>();
+  const add = (ref: ActivityObjectRef) => {
+    const role = typeof ref.link_role === 'string' ? ref.link_role : '';
+    merged.set(`${ref.object_type}:${ref.object_id}:${role}`, ref);
+  };
+
+  add({ object_type: 'task', object_id: String(taskId), link_role: 'origin' });
+  if (Array.isArray(objectRefs)) {
+    for (const ref of objectRefs) {
+      if (isActivityObjectRef(ref)) {
+        add(ref);
+      }
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function toSummaryEntry(event: ActivityEventEnvelope): ActivityEventConsumerSummaryEntry {
+  return {
+    id: event.id,
+    eventType: event.eventType,
+    action: event.action,
+    description: event.description,
+    actorPrincipalId: event.actorPrincipalId,
+    createdAt: event.createdAt,
+    degraded: event.degraded,
+  };
+}
+
+export function summarizeActivityEventsForReceipt(
+  events: readonly ActivityEventEnvelope[],
+): ActivityEventReceiptConsumerSummary {
+  const summary: ActivityEventReceiptConsumerSummary = {
+    taskId: events.find((event) => typeof event.taskId === 'number')?.taskId ?? null,
+    sourceEventIds: events.map((event) => event.id),
+    routingHistory: [],
+    reviewHistory: [],
+    humanGateHistory: [],
+    notificationHistory: [],
+    receiptArtifacts: [],
+    degradedEvents: [],
+    missingConsumers: [],
+  };
+
+  for (const event of events) {
+    const entry = toSummaryEntry(event);
+    if (ROUTING_EVENT_TYPES.has(event.eventType)) {
+      summary.routingHistory.push(entry);
+    }
+    if (REVIEW_EVENT_TYPES.has(event.eventType)) {
+      summary.reviewHistory.push(entry);
+    }
+    if (HUMAN_GATE_EVENT_TYPES.has(event.eventType)) {
+      summary.humanGateHistory.push(entry);
+    }
+    if (event.eventType === 'notification_routed') {
+      summary.notificationHistory.push(entry);
+    }
+    if (RECEIPT_EVENT_TYPES.has(event.eventType)) {
+      summary.receiptArtifacts.push(entry);
+    }
+    if (event.degraded) {
+      summary.degradedEvents.push(entry);
+    }
+  }
+
+  if (summary.receiptArtifacts.length === 0) summary.missingConsumers.push('receipt');
+  if (summary.reviewHistory.length === 0 && summary.humanGateHistory.length === 0) summary.missingConsumers.push('review');
+  if (summary.routingHistory.length === 0) summary.missingConsumers.push('routing');
+  if (summary.notificationHistory.length === 0) summary.missingConsumers.push('notification');
+
+  return summary;
+}
+
+export function buildConsumerActivityEventInput(input: {
+  consumer: ActivityEventConsumerKind;
+  eventType: ActivityEventType;
+  action: string;
+  description: string;
+  actorPrincipalId?: string;
+  actorType?: ActivityEventActorType;
+  objectRefs?: ActivityObjectRef[];
+  data?: Record<string, unknown>;
+  reason?: string;
+}): ActivityEventAppendInput {
+  return {
+    eventType: input.eventType,
+    action: input.action,
+    description: input.description,
+    actorPrincipalId: input.actorPrincipalId,
+    actorType: input.actorType ?? 'system',
+    payload: {
+      consumer: input.consumer,
+      object_refs: input.objectRefs,
+      reason: input.reason,
+      data: input.data,
+    },
+  };
+}
+
+export function buildTaskAgentActionActivityEventInput(action: {
+  event: string;
+  taskId?: number;
+  action: string;
+  result: string;
+  tokensUsed?: number;
+}): ActivityEventAppendInput | null {
+  if (!Number.isInteger(action.taskId)) {
+    return null;
+  }
+
+  let consumer: ActivityEventConsumerKind = 'routing';
+  let eventType: ActivityEventType | null = null;
+
+  if (action.action === 'notify_assignee' || action.action === 'request_output' || action.action === 'request_owner_assignment') {
+    consumer = 'notification';
+    eventType = 'notification_routed';
+  } else if (
+    action.action === 'classify_review_output' ||
+    action.action === 'reject_invalid_output' ||
+    action.action === 'flag_weak_output'
+  ) {
+    consumer = 'review';
+    eventType = 'review_decision';
+  } else if (action.event === 'review_check' || action.event === 'review_hygiene' || action.event === 'output_missing') {
+    consumer = 'review';
+    eventType = 'review_requested';
+  } else if (action.action === 'escalate_blocker') {
+    consumer = 'routing';
+    eventType = 'owner_escalated';
+  } else if (action.event === 'stale_scan') {
+    consumer = 'routing';
+    eventType = 'nudge_sent';
+  } else if (action.event === 'ownership_check') {
+    consumer = 'routing';
+    eventType = 'assignment_changed';
+  }
+
+  if (!eventType) {
+    return null;
+  }
+
+  return buildConsumerActivityEventInput({
+    consumer,
+    eventType,
+    action: `Task Agent: ${action.action}`,
+    description: action.result,
+    actorPrincipalId: 'task-master',
+    actorType: 'agent',
+    data: {
+      task_agent_event: action.event,
+      task_agent_action: action.action,
+      tokens_used: Number.isFinite(action.tokensUsed) ? action.tokensUsed : 0,
+    },
+  });
 }
 
 function readOrgScope(req: Request): ActivityEventQueryContext {
@@ -234,13 +453,7 @@ function normalizeAppendPayload(
       actor_principal_id: input.actorPrincipalId,
       actor_type: normalizeActorType(input.actorType),
       task_id: taskId,
-      object_refs: [
-        {
-          object_type: 'task',
-          object_id: String(taskId),
-          link_role: 'origin',
-        },
-      ],
+      object_refs: mergeObjectRefs(taskId, (base as { object_refs?: unknown }).object_refs),
       warnings: warnings.length ? warnings : undefined,
     },
     warnings,

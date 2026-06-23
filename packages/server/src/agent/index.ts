@@ -18,6 +18,7 @@ import { getAgentStatus, listAgentLogs, writeAgentLog } from './log';
 import { getTaskAgentLanguageModel, getTaskAgentSettings, updateTaskAgentSettings } from './settings';
 import { createTaskAgentTools, type TaskAgentToolDependencies } from './tools';
 import { hasAssignedOwner, isActiveTaskColumn, type ReviewAssessment } from './review-policy';
+import { buildTaskAgentActionActivityEventInput } from '../activity-events';
 
 export type AgentTriggerEvent = 'review_check' | 'review_hygiene' | 'ownership_check' | 'stale_scan' | 'manual';
 
@@ -188,6 +189,36 @@ export class TaskAgent {
         model: settings.model,
         tokens_used: action.tokensUsed,
       });
+
+      const activityEvent = buildTaskAgentActionActivityEventInput(action);
+      if (!activityEvent || typeof action.taskId !== 'number') {
+        continue;
+      }
+
+      try {
+        this.dependencies.activityRepository.createActivity({
+          source: 'agent',
+          type: 'task_updated',
+          activity_event_type: activityEvent.eventType,
+          activity_event_schema_status: 'structured',
+          activity_event_payload:
+            activityEvent.payload && typeof activityEvent.payload === 'object'
+              ? activityEvent.payload
+              : undefined,
+          action: activityEvent.action,
+          description: activityEvent.description,
+          task_id: action.taskId,
+          agent_name: 'Task Master',
+          metadata: JSON.stringify({
+            source: 'task_agent_consumer',
+            task_agent_event: action.event,
+            task_agent_action: action.action,
+          }),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown ActivityEvent write error';
+        console.warn('[TaskAgent] ActivityEvent write failed:', message);
+      }
     }
   }
 

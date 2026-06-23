@@ -10,9 +10,12 @@ import {
   type TaskRecord,
 } from '../../db/src';
 import {
+  buildConsumerActivityEventInput,
+  buildTaskAgentActionActivityEventInput,
   buildTaskMutationActivityEvent,
   createActivityEventRouter,
   createActivityEventService,
+  summarizeActivityEventsForReceipt,
 } from './activity-events';
 
 function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
@@ -193,6 +196,127 @@ describe('ActivityEvent service', () => {
     expect(result.value.warnings.map((warning) => warning.code)).toEqual(
       expect.arrayContaining(['legacy_unknown']),
     );
+  });
+
+  it('preserves consumer object refs so receipts can cite canonical evidence artifacts', async () => {
+    const task = makeTask();
+    const service = createActivityEventService({
+      activityRepository: createMemoryActivityRepository(),
+      getTask: (taskId) => (taskId === task.id ? task : undefined),
+    });
+
+    const result = await service.appendTaskEvent(
+      task.id,
+      buildConsumerActivityEventInput({
+        consumer: 'receipt',
+        eventType: 'receipt_created',
+        action: 'Receipt created',
+        description: 'Canonical task receipt was written.',
+        actorPrincipalId: 'agent-1',
+        actorType: 'agent',
+        objectRefs: [
+          { object_type: 'evidence_artifact', object_id: 'receipt-42', link_role: 'receipt' },
+        ],
+        data: { content_hash: 'sha256:test' },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.value.eventType).toBe('receipt_created');
+    expect(result.value.objectRefs).toEqual([
+      { object_type: 'task', object_id: String(task.id), link_role: 'origin' },
+      { object_type: 'evidence_artifact', object_id: 'receipt-42', link_role: 'receipt' },
+    ]);
+  });
+
+  it('summarizes routing, review, human gate, notification, and receipt consumers for receipt generation', async () => {
+    const task = makeTask();
+    const activityRepository = createMemoryActivityRepository();
+    const service = createActivityEventService({
+      activityRepository,
+      getTask: (taskId) => (taskId === task.id ? task : undefined),
+    });
+
+    for (const input of [
+      buildConsumerActivityEventInput({
+        consumer: 'routing',
+        eventType: 'nudge_sent',
+        action: 'Nudge sent',
+        description: 'Asked assignee for an update.',
+      }),
+      buildConsumerActivityEventInput({
+        consumer: 'review',
+        eventType: 'review_decision',
+        action: 'Review accepted',
+        description: 'Reviewer accepted the proof packet.',
+      }),
+      buildConsumerActivityEventInput({
+        consumer: 'review',
+        eventType: 'human_gate_decision',
+        action: 'Gate approved',
+        description: 'Human approver accepted the external-send gate.',
+      }),
+      buildConsumerActivityEventInput({
+        consumer: 'notification',
+        eventType: 'notification_routed',
+        action: 'Notification routed',
+        description: 'Entity inbox notification preserved the review request.',
+      }),
+      buildConsumerActivityEventInput({
+        consumer: 'receipt',
+        eventType: 'receipt_created',
+        action: 'Receipt created',
+        description: 'Canonical receipt was created.',
+      }),
+    ]) {
+      const result = await service.appendTaskEvent(task.id, input);
+      expect(result.ok).toBe(true);
+    }
+
+    const queried = await service.queryTaskEvents(task.id);
+    expect(queried.ok).toBe(true);
+    if (!queried.ok) throw new Error(queried.message);
+
+    const summary = summarizeActivityEventsForReceipt(queried.value);
+    expect(summary.routingHistory.map((entry) => entry.eventType)).toContain('nudge_sent');
+    expect(summary.reviewHistory.map((entry) => entry.eventType)).toContain('review_decision');
+    expect(summary.humanGateHistory.map((entry) => entry.eventType)).toContain('human_gate_decision');
+    expect(summary.notificationHistory.map((entry) => entry.eventType)).toContain('notification_routed');
+    expect(summary.receiptArtifacts.map((entry) => entry.eventType)).toContain('receipt_created');
+    expect(summary.missingConsumers).toEqual([]);
+  });
+
+  it('maps TaskAgent review, routing, and notification actions to canonical consumer events', () => {
+    expect(
+      buildTaskAgentActionActivityEventInput({
+        event: 'review_check',
+        taskId: 42,
+        action: 'classify_review_output',
+        result: 'implementation VALID 92/100',
+        tokensUsed: 0,
+      })?.eventType,
+    ).toBe('review_decision');
+
+    expect(
+      buildTaskAgentActionActivityEventInput({
+        event: 'stale_scan',
+        taskId: 42,
+        action: 'escalate_blocker',
+        result: 'blocked with no owner response',
+        tokensUsed: 0,
+      })?.eventType,
+    ).toBe('owner_escalated');
+
+    expect(
+      buildTaskAgentActionActivityEventInput({
+        event: 'output_missing',
+        taskId: 42,
+        action: 'request_output',
+        result: 'requested output from assignee',
+        tokensUsed: 0,
+      })?.eventType,
+    ).toBe('notification_routed');
   });
 
   it('classifies task mutation paths into ActivityEvent types', () => {
