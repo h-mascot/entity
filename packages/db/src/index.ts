@@ -246,10 +246,76 @@ export type ActivityType =
   | 'task_deleted'
   | 'task_comment';
 
+export const ACTIVITY_EVENT_PAYLOAD_VERSION = 1;
+
+export const ACTIVITY_EVENT_TYPES = [
+  'task_created',
+  'task_updated',
+  'assignment_changed',
+  'taskmaster_claimed',
+  'nudge_sent',
+  'owner_escalated',
+  'auto_reassigned',
+  'submission_created',
+  'review_requested',
+  'review_decision',
+  'human_gate_requested',
+  'human_gate_decision',
+  'status_changed',
+  'artifact_linked',
+  'receipt_created',
+  'receipt_failed',
+  'completion_accepted',
+  'completion_blocked',
+  'task_cancelled',
+  'task_paused',
+  'task_blocked',
+  'connector_state_changed',
+  'notification_routed',
+  'permission_denied',
+  'integration_degraded',
+  'migration_warning',
+  'legacy_event_observed',
+] as const;
+
+export type ActivityEventType = (typeof ACTIVITY_EVENT_TYPES)[number];
+export type ActivityEventActorType = 'human' | 'agent' | 'system' | 'workflow' | 'unknown';
+export type ActivityEventSchemaStatus = 'structured' | 'legacy_mapped' | 'legacy_unknown';
+
+export interface ActivityEventObjectRef {
+  object_type: string;
+  object_id: string;
+  link_role?: string;
+}
+
+export interface ActivityEventPayload {
+  version: typeof ACTIVITY_EVENT_PAYLOAD_VERSION;
+  actor_principal_id?: string;
+  actor_type: ActivityEventActorType;
+  task_id?: number;
+  object_refs?: ActivityEventObjectRef[];
+  previous_state?: string;
+  new_state?: string;
+  reason?: string;
+  policy_reason_chain?: Array<Record<string, unknown>>;
+  warnings?: Array<Record<string, unknown>>;
+  legacy?: {
+    source_type: string;
+    action?: string;
+    description?: string;
+  };
+  data?: Record<string, unknown>;
+}
+
 export interface ActivityRecord {
   id: number;
   source: ActivitySource;
   type: ActivityType;
+  activity_event_type: ActivityEventType;
+  activity_event_payload_version: number;
+  activity_event_payload_json: string;
+  activity_event_schema_status: ActivityEventSchemaStatus;
+  activity_event_legacy_type: string | null;
   action: string;
   description: string;
   agent_name: string | null;
@@ -264,6 +330,10 @@ export interface ActivityRecord {
 export interface CreateActivityInput {
   source?: ActivitySource;
   type: ActivityType;
+  activity_event_type?: ActivityEventType | string;
+  activity_event_payload?: Partial<ActivityEventPayload> | Record<string, unknown>;
+  activity_event_payload_version?: number;
+  activity_event_schema_status?: ActivityEventSchemaStatus;
   action: string;
   description: string;
   agent_name?: string;
@@ -792,6 +862,11 @@ function bootstrap(db: Database.Database): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       source TEXT NOT NULL DEFAULT 'agent',
       type TEXT NOT NULL,
+      activity_event_type TEXT,
+      activity_event_payload_version INTEGER NOT NULL DEFAULT 1,
+      activity_event_payload_json TEXT,
+      activity_event_schema_status TEXT NOT NULL DEFAULT 'legacy_mapped',
+      activity_event_legacy_type TEXT,
       action TEXT NOT NULL,
       description TEXT NOT NULL,
       agent_name TEXT,
@@ -1215,6 +1290,28 @@ function bootstrap(db: Database.Database): void {
   if (!hasColumn(db, 'tasks', 'archived')) {
     db.exec('ALTER TABLE tasks ADD COLUMN archived INTEGER DEFAULT 0');
   }
+
+  if (!hasColumn(db, 'activities', 'activity_event_type')) {
+    db.exec('ALTER TABLE activities ADD COLUMN activity_event_type TEXT');
+  }
+
+  if (!hasColumn(db, 'activities', 'activity_event_payload_version')) {
+    db.exec('ALTER TABLE activities ADD COLUMN activity_event_payload_version INTEGER NOT NULL DEFAULT 1');
+  }
+
+  if (!hasColumn(db, 'activities', 'activity_event_payload_json')) {
+    db.exec('ALTER TABLE activities ADD COLUMN activity_event_payload_json TEXT');
+  }
+
+  if (!hasColumn(db, 'activities', 'activity_event_schema_status')) {
+    db.exec("ALTER TABLE activities ADD COLUMN activity_event_schema_status TEXT NOT NULL DEFAULT 'legacy_mapped'");
+  }
+
+  if (!hasColumn(db, 'activities', 'activity_event_legacy_type')) {
+    db.exec('ALTER TABLE activities ADD COLUMN activity_event_legacy_type TEXT');
+  }
+
+  db.exec('CREATE INDEX IF NOT EXISTS idx_activities_event_type ON activities(activity_event_type)');
 
   seedDefaultMissionControlProjects(db);
   seedEntityRegistryDefaults(db);
@@ -2020,18 +2117,181 @@ function normalizeActivityType(value: unknown): ActivityType {
   }
 }
 
+function isActivityEventType(value: string): value is ActivityEventType {
+  return (ACTIVITY_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+function normalizeActivityEventType(value: unknown): ActivityEventType | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return isActivityEventType(normalized) ? normalized : null;
+}
+
+function normalizeActivityEventSchemaStatus(value: unknown): ActivityEventSchemaStatus {
+  if (value === 'structured' || value === 'legacy_unknown') {
+    return value;
+  }
+  return 'legacy_mapped';
+}
+
+function legacyActivityTypeToEventType(type: ActivityType): ActivityEventType {
+  switch (type) {
+    case 'task_created':
+      return 'task_created';
+    case 'task_updated':
+    case 'task_comment':
+      return 'task_updated';
+    case 'task_moved':
+      return 'status_changed';
+    case 'task_completed':
+      return 'completion_accepted';
+    case 'task_deleted':
+      return 'task_cancelled';
+    default:
+      return 'legacy_event_observed';
+  }
+}
+
+function parseActivityEventPayload(value: unknown): Partial<ActivityEventPayload> | Record<string, unknown> {
+  if (!value) {
+    return {};
+  }
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  return typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function normalizeActivityEventPayload(input: {
+  value?: Partial<ActivityEventPayload> | Record<string, unknown> | string | null;
+  type: ActivityType;
+  action: string;
+  description: string;
+  taskId: number | null;
+  agentName: string | null;
+}): ActivityEventPayload {
+  const parsed = parseActivityEventPayload(input.value);
+  const actorType = parsed.actor_type === 'human' || parsed.actor_type === 'system' || parsed.actor_type === 'workflow'
+    ? parsed.actor_type
+    : input.agentName
+      ? 'agent'
+      : 'unknown';
+
+  return {
+    ...parsed,
+    version: ACTIVITY_EVENT_PAYLOAD_VERSION,
+    actor_type: actorType,
+    task_id: typeof parsed.task_id === 'number' && Number.isInteger(parsed.task_id)
+      ? parsed.task_id
+      : input.taskId ?? undefined,
+    legacy: parsed.legacy && typeof parsed.legacy === 'object'
+      ? parsed.legacy as ActivityEventPayload['legacy']
+      : {
+          source_type: input.type,
+          action: input.action,
+          description: input.description,
+        },
+  };
+}
+
+function buildActivityEventProjection(input: {
+  legacyType: ActivityType;
+  explicitEventType?: unknown;
+  explicitSchemaStatus?: unknown;
+  payload?: Partial<ActivityEventPayload> | Record<string, unknown> | string | null;
+  action: string;
+  description: string;
+  taskId: number | null;
+  agentName: string | null;
+}): {
+  activity_event_type: ActivityEventType;
+  activity_event_payload_version: number;
+  activity_event_payload_json: string;
+  activity_event_schema_status: ActivityEventSchemaStatus;
+  activity_event_legacy_type: string | null;
+} {
+  const normalizedExplicitEventType = normalizeActivityEventType(input.explicitEventType);
+  const explicitWasInvalid = typeof input.explicitEventType === 'string' && !normalizedExplicitEventType;
+  const eventType = normalizedExplicitEventType ?? legacyActivityTypeToEventType(input.legacyType);
+  const fallbackStatus: ActivityEventSchemaStatus =
+    normalizedExplicitEventType && !explicitWasInvalid
+      ? 'structured'
+      : eventType === 'legacy_event_observed'
+        ? 'legacy_unknown'
+        : 'legacy_mapped';
+  const status = input.explicitSchemaStatus
+    ? normalizeActivityEventSchemaStatus(input.explicitSchemaStatus)
+    : fallbackStatus;
+  const payload = normalizeActivityEventPayload({
+    value: input.payload,
+    type: input.legacyType,
+    action: input.action,
+    description: input.description,
+    taskId: input.taskId,
+    agentName: input.agentName,
+  });
+
+  return {
+    activity_event_type: explicitWasInvalid ? 'legacy_event_observed' : eventType,
+    activity_event_payload_version: ACTIVITY_EVENT_PAYLOAD_VERSION,
+    activity_event_payload_json: JSON.stringify(payload),
+    activity_event_schema_status: explicitWasInvalid ? 'legacy_unknown' : status,
+    activity_event_legacy_type: explicitWasInvalid
+      ? input.explicitEventType as string
+      : eventType === 'legacy_event_observed'
+        ? input.legacyType
+        : null,
+  };
+}
+
 function mapActivityRow(row: Record<string, unknown>): ActivityRecord {
   const rawTaskId = Number(row.task_id);
+  const taskId = Number.isInteger(rawTaskId) ? rawTaskId : null;
+  const legacyType = normalizeActivityType(row.type);
+  const agentName = row.agent_name === null ? null : String(row.agent_name ?? '');
+  const action = String(row.action ?? '');
+  const description = String(row.description ?? '');
+  const projectedEvent = buildActivityEventProjection({
+    legacyType,
+    explicitEventType: row.activity_event_type,
+    explicitSchemaStatus: row.activity_event_schema_status,
+    payload: typeof row.activity_event_payload_json === 'string' ? row.activity_event_payload_json : null,
+    action,
+    description,
+    taskId,
+    agentName,
+  });
+
   return {
     id: Number(row.id),
     source: normalizeActivitySource(row.source),
-    type: normalizeActivityType(row.type),
-    action: String(row.action ?? ''),
-    description: String(row.description ?? ''),
-    agent_name: row.agent_name === null ? null : String(row.agent_name ?? ''),
+    type: legacyType,
+    activity_event_type: projectedEvent.activity_event_type,
+    activity_event_payload_version: projectedEvent.activity_event_payload_version,
+    activity_event_payload_json: projectedEvent.activity_event_payload_json,
+    activity_event_schema_status: projectedEvent.activity_event_schema_status,
+    activity_event_legacy_type:
+      row.activity_event_legacy_type === null || typeof row.activity_event_legacy_type === 'undefined'
+        ? projectedEvent.activity_event_legacy_type
+        : String(row.activity_event_legacy_type),
+    action,
+    description,
+    agent_name: agentName,
     agent_emoji: row.agent_emoji === null ? null : String(row.agent_emoji ?? ''),
     file_path: row.file_path === null ? null : String(row.file_path ?? ''),
-    task_id: Number.isInteger(rawTaskId) ? rawTaskId : null,
+    task_id: taskId,
     task_column: row.task_column === null ? null : String(row.task_column ?? ''),
     metadata: row.metadata === null ? null : String(row.metadata ?? ''),
     created_at: normalizeTimestamp(String(row.created_at ?? '')),
@@ -3302,6 +3562,11 @@ export function createActivityRepository(): ActivityRepository {
       id,
       source,
       type,
+      activity_event_type,
+      activity_event_payload_version,
+      activity_event_payload_json,
+      activity_event_schema_status,
+      activity_event_legacy_type,
       action,
       description,
       agent_name,
@@ -3327,6 +3592,11 @@ export function createActivityRepository(): ActivityRepository {
     INSERT INTO activities (
       source,
       type,
+      activity_event_type,
+      activity_event_payload_version,
+      activity_event_payload_json,
+      activity_event_schema_status,
+      activity_event_legacy_type,
       action,
       description,
       agent_name,
@@ -3336,7 +3606,7 @@ export function createActivityRepository(): ActivityRepository {
       task_column,
       metadata,
       created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
 
   const getStmt = db.prepare('SELECT * FROM activities WHERE id = ?');
@@ -3365,15 +3635,33 @@ export function createActivityRepository(): ActivityRepository {
         throw new Error('activity action and description are required');
       }
 
+      const taskId = typeof input.task_id === 'number' && Number.isInteger(input.task_id) ? input.task_id : null;
+      const agentName = input.agent_name?.trim() || null;
+      const eventProjection = buildActivityEventProjection({
+        legacyType: input.type,
+        explicitEventType: input.activity_event_type,
+        explicitSchemaStatus: input.activity_event_schema_status,
+        payload: input.activity_event_payload,
+        action,
+        description,
+        taskId,
+        agentName,
+      });
+
       const result = createStmt.run(
         input.source ?? 'agent',
         input.type,
+        eventProjection.activity_event_type,
+        eventProjection.activity_event_payload_version,
+        eventProjection.activity_event_payload_json,
+        eventProjection.activity_event_schema_status,
+        eventProjection.activity_event_legacy_type,
         action,
         description,
-        input.agent_name?.trim() || null,
+        agentName,
         input.agent_emoji?.trim() || null,
         input.file_path?.trim() || null,
-        typeof input.task_id === 'number' && Number.isInteger(input.task_id) ? input.task_id : null,
+        taskId,
         input.task_column?.trim() || null,
         input.metadata?.trim() || null
       );

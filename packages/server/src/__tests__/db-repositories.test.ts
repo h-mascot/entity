@@ -288,6 +288,42 @@ describe('ActivityRepository', () => {
   beforeEach(() => freshDb());
   afterEach(() => cleanupDb());
 
+  it('defines the Phase 2 ActivityEvent enum needed by routing, review, receipts, connectors, and migration', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+
+    expect(dbMod.ACTIVITY_EVENT_TYPES).toEqual(
+      expect.arrayContaining([
+        'task_created',
+        'task_updated',
+        'assignment_changed',
+        'taskmaster_claimed',
+        'nudge_sent',
+        'owner_escalated',
+        'auto_reassigned',
+        'submission_created',
+        'review_requested',
+        'review_decision',
+        'human_gate_requested',
+        'human_gate_decision',
+        'status_changed',
+        'artifact_linked',
+        'receipt_created',
+        'receipt_failed',
+        'completion_accepted',
+        'completion_blocked',
+        'task_cancelled',
+        'task_paused',
+        'task_blocked',
+        'connector_state_changed',
+        'notification_routed',
+        'permission_denied',
+        'integration_degraded',
+        'migration_warning',
+        'legacy_event_observed',
+      ]),
+    );
+  });
+
   it('should create and list activities', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createActivityRepository();
@@ -307,6 +343,69 @@ describe('ActivityRepository', () => {
     const list = repo.listActivities(10);
     expect(list.length).toBeGreaterThanOrEqual(1);
     expect(list[0].action).toBe('Created task');
+  });
+
+  it('stores versioned ActivityEvent payloads for structured events', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createActivityRepository();
+
+    const activity = repo.createActivity({
+      type: 'task_completed',
+      activity_event_type: 'receipt_created',
+      activity_event_payload: {
+        actor_principal_id: 'agent-1',
+        actor_type: 'agent',
+        task_id: 42,
+        object_refs: [{ object_type: 'evidence_artifact', object_id: 'receipt-42', link_role: 'receipt' }],
+        data: { content_hash: 'sha256:test' },
+      },
+      action: 'Receipt created',
+      description: 'Canonical task receipt was written',
+      task_id: 42,
+      agent_name: 'Ada',
+    });
+
+    expect(activity.activity_event_type).toBe('receipt_created');
+    expect(activity.activity_event_payload_version).toBe(dbMod.ACTIVITY_EVENT_PAYLOAD_VERSION);
+    expect(activity.activity_event_schema_status).toBe('structured');
+
+    const payload = JSON.parse(activity.activity_event_payload_json);
+    expect(payload).toMatchObject({
+      version: dbMod.ACTIVITY_EVENT_PAYLOAD_VERSION,
+      actor_principal_id: 'agent-1',
+      actor_type: 'agent',
+      task_id: 42,
+      data: { content_hash: 'sha256:test' },
+    });
+    expect(payload.object_refs).toEqual([
+      { object_type: 'evidence_artifact', object_id: 'receipt-42', link_role: 'receipt' },
+    ]);
+  });
+
+  it('preserves unknown legacy event names without pretending they are structured', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createActivityRepository();
+
+    const activity = repo.createActivity({
+      type: 'message_sent',
+      activity_event_type: 'legacy.freeform.status',
+      action: 'Legacy note',
+      description: 'Imported freeform activity event',
+      task_id: 7,
+      agent_name: 'Legacy Import',
+    });
+
+    expect(activity.activity_event_type).toBe('legacy_event_observed');
+    expect(activity.activity_event_schema_status).toBe('legacy_unknown');
+    expect(activity.activity_event_legacy_type).toBe('legacy.freeform.status');
+
+    const payload = JSON.parse(activity.activity_event_payload_json);
+    expect(payload.legacy).toMatchObject({
+      source_type: 'message_sent',
+      action: 'Legacy note',
+      description: 'Imported freeform activity event',
+    });
+    expect(payload.task_id).toBe(7);
   });
 
   it('should list activities by task id', async () => {
