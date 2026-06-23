@@ -230,6 +230,77 @@ export interface TaskRepository {
   deleteTask: (id: number) => boolean;
 }
 
+export const EVIDENCE_ARTIFACT_KINDS = [
+  'raw_task_receipt',
+  'review_packet',
+  'output_receipt',
+  'generated_summary',
+  'agent_handoff',
+  'audit_trail',
+  'curated_report',
+  'rollup',
+] as const;
+
+export type EvidenceArtifactKind = (typeof EVIDENCE_ARTIFACT_KINDS)[number];
+export type EvidenceArtifactMutabilityPolicy = 'immutable_append_only' | 'editable_versioned';
+export type EvidenceArtifactIntegrityState = 'valid' | 'missing_body' | 'hash_mismatch' | 'metadata_mismatch' | 'unknown';
+export type EvidenceArtifactAvailabilityState = 'available' | 'missing_body' | 'unavailable' | 'pending' | 'unknown';
+
+export interface EvidenceArtifactRecord {
+  id: string;
+  org_id: string;
+  team_id: string | null;
+  project_id: number | null;
+  artifact_kind: EvidenceArtifactKind;
+  title: string;
+  body_format: 'markdown';
+  stable_path: string;
+  human_path_alias: string | null;
+  content_hash: string;
+  mutability_policy: EvidenceArtifactMutabilityPolicy;
+  version: number;
+  origin_task_id: number | null;
+  source_activity_event_ids: number[];
+  source_artifact_ids: string[];
+  provenance_json: string;
+  integrity_state: EvidenceArtifactIntegrityState;
+  availability_state: EvidenceArtifactAvailabilityState;
+  created_by_principal_id: string | null;
+  metadata_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateEvidenceArtifactInput {
+  id?: string;
+  org_id?: string;
+  team_id?: string | null;
+  project_id?: number | null;
+  artifact_kind?: EvidenceArtifactKind;
+  title: string;
+  body_format?: 'markdown';
+  stable_path?: string;
+  human_path_alias?: string | null;
+  content_hash: string;
+  mutability_policy?: EvidenceArtifactMutabilityPolicy;
+  version?: number;
+  origin_task_id?: number | null;
+  source_activity_event_ids?: number[];
+  source_artifact_ids?: string[];
+  provenance_json?: string;
+  integrity_state?: EvidenceArtifactIntegrityState;
+  availability_state?: EvidenceArtifactAvailabilityState;
+  created_by_principal_id?: string | null;
+  metadata_json?: string;
+}
+
+export interface EvidenceArtifactRepository {
+  createArtifact: (input: CreateEvidenceArtifactInput) => EvidenceArtifactRecord;
+  getArtifact: (id: string) => EvidenceArtifactRecord | undefined;
+  listArtifactsByOriginTask: (taskId: number) => EvidenceArtifactRecord[];
+  updateHumanPathAlias: (id: string, humanPathAlias: string | null) => EvidenceArtifactRecord | undefined;
+}
+
 export type ActivitySource = 'agent' | 'task';
 
 export type ActivityType =
@@ -839,6 +910,36 @@ function normalizeOrgQueryContext(context: OrgQueryContext): Required<OrgQueryCo
   return { orgId, teamId };
 }
 
+function normalizeJsonObjectString(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    return '{}';
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? JSON.stringify(parsed) : '{}';
+  } catch {
+    return '{}';
+  }
+}
+
+function normalizeJsonStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter((entry) => entry.length > 0);
+}
+
+function normalizeJsonNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => normalizePositiveInteger(entry))
+    .filter((entry): entry is number => entry !== null);
+}
+
 function normalizeSlug(value: unknown, fallback: string): string {
   const raw = normalizeBlockerReason(value) ?? fallback;
   const slug = raw
@@ -939,6 +1040,35 @@ function bootstrap(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_activities_source ON activities(source);
     CREATE INDEX IF NOT EXISTS idx_activities_task_id ON activities(task_id);
     CREATE INDEX IF NOT EXISTS idx_activities_file_path ON activities(file_path);
+
+    CREATE TABLE IF NOT EXISTS evidence_artifacts (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL DEFAULT '${DEFAULT_WORKSPACE_ORG_ID}',
+      team_id TEXT,
+      project_id INTEGER,
+      artifact_kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body_format TEXT NOT NULL DEFAULT 'markdown',
+      stable_path TEXT NOT NULL UNIQUE,
+      human_path_alias TEXT,
+      content_hash TEXT NOT NULL,
+      mutability_policy TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      origin_task_id INTEGER,
+      source_activity_event_ids_json TEXT NOT NULL DEFAULT '[]',
+      source_artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+      provenance_json TEXT NOT NULL DEFAULT '{}',
+      integrity_state TEXT NOT NULL DEFAULT 'valid',
+      availability_state TEXT NOT NULL DEFAULT 'available',
+      created_by_principal_id TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_origin_task ON evidence_artifacts(origin_task_id);
+    CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_org_kind ON evidence_artifacts(org_id, artifact_kind);
+    CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_integrity ON evidence_artifacts(integrity_state);
 
     CREATE TABLE IF NOT EXISTS agent_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2825,6 +2955,74 @@ function mapTaskCommentRow(row: Record<string, unknown>): TaskCommentRecord {
   };
 }
 
+function parseJsonArray(value: unknown): unknown[] {
+  if (typeof value !== 'string' || !value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeEvidenceArtifactKind(value: unknown): EvidenceArtifactKind {
+  return EVIDENCE_ARTIFACT_KINDS.includes(value as EvidenceArtifactKind)
+    ? value as EvidenceArtifactKind
+    : 'raw_task_receipt';
+}
+
+function normalizeEvidenceMutabilityPolicy(
+  kind: EvidenceArtifactKind,
+  value: unknown
+): EvidenceArtifactMutabilityPolicy {
+  const normalized = value === 'editable_versioned' ? 'editable_versioned' : 'immutable_append_only';
+  if (kind === 'raw_task_receipt' && normalized !== 'immutable_append_only') {
+    throw new Error('raw task receipt artifacts must be immutable_append_only');
+  }
+  return normalized;
+}
+
+function normalizeEvidenceIntegrityState(value: unknown): EvidenceArtifactIntegrityState {
+  return value === 'missing_body' || value === 'hash_mismatch' || value === 'metadata_mismatch' || value === 'unknown'
+    ? value
+    : 'valid';
+}
+
+function normalizeEvidenceAvailabilityState(value: unknown): EvidenceArtifactAvailabilityState {
+  return value === 'missing_body' || value === 'unavailable' || value === 'pending' || value === 'unknown'
+    ? value
+    : 'available';
+}
+
+function mapEvidenceArtifactRow(row: Record<string, unknown>): EvidenceArtifactRecord {
+  return {
+    id: String(row.id ?? ''),
+    org_id: normalizeWorkspaceId(row.org_id, DEFAULT_WORKSPACE_ORG_ID),
+    team_id: normalizeBlockerReason(row.team_id),
+    project_id: normalizePositiveInteger(row.project_id),
+    artifact_kind: normalizeEvidenceArtifactKind(row.artifact_kind),
+    title: String(row.title ?? ''),
+    body_format: 'markdown',
+    stable_path: String(row.stable_path ?? ''),
+    human_path_alias: normalizeBlockerReason(row.human_path_alias),
+    content_hash: String(row.content_hash ?? ''),
+    mutability_policy: row.mutability_policy === 'editable_versioned' ? 'editable_versioned' : 'immutable_append_only',
+    version: normalizePositiveInteger(row.version) ?? 1,
+    origin_task_id: normalizePositiveInteger(row.origin_task_id),
+    source_activity_event_ids: normalizeJsonNumberArray(parseJsonArray(row.source_activity_event_ids_json)),
+    source_artifact_ids: normalizeJsonStringArray(parseJsonArray(row.source_artifact_ids_json)),
+    provenance_json: normalizeJsonObjectString(row.provenance_json),
+    integrity_state: normalizeEvidenceIntegrityState(row.integrity_state),
+    availability_state: normalizeEvidenceAvailabilityState(row.availability_state),
+    created_by_principal_id: normalizeBlockerReason(row.created_by_principal_id),
+    metadata_json: normalizeJsonObjectString(row.metadata_json),
+    created_at: normalizeTimestamp(String(row.created_at ?? '')),
+    updated_at: normalizeTimestamp(String(row.updated_at ?? row.created_at ?? '')),
+  };
+}
+
 function normalizePositiveInteger(value: unknown): number | null {
   if (typeof value === 'number') {
     return Number.isInteger(value) && value > 0 ? value : null;
@@ -3569,6 +3767,110 @@ export function createTaskRepository(): TaskRepository {
     deleteTask: (id: number) => {
       const result = deleteStmt.run(id);
       return result.changes > 0;
+    },
+  };
+}
+
+export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
+  const db = openEntityDatabase();
+  const getStmt = db.prepare('SELECT * FROM evidence_artifacts WHERE id = ?');
+  const listByOriginTaskStmt = db.prepare(`
+    SELECT *
+    FROM evidence_artifacts
+    WHERE origin_task_id = ?
+    ORDER BY created_at ASC, id ASC
+  `);
+  const createStmt = db.prepare(`
+    INSERT INTO evidence_artifacts (
+      id,
+      org_id,
+      team_id,
+      project_id,
+      artifact_kind,
+      title,
+      body_format,
+      stable_path,
+      human_path_alias,
+      content_hash,
+      mutability_policy,
+      version,
+      origin_task_id,
+      source_activity_event_ids_json,
+      source_artifact_ids_json,
+      provenance_json,
+      integrity_state,
+      availability_state,
+      created_by_principal_id,
+      metadata_json,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'markdown', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `);
+  const updateAliasStmt = db.prepare(`
+    UPDATE evidence_artifacts
+    SET human_path_alias = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+
+  return {
+    createArtifact: (input: CreateEvidenceArtifactInput) => {
+      const id = normalizeWorkspaceId(input.id, randomUUID());
+      const kind = normalizeEvidenceArtifactKind(input.artifact_kind);
+      const title = input.title.trim();
+      const contentHash = input.content_hash.trim();
+      if (!title) {
+        throw new Error('evidence artifact title is required');
+      }
+      if (!contentHash) {
+        throw new Error('evidence artifact content_hash is required');
+      }
+      const mutabilityPolicy = normalizeEvidenceMutabilityPolicy(kind, input.mutability_policy);
+      const stablePath = input.stable_path?.trim() || `/artifacts/evidence/${id}.md`;
+      createStmt.run(
+        id,
+        normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
+        normalizeBlockerReason(input.team_id),
+        normalizePositiveInteger(input.project_id),
+        kind,
+        title,
+        stablePath,
+        normalizeBlockerReason(input.human_path_alias),
+        contentHash,
+        mutabilityPolicy,
+        normalizePositiveInteger(input.version) ?? 1,
+        normalizePositiveInteger(input.origin_task_id),
+        JSON.stringify(normalizeJsonNumberArray(input.source_activity_event_ids)),
+        JSON.stringify(normalizeJsonStringArray(input.source_artifact_ids)),
+        normalizeJsonObjectString(input.provenance_json),
+        normalizeEvidenceIntegrityState(input.integrity_state),
+        normalizeEvidenceAvailabilityState(input.availability_state),
+        normalizeBlockerReason(input.created_by_principal_id),
+        normalizeJsonObjectString(input.metadata_json)
+      );
+      const row = getStmt.get(id) as Record<string, unknown> | undefined;
+      if (!row) {
+        throw new Error('Failed to create evidence artifact');
+      }
+      return mapEvidenceArtifactRow(row);
+    },
+
+    getArtifact: (id: string) => {
+      const row = getStmt.get(id.trim()) as Record<string, unknown> | undefined;
+      return row ? mapEvidenceArtifactRow(row) : undefined;
+    },
+
+    listArtifactsByOriginTask: (taskId: number) => {
+      const safeTaskId = normalizePositiveInteger(taskId);
+      if (!safeTaskId) {
+        return [];
+      }
+      return (listByOriginTaskStmt.all(safeTaskId) as Array<Record<string, unknown>>).map(mapEvidenceArtifactRow);
+    },
+
+    updateHumanPathAlias: (id: string, humanPathAlias: string | null) => {
+      updateAliasStmt.run(normalizeBlockerReason(humanPathAlias), id.trim());
+      const row = getStmt.get(id.trim()) as Record<string, unknown> | undefined;
+      return row ? mapEvidenceArtifactRow(row) : undefined;
     },
   };
 }

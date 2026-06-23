@@ -576,6 +576,93 @@ describe('ActivityRepository', () => {
   });
 });
 
+describe('EvidenceArtifactRepository', () => {
+  beforeEach(() => freshDb());
+  afterEach(() => cleanupDb());
+
+  it('persists stable raw receipt artifact metadata linked to the origin task', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const taskRepo = dbMod.createTaskRepository();
+    const artifactRepo = dbMod.createEvidenceArtifactRepository();
+    const task = taskRepo.createTask({ name: 'Receipt Metadata Task' });
+
+    const artifact = artifactRepo.createArtifact({
+      id: 'receipt-artifact-1',
+      artifact_kind: 'raw_task_receipt',
+      title: 'Receipt Metadata Task receipt',
+      stable_path: '/artifacts/evidence/receipt-artifact-1.md',
+      human_path_alias: `/tasks/${task.id}/receipt`,
+      content_hash: 'sha256:receipt-fixture',
+      mutability_policy: 'immutable_append_only',
+      origin_task_id: task.id,
+      source_activity_event_ids: [1, 2],
+      source_artifact_ids: ['proof-output-1'],
+      provenance_json: JSON.stringify({ source: 'THE-36-fixture' }),
+      created_by_principal_id: 'agent-1',
+    });
+
+    expect(artifact).toMatchObject({
+      id: 'receipt-artifact-1',
+      org_id: dbMod.DEFAULT_WORKSPACE_ORG_ID,
+      artifact_kind: 'raw_task_receipt',
+      stable_path: '/artifacts/evidence/receipt-artifact-1.md',
+      human_path_alias: `/tasks/${task.id}/receipt`,
+      content_hash: 'sha256:receipt-fixture',
+      mutability_policy: 'immutable_append_only',
+      origin_task_id: task.id,
+      integrity_state: 'valid',
+      availability_state: 'available',
+      created_by_principal_id: 'agent-1',
+    });
+    expect(artifact.source_activity_event_ids).toEqual([1, 2]);
+    expect(artifact.source_artifact_ids).toEqual(['proof-output-1']);
+    expect(JSON.parse(artifact.provenance_json)).toMatchObject({ source: 'THE-36-fixture' });
+    expect(artifactRepo.listArtifactsByOriginTask(task.id).map((entry) => entry.id)).toEqual(['receipt-artifact-1']);
+  });
+
+  it('keeps canonical receipt identity stable when the human-friendly alias changes', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const task = dbMod.createTaskRepository().createTask({ name: 'Alias Move Task' });
+    const artifactRepo = dbMod.createEvidenceArtifactRepository();
+
+    const original = artifactRepo.createArtifact({
+      id: 'receipt-artifact-2',
+      title: 'Alias Move Task receipt',
+      stable_path: '/artifacts/evidence/receipt-artifact-2.md',
+      human_path_alias: `/projects/original/tasks/${task.id}/receipt`,
+      content_hash: 'sha256:stable-body',
+      origin_task_id: task.id,
+    });
+
+    const moved = artifactRepo.updateHumanPathAlias(
+      original.id,
+      `/projects/renamed/tasks/${task.id}/receipt`,
+    );
+
+    expect(moved).toMatchObject({
+      id: original.id,
+      stable_path: original.stable_path,
+      content_hash: original.content_hash,
+      origin_task_id: task.id,
+      human_path_alias: `/projects/renamed/tasks/${task.id}/receipt`,
+    });
+    expect(artifactRepo.getArtifact(original.id)?.stable_path).toBe('/artifacts/evidence/receipt-artifact-2.md');
+  });
+
+  it('rejects editable mutability for raw task receipt artifacts', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const artifactRepo = dbMod.createEvidenceArtifactRepository();
+
+    expect(() => artifactRepo.createArtifact({
+      id: 'receipt-artifact-3',
+      artifact_kind: 'raw_task_receipt',
+      title: 'Mutable raw receipt',
+      content_hash: 'sha256:mutable-raw',
+      mutability_policy: 'editable_versioned',
+    })).toThrow('raw task receipt artifacts must be immutable_append_only');
+  });
+});
+
 describe('TaskCommentRepository', () => {
   beforeEach(() => freshDb());
   afterEach(() => cleanupDb());
