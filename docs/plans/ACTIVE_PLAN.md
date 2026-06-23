@@ -120,6 +120,7 @@ The active issue is `THE-40`, source `THE-9.5`, parent `THE-9`, title `Harden re
 | 15:16 | Step 16 | in progress | Created branch `THE-40-harden-receipt-immutability-path-stability-and-protocol-docs`; live Linear confirms `THE-40` is child `THE-9.5`, no children, state `Todo`, and prior receipt siblings are Done. |
 | 15:19 | Step 17 | done | Receipt writer now writes raw receipt bodies with exclusive creation; focused tests cover overwrite rejection and task/project/team alias moves; protocol docs added. |
 | 15:21 | Step 18 | blocked | Focused tests, smoke, root build, server build+Vitest, CLI Tester request/run passed. Book review returned `REQUESTED`/`safeToContinue=false`; verify exited 1 with review gate blocked. Do not start `THE-41`. |
+| 15:55 | Relaunch | blocked | New relaunch pointer said start `THE-41` as `THE-9.6` receipt reviewer UI, but live Linear `THE-41` is `THE-10.1` docs/files/artifacts schema under `THE-10`; stopped before branch switch or code edits. |
 
 ## Files Touched
 - `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-40`.
@@ -139,7 +140,7 @@ The active issue is `THE-40`, source `THE-9.5`, parent `THE-9`, title `Harden re
 3. Read `.cursor/run-state/entity-phase-2.json`.
 4. Find the first unchecked step above.
 5. Use Node v22.22.x for proof/gate commands unless native dependencies are rebuilt for another Node.
-6. Continue `THE-40` from Step 18. Do not start `THE-41` until `output/entity-phase-2/book-review/THE-40.json` records `decision=APPROVED` and `safeToContinue=true`, then rerun `project-test-gate verify THE-40` successfully.
+6. Resolve the `THE-41` scope mismatch before implementation. Live Linear is authoritative and currently says `THE-41` is `THE-10.1` under `THE-10`, while the relaunch pointer expected `THE-9.6` under `THE-9`.
 
 ## Done
 - [x] `THE-36` complete by current receipts and verify gate.
