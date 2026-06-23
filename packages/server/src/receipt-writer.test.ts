@@ -117,6 +117,7 @@ function makeArtifact(input: {
     origin_task_id: input.origin_task_id,
     source_activity_event_ids: input.source_activity_event_ids,
     source_artifact_ids: [],
+    linked_object_refs: [],
     provenance_json: '{}',
     integrity_state: 'valid',
     availability_state: 'available',

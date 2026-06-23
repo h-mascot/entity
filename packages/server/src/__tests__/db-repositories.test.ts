@@ -576,6 +576,109 @@ describe('ActivityRepository', () => {
   });
 });
 
+describe('DocumentObjectRepository', () => {
+  beforeEach(() => freshDb());
+  afterEach(() => cleanupDb());
+
+  it('keeps NativeDocument, ExternalDocumentRef, and EvidenceArtifact concepts distinct with ObjectRef links', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createDocumentObjectRepository();
+    const artifactRepo = dbMod.createEvidenceArtifactRepository();
+    const task = dbMod.createTaskRepository().createTask({ name: 'Document Object Task' });
+    const taskRef = { object_type: 'task', object_id: String(task.id), link_role: 'context' };
+
+    const nativeDoc = repo.createNativeDocument({
+      id: 'native-doc-1',
+      title: 'Internal renewal note',
+      document_kind: 'note',
+      stable_path: '/documents/native/native-doc-1.md',
+      content_hash: 'sha256:native-doc',
+      mutability_policy: 'editable_versioned',
+      linked_object_refs: [taskRef],
+    });
+    const externalRef = repo.createExternalDocumentRef({
+      id: 'external-doc-1',
+      connector_type: 'google_docs',
+      external_id: 'gdoc-123',
+      title: 'Customer-owned account plan',
+      auth_state: 'authorized',
+      readiness_state: 'ready',
+      linked_object_refs: [{ object_type: 'task', object_id: String(task.id), link_role: 'source_context' }],
+    });
+    const artifact = artifactRepo.createArtifact({
+      id: 'evidence-artifact-1',
+      artifact_kind: 'review_packet',
+      title: 'Review packet artifact',
+      stable_path: '/artifacts/evidence/evidence-artifact-1.md',
+      content_hash: 'sha256:evidence',
+      linked_object_refs: [{ object_type: 'task', object_id: String(task.id), link_role: 'proof' }],
+    });
+
+    expect(nativeDoc).toMatchObject({
+      id: 'native-doc-1',
+      document_kind: 'note',
+      body_format: 'markdown',
+      mutability_policy: 'editable_versioned',
+      stable_path: '/documents/native/native-doc-1.md',
+    });
+    expect(nativeDoc.linked_object_refs).toEqual([taskRef]);
+    expect(externalRef).toMatchObject({
+      id: 'external-doc-1',
+      connector_type: 'google_docs',
+      external_id: 'gdoc-123',
+      auth_state: 'authorized',
+      readiness_state: 'ready',
+      canonicality: 'unknown',
+    });
+    expect(JSON.parse(externalRef.capabilities_json)).toMatchObject({ read: true, preview: true, write: false });
+    expect(artifact).toMatchObject({
+      id: 'evidence-artifact-1',
+      artifact_kind: 'review_packet',
+      stable_path: '/artifacts/evidence/evidence-artifact-1.md',
+    });
+    expect(artifact.linked_object_refs).toEqual([
+      { object_type: 'task', object_id: String(task.id), link_role: 'proof' },
+    ]);
+  });
+
+  it('rejects malformed ObjectRef links before persisting document objects', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createDocumentObjectRepository();
+
+    expect(() => repo.createNativeDocument({
+      title: 'Bad object ref',
+      content_hash: 'sha256:bad-ref',
+      linked_object_refs: [{ object_type: 'task', object_id: '1', link_role: '' }],
+    })).toThrow('ObjectRef requires object_type, object_id, and link_role');
+  });
+
+  it('plans a non-destructive migration path for vague legacy file and artifact references', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+
+    expect(dbMod.planLegacyFileArtifactReferenceMigration({
+      source_table: 'tasks',
+      source_field: 'metadata.review_packet.output_artifact',
+      legacy_value: '/artifacts/evidence/receipt-123.md',
+      task_id: 42,
+      link_role: 'proof',
+    })).toMatchObject({
+      object_ref: { object_type: 'evidence_artifact', object_id: 'receipt-123', link_role: 'proof' },
+      confidence: 'medium',
+      warnings: [],
+    });
+
+    expect(dbMod.planLegacyFileArtifactReferenceMigration({
+      source_table: 'tasks',
+      source_field: 'metadata.file',
+      legacy_value: 'loose-upload.txt',
+    })).toMatchObject({
+      object_ref: null,
+      confidence: 'low',
+      warnings: ['ambiguous_document_reference', 'missing_task_context'],
+    });
+  });
+});
+
 describe('EvidenceArtifactRepository', () => {
   beforeEach(() => freshDb());
   afterEach(() => cleanupDb());

@@ -30,7 +30,29 @@
     ".cursor/run-state/",
     ".cursor/run-state",
     ".cursor/entity-phase-2-autonomous-run-state.json",
-    ".cursor/the-26-pr-body.md"
+    ".cursor/the-26-pr-body.md",
+    ".env",
+    ".env.example",
+    ".env.*",
+    ".gitnexus",
+    ".gitnexus/",
+    ".github/workflows",
+    "output",
+    "evidence",
+    "artifacts"
+  ],
+  "scanExcludeDirs": [
+    ".git",
+    "node_modules",
+    ".next",
+    "dist",
+    "build",
+    "output",
+    ".worktrees",
+    ".gitnexus",
+    ".gitnexus/",
+    "evidence",
+    "artifacts"
   ],
   "bookReview": {
     "required": true,
