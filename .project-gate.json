@@ -19,7 +19,14 @@
   ],
   "scanExcludePaths": [
     "docs/execution-packs/entity-phase-2-cursor-20260621/cleanup-drafts",
-    "docs/specs/entity-phase-2-linear_id_to_source_id.json"
+    "docs/specs/entity-phase-2-linear_id_to_source_id.json",
+    "AGENTS.md",
+    ".cursor/rules/",
+    "docs/context/",
+    "docs/specs/",
+    "docs/execution-packs/",
+    "docs/plans/",
+    ".cursor/linear-live.json"
   ],
   "bookReview": {
     "required": true,
