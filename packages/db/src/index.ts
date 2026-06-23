@@ -11,6 +11,77 @@ export const DEFAULT_WORKSPACE_TEAM_ID = 'default-team';
 
 export type TaskColumn = (typeof TASK_COLUMNS)[number];
 
+export const POLICY_INPUT_LAYERS = [
+  'workspace',
+  'org',
+  'team',
+  'project',
+  'worktype',
+  'task',
+  'risk',
+  'agent_trust',
+] as const;
+
+export type PolicyInputLayer = (typeof POLICY_INPUT_LAYERS)[number];
+export type PolicyRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+export type AgentTrustLevel = 'unknown' | 'low' | 'standard' | 'high';
+export type ReviewPolicyState = 'not_required' | 'pending' | 'accepted' | 'request_fix' | 'skipped_by_policy';
+export type HumanGatePolicyState = 'not_required' | 'pending' | 'approved' | 'rejected';
+
+export const EXTERNAL_SIDE_EFFECT_TYPES = [
+  'email_send',
+  'crm_update',
+  'hr_action',
+  'financial_commitment',
+  'legal_contract',
+  'production_security_change',
+  'customer_commitment',
+  'other',
+] as const;
+
+export type ExternalSideEffectType = (typeof EXTERNAL_SIDE_EFFECT_TYPES)[number];
+export type ExternalSideEffectResolutionState =
+  | 'requested'
+  | 'gate_pending'
+  | 'gate_approved'
+  | 'gate_rejected'
+  | 'resolved'
+  | 'cancelled';
+export type ExternalSideEffectSensitivity =
+  | 'none'
+  | 'people'
+  | 'customer'
+  | 'legal'
+  | 'financial'
+  | 'security'
+  | 'production'
+  | 'confidential'
+  | 'workspace_restricted';
+
+export interface ExternalSideEffect {
+  type: ExternalSideEffectType;
+  target_system: string;
+  risk_level: PolicyRiskLevel;
+  sensitivity: ExternalSideEffectSensitivity;
+  required_gate: boolean;
+  requested_actor_principal_id: string;
+  resolution_state: ExternalSideEffectResolutionState;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TaskPolicyInputEnvelope {
+  layers: Record<PolicyInputLayer, Record<string, unknown>>;
+  review: {
+    required: boolean;
+    state: ReviewPolicyState;
+  };
+  human_gate: {
+    required: boolean;
+    state: HumanGatePolicyState;
+  };
+  external_side_effects: ExternalSideEffect[];
+}
+
 export interface TaskRecord {
   id: number;
   org_id?: string;
@@ -24,6 +95,16 @@ export interface TaskRecord {
   executor_principal_id?: string | null;
   assignment_state?: string | null;
   taskmaster_drivable?: boolean;
+  worktype?: string;
+  risk_level?: PolicyRiskLevel;
+  agent_trust_level?: AgentTrustLevel;
+  policy_inputs_json?: string;
+  external_side_effects_json?: string;
+  external_side_effects?: ExternalSideEffect[];
+  review_required?: boolean;
+  review_state?: ReviewPolicyState;
+  human_gate_required?: boolean;
+  human_gate_state?: HumanGatePolicyState;
   name: string;
   description: string | null;
   brief: string | null;
@@ -61,6 +142,15 @@ export interface CreateTaskInput {
   executor_principal_id?: string;
   assignment_state?: string;
   taskmaster_drivable?: boolean;
+  worktype?: string;
+  risk_level?: PolicyRiskLevel | string;
+  agent_trust_level?: AgentTrustLevel | string;
+  policy_inputs_json?: string;
+  external_side_effects_json?: string;
+  review_required?: boolean;
+  review_state?: ReviewPolicyState | string;
+  human_gate_required?: boolean;
+  human_gate_state?: HumanGatePolicyState | string;
   name: string;
   description?: string;
   brief?: string;
@@ -199,6 +289,15 @@ export interface UpdateTaskInput {
   executor_principal_id?: string;
   assignment_state?: string;
   taskmaster_drivable?: boolean;
+  worktype?: string;
+  risk_level?: PolicyRiskLevel | string;
+  agent_trust_level?: AgentTrustLevel | string;
+  policy_inputs_json?: string;
+  external_side_effects_json?: string;
+  review_required?: boolean;
+  review_state?: ReviewPolicyState | string;
+  human_gate_required?: boolean;
+  human_gate_state?: HumanGatePolicyState | string;
   name?: string;
   description?: string;
   brief?: string;
@@ -1480,6 +1579,180 @@ function normalizeJsonObjectString(value: unknown): string {
   }
 }
 
+function normalizePolicyRiskLevel(value: unknown): PolicyRiskLevel {
+  return value === 'medium' || value === 'high' || value === 'critical' ? value : 'low';
+}
+
+function normalizeAgentTrustLevel(value: unknown): AgentTrustLevel {
+  return value === 'low' || value === 'standard' || value === 'high' ? value : 'unknown';
+}
+
+function normalizeReviewPolicyState(value: unknown, required: boolean): ReviewPolicyState {
+  if (value === 'pending' || value === 'accepted' || value === 'request_fix' || value === 'skipped_by_policy') {
+    return value;
+  }
+  return required ? 'pending' : 'not_required';
+}
+
+function normalizeHumanGatePolicyState(value: unknown, required: boolean): HumanGatePolicyState {
+  if (value === 'pending' || value === 'approved' || value === 'rejected') {
+    return value;
+  }
+  return required ? 'pending' : 'not_required';
+}
+
+function normalizeExternalSideEffectType(value: unknown): ExternalSideEffectType {
+  return EXTERNAL_SIDE_EFFECT_TYPES.includes(value as ExternalSideEffectType)
+    ? value as ExternalSideEffectType
+    : 'other';
+}
+
+function normalizeExternalSideEffectSensitivity(value: unknown): ExternalSideEffectSensitivity {
+  return value === 'people' ||
+    value === 'customer' ||
+    value === 'legal' ||
+    value === 'financial' ||
+    value === 'security' ||
+    value === 'production' ||
+    value === 'confidential' ||
+    value === 'workspace_restricted'
+    ? value
+    : 'none';
+}
+
+function normalizeExternalSideEffectResolutionState(value: unknown): ExternalSideEffectResolutionState {
+  return value === 'gate_pending' ||
+    value === 'gate_approved' ||
+    value === 'gate_rejected' ||
+    value === 'resolved' ||
+    value === 'cancelled'
+    ? value
+    : 'requested';
+}
+
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  if (!value.trim()) {
+    return undefined;
+  }
+  return JSON.parse(value);
+}
+
+function normalizeExternalSideEffect(value: unknown, index: number): ExternalSideEffect {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`external side effect ${index + 1} must be an object`);
+  }
+
+  const record = value as Record<string, unknown>;
+  const targetSystem = normalizeBlockerReason(record.target_system);
+  if (!targetSystem) {
+    throw new Error(`external side effect ${index + 1} must include target_system`);
+  }
+
+  const requestedActor = normalizeBlockerReason(record.requested_actor_principal_id ?? record.requested_actor);
+  if (!requestedActor) {
+    throw new Error(`external side effect ${index + 1} must include requested_actor_principal_id`);
+  }
+
+  const metadata = record.metadata && typeof record.metadata === 'object' && !Array.isArray(record.metadata)
+    ? record.metadata as Record<string, unknown>
+    : undefined;
+
+  return {
+    type: normalizeExternalSideEffectType(record.type),
+    target_system: targetSystem,
+    risk_level: normalizePolicyRiskLevel(record.risk_level ?? record.risk),
+    sensitivity: normalizeExternalSideEffectSensitivity(record.sensitivity),
+    required_gate: normalizeBlocked(record.required_gate),
+    requested_actor_principal_id: requestedActor,
+    resolution_state: normalizeExternalSideEffectResolutionState(record.resolution_state),
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+export function parseExternalSideEffects(value: unknown): ExternalSideEffect[] {
+  const parsed = parseJsonValue(value);
+  if (typeof parsed === 'undefined' || parsed === null || parsed === '') {
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error('external_side_effects_json must be a JSON array');
+  }
+  return parsed.map((entry, index) => normalizeExternalSideEffect(entry, index));
+}
+
+function normalizeExternalSideEffectsJson(value: unknown): string {
+  return JSON.stringify(parseExternalSideEffects(value));
+}
+
+function readTaskPolicyLayers(value: unknown): Partial<Record<PolicyInputLayer, Record<string, unknown>>> {
+  const normalized = normalizeJsonObjectString(value);
+  try {
+    const parsed = JSON.parse(normalized) as Record<string, unknown> & { layers?: unknown };
+    const rawLayers: Record<string, unknown> = parsed.layers && typeof parsed.layers === 'object' && !Array.isArray(parsed.layers)
+      ? parsed.layers as Record<string, unknown>
+      : parsed;
+    const layers: Partial<Record<PolicyInputLayer, Record<string, unknown>>> = {};
+    for (const layer of POLICY_INPUT_LAYERS) {
+      const candidate = rawLayers[layer];
+      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+        layers[layer] = candidate as Record<string, unknown>;
+      }
+    }
+    return layers;
+  } catch {
+    return {};
+  }
+}
+
+export function buildTaskPolicyInputEnvelope(
+  task: Pick<
+    TaskRecord,
+    | 'id'
+    | 'org_id'
+    | 'team_id'
+    | 'project_id'
+    | 'worktype'
+    | 'column'
+    | 'risk_level'
+    | 'agent_trust_level'
+    | 'policy_inputs_json'
+    | 'external_side_effects_json'
+    | 'review_required'
+    | 'review_state'
+    | 'human_gate_required'
+    | 'human_gate_state'
+  >
+): TaskPolicyInputEnvelope {
+  const storedLayers = readTaskPolicyLayers(task.policy_inputs_json);
+  return {
+    layers: {
+      workspace: storedLayers.workspace ?? { org_id: task.org_id ?? DEFAULT_WORKSPACE_ORG_ID },
+      org: storedLayers.org ?? { org_id: task.org_id ?? DEFAULT_WORKSPACE_ORG_ID },
+      team: storedLayers.team ?? { team_id: task.team_id ?? DEFAULT_WORKSPACE_TEAM_ID },
+      project: storedLayers.project ?? { project_id: task.project_id ?? null },
+      worktype: storedLayers.worktype ?? { worktype: task.worktype ?? 'general' },
+      task: storedLayers.task ?? { task_id: task.id, lifecycle_state: task.column },
+      risk: storedLayers.risk ?? {
+        risk_level: task.risk_level ?? 'low',
+        external_side_effect_count: parseExternalSideEffects(task.external_side_effects_json).length,
+      },
+      agent_trust: storedLayers.agent_trust ?? { trust_level: task.agent_trust_level ?? 'unknown' },
+    },
+    review: {
+      required: Boolean(task.review_required),
+      state: task.review_state ?? 'not_required',
+    },
+    human_gate: {
+      required: Boolean(task.human_gate_required),
+      state: task.human_gate_state ?? 'not_required',
+    },
+    external_side_effects: parseExternalSideEffects(task.external_side_effects_json),
+  };
+}
+
 function normalizeJsonStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1616,6 +1889,15 @@ function bootstrap(db: Database.Database): void {
       executor_principal_id TEXT,
       assignment_state TEXT DEFAULT 'unassigned',
       taskmaster_drivable INTEGER NOT NULL DEFAULT 0,
+      worktype TEXT NOT NULL DEFAULT 'general',
+      risk_level TEXT NOT NULL DEFAULT 'low',
+      agent_trust_level TEXT NOT NULL DEFAULT 'unknown',
+      policy_inputs_json TEXT NOT NULL DEFAULT '{}',
+      external_side_effects_json TEXT NOT NULL DEFAULT '[]',
+      review_required INTEGER NOT NULL DEFAULT 0,
+      review_state TEXT NOT NULL DEFAULT 'not_required',
+      human_gate_required INTEGER NOT NULL DEFAULT 0,
+      human_gate_state TEXT NOT NULL DEFAULT 'not_required',
       name TEXT NOT NULL,
       description TEXT,
       column TEXT NOT NULL DEFAULT 'backlog',
@@ -2387,6 +2669,42 @@ function ensureWorkspaceScopeSchema(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN taskmaster_drivable INTEGER NOT NULL DEFAULT 0');
   }
 
+  if (!hasColumn(db, 'tasks', 'worktype')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN worktype TEXT NOT NULL DEFAULT 'general'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'risk_level')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'low'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'agent_trust_level')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN agent_trust_level TEXT NOT NULL DEFAULT 'unknown'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'policy_inputs_json')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN policy_inputs_json TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'external_side_effects_json')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN external_side_effects_json TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'review_required')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN review_required INTEGER NOT NULL DEFAULT 0');
+  }
+
+  if (!hasColumn(db, 'tasks', 'review_state')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN review_state TEXT NOT NULL DEFAULT 'not_required'");
+  }
+
+  if (!hasColumn(db, 'tasks', 'human_gate_required')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN human_gate_required INTEGER NOT NULL DEFAULT 0');
+  }
+
+  if (!hasColumn(db, 'tasks', 'human_gate_state')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN human_gate_state TEXT NOT NULL DEFAULT 'not_required'");
+  }
+
   if (!hasColumn(db, 'projects', 'org_id')) {
     db.exec(`ALTER TABLE projects ADD COLUMN org_id TEXT DEFAULT '${DEFAULT_WORKSPACE_ORG_ID}'`);
   }
@@ -2439,6 +2757,40 @@ function ensureWorkspaceScopeSchema(db: Database.Database): void {
       ELSE 'routing_problem'
     END
     WHERE assignment_state IS NULL OR trim(assignment_state) = '';
+
+    UPDATE tasks
+    SET worktype = 'general'
+    WHERE worktype IS NULL OR trim(worktype) = '';
+
+    UPDATE tasks
+    SET risk_level = 'low'
+    WHERE risk_level IS NULL OR trim(risk_level) = '';
+
+    UPDATE tasks
+    SET agent_trust_level = 'unknown'
+    WHERE agent_trust_level IS NULL OR trim(agent_trust_level) = '';
+
+    UPDATE tasks
+    SET policy_inputs_json = '{}'
+    WHERE policy_inputs_json IS NULL OR trim(policy_inputs_json) = '';
+
+    UPDATE tasks
+    SET external_side_effects_json = '[]'
+    WHERE external_side_effects_json IS NULL OR trim(external_side_effects_json) = '';
+
+    UPDATE tasks
+    SET review_state = CASE
+      WHEN review_required = 1 AND (review_state IS NULL OR trim(review_state) = '' OR review_state = 'not_required') THEN 'pending'
+      WHEN review_required = 0 AND (review_state IS NULL OR trim(review_state) = '') THEN 'not_required'
+      ELSE review_state
+    END;
+
+    UPDATE tasks
+    SET human_gate_state = CASE
+      WHEN human_gate_required = 1 AND (human_gate_state IS NULL OR trim(human_gate_state) = '' OR human_gate_state = 'not_required') THEN 'pending'
+      WHEN human_gate_required = 0 AND (human_gate_state IS NULL OR trim(human_gate_state) = '') THEN 'not_required'
+      ELSE human_gate_state
+    END;
 
     UPDATE projects
     SET org_id = '${DEFAULT_WORKSPACE_ORG_ID}'
@@ -3357,6 +3709,16 @@ function mapTaskRow(row: Record<string, unknown>): TaskRecord {
     executor_principal_id: normalizeBlockerReason(row.executor_principal_id),
     assignment_state: normalizeBlockerReason(row.assignment_state) ?? 'unassigned',
     taskmaster_drivable: normalizeBlocked(row.taskmaster_drivable),
+    worktype: normalizeBlockerReason(row.worktype) ?? 'general',
+    risk_level: normalizePolicyRiskLevel(row.risk_level),
+    agent_trust_level: normalizeAgentTrustLevel(row.agent_trust_level),
+    policy_inputs_json: normalizeJsonObjectString(row.policy_inputs_json),
+    external_side_effects_json: normalizeExternalSideEffectsJson(row.external_side_effects_json),
+    external_side_effects: parseExternalSideEffects(row.external_side_effects_json),
+    review_required: normalizeBlocked(row.review_required),
+    review_state: normalizeReviewPolicyState(row.review_state, normalizeBlocked(row.review_required)),
+    human_gate_required: normalizeBlocked(row.human_gate_required),
+    human_gate_state: normalizeHumanGatePolicyState(row.human_gate_state, normalizeBlocked(row.human_gate_required)),
     name: String(row.name ?? ''),
     description: row.description === null ? null : String(row.description ?? ''),
     brief: row.brief === null ? null : String(row.brief ?? ''),
@@ -4318,6 +4680,15 @@ export function createTaskRepository(): TaskRepository {
       executor_principal_id,
       assignment_state,
       taskmaster_drivable,
+      worktype,
+      risk_level,
+      agent_trust_level,
+      policy_inputs_json,
+      external_side_effects_json,
+      review_required,
+      review_state,
+      human_gate_required,
+      human_gate_state,
       name,
       description,
       brief,
@@ -4341,7 +4712,7 @@ export function createTaskRepository(): TaskRepository {
       created_at,
       updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const deleteStmt = db.prepare('DELETE FROM tasks WHERE id = ?');
 
@@ -4383,6 +4754,8 @@ export function createTaskRepository(): TaskRepository {
           : taskmasterDrivable
             ? 'unassigned'
             : 'routing_problem');
+      const reviewRequired = normalizeBlocked(input.review_required);
+      const humanGateRequired = normalizeBlocked(input.human_gate_required);
       const result = createStmt.run(
         normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
         normalizeWorkspaceId(input.team_id, DEFAULT_WORKSPACE_TEAM_ID),
@@ -4395,6 +4768,15 @@ export function createTaskRepository(): TaskRepository {
         input.executor_principal_id?.trim() || null,
         assignmentState,
         taskmasterDrivable ? 1 : 0,
+        input.worktype?.trim() || 'general',
+        normalizePolicyRiskLevel(input.risk_level),
+        normalizeAgentTrustLevel(input.agent_trust_level),
+        normalizeJsonObjectString(input.policy_inputs_json),
+        normalizeExternalSideEffectsJson(input.external_side_effects_json),
+        reviewRequired ? 1 : 0,
+        normalizeReviewPolicyState(input.review_state, reviewRequired),
+        humanGateRequired ? 1 : 0,
+        normalizeHumanGatePolicyState(input.human_gate_state, humanGateRequired),
         taskName,
         input.description?.trim() || null,
         input.brief?.trim() || null,
@@ -4589,6 +4971,69 @@ export function createTaskRepository(): TaskRepository {
       if (typeof updates.taskmaster_drivable !== 'undefined') {
         fields.push('taskmaster_drivable = ?');
         values.push(normalizeBlocked(updates.taskmaster_drivable) ? 1 : 0);
+      }
+
+      if (typeof updates.worktype === 'string') {
+        fields.push('worktype = ?');
+        values.push(updates.worktype.trim() || 'general');
+      }
+
+      if (typeof updates.risk_level !== 'undefined') {
+        fields.push('risk_level = ?');
+        values.push(normalizePolicyRiskLevel(updates.risk_level));
+      }
+
+      if (typeof updates.agent_trust_level !== 'undefined') {
+        fields.push('agent_trust_level = ?');
+        values.push(normalizeAgentTrustLevel(updates.agent_trust_level));
+      }
+
+      if (typeof updates.policy_inputs_json !== 'undefined') {
+        fields.push('policy_inputs_json = ?');
+        values.push(normalizeJsonObjectString(updates.policy_inputs_json));
+      }
+
+      if (typeof updates.external_side_effects_json !== 'undefined') {
+        fields.push('external_side_effects_json = ?');
+        values.push(normalizeExternalSideEffectsJson(updates.external_side_effects_json));
+      }
+
+      if (typeof updates.review_required !== 'undefined') {
+        const reviewRequired = normalizeBlocked(updates.review_required);
+        fields.push('review_required = ?');
+        values.push(reviewRequired ? 1 : 0);
+        if (typeof updates.review_state === 'undefined') {
+          fields.push('review_state = ?');
+          values.push(normalizeReviewPolicyState(undefined, reviewRequired));
+        }
+      }
+
+      if (typeof updates.review_state !== 'undefined') {
+        const reviewRequired =
+          typeof updates.review_required !== 'undefined'
+            ? normalizeBlocked(updates.review_required)
+            : normalizeBlocked(existingTask.review_required);
+        fields.push('review_state = ?');
+        values.push(normalizeReviewPolicyState(updates.review_state, reviewRequired));
+      }
+
+      if (typeof updates.human_gate_required !== 'undefined') {
+        const humanGateRequired = normalizeBlocked(updates.human_gate_required);
+        fields.push('human_gate_required = ?');
+        values.push(humanGateRequired ? 1 : 0);
+        if (typeof updates.human_gate_state === 'undefined') {
+          fields.push('human_gate_state = ?');
+          values.push(normalizeHumanGatePolicyState(undefined, humanGateRequired));
+        }
+      }
+
+      if (typeof updates.human_gate_state !== 'undefined') {
+        const humanGateRequired =
+          typeof updates.human_gate_required !== 'undefined'
+            ? normalizeBlocked(updates.human_gate_required)
+            : normalizeBlocked(existingTask.human_gate_required);
+        fields.push('human_gate_state = ?');
+        values.push(normalizeHumanGatePolicyState(updates.human_gate_state, humanGateRequired));
       }
 
       if (fields.length === 0) {

@@ -177,6 +177,108 @@ describe('TaskRepository', () => {
     expect(report.markdown).toContain('Cleanup warnings');
   });
 
+  it('persists policy input layers, risk inputs, and external side effects separately from review state', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const sideEffects = [
+      {
+        type: 'email_send',
+        target_system: 'gmail',
+        risk_level: 'high',
+        sensitivity: 'customer',
+        required_gate: true,
+        requested_actor_principal_id: 'agent-1',
+        resolution_state: 'gate_pending',
+      },
+    ];
+
+    const task = repo.createTask({
+      name: 'Customer send policy fixture',
+      org_id: 'org-policy',
+      team_id: 'team-cs',
+      project_id: 42,
+      worktype: 'customer_success',
+      risk_level: 'high',
+      agent_trust_level: 'standard',
+      review_required: true,
+      review_state: 'pending',
+      human_gate_required: true,
+      human_gate_state: 'pending',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          workspace: { policy_id: 'workspace-default' },
+          org: { policy_id: 'org-default' },
+        },
+      }),
+      external_side_effects_json: JSON.stringify(sideEffects),
+    });
+
+    expect(task).toMatchObject({
+      worktype: 'customer_success',
+      risk_level: 'high',
+      agent_trust_level: 'standard',
+      review_required: true,
+      review_state: 'pending',
+      human_gate_required: true,
+      human_gate_state: 'pending',
+    });
+    expect(task.external_side_effects).toEqual(sideEffects);
+
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+    expect(Object.keys(envelope.layers)).toEqual(
+      expect.arrayContaining(['workspace', 'org', 'team', 'project', 'worktype', 'task', 'risk', 'agent_trust']),
+    );
+    expect(envelope.layers.workspace).toMatchObject({ policy_id: 'workspace-default' });
+    expect(envelope.layers.worktype).toMatchObject({ worktype: 'customer_success' });
+    expect(envelope.layers.risk).toMatchObject({ risk_level: 'high', external_side_effect_count: 1 });
+    expect(envelope.review).toEqual({ required: true, state: 'pending' });
+    expect(envelope.human_gate).toEqual({ required: true, state: 'pending' });
+    expect(envelope.external_side_effects[0]).toMatchObject({
+      target_system: 'gmail',
+      required_gate: true,
+      requested_actor_principal_id: 'agent-1',
+      resolution_state: 'gate_pending',
+    });
+  });
+
+  it('keeps human gate state independent from review state and rejects malformed side effects', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const gatedWithoutReview = repo.createTask({
+      name: 'Gate-only fixture',
+      review_required: false,
+      human_gate_required: true,
+    });
+
+    expect(gatedWithoutReview.review_required).toBe(false);
+    expect(gatedWithoutReview.review_state).toBe('not_required');
+    expect(gatedWithoutReview.human_gate_required).toBe(true);
+    expect(gatedWithoutReview.human_gate_state).toBe('pending');
+
+    expect(() => repo.createTask({
+      name: 'Malformed side effect',
+      external_side_effects_json: JSON.stringify([
+        {
+          type: 'crm_update',
+          risk_level: 'medium',
+          required_gate: true,
+          requested_actor_principal_id: 'agent-1',
+        },
+      ]),
+    })).toThrow('target_system');
+
+    expect(() => repo.updateTask(gatedWithoutReview.id, {
+      external_side_effects_json: JSON.stringify([
+        {
+          type: 'hr_action',
+          target_system: 'hris',
+          required_gate: true,
+        },
+      ]),
+    })).toThrow('requested_actor_principal_id');
+  });
+
   it('should list tasks', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();
