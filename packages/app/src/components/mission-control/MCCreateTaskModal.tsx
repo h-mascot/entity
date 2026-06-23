@@ -235,8 +235,17 @@ export default function MCCreateTaskModal({
 
     try {
       const projectNames = selectedProjects.map((project) => project.name);
+      const currentPrincipal = userProfile.displayName || 'Local User';
+      const executorPrincipal = form.assignee !== 'Unassigned' ? form.assignee : undefined;
       const task = await onCreateTask({
         name: trimmedName,
+        created_by_principal_id: currentPrincipal,
+        initiator_principal_id: currentPrincipal,
+        initiator_type: 'human',
+        owner_principal_id: currentPrincipal,
+        owner_principal_type: 'human',
+        executor_principal_id: executorPrincipal,
+        assignment_state: executorPrincipal ? 'assigned' : 'unassigned',
         description: form.description.trim() || undefined,
         assignee: form.assignee,
         column: form.column,

@@ -70,6 +70,16 @@ function matchesReviewFilter(task: TaskBoardTask, filter: string): boolean {
   return true;
 }
 
+function isKnownPrincipal(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return Boolean(normalized) && !normalized.startsWith("legacy-") && normalized !== "unknown";
+}
+
+function isExecutableTask(task: TaskBoardTask): boolean {
+  return task.column === "todo" || task.column === "doing" || task.column === "review";
+}
+
 function isViewportMatch(viewport: MCViewport, width: number): boolean {
   if (viewport === "desktop") {
     return width >= 1024;
@@ -208,6 +218,37 @@ export default function TaskBoard({
     }
     return result;
   })();
+  const workPlaneSummary = (() => {
+    const projectKeys = new Set<string>();
+    for (const task of tasks) {
+      for (const project of task.projects) {
+        projectKeys.add(project.id ? `id:${project.id}` : `name:${project.name.toLowerCase()}`);
+      }
+      if (task.project_id) {
+        projectKeys.add(`id:${task.project_id}`);
+      }
+    }
+
+    const ownedTasks = tasks.filter((task) => isKnownPrincipal(task.owner_principal_id)).length;
+    const unknownAccountabilityTasks = tasks.filter(
+      (task) => !isKnownPrincipal(task.initiator_principal_id) || !isKnownPrincipal(task.owner_principal_id)
+    ).length;
+    const executableTasks = tasks.filter(isExecutableTask);
+    const executableWithAssigneeOrExecutor = executableTasks.filter(
+      (task) =>
+        isKnownPrincipal(task.executor_principal_id) ||
+        (task.assignee.trim() !== "" && task.assignee.toLowerCase() !== "unassigned") ||
+        task.taskmaster_drivable
+    ).length;
+
+    return {
+      projects: projectKeys.size,
+      ownedTasks,
+      unknownAccountabilityTasks,
+      executableTasks: executableTasks.length,
+      executableWithAssigneeOrExecutor,
+    };
+  })();
 
   return (
     <div
@@ -227,6 +268,35 @@ export default function TaskBoard({
           onReviewFilterChange={setReviewFilter}
           onSettingsOpen={() => setSettingsOpen(true)}
         />
+        <section
+          data-testid="work-plane-summary"
+          className="border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]/70 px-4 py-2 text-xs text-[var(--text-secondary)] md:px-5"
+          aria-label="Entity work plane summary"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+              Work plane
+            </span>
+            <span className="rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-0.5">
+              {workPlaneSummary.projects} project{workPlaneSummary.projects === 1 ? "" : "s"}
+            </span>
+            <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-emerald-200">
+              {workPlaneSummary.ownedTasks}/{tasks.length} tasks have owners
+            </span>
+            <span
+              className={`rounded-full border px-2 py-0.5 ${
+                workPlaneSummary.unknownAccountabilityTasks > 0
+                  ? "border-amber-500/25 bg-amber-500/10 text-amber-200"
+                  : "border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]"
+              }`}
+            >
+              {workPlaneSummary.unknownAccountabilityTasks} unknown accountability
+            </span>
+            <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-sky-200">
+              {workPlaneSummary.executableWithAssigneeOrExecutor}/{workPlaneSummary.executableTasks} active executable
+            </span>
+          </div>
+        </section>
       </div>
       {settingsOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true" aria-labelledby="mc-settings-title">

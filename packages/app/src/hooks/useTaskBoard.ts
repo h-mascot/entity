@@ -38,6 +38,17 @@ export interface TaskActivity {
 
 export interface TaskBoardTask {
   id: number;
+  org_id: string | null;
+  team_id: string | null;
+  project_id: number | null;
+  created_by_principal_id: string | null;
+  initiator_principal_id: string | null;
+  initiator_type: string | null;
+  owner_principal_id: string | null;
+  owner_principal_type: string | null;
+  executor_principal_id: string | null;
+  assignment_state: string | null;
+  taskmaster_drivable: boolean;
   name: string;
   description: string | null;
   column: TaskColumn;
@@ -65,6 +76,17 @@ export interface TaskBoardTask {
 
 export interface CreateTaskPayload {
   name: string;
+  org_id?: string;
+  team_id?: string;
+  project_id?: number | null;
+  created_by_principal_id?: string;
+  initiator_principal_id?: string;
+  initiator_type?: string;
+  owner_principal_id?: string;
+  owner_principal_type?: string;
+  executor_principal_id?: string;
+  assignment_state?: string;
+  taskmaster_drivable?: boolean;
   description?: string;
   assignee?: string;
   column?: TaskColumn;
@@ -204,6 +226,15 @@ function normalizeBlocked(value: unknown): boolean {
 }
 
 function normalizeBlockerReason(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeOptionalString(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
@@ -447,9 +478,21 @@ function normalizeTask(raw: unknown): TaskBoardTask | null {
   const parentTaskId = Number.isInteger(parentTaskIdCandidate) && parentTaskIdCandidate > 0 ? parentTaskIdCandidate : null;
   const subtaskCountCandidate = Number(row.subtask_count ?? row.subtaskCount ?? metadataRecord?.subtask_count);
   const subtaskDoneCountCandidate = Number(row.subtask_done_count ?? row.subtaskDoneCount ?? metadataRecord?.subtask_done_count);
+  const projectIdCandidate = Number(row.project_id ?? row.projectId);
 
   return {
     id,
+    org_id: normalizeOptionalString(row.org_id ?? row.orgId),
+    team_id: normalizeOptionalString(row.team_id ?? row.teamId),
+    project_id: Number.isInteger(projectIdCandidate) && projectIdCandidate > 0 ? projectIdCandidate : null,
+    created_by_principal_id: normalizeOptionalString(row.created_by_principal_id ?? row.createdByPrincipalId),
+    initiator_principal_id: normalizeOptionalString(row.initiator_principal_id ?? row.initiatorPrincipalId),
+    initiator_type: normalizeOptionalString(row.initiator_type ?? row.initiatorType),
+    owner_principal_id: normalizeOptionalString(row.owner_principal_id ?? row.ownerPrincipalId),
+    owner_principal_type: normalizeOptionalString(row.owner_principal_type ?? row.ownerPrincipalType),
+    executor_principal_id: normalizeOptionalString(row.executor_principal_id ?? row.executorPrincipalId),
+    assignment_state: normalizeOptionalString(row.assignment_state ?? row.assignmentState),
+    taskmaster_drivable: normalizeBlocked(row.taskmaster_drivable ?? row.taskmasterDrivable),
     name,
     description: typeof row.description === 'string' ? row.description : null,
     column: normalizeTaskColumn(row.column),
@@ -561,6 +604,17 @@ function buildOfflineQueuedTask(payload: CreateTaskPayload, queueId: number): Ta
 
   return {
     id: -Math.abs(queueId),
+    org_id: normalizeOptionalString(payload.org_id) ?? 'default-org',
+    team_id: normalizeOptionalString(payload.team_id) ?? 'default-team',
+    project_id: payload.project_id ?? payload.projectIds?.[0] ?? null,
+    created_by_principal_id: normalizeOptionalString(payload.created_by_principal_id),
+    initiator_principal_id: normalizeOptionalString(payload.initiator_principal_id) ?? 'legacy-unknown',
+    initiator_type: normalizeOptionalString(payload.initiator_type) ?? 'unknown',
+    owner_principal_id: normalizeOptionalString(payload.owner_principal_id) ?? 'legacy-owner',
+    owner_principal_type: normalizeOptionalString(payload.owner_principal_type) ?? 'unknown',
+    executor_principal_id: normalizeOptionalString(payload.executor_principal_id),
+    assignment_state: normalizeOptionalString(payload.assignment_state),
+    taskmaster_drivable: Boolean(payload.taskmaster_drivable),
     name: payload.name.trim() || 'Offline Task',
     description: typeof payload.description === 'string' ? payload.description : null,
     column: normalizeTaskColumn(payload.column ?? 'backlog'),
@@ -766,6 +820,25 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
           : existing?.projects ?? [];
         const optimisticTask: TaskBoardTask = {
           id: taskId,
+          org_id: existing?.org_id ?? normalizeOptionalString(payload.org_id) ?? 'default-org',
+          team_id: existing?.team_id ?? normalizeOptionalString(payload.team_id) ?? 'default-team',
+          project_id: payload.project_id ?? existing?.project_id ?? payload.projectIds?.[0] ?? null,
+          created_by_principal_id:
+            normalizeOptionalString(payload.created_by_principal_id) ?? existing?.created_by_principal_id ?? null,
+          initiator_principal_id:
+            normalizeOptionalString(payload.initiator_principal_id) ?? existing?.initiator_principal_id ?? 'legacy-unknown',
+          initiator_type: normalizeOptionalString(payload.initiator_type) ?? existing?.initiator_type ?? 'unknown',
+          owner_principal_id:
+            normalizeOptionalString(payload.owner_principal_id) ?? existing?.owner_principal_id ?? 'legacy-owner',
+          owner_principal_type:
+            normalizeOptionalString(payload.owner_principal_type) ?? existing?.owner_principal_type ?? 'unknown',
+          executor_principal_id:
+            normalizeOptionalString(payload.executor_principal_id) ?? existing?.executor_principal_id ?? null,
+          assignment_state: normalizeOptionalString(payload.assignment_state) ?? existing?.assignment_state ?? null,
+          taskmaster_drivable:
+            typeof payload.taskmaster_drivable === 'boolean'
+              ? payload.taskmaster_drivable
+              : existing?.taskmaster_drivable ?? false,
           name: typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : existing?.name ?? `Task #${taskId}`,
           description: Object.prototype.hasOwnProperty.call(payload, 'description')
             ? typeof payload.description === 'string'
@@ -858,6 +931,17 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
           const now = new Date().toISOString();
           return {
             id: taskId,
+            org_id: null,
+            team_id: null,
+            project_id: null,
+            created_by_principal_id: null,
+            initiator_principal_id: 'legacy-unknown',
+            initiator_type: 'unknown',
+            owner_principal_id: 'legacy-owner',
+            owner_principal_type: 'unknown',
+            executor_principal_id: null,
+            assignment_state: null,
+            taskmaster_drivable: false,
             name: `Task #${taskId}`,
             description: null,
             column,

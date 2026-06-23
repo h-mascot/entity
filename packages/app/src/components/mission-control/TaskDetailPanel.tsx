@@ -94,6 +94,17 @@ interface TaskDetailData {
   createdAt: string;
   updatedAt: string;
   createdBy: string | null;
+  createdByPrincipalId: string | null;
+  initiatorPrincipalId: string | null;
+  initiatorType: string | null;
+  ownerPrincipalId: string | null;
+  ownerPrincipalType: string | null;
+  executorPrincipalId: string | null;
+  assignmentState: string | null;
+  taskmasterDrivable: boolean;
+  submittedBy: string | null;
+  reviewer: string | null;
+  approver: string | null;
   model: string | null;
   estimateHours: number | null;
   timeSpent: number | null;
@@ -499,6 +510,17 @@ function normalizeTaskDetail(raw: unknown): TaskDetailData | null {
     createdAt: normalizeTimestamp(record.created_at),
     updatedAt: normalizeTimestamp(record.updated_at ?? record.created_at),
     createdBy: readFirstString(record.created_by, metadataRecord.created_by, metadataRecord.createdBy),
+    createdByPrincipalId: readFirstString(record.created_by_principal_id, record.createdByPrincipalId, metadataRecord.created_by_principal_id, metadataRecord.createdByPrincipalId),
+    initiatorPrincipalId: readFirstString(record.initiator_principal_id, record.initiatorPrincipalId, metadataRecord.initiator_principal_id, metadataRecord.initiatorPrincipalId),
+    initiatorType: readFirstString(record.initiator_type, record.initiatorType, metadataRecord.initiator_type, metadataRecord.initiatorType),
+    ownerPrincipalId: readFirstString(record.owner_principal_id, record.ownerPrincipalId, metadataRecord.owner_principal_id, metadataRecord.ownerPrincipalId),
+    ownerPrincipalType: readFirstString(record.owner_principal_type, record.ownerPrincipalType, metadataRecord.owner_principal_type, metadataRecord.ownerPrincipalType),
+    executorPrincipalId: readFirstString(record.executor_principal_id, record.executorPrincipalId, metadataRecord.executor_principal_id, metadataRecord.executorPrincipalId),
+    assignmentState: readFirstString(record.assignment_state, record.assignmentState, metadataRecord.assignment_state, metadataRecord.assignmentState),
+    taskmasterDrivable: normalizeBoolean(record.taskmaster_drivable ?? record.taskmasterDrivable ?? metadataRecord.taskmaster_drivable ?? metadataRecord.taskmasterDrivable),
+    submittedBy: readFirstString(record.submitted_by, record.submittedBy, metadataRecord.submitted_by, metadataRecord.submittedBy, metadataRecord.producer),
+    reviewer: readFirstString(record.reviewer, metadataRecord.reviewer, metadataRecord.review_owner),
+    approver: readFirstString(record.approver, record.approver_principal_id, metadataRecord.approver, metadataRecord.approver_principal_id, metadataRecord.human_gate_approver, metadataRecord.gate_approver),
     model: readFirstString(record.model, metadataRecord.model),
     estimateHours: normalizeNullableNumber(record.estimate_hours ?? metadataRecord.estimate_hours),
     timeSpent: normalizeNullableNumber(record.time_spent ?? metadataRecord.time_spent),
@@ -801,6 +823,25 @@ function hasReviewMetadata(metadata: Record<string, unknown>): boolean {
 
 function reviewField(value: unknown, fallback = 'Not set'): string {
   return readNonEmptyString(value) ?? fallback;
+}
+
+function formatAccountabilityField(value: string | null, fallback = 'Unknown'): { label: string; degraded: boolean } {
+  const normalized = readNonEmptyString(value);
+  if (!normalized || normalized.toLowerCase() === 'unknown') {
+    return { label: `${fallback} (degraded)`, degraded: true };
+  }
+
+  if (normalized.toLowerCase().startsWith('legacy-')) {
+    return { label: `${normalized} (legacy)`, degraded: true };
+  }
+
+  return { label: normalized, degraded: false };
+}
+
+function accountabilityCardClass(degraded: boolean): string {
+  return degraded
+    ? 'rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-amber-100'
+    : 'rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5';
 }
 
 function reviewPacketSummary(metadata: Record<string, unknown>): string {
@@ -1993,6 +2034,50 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
       );
     });
 
+  const accountabilityRows = task
+    ? [
+        {
+          label: 'Initiator',
+          value: formatAccountabilityField(task.initiatorPrincipalId),
+          meta: task.initiatorType ?? 'type unknown',
+        },
+        {
+          label: 'Owner',
+          value: formatAccountabilityField(task.ownerPrincipalId),
+          meta: task.ownerPrincipalType ?? 'principal type unknown',
+        },
+        {
+          label: 'Assignee',
+          value: formatAccountabilityField(task.assignee === 'Unassigned' ? null : task.assignee),
+          meta: task.assignmentState ?? 'assignment state unknown',
+        },
+        {
+          label: 'Executor',
+          value: task.executorPrincipalId
+            ? formatAccountabilityField(task.executorPrincipalId)
+            : task.taskmasterDrivable
+              ? { label: 'Task Master drivable', degraded: false }
+              : formatAccountabilityField(null),
+          meta: task.taskmasterDrivable ? 'policy-drivable unassigned state' : 'individual executor expected',
+        },
+        {
+          label: 'Submitted by',
+          value: formatAccountabilityField(task.submittedBy),
+          meta: 'review submission principal',
+        },
+        {
+          label: 'Reviewer',
+          value: formatAccountabilityField(task.reviewer),
+          meta: 'review decision principal',
+        },
+        {
+          label: 'Approver',
+          value: formatAccountabilityField(task.approver),
+          meta: 'human gate principal',
+        },
+      ]
+    : [];
+
   return (
     <div className="fixed inset-0 z-[85] pointer-events-none">
       <div
@@ -2347,6 +2432,46 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                  className="mc-shell-input min-h-[104px] w-full resize-y px-3 py-2 text-sm leading-5"
 	                  placeholder="Add task details, context, or markdown notes."
 	                />
+	              </section>
+
+	              <section
+	                style={{ order: 2 }}
+	                className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+	                data-testid="task-accountability-panel"
+	              >
+	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+	                  <div>
+	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                      Accountability
+	                    </div>
+	                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+	                      Work-object principals for ownership, execution, review, and approval.
+	                    </p>
+	                  </div>
+	                  {accountabilityRows.some((row) => row.value.degraded) ? (
+	                    <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-200">
+	                      Unknown or legacy fields present
+	                    </span>
+	                  ) : (
+	                    <span className="rounded-full border border-[var(--accent)]/25 bg-[var(--surface-accent)] px-2 py-0.5 text-[11px] text-[var(--accent)]">
+	                      Complete
+	                    </span>
+	                  )}
+	                </div>
+	                <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+	                  <div className={accountabilityCardClass(formatAccountabilityField(task.createdByPrincipalId ?? task.createdBy).degraded)}>
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Created by</div>
+	                    <div>{formatAccountabilityField(task.createdByPrincipalId ?? task.createdBy).label}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">record creator</div>
+	                  </div>
+	                  {accountabilityRows.map((row) => (
+	                    <div key={row.label} className={accountabilityCardClass(row.value.degraded)}>
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">{row.label}</div>
+	                      <div>{row.value.label}</div>
+	                      <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{row.meta}</div>
+	                    </div>
+	                  ))}
+	                </div>
 	              </section>
 
 	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
