@@ -38,7 +38,7 @@ The active issue is `THE-32`, source `THE-8.2`, parent `THE-8`, title `Implement
 - [x] Step 5: Run proof commands and CLI Tester gates for `THE-32`.
   - **Files:** `output/entity-phase-2/test-gate/THE-32.*`, `output/entity-phase-2/book-review/THE-32.*`.
   - **Verify:** proof commands and CLI Tester request/run pass; Book review is `REQUESTED` with `safeToContinue=false`; verify is blocked on Book review, so `THE-33` must not start.
-- [ ] Step 6: Update local run-state and Linear proof comment for `THE-32`.
+- [x] Step 6: Update local run-state and Linear proof comment for `THE-32`.
   - **Files:** `.cursor/run-state/entity-phase-2.json`, Linear `THE-32`.
   - **Verify:** Linear proof comment includes branch, files changed, commands/exit codes, proof paths, gate receipt, Book review receipt, and blockers if any.
 
@@ -49,6 +49,7 @@ The active issue is `THE-32`, source `THE-8.2`, parent `THE-8`, title `Implement
 | 06:35 | Step 2 | done | Fresh `THE-31` verify passed under Node 22 with clean-tree baseline. |
 | 06:36 | Step 3 | done | `THE-32` and parent `THE-8` fetched live; source mapping and dependency safety confirmed. |
 | 06:41 | Steps 4-5 | blocked | `THE-32` implementation complete; focused tests, server suite, root build, smoke, and machine gate pass. Book review remains `REQUESTED` with `safeToContinue=false`; `THE-33` not started. |
+| 06:43 | Step 6 | done | Linear proof/blocker comment posted: `6bbea95f-3c91-4234-b89e-e1a8c73bc4eb`. |
 
 ## Files Touched
 - `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-32`.
@@ -72,5 +73,5 @@ The active issue is `THE-32`, source `THE-8.2`, parent `THE-8`, title `Implement
 - [x] `THE-32` implementation complete.
 - [x] Proof commands pass.
 - [ ] CLI Tester request/run/book-review/verify pass; currently blocked at Book review.
-- [ ] Linear proof comment added.
+- [x] Linear proof comment added.
 - [ ] Next queue candidate identified only after verify allows continuation.
