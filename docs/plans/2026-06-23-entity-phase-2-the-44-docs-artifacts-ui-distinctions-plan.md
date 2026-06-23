@@ -4,7 +4,7 @@ Implement `THE-44` / `THE-10.4`: build docs/files/artifacts UI distinctions for 
 **MC Task:** Entity Phase 2 approved queue
 **Created:** 2026-06-23
 **Agent:** Cursor
-**Status:** BLOCKED_ON_BOOK_REVIEW
+**Status:** COMPLETE_VERIFIED
 
 ## Context
 Live Linear `THE-44` is a child issue under parent `THE-10`, source `THE-10.4`. Scope is UI-facing: show ExternalDocumentRef, NativeDocument, raw EvidenceArtifact/proof, and curated reports side by side without blurring ownership, canonicality, mutability, or degraded/restricted states. This follows completed `THE-41` schema, `THE-42` link services, and `THE-43` markdown storage/versioning seams.
@@ -37,10 +37,10 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 - [x] Step 6: Run required proof commands and any focused tests.
   - **Files:** command receipts only
   - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`, `npm run build`, `cd packages/server && npm run build && npx vitest run` pass under Node 22.
-- [ ] Step 7: Run CLI Tester four-step for `THE-44`.
+- [x] Step 7: Run CLI Tester four-step for `THE-44`.
   - **Files:** `output/entity-phase-2/test-gate/THE-44.*`, `output/entity-phase-2/book-review/THE-44.*`
   - **Verify:** request, run, book-review, and verify pass; verify reports `nextChildBlocked=false`.
-- [ ] Step 8: Comment Linear, update run-state, commit, push if needed, and advance to `THE-45`.
+- [x] Step 8: Comment Linear, update run-state, commit, push if needed, and advance to `THE-45`.
   - **Files:** `.cursor/run-state/entity-phase-2.json`, Linear `THE-44`
   - **Verify:** Linear proof comment includes branch, files changed, commands/exit codes, proof paths, screenshot/DOM receipt, gate receipt, Book review receipt.
 
@@ -51,6 +51,7 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 | 19:34 | Steps 2-5 | done | Added task panel document-object cards for native markdown, external refs, raw proof, curated interpretation, ObjectRef roles, and restricted/degraded placeholders. Browser proof captured at `output/playwright/THE-44-docs-artifacts-ui-distinctions.png` and `output/playwright/THE-44-docs-artifacts-ui-distinctions-dom.md`. |
 | 19:36 | Step 6 | done | `bash scripts/proof/entity-phase-2-smoke.sh`, `npm run build`, and `cd packages/server && npm run build && npx vitest run` passed under Node v22.22.3. GitNexus detect-changes run; shared UI component impact noted. |
 | 19:40 | Steps 7-8 | blocked | CLI Tester request and run passed, but Book review returned `REQUESTED` / `safeToContinue=false`; `verify` exited 1 with `reviewGateStatus=BLOCKED`, `nextChildBlocked=true`. Linear proof/blocker comment posted: `9eac52a3-179a-4961-a074-097dabb80532`. Scoped implementation commit: `0b8ed7b`. Do not start `THE-45` until Book approval plus verify PASS, or explicit waiver. |
+| 20:22 | Steps 7-8 | done | Book review receipt updated to `APPROVED` / `safeToContinue=true`; reran server proof and `project-test-gate verify THE-44` under Node v22.22.3. Verify PASS with no blockers. Run-state advanced to live `THE-45` (`THE-10.5`: migrate docs/artifacts and add permission tests). |
 
 ## Files Touched
 - `docs/plans/2026-06-23-entity-phase-2-the-44-docs-artifacts-ui-distinctions-plan.md` - created - compaction-safe plan for `THE-44`.
@@ -63,7 +64,7 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 1. Re-read this file fully.
 2. Run `git status` and `git diff` to see current state.
 3. Read `.cursor/run-state/entity-phase-2.json`.
-4. Continue from Step 7 after `output/entity-phase-2/book-review/THE-44.json` is APPROVED and `safeToContinue=true`; then re-run `project-test-gate verify THE-44`.
+4. `THE-44` is complete and verified. Continue with live Linear `THE-45` (`THE-10.5`: migrate existing docs/artifacts and add permission tests).
 5. Use Node v22.22.x for proof/gate commands unless native dependencies are rebuilt for another Node.
 6. Continue from `THE-44`; do not restart earlier issues.
 
@@ -72,7 +73,7 @@ Authority order: live Linear issue body, `AGENTS.md`, `.cursor/rules/entity-phas
 - [x] Focused tests/fixtures pass.
 - [x] Screenshot/DOM proof captured.
 - [x] Required proof commands pass.
-- [ ] CLI Tester request/run/book-review/verify pass with `nextChildBlocked=false`.
+- [x] CLI Tester request/run/book-review/verify pass with `nextChildBlocked=false`.
 - [x] Linear proof/blocker comment posted.
 - [x] Scoped save-point commit created.
-- [ ] Run-state advanced to `THE-45`.
+- [x] Run-state advanced to `THE-45`.
