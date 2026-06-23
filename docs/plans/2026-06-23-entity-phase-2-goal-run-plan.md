@@ -59,6 +59,7 @@ Current local receipts show `THE-37` machine proof passed, Book review is `decis
 | 13:37 | Step 6 | blocked | Fixed receipt hash basis, reran focused test and proof commands successfully, then reran CLI request/run/book-review. Machine gate passed, but fresh Book review returned `REQUESTED`/`safeToContinue=false`; verify was not run. |
 | 13:38 | Step 7 | blocked | Linear blocker follow-up posted: `0ddad8f8-b5d7-482f-a9f3-c3398ae38294`; no commit and no `THE-38` branch because Book approval is still missing. |
 | 14:16 | Step 6 | done | Current local receipts now show Book `APPROVED`/`safeToContinue=true` and gate `reviewGateStatus=PASS`, `nextChildBlocked=false`; commit is now unblocked. |
+| 14:18 | Step 7 | done | Scoped `THE-37` commit created: `cf3a34d`. Final Linear proof update posted: `ee799ee6-759f-4d18-a6ff-3cd1a0414744`. |
 
 ## Files Touched
 - `docs/plans/2026-06-23-entity-phase-2-goal-run-plan.md` - created/modified - dated resume plan for the current goal-mode run.
@@ -81,5 +82,5 @@ Current local receipts show `THE-37` machine proof passed, Book review is `decis
 - [x] `THE-37` implemented and machine-proven.
 - [x] `THE-37` Book review/verify passed.
 - [x] `THE-37` final Linear blocker follow-up complete.
-- [ ] `THE-37` scoped commit complete after Book approval.
+- [x] `THE-37` scoped commit complete after Book approval.
 - [ ] Remaining dependency-safe queue complete.

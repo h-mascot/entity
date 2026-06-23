@@ -67,6 +67,7 @@ The active issue is `THE-37`, source `THE-9.2`, parent `THE-9`, title `Implement
 | 13:37 | Step 7 | blocked | Fixed receipt hash basis, reran focused test and proof commands successfully, then reran CLI request/run/book-review. Machine gate passed, but fresh Book review returned `REQUESTED`/`safeToContinue=false`; verify was not run. |
 | 13:38 | Step 8 | done | Linear blocker follow-up posted: `0ddad8f8-b5d7-482f-a9f3-c3398ae38294`. |
 | 14:16 | Step 7 | done | Current local receipts now show `THE-37` Book review `APPROVED`/`safeToContinue=true`; test gate has `reviewGateStatus=PASS` and `nextChildBlocked=false`. |
+| 14:18 | Step 8 | done | Scoped `THE-37` commit created: `cf3a34d`. Final Linear proof update posted: `ee799ee6-759f-4d18-a6ff-3cd1a0414744`. |
 
 ## Files Touched
 - `docs/plans/ACTIVE_PLAN.md` - modified - current resume plan for `THE-37`.
@@ -93,5 +94,5 @@ The active issue is `THE-37`, source `THE-9.2`, parent `THE-9`, title `Implement
 - [x] CLI Tester request/run/book-review/verify pass.
 - [x] Linear follow-up comment added for the fresh blocker.
 - [x] Next queue candidate identified only after verify allows continuation.
-- [ ] `THE-37` scoped commit created.
+- [x] `THE-37` scoped commit created.
 - [ ] `THE-38` branch created and live issue validation complete.
