@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
+  ActivityRecord,
   ActivityRepository,
   ActivityType,
   CreateActivityInput,
@@ -80,6 +81,37 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
   };
 }
 
+function makeActivity(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
+  return {
+    id: 1,
+    source: 'agent',
+    type: 'task_updated',
+    activity_event_type: 'nudge_sent',
+    activity_event_payload_version: 1,
+    activity_event_payload_json: JSON.stringify({
+      version: 1,
+      actor_type: 'agent',
+      task_id: 42,
+    }),
+    activity_event_schema_status: 'structured',
+    activity_event_legacy_type: null,
+    action: 'Task Agent: nudge_assignee',
+    description: 'Nudge sent',
+    agent_name: 'Task Master',
+    agent_emoji: null,
+    file_path: null,
+    task_id: 42,
+    task_column: 'doing',
+    metadata: JSON.stringify({
+      source: 'task_agent_consumer',
+      task_agent_event: 'stale_scan',
+      task_agent_action: 'nudge_assignee',
+    }),
+    created_at: '2026-06-23T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 function makeTaskSyncLayer(task: TaskRecord): TaskSyncLayer {
   return {
     getMode: () => 'LOCAL',
@@ -99,12 +131,14 @@ function makeTaskSyncLayer(task: TaskRecord): TaskSyncLayer {
   };
 }
 
-function makeActivityRepository(): ActivityRepository & { created: CreateActivityInput[] } {
+function makeActivityRepository(initialActivities: ActivityRecord[] = []): ActivityRepository & { created: CreateActivityInput[] } {
   const created: CreateActivityInput[] = [];
   return {
     created,
     listActivities: vi.fn(() => []),
-    listActivitiesByTaskId: vi.fn(() => []),
+    listActivitiesByTaskId: vi.fn((taskId: number, limit = 100) =>
+      initialActivities.filter((activity) => activity.task_id === taskId).slice(0, limit)
+    ),
     createActivity: vi.fn((input: CreateActivityInput) => {
       created.push(input);
       return {
@@ -169,5 +203,109 @@ describe('TaskAgent ActivityEvent consumers', () => {
     expect(activityRepository.created.every((input) => input.task_id === task.id)).toBe(true);
     expect(activityRepository.created.every((input) => input.source === 'agent')).toBe(true);
     expect(activityRepository.created[0]?.metadata).toContain('task_agent_consumer');
+  });
+
+  it('nudges assigned stalled tasks before owner escalation', async () => {
+    const task = makeTask({
+      column: 'doing',
+      output: null,
+      updated_at: '2000-01-01T00:00:00.000Z',
+    });
+    const activityRepository = makeActivityRepository();
+    const agent = new TaskAgent({
+      taskSyncLayer: makeTaskSyncLayer(task),
+      activityRepository,
+      taskCommentRepository: makeCommentRepository(),
+      workspaceRoot: '/tmp/entity',
+      docsRoots: { output: '/tmp/entity/output' },
+      logActivity: vi.fn(),
+      broadcast: vi.fn(),
+    });
+
+    const actions = await agent.runStaleScan('manual');
+
+    expect(actions.map((action) => action.action)).toEqual(
+      expect.arrayContaining(['nudge_assignee', 'notify_assignee'])
+    );
+    expect(actions.map((action) => action.action)).not.toContain('escalate_owner');
+    expect(activityRepository.created.map((input) => input.activity_event_type)).toEqual(
+      expect.arrayContaining(['nudge_sent', 'notification_routed'])
+    );
+  });
+
+  it('escalates assigned stalled tasks to the owner only after a prior nudge', async () => {
+    const task = makeTask({
+      column: 'doing',
+      output: null,
+      updated_at: '2000-01-01T00:00:00.000Z',
+    });
+    const activityRepository = makeActivityRepository([
+      makeActivity({
+        id: 10,
+        activity_event_type: 'nudge_sent',
+        task_id: task.id,
+        created_at: '2000-01-01T01:00:00.000Z',
+      }),
+    ]);
+    const agent = new TaskAgent({
+      taskSyncLayer: makeTaskSyncLayer(task),
+      activityRepository,
+      taskCommentRepository: makeCommentRepository(),
+      workspaceRoot: '/tmp/entity',
+      docsRoots: { output: '/tmp/entity/output' },
+      logActivity: vi.fn(),
+      broadcast: vi.fn(),
+    });
+
+    const actions = await agent.runStaleScan('manual');
+
+    expect(actions.map((action) => action.action)).toEqual(
+      expect.arrayContaining(['escalate_owner', 'notify_owner'])
+    );
+    expect(actions.map((action) => action.action)).not.toContain('nudge_assignee');
+    expect(activityRepository.created.map((input) => input.activity_event_type)).toEqual(
+      expect.arrayContaining(['owner_escalated', 'notification_routed'])
+    );
+  });
+
+  it('records degraded notification delivery when assignee nudge routing fails', async () => {
+    const task = makeTask({
+      column: 'doing',
+      output: null,
+      updated_at: '2000-01-01T00:00:00.000Z',
+    });
+    const activityRepository = makeActivityRepository();
+    const agent = new TaskAgent({
+      taskSyncLayer: makeTaskSyncLayer(task),
+      activityRepository,
+      taskCommentRepository: makeCommentRepository(),
+      workspaceRoot: '/tmp/entity',
+      docsRoots: { output: '/tmp/entity/output' },
+      logActivity: vi.fn(),
+      broadcast: vi.fn((data: unknown) => {
+        if (data && typeof data === 'object' && (data as { type?: unknown }).type === 'agent:notify') {
+          throw new Error('notification channel offline');
+        }
+      }),
+    });
+
+    const actions = await agent.runStaleScan('manual');
+
+    expect(actions.map((action) => action.action)).toContain('notify_assignee_failed');
+    const degradedNotification = activityRepository.created.find(
+      (input) => input.activity_event_type === 'notification_routed'
+    );
+    expect(degradedNotification?.activity_event_payload).toMatchObject({
+      data: {
+        task_agent_action: 'notify_assignee_failed',
+        delivery_status: 'failed',
+      },
+      warnings: [
+        {
+          code: 'notification_delivery_failed',
+          message: 'notification channel offline',
+        },
+      ],
+    });
   });
 });

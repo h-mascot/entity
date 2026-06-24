@@ -129,12 +129,35 @@ async function notifyTaskAssignee(
   task: TaskRecord,
   message: string,
   context: TaskAgentEventContext
-): Promise<void> {
+): Promise<{ ok: true; skipped?: boolean } | { ok: false; error: string }> {
   if (!hasAssignedOwner(task.assignee)) {
-    return;
+    return { ok: true, skipped: true };
   }
 
-  await context.tools.notifyAgent(task.assignee!.trim(), message, task.id);
+  try {
+    await context.tools.notifyAgent(task.assignee!.trim(), message, task.id);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'unknown notification failure' };
+  }
+}
+
+async function notifyTaskOwner(
+  task: TaskRecord,
+  message: string,
+  context: TaskAgentEventContext
+): Promise<{ ok: true; skipped?: boolean } | { ok: false; error: string }> {
+  const ownerPrincipalId = task.owner_principal_id?.trim();
+  if (!ownerPrincipalId) {
+    return { ok: true, skipped: true };
+  }
+
+  try {
+    await context.tools.notifyAgent(ownerPrincipalId, message, task.id);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'unknown notification failure' };
+  }
 }
 
 async function noteOwnerlessTask(task: TaskRecord, context: TaskAgentEventContext): Promise<void> {
@@ -287,6 +310,8 @@ export async function onTaskStale(
   const event = 'stale_scan';
   const actions: TaskAgentAction[] = [];
   const activities = context.tools.listTaskActivities(task.id, 40);
+  const wasAlreadyNudged = activities.some((activity) => activity.activity_event_type === 'nudge_sent');
+  const wasAlreadyEscalated = activities.some((activity) => activity.activity_event_type === 'owner_escalated');
   const hasRecentActivity = activities.some(
     (activity) => toHoursSince(activity.created_at) <= RECENT_ACTIVITY_WINDOW_HOURS
   );
@@ -313,6 +338,24 @@ export async function onTaskStale(
     }
   }
 
+  if (hasAssignedOwner(task.assignee) && wasAlreadyNudged && !wasAlreadyEscalated) {
+    const ownerPrincipalId = task.owner_principal_id?.trim();
+    const ownerLabel = ownerPrincipalId || 'unknown owner';
+    const escalationReason = `assigned task is still stale after assignee nudge (${hoursInColumn.toFixed(1)}h in ${task.column})`;
+    await context.tools.addNoteOnce(task.id, `Owner escalation: ${ownerLabel} notified because ${escalationReason}.`);
+    actions.push(buildAction(event, task.id, 'escalate_owner', escalationReason));
+
+    const ownerMessage = `Task "${task.name}" is still stale after an assignee nudge. Please help unblock or redirect it.`;
+    const ownerNotification = await notifyTaskOwner(task, ownerMessage, context);
+    if (ownerNotification.ok && !ownerNotification.skipped) {
+      actions.push(buildAction(event, task.id, 'notify_owner', `routed owner escalation to ${ownerLabel}`));
+    } else if (!ownerNotification.ok) {
+      actions.push(buildAction(event, task.id, 'notify_owner_failed', ownerNotification.error));
+    }
+
+    return actions;
+  }
+
   const defaultMessage = `Task "${task.name}" is stale for ${Math.round(hoursInColumn)}h in ${task.column}. Please post an update.`;
   let message = defaultMessage;
   let tokensUsed = 0;
@@ -325,8 +368,13 @@ export async function onTaskStale(
     }
   }
 
-  await notifyTaskAssignee(task, message, context);
-  actions.push(buildAction(event, task.id, 'notify_assignee', 'sent stale nudge', tokensUsed));
+  actions.push(buildAction(event, task.id, 'nudge_assignee', 'assigned stale work is nudged before escalation', tokensUsed));
+  const assigneeNotification = await notifyTaskAssignee(task, message, context);
+  if (assigneeNotification.ok && !assigneeNotification.skipped) {
+    actions.push(buildAction(event, task.id, 'notify_assignee', 'sent stale nudge', tokensUsed));
+  } else if (!assigneeNotification.ok) {
+    actions.push(buildAction(event, task.id, 'notify_assignee_failed', assigneeNotification.error, tokensUsed));
+  }
   return actions;
 }
 

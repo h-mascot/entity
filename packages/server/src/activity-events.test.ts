@@ -198,6 +198,47 @@ describe('ActivityEvent service', () => {
     );
   });
 
+  it('surfaces recorded notification failures as degraded envelopes', async () => {
+    const task = makeTask();
+    const service = createActivityEventService({
+      activityRepository: createMemoryActivityRepository(),
+      getTask: (taskId) => (taskId === task.id ? task : undefined),
+    });
+
+    const result = await service.appendTaskEvent(task.id, {
+      eventType: 'notification_routed',
+      action: 'Task Agent: notify_assignee_failed',
+      description: 'notification channel offline',
+      actorPrincipalId: 'task-master',
+      actorType: 'agent',
+      payload: {
+        consumer: 'notification',
+        data: { delivery_status: 'failed' },
+        warnings: [
+          {
+            code: 'notification_delivery_failed',
+            message: 'notification channel offline',
+          },
+        ],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.value).toMatchObject({
+      eventType: 'notification_routed',
+      degraded: true,
+    });
+    expect(result.value.warnings).toEqual(
+      expect.arrayContaining([
+        {
+          code: 'notification_delivery_failed',
+          message: 'notification channel offline',
+        },
+      ]),
+    );
+  });
+
   it('preserves consumer object refs so receipts can cite canonical evidence artifacts', async () => {
     const task = makeTask();
     const service = createActivityEventService({

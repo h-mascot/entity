@@ -241,6 +241,7 @@ export function buildConsumerActivityEventInput(input: {
   objectRefs?: ActivityObjectRef[];
   data?: Record<string, unknown>;
   reason?: string;
+  warnings?: Array<{ code: string; message: string }>;
 }): ActivityEventAppendInput {
   return {
     eventType: input.eventType,
@@ -249,10 +250,14 @@ export function buildConsumerActivityEventInput(input: {
     actorPrincipalId: input.actorPrincipalId,
     actorType: input.actorType ?? 'system',
     payload: {
+      version: ACTIVITY_EVENT_PAYLOAD_VERSION,
+      actor_principal_id: input.actorPrincipalId,
+      actor_type: input.actorType ?? 'system',
       consumer: input.consumer,
       object_refs: input.objectRefs,
       reason: input.reason,
       data: input.data,
+      warnings: input.warnings,
     },
   };
 }
@@ -271,7 +276,14 @@ export function buildTaskAgentActionActivityEventInput(action: {
   let consumer: ActivityEventConsumerKind = 'routing';
   let eventType: ActivityEventType | null = null;
 
-  if (action.action === 'notify_assignee' || action.action === 'request_output' || action.action === 'request_owner_assignment') {
+  const notificationFailed = action.action === 'notify_assignee_failed' || action.action === 'notify_owner_failed';
+  if (
+    action.action === 'notify_assignee' ||
+    action.action === 'notify_owner' ||
+    action.action === 'request_output' ||
+    action.action === 'request_owner_assignment' ||
+    notificationFailed
+  ) {
     consumer = 'notification';
     eventType = 'notification_routed';
   } else if (
@@ -284,10 +296,10 @@ export function buildTaskAgentActionActivityEventInput(action: {
   } else if (action.event === 'review_check' || action.event === 'review_hygiene' || action.event === 'output_missing') {
     consumer = 'review';
     eventType = 'review_requested';
-  } else if (action.action === 'escalate_blocker') {
+  } else if (action.action === 'escalate_blocker' || action.action === 'escalate_owner') {
     consumer = 'routing';
     eventType = 'owner_escalated';
-  } else if (action.event === 'stale_scan') {
+  } else if (action.action === 'nudge_assignee') {
     consumer = 'routing';
     eventType = 'nudge_sent';
   } else if (action.event === 'ownership_check') {
@@ -309,8 +321,12 @@ export function buildTaskAgentActionActivityEventInput(action: {
     data: {
       task_agent_event: action.event,
       task_agent_action: action.action,
+      delivery_status: notificationFailed ? 'failed' : undefined,
       tokens_used: Number.isFinite(action.tokensUsed) ? action.tokensUsed : 0,
     },
+    warnings: notificationFailed
+      ? [{ code: 'notification_delivery_failed', message: action.result }]
+      : undefined,
   });
 }
 
@@ -393,6 +409,22 @@ function parseEnvelopePayload(record: ActivityRecord): {
     warnings.push({ code: 'payload_version_mismatch', message: 'payload version is missing or unsupported' });
   }
 
+  if (Array.isArray(payload.warnings)) {
+    for (const warning of payload.warnings) {
+      if (
+        warning &&
+        typeof warning === 'object' &&
+        typeof (warning as { code?: unknown }).code === 'string' &&
+        typeof (warning as { message?: unknown }).message === 'string'
+      ) {
+        warnings.push({
+          code: (warning as { code: string }).code,
+          message: (warning as { message: string }).message,
+        });
+      }
+    }
+  }
+
   return { payload, warnings };
 }
 
@@ -441,6 +473,15 @@ function normalizeAppendPayload(
   const base = input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload)
     ? input.payload
     : {};
+  const payloadWarnings = Array.isArray((base as { warnings?: unknown }).warnings)
+    ? (base as { warnings: unknown[] }).warnings.filter(
+        (warning): warning is { code: string; message: string } =>
+          Boolean(warning) &&
+          typeof warning === 'object' &&
+          typeof (warning as { code?: unknown }).code === 'string' &&
+          typeof (warning as { message?: unknown }).message === 'string',
+      )
+    : [];
 
   if (input.payload !== undefined && input.payload !== null && base !== input.payload) {
     warnings.push({ code: 'malformed_payload', message: 'non-object payload stored as degraded ActivityEvent metadata' });
@@ -454,7 +495,7 @@ function normalizeAppendPayload(
       actor_type: normalizeActorType(input.actorType),
       task_id: taskId,
       object_refs: mergeObjectRefs(taskId, (base as { object_refs?: unknown }).object_refs),
-      warnings: warnings.length ? warnings : undefined,
+      warnings: payloadWarnings.length || warnings.length ? [...payloadWarnings, ...warnings] : undefined,
     },
     warnings,
   };
