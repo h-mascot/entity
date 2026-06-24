@@ -1915,6 +1915,143 @@ describe('ActivityRepository', () => {
   });
 });
 
+describe('NotificationRepository', () => {
+  beforeEach(() => freshDb());
+  afterEach(() => cleanupDb());
+
+  it('stores canonical event/object links separately from external delivery status', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const activityRepo = dbMod.createActivityRepository();
+    const notificationRepo = dbMod.createNotificationRepository();
+    const task = dbMod.createTaskRepository().createTask({
+      name: 'Review notification task',
+      org_id: 'org-notify',
+      owner_principal_id: 'owner-1',
+    });
+    const event = activityRepo.createActivity({
+      type: 'task_updated',
+      activity_event_type: 'review_requested',
+      activity_event_payload: {
+        actor_type: 'system',
+        task_id: task.id,
+        object_refs: [{ object_type: 'task', object_id: String(task.id), link_role: 'review' }],
+      },
+      action: 'Review requested',
+      description: 'A reviewer must inspect the work.',
+      task_id: task.id,
+    });
+
+    const notification = notificationRepo.createNotification({
+      id: 'notification-review-1',
+      org_id: 'org-notify',
+      recipient_principal_id: 'reviewer-1',
+      canonical_event_id: event.id,
+      object_ref: { object_type: 'task', object_id: String(task.id), link_role: 'review' },
+      notification_type: 'review_request',
+      title: 'Review requested',
+      body: 'Please review this task.',
+      policy_reason_chain_json: JSON.stringify([
+        { source: 'task', decision: 'notification_route', reason: 'review pending' },
+      ]),
+      deliveries: [
+        {
+          channel: 'entity_inbox',
+          status: 'sent',
+          policy_reason_json: JSON.stringify({ route: 'canonical_inbox' }),
+        },
+        {
+          channel: 'slack',
+          status: 'failed',
+          external_ref: 'slack-msg-1',
+          failure_reason: 'channel unavailable',
+          policy_reason_json: JSON.stringify({ route: 'reviewer_preference' }),
+        },
+      ],
+    });
+
+    expect(notification).toMatchObject({
+      id: 'notification-review-1',
+      org_id: 'org-notify',
+      recipient_principal_id: 'reviewer-1',
+      canonical_event_id: String(event.id),
+      notification_type: 'review_request',
+      inbox_state: 'unread',
+      object_ref: { object_type: 'task', object_id: String(task.id), link_role: 'review' },
+    });
+    expect(notification.deliveries).toEqual([
+      expect.objectContaining({ channel: 'entity_inbox', status: 'sent' }),
+      expect.objectContaining({ channel: 'slack', status: 'failed', failure_reason: 'channel unavailable' }),
+    ]);
+
+    const read = notificationRepo.updateInboxState(notification.id, 'read');
+    expect(read?.inbox_state).toBe('read');
+    expect(read?.deliveries.find((delivery) => delivery.channel === 'slack')?.status).toBe('failed');
+    expect(notificationRepo.listNotificationsForRecipient({
+      org_id: 'org-notify',
+      recipient_principal_id: 'reviewer-1',
+      inbox_state: 'unread',
+    })).toEqual([]);
+    expect(notificationRepo.listNotificationsForRecipient({
+      org_id: 'org-notify',
+      recipient_principal_id: 'reviewer-1',
+      inbox_state: 'all',
+    })).toHaveLength(1);
+  });
+
+  it('provides fixture samples for every canonical PRD notification type', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const notificationRepo = dbMod.createNotificationRepository();
+    const samples = dbMod.buildNotificationFixtureSamples({
+      org_id: 'org-fixture',
+      recipient_principal_id: 'owner-fixture',
+      canonical_event_id: 'event-fixture',
+      task_id: 101,
+    });
+
+    expect(samples.map((sample) => sample.notification_type).sort()).toEqual(
+      [...dbMod.NOTIFICATION_TYPES].sort(),
+    );
+
+    const records = samples.map((sample) => notificationRepo.createNotification(sample));
+    expect(records).toHaveLength(8);
+    expect(records.map((record) => record.notification_type)).toEqual(
+      expect.arrayContaining([
+        'review_request',
+        'human_gate_request',
+        'task_nudge',
+        'owner_escalation',
+        'auto_reassignment_notice',
+        'receipt_failure',
+        'connector_degraded',
+        'policy_warning',
+      ]),
+    );
+    expect(records.every((record) => record.object_ref.object_type === 'task')).toBe(true);
+    expect(records.every((record) => record.deliveries[0]?.channel === 'entity_inbox')).toBe(true);
+  });
+
+  it('rejects malformed notification records before persistence', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const notificationRepo = dbMod.createNotificationRepository();
+
+    expect(() => notificationRepo.createNotification({
+      recipient_principal_id: 'owner-1',
+      canonical_event_id: 'event-1',
+      object_ref: { object_type: 'task', object_id: '1', link_role: 'target' },
+      notification_type: 'unknown_notification',
+      title: 'Bad type',
+    })).toThrow('notification_type must be one of');
+
+    expect(() => notificationRepo.createNotification({
+      recipient_principal_id: 'owner-1',
+      canonical_event_id: 'event-1',
+      object_ref: { object_type: 'task', object_id: '1', link_role: '' },
+      notification_type: 'task_nudge',
+      title: 'Bad ref',
+    })).toThrow('ObjectRef requires object_type, object_id, and link_role');
+  });
+});
+
 describe('DocumentObjectRepository', () => {
   beforeEach(() => freshDb());
   afterEach(() => cleanupDb());

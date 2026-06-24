@@ -642,6 +642,101 @@ export interface ObjectRef {
   link_role: string;
 }
 
+export const NOTIFICATION_TYPES = [
+  'task_nudge',
+  'owner_escalation',
+  'review_request',
+  'human_gate_request',
+  'auto_reassignment_notice',
+  'receipt_failure',
+  'connector_degraded',
+  'policy_warning',
+] as const;
+
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+export type NotificationInboxState = 'unread' | 'read' | 'archived';
+export type NotificationDeliveryChannel =
+  | 'entity_inbox'
+  | 'clickclack'
+  | 'email'
+  | 'discord'
+  | 'slack'
+  | 'agentpush'
+  | 'webhook'
+  | 'other';
+export type NotificationDeliveryStatus = 'pending' | 'sent' | 'failed' | 'degraded' | 'skipped';
+
+export interface NotificationDeliveryRecord {
+  id: number;
+  notification_id: string;
+  channel: NotificationDeliveryChannel;
+  status: NotificationDeliveryStatus;
+  external_ref: string | null;
+  failure_reason: string | null;
+  degraded_reason: string | null;
+  policy_reason_json: string;
+  attempted_at: string;
+  completed_at: string | null;
+  metadata_json: string;
+}
+
+export interface NotificationRecord {
+  id: string;
+  org_id: string;
+  recipient_principal_id: string;
+  canonical_event_id: string;
+  object_ref: ObjectRef;
+  notification_type: NotificationType;
+  inbox_state: NotificationInboxState;
+  title: string;
+  body: string;
+  policy_reason_chain_json: string;
+  metadata_json: string;
+  created_at: string;
+  updated_at: string;
+  deliveries: NotificationDeliveryRecord[];
+}
+
+export interface CreateNotificationInput {
+  id?: string;
+  org_id?: string;
+  recipient_principal_id: string;
+  canonical_event_id: string | number;
+  object_ref: ObjectRef;
+  notification_type: NotificationType | string;
+  inbox_state?: NotificationInboxState | string;
+  title: string;
+  body?: string | null;
+  policy_reason_chain_json?: string;
+  metadata_json?: string;
+  deliveries?: CreateNotificationDeliveryInput[];
+}
+
+export interface CreateNotificationDeliveryInput {
+  channel: NotificationDeliveryChannel | string;
+  status?: NotificationDeliveryStatus | string;
+  external_ref?: string | null;
+  failure_reason?: string | null;
+  degraded_reason?: string | null;
+  policy_reason_json?: string;
+  completed_at?: string | null;
+  metadata_json?: string;
+}
+
+export interface NotificationRepository {
+  createNotification: (input: CreateNotificationInput) => NotificationRecord;
+  getNotification: (id: string) => NotificationRecord | undefined;
+  listNotificationsForRecipient: (input: {
+    org_id?: string;
+    recipient_principal_id: string;
+    inbox_state?: NotificationInboxState | 'all';
+    limit?: number;
+  }) => NotificationRecord[];
+  updateInboxState: (id: string, inboxState: NotificationInboxState | string) => NotificationRecord | undefined;
+  addDeliveryAttempt: (notificationId: string, input: CreateNotificationDeliveryInput) => NotificationDeliveryRecord;
+  listDeliveryAttempts: (notificationId: string) => NotificationDeliveryRecord[];
+}
+
 export type NativeDocumentKind = 'note' | 'spec' | 'report' | 'internal_doc' | 'generated_markdown' | 'fallback_doc';
 export type NativeDocumentMutabilityPolicy = 'editable_versioned' | 'immutable';
 export type NativeDocumentLifecycleState = 'draft' | 'active' | 'archived' | 'superseded';
@@ -3399,6 +3494,44 @@ function bootstrap(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_activities_task_id ON activities(task_id);
     CREATE INDEX IF NOT EXISTS idx_activities_file_path ON activities(file_path);
 
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL DEFAULT '${DEFAULT_WORKSPACE_ORG_ID}',
+      recipient_principal_id TEXT NOT NULL,
+      canonical_event_id TEXT NOT NULL,
+      object_ref_json TEXT NOT NULL,
+      notification_type TEXT NOT NULL,
+      inbox_state TEXT NOT NULL DEFAULT 'unread',
+      title TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      policy_reason_chain_json TEXT NOT NULL DEFAULT '[]',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notifications_recipient_state ON notifications(org_id, recipient_principal_id, inbox_state);
+    CREATE INDEX IF NOT EXISTS idx_notifications_event ON notifications(canonical_event_id);
+    CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(notification_type);
+    CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS notification_deliveries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      external_ref TEXT,
+      failure_reason TEXT,
+      degraded_reason TEXT,
+      policy_reason_json TEXT NOT NULL DEFAULT '{}',
+      attempted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notification_deliveries_notification ON notification_deliveries(notification_id, attempted_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_notification_deliveries_channel_status ON notification_deliveries(channel, status);
+
     CREATE TABLE IF NOT EXISTS evidence_artifacts (
       id TEXT PRIMARY KEY,
       org_id TEXT NOT NULL DEFAULT '${DEFAULT_WORKSPACE_ORG_ID}',
@@ -5269,6 +5402,10 @@ function isActivityEventType(value: string): value is ActivityEventType {
   return (ACTIVITY_EVENT_TYPES as readonly string[]).includes(value);
 }
 
+function isNotificationType(value: string): value is NotificationType {
+  return (NOTIFICATION_TYPES as readonly string[]).includes(value);
+}
+
 function normalizeActivityEventType(value: unknown): ActivityEventType | null {
   if (typeof value !== 'string') {
     return null;
@@ -5276,6 +5413,72 @@ function normalizeActivityEventType(value: unknown): ActivityEventType | null {
 
   const normalized = value.trim().toLowerCase();
   return isActivityEventType(normalized) ? normalized : null;
+}
+
+function normalizeNotificationType(value: unknown): NotificationType {
+  if (typeof value !== 'string') {
+    throw new Error('notification_type is required');
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!isNotificationType(normalized)) {
+    throw new Error(`notification_type must be one of ${NOTIFICATION_TYPES.join(', ')}`);
+  }
+
+  return normalized;
+}
+
+function normalizeNotificationInboxState(value: unknown): NotificationInboxState {
+  if (value === 'read' || value === 'archived') {
+    return value;
+  }
+  return 'unread';
+}
+
+function normalizeNotificationDeliveryChannel(value: unknown): NotificationDeliveryChannel {
+  if (typeof value !== 'string') {
+    return 'other';
+  }
+
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case 'entity_inbox':
+    case 'clickclack':
+    case 'email':
+    case 'discord':
+    case 'slack':
+    case 'agentpush':
+    case 'webhook':
+    case 'other':
+      return normalized;
+    default:
+      return 'other';
+  }
+}
+
+function normalizeNotificationDeliveryStatus(value: unknown): NotificationDeliveryStatus {
+  if (value === 'sent' || value === 'failed' || value === 'degraded' || value === 'skipped') {
+    return value;
+  }
+  return 'pending';
+}
+
+function parseObjectRef(value: unknown): ObjectRef {
+  const refs = normalizeObjectRefsJson(value);
+  if (refs.length === 1) {
+    return refs[0];
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return normalizeObjectRefs([parsed])[0];
+      }
+    } catch {
+      // Fall through to explicit error below.
+    }
+  }
+  return normalizeObjectRefs([value])[0];
 }
 
 function normalizeActivityEventSchemaStatus(value: unknown): ActivityEventSchemaStatus {
@@ -5460,6 +5663,57 @@ function clampActivityLimit(limit: number): number {
   }
 
   return limit;
+}
+
+function normalizePolicyReasonChainString(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    return '[]';
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? JSON.stringify(parsed) : '[]';
+  } catch {
+    return '[]';
+  }
+}
+
+function mapNotificationDeliveryRow(row: Record<string, unknown>): NotificationDeliveryRecord {
+  return {
+    id: Number(row.id),
+    notification_id: String(row.notification_id),
+    channel: normalizeNotificationDeliveryChannel(row.channel),
+    status: normalizeNotificationDeliveryStatus(row.status),
+    external_ref: normalizeBlockerReason(row.external_ref),
+    failure_reason: normalizeBlockerReason(row.failure_reason),
+    degraded_reason: normalizeBlockerReason(row.degraded_reason),
+    policy_reason_json: normalizeJsonObjectString(row.policy_reason_json),
+    attempted_at: normalizeTimestamp(String(row.attempted_at ?? '')),
+    completed_at: normalizeNullableTimestamp(row.completed_at),
+    metadata_json: normalizeJsonObjectString(row.metadata_json),
+  };
+}
+
+function mapNotificationRow(
+  row: Record<string, unknown>,
+  deliveries: NotificationDeliveryRecord[] = []
+): NotificationRecord {
+  return {
+    id: String(row.id),
+    org_id: normalizeWorkspaceId(row.org_id, DEFAULT_WORKSPACE_ORG_ID),
+    recipient_principal_id: String(row.recipient_principal_id),
+    canonical_event_id: String(row.canonical_event_id),
+    object_ref: parseObjectRef(row.object_ref_json),
+    notification_type: normalizeNotificationType(row.notification_type),
+    inbox_state: normalizeNotificationInboxState(row.inbox_state),
+    title: String(row.title ?? ''),
+    body: String(row.body ?? ''),
+    policy_reason_chain_json: normalizePolicyReasonChainString(row.policy_reason_chain_json),
+    metadata_json: normalizeJsonObjectString(row.metadata_json),
+    created_at: normalizeTimestamp(String(row.created_at ?? '')),
+    updated_at: normalizeTimestamp(String(row.updated_at ?? '')),
+    deliveries,
+  };
 }
 
 function mapAgentLogRow(row: Record<string, unknown>): AgentLogRecord {
@@ -7725,6 +7979,228 @@ export function createActivityRepository(): ActivityRepository {
       return mapActivityRow(row);
     },
   };
+}
+
+export function createNotificationRepository(): NotificationRepository {
+  const db = openEntityDatabase();
+
+  const getStmt = db.prepare('SELECT * FROM notifications WHERE id = ?');
+  const listDeliveriesStmt = db.prepare(`
+    SELECT *
+    FROM notification_deliveries
+    WHERE notification_id = ?
+    ORDER BY datetime(attempted_at) ASC, id ASC
+  `);
+  const listByRecipientStmt = db.prepare(`
+    SELECT *
+    FROM notifications
+    WHERE org_id = ?
+      AND recipient_principal_id = ?
+      AND (? = 'all' OR inbox_state = ?)
+    ORDER BY datetime(created_at) DESC, id DESC
+    LIMIT ?
+  `);
+  const createStmt = db.prepare(`
+    INSERT INTO notifications (
+      id,
+      org_id,
+      recipient_principal_id,
+      canonical_event_id,
+      object_ref_json,
+      notification_type,
+      inbox_state,
+      title,
+      body,
+      policy_reason_chain_json,
+      metadata_json,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `);
+  const createDeliveryStmt = db.prepare(`
+    INSERT INTO notification_deliveries (
+      notification_id,
+      channel,
+      status,
+      external_ref,
+      failure_reason,
+      degraded_reason,
+      policy_reason_json,
+      attempted_at,
+      completed_at,
+      metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+  `);
+  const getDeliveryStmt = db.prepare('SELECT * FROM notification_deliveries WHERE id = ?');
+  const updateInboxStateStmt = db.prepare(`
+    UPDATE notifications
+    SET inbox_state = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+
+  const withDeliveries = (row: Record<string, unknown> | undefined): NotificationRecord | undefined => {
+    if (!row) {
+      return undefined;
+    }
+    const deliveries = (listDeliveriesStmt.all(String(row.id)) as Array<Record<string, unknown>>)
+      .map(mapNotificationDeliveryRow);
+    return mapNotificationRow(row, deliveries);
+  };
+
+  const addDelivery = (notificationId: string, input: CreateNotificationDeliveryInput): NotificationDeliveryRecord => {
+    const normalizedNotificationId = normalizeWorkspaceId(notificationId);
+    const existing = getStmt.get(normalizedNotificationId) as Record<string, unknown> | undefined;
+    if (!existing) {
+      throw new Error('notification does not exist');
+    }
+
+    const status = normalizeNotificationDeliveryStatus(input.status);
+    const result = createDeliveryStmt.run(
+      normalizedNotificationId,
+      normalizeNotificationDeliveryChannel(input.channel),
+      status,
+      normalizeBlockerReason(input.external_ref),
+      normalizeBlockerReason(input.failure_reason),
+      normalizeBlockerReason(input.degraded_reason),
+      normalizeJsonObjectString(input.policy_reason_json),
+      normalizeNullableTimestamp(input.completed_at),
+      normalizeJsonObjectString(input.metadata_json)
+    );
+    const row = getDeliveryStmt.get(result.lastInsertRowid as number) as Record<string, unknown> | undefined;
+    if (!row) {
+      throw new Error('failed to create notification delivery');
+    }
+    return mapNotificationDeliveryRow(row);
+  };
+
+  return {
+    createNotification: (input: CreateNotificationInput) => {
+      const id = normalizeWorkspaceId(input.id, randomUUID());
+      const recipientPrincipalId = normalizeBlockerReason(input.recipient_principal_id);
+      const title = normalizeBlockerReason(input.title);
+      if (!recipientPrincipalId) {
+        throw new Error('recipient_principal_id is required');
+      }
+      if (!title) {
+        throw new Error('notification title is required');
+      }
+
+      const canonicalEventId = normalizeBlockerReason(String(input.canonical_event_id));
+      if (!canonicalEventId) {
+        throw new Error('canonical_event_id is required');
+      }
+
+      createStmt.run(
+        id,
+        normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
+        recipientPrincipalId,
+        canonicalEventId,
+        JSON.stringify(parseObjectRef(input.object_ref)),
+        normalizeNotificationType(input.notification_type),
+        normalizeNotificationInboxState(input.inbox_state),
+        title,
+        normalizeBlockerReason(input.body) ?? '',
+        normalizePolicyReasonChainString(input.policy_reason_chain_json),
+        normalizeJsonObjectString(input.metadata_json)
+      );
+
+      for (const delivery of input.deliveries ?? []) {
+        addDelivery(id, delivery);
+      }
+
+      const row = getStmt.get(id) as Record<string, unknown> | undefined;
+      const record = withDeliveries(row);
+      if (!record) {
+        throw new Error('failed to create notification');
+      }
+      return record;
+    },
+
+    getNotification: (id: string) => withDeliveries(getStmt.get(id.trim()) as Record<string, unknown> | undefined),
+
+    listNotificationsForRecipient: (input) => {
+      const recipientPrincipalId = normalizeBlockerReason(input.recipient_principal_id);
+      if (!recipientPrincipalId) {
+        return [];
+      }
+      const inboxState = input.inbox_state === 'all' ? 'all' : normalizeNotificationInboxState(input.inbox_state);
+      const limit = clampActivityLimit(input.limit ?? 100);
+      return (listByRecipientStmt.all(
+        normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
+        recipientPrincipalId,
+        inboxState,
+        inboxState,
+        limit
+      ) as Array<Record<string, unknown>>)
+        .map((row) => withDeliveries(row))
+        .filter((record): record is NotificationRecord => Boolean(record));
+    },
+
+    updateInboxState: (id: string, inboxState: NotificationInboxState | string) => {
+      const normalizedId = id.trim();
+      updateInboxStateStmt.run(normalizeNotificationInboxState(inboxState), normalizedId);
+      return withDeliveries(getStmt.get(normalizedId) as Record<string, unknown> | undefined);
+    },
+
+    addDeliveryAttempt: addDelivery,
+
+    listDeliveryAttempts: (notificationId: string) =>
+      (listDeliveriesStmt.all(notificationId.trim()) as Array<Record<string, unknown>>).map(mapNotificationDeliveryRow),
+  };
+}
+
+export function buildNotificationFixtureSamples(overrides: {
+  org_id?: string;
+  recipient_principal_id?: string;
+  canonical_event_id?: string;
+  task_id?: string | number;
+} = {}): CreateNotificationInput[] {
+  const orgId = normalizeWorkspaceId(overrides.org_id, DEFAULT_WORKSPACE_ORG_ID);
+  const recipientPrincipalId = normalizeWorkspaceId(overrides.recipient_principal_id, 'owner-1');
+  const taskId = String(overrides.task_id ?? '42');
+  const baseEventId = normalizeWorkspaceId(overrides.canonical_event_id, 'activity-event');
+  const baseRef: ObjectRef = { object_type: 'task', object_id: taskId, link_role: 'target' };
+  const sample = (
+    notificationType: NotificationType,
+    index: number,
+    title: string,
+    eventRole: string,
+  ): CreateNotificationInput => ({
+    id: `fixture-${notificationType}`,
+    org_id: orgId,
+    recipient_principal_id: recipientPrincipalId,
+    canonical_event_id: `${baseEventId}-${index}`,
+    object_ref: { ...baseRef, link_role: eventRole },
+    notification_type: notificationType,
+    title,
+    body: `${title} requires attention in Entity.`,
+    policy_reason_chain_json: JSON.stringify([
+      {
+        source: 'task',
+        decision: 'notification_route',
+        reason: `Fixture covers ${notificationType}`,
+      },
+    ]),
+    metadata_json: JSON.stringify({ fixture: 'THE-66', notification_type: notificationType }),
+    deliveries: [
+      {
+        channel: 'entity_inbox',
+        status: 'sent',
+        policy_reason_json: JSON.stringify({ reason: 'canonical inbox record is source of truth' }),
+      },
+    ],
+  });
+
+  return [
+    sample('review_request', 1, 'Review requested', 'review'),
+    sample('human_gate_request', 2, 'Human gate requested', 'approval'),
+    sample('task_nudge', 3, 'Task nudge sent', 'routing'),
+    sample('owner_escalation', 4, 'Owner escalation sent', 'escalation'),
+    sample('auto_reassignment_notice', 5, 'Task reassigned', 'routing'),
+    sample('receipt_failure', 6, 'Receipt failure detected', 'proof'),
+    sample('connector_degraded', 7, 'Connector degraded', 'integration'),
+    sample('policy_warning', 8, 'Policy warning', 'policy'),
+  ];
 }
 
 export function createAgentLogRepository(): AgentLogRepository {
