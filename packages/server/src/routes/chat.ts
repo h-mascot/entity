@@ -9,14 +9,26 @@ import {
   type ChatChannelRecord,
   type ChatMessageRecord,
   type ChatThreadRecord,
+} from '../../../db/src/chat';
+import {
+  type ObjectRef,
 } from '../../../db/src';
 import { ChatModelRegistry, type ChatModelOption } from './chat-model-registry';
+import { requireRequestOrg, sendPermissionDenied, type RequestOrgBinding } from '../request-permissions';
+
+interface ChatObjectRefAccessDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+type ChatObjectRefAccess = (binding: RequestOrgBinding, objectRef: ObjectRef) => ChatObjectRefAccessDecision;
 
 interface ChatRouteDependencies {
   app: express.Express;
   openClawBaseUrl?: string;
   clickClackBridge?: ClickClackChatBridge;
   clickClackReadiness?: ClickClackReadinessProbe;
+  chatObjectRefAccess?: ChatObjectRefAccess;
 }
 
 interface OpenClawReply {
@@ -109,6 +121,42 @@ function normalizeAgents(value: unknown): string[] {
   return value
     .map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : ''))
     .filter(Boolean);
+}
+
+function parseObjectRefBody(body: unknown): ObjectRef {
+  const record = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const rawRef = record.object_ref && typeof record.object_ref === 'object' && !Array.isArray(record.object_ref)
+    ? record.object_ref as Record<string, unknown>
+    : record;
+  const objectType = String(rawRef.object_type ?? '').trim();
+  const objectId = String(rawRef.object_id ?? '').trim();
+  const linkRole = String(rawRef.link_role ?? '').trim();
+  if (!objectType || !objectId || !linkRole) {
+    throw new Error('ObjectRef requires object_type, object_id, and link_role');
+  }
+  return { object_type: objectType, object_id: objectId, link_role: linkRole };
+}
+
+function allowChatObjectRef(): ChatObjectRefAccessDecision {
+  return { allowed: true };
+}
+
+function visibleObjectRefs(
+  binding: RequestOrgBinding,
+  objectRefs: ObjectRef[],
+  access: ChatObjectRefAccess,
+): { object_refs: ObjectRef[]; restricted_count: number } {
+  const visible: ObjectRef[] = [];
+  let restrictedCount = 0;
+  for (const objectRef of objectRefs) {
+    const decision = access(binding, objectRef);
+    if (decision.allowed) {
+      visible.push(objectRef);
+    } else {
+      restrictedCount += 1;
+    }
+  }
+  return { object_refs: visible, restricted_count: restrictedCount };
 }
 
 function compatibilityMessageTimestamp(value: string | undefined): string {
@@ -721,7 +769,13 @@ async function getCachedOllamaModels(): Promise<ChatModelOption[]> {
   return localModelsRefresh;
 }
 
-export function registerChatRoutes({ app, openClawBaseUrl, clickClackBridge, clickClackReadiness }: ChatRouteDependencies): void {
+export function registerChatRoutes({
+  app,
+  openClawBaseUrl,
+  clickClackBridge,
+  clickClackReadiness,
+  chatObjectRefAccess = allowChatObjectRef,
+}: ChatRouteDependencies): void {
   const repo = createChatRepository();
   const modelRegistry = new ChatModelRegistry({
     openClawBaseUrl,
@@ -834,6 +888,42 @@ export function registerChatRoutes({ app, openClawBaseUrl, clickClackBridge, cli
     }
   });
 
+  app.get('/api/chat/channels/:channelId/object-refs', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const channel = repo.getChannel(req.params.channelId);
+    if (!channel) {
+      return res.status(404).json({ error: 'channel not found' });
+    }
+    return res.json({
+      target: { type: 'channel', id: channel.id },
+      ...visibleObjectRefs(binding, channel.linked_object_refs, chatObjectRefAccess),
+    });
+  });
+
+  app.post('/api/chat/channels/:channelId/object-refs', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    try {
+      const objectRef = parseObjectRefBody(req.body);
+      const decision = chatObjectRefAccess(binding, objectRef);
+      if (!decision.allowed) {
+        return sendPermissionDenied(res, decision.reason ?? 'access denied by object policy');
+      }
+      const channel = repo.linkChannelObject(req.params.channelId, objectRef);
+      if (!channel) {
+        return res.status(404).json({ error: 'channel not found' });
+      }
+      return res.status(201).json({
+        target: { type: 'channel', id: channel.id },
+        ...visibleObjectRefs(binding, channel.linked_object_refs, chatObjectRefAccess),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      return res.status(400).json({ error: message });
+    }
+  });
+
   app.get('/api/chat/threads/:threadId/messages', (req, res) => {
     try {
       const messages = repo.listMessagesByThread(req.params.threadId).map(toMessage);
@@ -851,6 +941,42 @@ export function registerChatRoutes({ app, openClawBaseUrl, clickClackBridge, cli
     }
 
     return res.json({ message: toMessage(message) });
+  });
+
+  app.get('/api/chat/threads/:threadId/object-refs', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const thread = repo.getThread(req.params.threadId);
+    if (!thread) {
+      return res.status(404).json({ error: 'thread not found' });
+    }
+    return res.json({
+      target: { type: 'thread', id: thread.id },
+      ...visibleObjectRefs(binding, thread.linked_object_refs, chatObjectRefAccess),
+    });
+  });
+
+  app.post('/api/chat/threads/:threadId/object-refs', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    try {
+      const objectRef = parseObjectRefBody(req.body);
+      const decision = chatObjectRefAccess(binding, objectRef);
+      if (!decision.allowed) {
+        return sendPermissionDenied(res, decision.reason ?? 'access denied by object policy');
+      }
+      const thread = repo.linkThreadObject(req.params.threadId, objectRef);
+      if (!thread) {
+        return res.status(404).json({ error: 'thread not found' });
+      }
+      return res.status(201).json({
+        target: { type: 'thread', id: thread.id },
+        ...visibleObjectRefs(binding, thread.linked_object_refs, chatObjectRefAccess),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      return res.status(400).json({ error: message });
+    }
   });
 
   app.get('/api/chat/threads/by-parent/:parentMessageId', (req, res) => {

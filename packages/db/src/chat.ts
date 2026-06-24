@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import Database from 'better-sqlite3';
 import { getEntityDatabase } from './entity-db';
+import type { ObjectRef } from './index';
 
 export interface ChatCategoryRecord {
   id: string;
@@ -19,6 +20,7 @@ export interface ChatChannelRecord {
   agents: string[];
   unread_count: number;
   last_message_at: string | null;
+  linked_object_refs: ObjectRef[];
   created_at: string;
 }
 
@@ -45,6 +47,7 @@ export interface ChatThreadRecord {
   title: string;
   message_count: number;
   last_message_at: string;
+  linked_object_refs: ObjectRef[];
   created_at: string;
 }
 
@@ -111,6 +114,8 @@ export interface ChatRepository {
   deleteChannel: (id: string) => boolean;
   markChannelRead: (id: string) => void;
   touchChannelLastMessage: (id: string, timestamp: string) => void;
+  linkChannelObject: (id: string, objectRef: ObjectRef) => ChatChannelRecord | undefined;
+  listChannelObjectRefs: (id: string) => ObjectRef[];
 
   listMessagesByChannel: (channelId: string) => ChatMessageRecord[];
   listMessagesByThread: (threadId: string) => ChatMessageRecord[];
@@ -123,6 +128,8 @@ export interface ChatRepository {
   getThreadByParentMessage: (parentMessageId: string) => ChatThreadRecord | undefined;
   createThread: (input: CreateChatThreadInput) => ChatThreadRecord;
   incrementThreadCount: (id: string, timestamp: string) => void;
+  linkThreadObject: (id: string, objectRef: ObjectRef) => ChatThreadRecord | undefined;
+  listThreadObjectRefs: (id: string) => ObjectRef[];
 }
 
 function normalizeTimestamp(value?: string | null): string {
@@ -149,6 +156,46 @@ function parseAgents(value: unknown): string[] {
   }
 }
 
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: unknown }>)
+    .some((entry) => entry.name === column);
+}
+
+function normalizeObjectRef(value: ObjectRef): ObjectRef {
+  const objectType = String(value.object_type ?? '').trim();
+  const objectId = String(value.object_id ?? '').trim();
+  const linkRole = String(value.link_role ?? '').trim();
+  if (!objectType || !objectId || !linkRole) {
+    throw new Error('ObjectRef requires object_type, object_id, and link_role');
+  }
+  return { object_type: objectType, object_id: objectId, link_role: linkRole };
+}
+
+function parseObjectRefs(value: unknown): ObjectRef[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeObjectRef(entry as ObjectRef));
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.map((entry) => normalizeObjectRef(entry as ObjectRef)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendObjectRef(current: ObjectRef[], objectRef: ObjectRef): ObjectRef[] {
+  const normalized = normalizeObjectRef(objectRef);
+  const exists = current.some((entry) =>
+    entry.object_type === normalized.object_type &&
+    entry.object_id === normalized.object_id &&
+    entry.link_role === normalized.link_role
+  );
+  return exists ? current : [...current, normalized];
+}
+
 function ensureChatSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS chat_categories (
@@ -168,6 +215,7 @@ function ensureChatSchema(db: Database.Database): void {
       agents TEXT NOT NULL DEFAULT '[]',
       unread_count INTEGER NOT NULL DEFAULT 0,
       last_message_at TEXT,
+      linked_object_refs_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -194,6 +242,7 @@ function ensureChatSchema(db: Database.Database): void {
       title TEXT NOT NULL,
       message_count INTEGER NOT NULL DEFAULT 0,
       last_message_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      linked_object_refs_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -203,6 +252,13 @@ function ensureChatSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_chat_threads_channel_last ON chat_threads(channel_id, last_message_at DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_parent_message ON chat_threads(parent_message_id);
   `);
+
+  if (!hasColumn(db, 'chat_channels', 'linked_object_refs_json')) {
+    db.exec("ALTER TABLE chat_channels ADD COLUMN linked_object_refs_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!hasColumn(db, 'chat_threads', 'linked_object_refs_json')) {
+    db.exec("ALTER TABLE chat_threads ADD COLUMN linked_object_refs_json TEXT NOT NULL DEFAULT '[]'");
+  }
 }
 
 function mapCategoryRow(row: Record<string, unknown>): ChatCategoryRecord {
@@ -225,6 +281,7 @@ function mapChannelRow(row: Record<string, unknown>): ChatChannelRecord {
     agents: parseAgents(row.agents),
     unread_count: Number.isFinite(Number(row.unread_count)) ? Number(row.unread_count) : 0,
     last_message_at: typeof row.last_message_at === 'string' ? normalizeTimestamp(row.last_message_at) : null,
+    linked_object_refs: parseObjectRefs(row.linked_object_refs_json),
     created_at: normalizeTimestamp(typeof row.created_at === 'string' ? row.created_at : undefined),
   };
 }
@@ -255,6 +312,7 @@ function mapThreadRow(row: Record<string, unknown>): ChatThreadRecord {
     title: String(row.title ?? 'Thread'),
     message_count: Number.isFinite(Number(row.message_count)) ? Number(row.message_count) : 0,
     last_message_at: normalizeTimestamp(typeof row.last_message_at === 'string' ? row.last_message_at : undefined),
+    linked_object_refs: parseObjectRefs(row.linked_object_refs_json),
     created_at: normalizeTimestamp(typeof row.created_at === 'string' ? row.created_at : undefined),
   };
 }
@@ -282,6 +340,7 @@ export function createChatRepository(): ChatRepository {
   const markChannelReadStmt = db.prepare('UPDATE chat_channels SET unread_count = 0 WHERE id = ?');
   const touchChannelStmt = db.prepare('UPDATE chat_channels SET last_message_at = ? WHERE id = ?');
   const incUnreadStmt = db.prepare('UPDATE chat_channels SET unread_count = unread_count + 1 WHERE id = ?');
+  const updateChannelObjectRefsStmt = db.prepare('UPDATE chat_channels SET linked_object_refs_json = ? WHERE id = ?');
 
   const listMessagesByChannelStmt = db.prepare(`
     SELECT * FROM chat_messages
@@ -309,6 +368,7 @@ export function createChatRepository(): ChatRepository {
     VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const incrementThreadStmt = db.prepare('UPDATE chat_threads SET message_count = message_count + 1, last_message_at = ? WHERE id = ?');
+  const updateThreadObjectRefsStmt = db.prepare('UPDATE chat_threads SET linked_object_refs_json = ? WHERE id = ?');
 
   return {
     listCategories: () => (listCategoriesStmt.all() as Array<Record<string, unknown>>).map(mapCategoryRow),
@@ -421,6 +481,20 @@ export function createChatRepository(): ChatRepository {
       touchChannelStmt.run(normalizeTimestamp(timestamp), id);
     },
 
+    linkChannelObject: (id, objectRef) => {
+      const row = getChannelStmt.get(id) as Record<string, unknown> | undefined;
+      if (!row) return undefined;
+      const refs = appendObjectRef(mapChannelRow(row).linked_object_refs, objectRef);
+      updateChannelObjectRefsStmt.run(JSON.stringify(refs), id);
+      const updated = getChannelStmt.get(id) as Record<string, unknown> | undefined;
+      return updated ? mapChannelRow(updated) : undefined;
+    },
+
+    listChannelObjectRefs: (id) => {
+      const row = getChannelStmt.get(id) as Record<string, unknown> | undefined;
+      return row ? mapChannelRow(row).linked_object_refs : [];
+    },
+
     listMessagesByChannel: (channelId) => (listMessagesByChannelStmt.all(channelId) as Array<Record<string, unknown>>).map(mapMessageRow),
 
     listMessagesByThread: (threadId) => (listMessagesByThreadStmt.all(threadId) as Array<Record<string, unknown>>).map(mapMessageRow),
@@ -492,6 +566,20 @@ export function createChatRepository(): ChatRepository {
 
     incrementThreadCount: (id, timestamp) => {
       incrementThreadStmt.run(normalizeTimestamp(timestamp), id);
+    },
+
+    linkThreadObject: (id, objectRef) => {
+      const row = getThreadStmt.get(id) as Record<string, unknown> | undefined;
+      if (!row) return undefined;
+      const refs = appendObjectRef(mapThreadRow(row).linked_object_refs, objectRef);
+      updateThreadObjectRefsStmt.run(JSON.stringify(refs), id);
+      const updated = getThreadStmt.get(id) as Record<string, unknown> | undefined;
+      return updated ? mapThreadRow(updated) : undefined;
+    },
+
+    listThreadObjectRefs: (id) => {
+      const row = getThreadStmt.get(id) as Record<string, unknown> | undefined;
+      return row ? mapThreadRow(row).linked_object_refs : [];
     },
   };
 }
