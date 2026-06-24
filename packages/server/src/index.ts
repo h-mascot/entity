@@ -133,6 +133,7 @@ import {
   resolvePhase2Flags,
   serializePhase2FlagDiagnostics,
 } from "./phase2-flags";
+import { buildPhase2ObservabilityDiagnostics } from "./phase2-observability";
 import {
   buildTaskMutationActivityEvent,
   createActivityEventRouter,
@@ -195,7 +196,12 @@ app.get("/api/health", (_req, res) => {
 
 function registerPhase2DiagnosticsRoutes(prefix: "" | "/api") {
   app.get(`${prefix}/phase2/diagnostics`, (_req, res) => {
-    res.json({ phase2: serializePhase2FlagDiagnostics(phase2Flags) });
+    res.json({
+      phase2: {
+        ...serializePhase2FlagDiagnostics(phase2Flags),
+        observability: buildPhase2ObservabilityDiagnostics(),
+      },
+    });
   });
 }
 
