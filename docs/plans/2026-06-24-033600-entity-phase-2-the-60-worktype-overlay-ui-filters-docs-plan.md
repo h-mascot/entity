@@ -4,7 +4,7 @@ Entity Phase 2 THE-60: build worktype overlay UI, filters, and docs.
 **MC Task:** THE-60
 **Created:** 2026-06-24
 **Agent:** Cursor
-**Status:** PROOF PASSED; CLI GATES PENDING
+**Status:** BLOCKED ON BOOK REVIEW
 
 ## Context
 Live Linear issue THE-60 is child issue THE-13.5 under THE-13 worktype registry and overlays. Scope is to render domain-appropriate sales/CS/people/business-ops fields without forcing engineering/spec language, expose declared indexable overlay filter fields safely, and document registry/overlay versioning/migration behavior.
@@ -47,6 +47,8 @@ Live Linear issue THE-60 is child issue THE-13.5 under THE-13 worktype registry 
 |------|------|--------|-------|
 | 03:36Z | Setup | done | Read live child issue; branch created from THE-59 commit. |
 | 03:44Z | Implementation/proof | done | App create/detail/filter overlay UI implemented; proof commands passed; Playwright DOM proof captured at `output/entity-phase-2/browser-proof/THE-60-people-overlay-create.png` and snapshot output `agent-tools/5b6a7c19-fbef-4474-8f12-1058a75cd4ba.txt`. |
+| 03:49Z | Gate | blocked | CLI Tester request/run PASS; Book review packet returned `decision=REQUESTED`, `safeToContinue=false`; verify exited 1 with `reviewGateStatus=BLOCKED`, so THE-61 was not started. |
+| 03:51Z | Linear | blocked | Proof/blocker comment posted to THE-60: `e3e16813-aa73-405b-90ae-9be46067068c`. |
 
 ## Files Touched
 - `docs/plans/2026-06-24-033600-entity-phase-2-the-60-worktype-overlay-ui-filters-docs-plan.md` - created - THE-60 execution plan.
@@ -67,12 +69,12 @@ Live Linear issue THE-60 is child issue THE-13.5 under THE-13 worktype registry 
 2. Run `git status` and `git diff` to see current state.
 3. Find the first unchecked step above.
 4. Continue from the first unchecked step; do not redo completed work.
-5. Keep THE-60 scoped to overlay UI, safe indexable filter UI, and registry/versioning docs. Browser/DOM proof is mandatory because the issue is UI-facing.
+5. Resume at Step 7: rerun or obtain Book review approval for `output/entity-phase-2/book-review/THE-60.json`; do not start THE-61 until Book review is APPROVED and verify passes.
 
 ## Done
 - [ ] All steps complete
 - [x] Tests/build pass
 - [x] Browser/DOM proof captured
-- [ ] CLI Tester request/run/book-review/verify complete
+- [ ] CLI Tester request/run/book-review/verify complete (blocked: Book review `REQUESTED`, verify exit 1)
 - [ ] Linear THE-60 proof comment added and status moved to Done
 - [ ] Run-state advanced to THE-61
