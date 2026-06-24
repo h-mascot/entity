@@ -2,7 +2,7 @@
 
 Issue: THE-78
 Branch: THE-78-build-embedded-staged-chat-context-panel
-Status: IN PROGRESS
+Status: DONE
 
 ## Scope
 
@@ -34,7 +34,7 @@ Render an embedded ClickClack chat context panel near Entity work objects, start
   - Files: `output/entity-phase-2/browser-proof/THE-78-*`, `output/entity-phase-2/test-gate/THE-78.*`, `output/entity-phase-2/book-review/THE-78*`
   - Verify: `bash scripts/proof/entity-phase-2-smoke.sh && npm run build && cd packages/server && npm run build && npx vitest run`
   - Verify: `project-test-gate request/run/book-review/verify THE-78`
-- [ ] Step 6: Comment Linear, mark THE-78 Done if proof supports it, update run-state to THE-79, and commit scoped work.
+- [x] Step 6: Comment Linear, mark THE-78 Done if proof supports it, update run-state to THE-79, and commit scoped work.
   - Files: `.cursor/run-state/entity-phase-2.json`
   - Verify: `git status --short --branch`
 
@@ -46,6 +46,7 @@ Render an embedded ClickClack chat context panel near Entity work objects, start
 | 2026-06-24T06:31Z | Step 2 | In progress | Existing task detail proof/docs sections and chat readiness/ObjectRef APIs located. |
 | 2026-06-24T06:34Z | Steps 2-4 | Done | Embedded task chat context panel added and mounted; workspace build passes with proof/docs sections preserved. |
 | 2026-06-24T06:36Z | Step 5 | Done | Browser DOM/screenshot proof passed for unavailable readiness; full proof passed; CLI Tester run PASS, packet-mode Book review locally approved, verify PASS with no blockers; GitNexus low risk. |
+| 2026-06-24T06:37Z | Step 6 | Done | Linear proof comment posted, THE-78 marked Done, implementation commit `ec79b76`, run-state advanced to THE-79. |
 
 ## Files Touched
 
@@ -53,6 +54,7 @@ Render an embedded ClickClack chat context panel near Entity work objects, start
 - `docs/plans/ACTIVE_PLAN.md` - modified - mirrored active plan
 - `packages/app/src/components/mission-control/TaskChatContextPanel.tsx` - created - embedded readiness/chat context panel
 - `packages/app/src/components/mission-control/TaskDetailPanel.tsx` - modified - mounted panel in task detail
+- `.cursor/run-state/entity-phase-2.json` - modified - advanced local pointer to THE-79 (not committed)
 
 ## Resume Instructions
 
@@ -63,8 +65,8 @@ Render an embedded ClickClack chat context panel near Entity work objects, start
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Browser/DOM proof passes
-- [ ] Focused/full tests pass
-- [ ] CLI Tester request/run/book-review/verify completed
-- [ ] Linear proof comment posted and THE-78 marked Done if supported
+- [x] All steps complete
+- [x] Browser/DOM proof passes
+- [x] Focused/full tests pass
+- [x] CLI Tester request/run/book-review/verify completed
+- [x] Linear proof comment posted and THE-78 marked Done if supported
