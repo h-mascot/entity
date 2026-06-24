@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import {
   buildPermissionSafeEnvelope,
+  buildPermissionSafeRecordEnvelope,
   evaluatePermission,
   type PermissionAction,
   type PrincipalPermissionContext,
@@ -91,4 +92,13 @@ export function permissionSafeObject<T extends ProtectedObject>(
   action: PermissionAction,
 ) {
   return buildPermissionSafeEnvelope(binding.principal, object, action);
+}
+
+export function permissionSafeRecord<T extends Record<string, unknown>>(
+  binding: RequestOrgBinding,
+  object: ProtectedObject,
+  record: T,
+  action: PermissionAction,
+) {
+  return buildPermissionSafeRecordEnvelope(binding.principal, object, record, action);
 }

@@ -87,6 +87,21 @@ export interface PermissionDecision {
   };
 }
 
+export type PermissionVisibilityState = 'visible' | 'restricted';
+
+export interface PermissionEnvelopeMetadata {
+  permission_state: PermissionVisibilityState;
+  entity_permission_state: PermissionVisibilityState;
+  restricted: boolean;
+  placeholder: boolean;
+  permission_reasons: string[];
+}
+
+export interface PermissionSafeEnvelope<T extends Record<string, unknown>> {
+  permission: PermissionDecision;
+  object: T & PermissionEnvelopeMetadata;
+}
+
 const ROLE_RANK: Record<PermissionRole, number> = {
   none: 0,
   viewer: 1,
@@ -337,20 +352,44 @@ export function evaluatePermission(input: {
 }
 
 export function buildPermissionSafeEnvelope<T extends ProtectedObject>(principal: PrincipalPermissionContext, object: T, action: PermissionAction = 'read') {
+  return buildPermissionSafeRecordEnvelope(principal, object, object as T & Record<string, unknown>, action);
+}
+
+function permissionEnvelopeMetadata(decision: PermissionDecision): PermissionEnvelopeMetadata {
+  const state: PermissionVisibilityState = decision.allowed ? 'visible' : 'restricted';
+  return {
+    permission_state: state,
+    entity_permission_state: state,
+    restricted: !decision.allowed,
+    placeholder: !decision.allowed,
+    permission_reasons: decision.allowed ? [] : [...decision.reasons],
+  };
+}
+
+function permissionSafePlaceholder(object: ProtectedObject): Record<string, unknown> {
+  const objectId = String(object.object_id);
+  return {
+    id: objectId,
+    object_id: objectId,
+    object_type: object.object_type,
+    title: null,
+    snippet: null,
+    content: null,
+  };
+}
+
+export function buildPermissionSafeRecordEnvelope<T extends Record<string, unknown>>(
+  principal: PrincipalPermissionContext,
+  object: ProtectedObject,
+  record: T,
+  action: PermissionAction = 'read',
+): PermissionSafeEnvelope<T> {
   const decision = evaluatePermission({ principal, object, action });
-  if (!decision.allowed) {
-    return {
-      permission: decision,
-      object: {
-        object_type: object.object_type,
-        object_id: String(object.object_id),
-        title: null,
-        snippet: null,
-        content: null,
-      },
-    };
-  }
-  return { permission: decision, object };
+  const metadata = permissionEnvelopeMetadata(decision);
+  const safeRecord = decision.allowed
+    ? { ...record, ...metadata }
+    : { ...permissionSafePlaceholder(object), ...metadata };
+  return { permission: decision, object: safeRecord as T & PermissionEnvelopeMetadata };
 }
 
 export function filterAccessibleObjects<T extends ProtectedObject>(

@@ -12,7 +12,13 @@ import {
   type UpdateEvidenceArtifactVersionInput,
   type UpdateNativeDocumentVersionInput,
 } from '../../db/src';
-import { ensureObjectPermission, requireRequestOrg, type RequestOrgBinding } from './request-permissions';
+import {
+  ensureObjectPermission,
+  ensureRequestOrgMatches,
+  permissionSafeRecord,
+  requireRequestOrg,
+  type RequestOrgBinding,
+} from './request-permissions';
 import type { ProtectedObject } from './permissions';
 
 interface DocumentObjectRouterDeps {
@@ -291,8 +297,10 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     if (!binding) return undefined;
     const nativeDocument = documentRepo.getNativeDocument(req.params.id);
     if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
-    if (!ensureObjectPermission(res, binding, nativeDocumentObject(nativeDocument), 'read')) return undefined;
-    return res.json({ nativeDocument });
+    const object = nativeDocumentObject(nativeDocument);
+    if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
+    const envelope = permissionSafeRecord(binding, object, nativeDocument as unknown as Record<string, unknown>, 'read');
+    return res.json({ nativeDocument: envelope.object, permission: envelope.permission });
   });
 
   router.patch('/native-documents/:id', (req, res) => {
@@ -315,7 +323,10 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     if (!binding) return undefined;
     const nativeDocument = documentRepo.getNativeDocument(req.params.id);
     if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
-    if (!ensureObjectPermission(res, binding, nativeDocumentObject(nativeDocument), 'read')) return undefined;
+    const object = nativeDocumentObject(nativeDocument);
+    if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
+    const envelope = permissionSafeRecord(binding, object, nativeDocument as unknown as Record<string, unknown>, 'read');
+    if (!envelope.permission.allowed) return res.json({ versions: [], permission: envelope.permission });
     return res.json({ versions: documentRepo.listNativeDocumentVersions(req.params.id) });
   });
 
@@ -350,8 +361,10 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     if (!binding) return undefined;
     const externalDocumentRef = documentRepo.getExternalDocumentRef(req.params.id);
     if (!externalDocumentRef) return res.status(404).json({ error: 'external document ref not found' });
-    if (!ensureObjectPermission(res, binding, externalDocumentObject(externalDocumentRef), 'read')) return undefined;
-    return res.json({ externalDocumentRef });
+    const object = externalDocumentObject(externalDocumentRef);
+    if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
+    const envelope = permissionSafeRecord(binding, object, externalDocumentRef as unknown as Record<string, unknown>, 'read');
+    return res.json({ externalDocumentRef: envelope.object, permission: envelope.permission });
   });
 
   router.post('/external-document-refs/:id/links', (req, res) => {
@@ -385,8 +398,10 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     if (!binding) return undefined;
     const evidenceArtifact = artifactRepo.getArtifact(req.params.id);
     if (!evidenceArtifact) return res.status(404).json({ error: 'evidence artifact not found' });
-    if (!ensureObjectPermission(res, binding, evidenceArtifactObject(evidenceArtifact), 'read')) return undefined;
-    return res.json({ evidenceArtifact });
+    const object = evidenceArtifactObject(evidenceArtifact);
+    if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
+    const envelope = permissionSafeRecord(binding, object, evidenceArtifact as unknown as Record<string, unknown>, 'read');
+    return res.json({ evidenceArtifact: envelope.object, permission: envelope.permission });
   });
 
   router.patch('/evidence-artifacts/:id', (req, res) => {
@@ -409,7 +424,10 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     if (!binding) return undefined;
     const evidenceArtifact = artifactRepo.getArtifact(req.params.id);
     if (!evidenceArtifact) return res.status(404).json({ error: 'evidence artifact not found' });
-    if (!ensureObjectPermission(res, binding, evidenceArtifactObject(evidenceArtifact), 'read')) return undefined;
+    const object = evidenceArtifactObject(evidenceArtifact);
+    if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
+    const envelope = permissionSafeRecord(binding, object, evidenceArtifact as unknown as Record<string, unknown>, 'read');
+    if (!envelope.permission.allowed) return res.json({ versions: [], permission: envelope.permission });
     return res.json({ versions: artifactRepo.listArtifactVersions(req.params.id) });
   });
 

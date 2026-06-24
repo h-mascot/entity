@@ -129,13 +129,19 @@ describe('permission evaluator', () => {
 
     expect(envelope.permission.allowed).toBe(false);
     expect(envelope.permission.reasons).toEqual(expect.arrayContaining(['requires viewer role', 'requires sensitivity clearance: customer']));
-    expect(envelope.object).toEqual({
+    expect(envelope.object).toMatchObject({
+      id: 'search-1',
       object_type: 'search_result',
       object_id: 'search-1',
       title: null,
       snippet: null,
       content: null,
+      permission_state: 'restricted',
+      entity_permission_state: 'restricted',
+      restricted: true,
+      placeholder: true,
     });
+    expect(JSON.stringify(envelope.object)).not.toContain('Should not be visible');
   });
 
   it('filters mixed search collections to accessible objects only', () => {
@@ -143,5 +149,21 @@ describe('permission evaluator', () => {
     const hidden = object({ object_type: 'search_result', object_id: 'hidden', org_id: 'org-b', sensitivity: 'customer' });
 
     expect(filterAccessibleObjects(orgManager, [visible, hidden]).map((entry) => entry.object_id)).toEqual(['visible']);
+  });
+
+  it('marks visible envelopes without changing readable content', () => {
+    const envelope = buildPermissionSafeEnvelope(orgManager, object({ object_type: 'external_document_ref', sensitivity: 'customer' }), 'preview');
+
+    expect(envelope.permission.allowed).toBe(true);
+    expect(envelope.object).toMatchObject({
+      title: 'Sensitive renewal',
+      snippet: 'Customer renewal summary',
+      content: 'Full restricted customer renewal details',
+      permission_state: 'visible',
+      entity_permission_state: 'visible',
+      restricted: false,
+      placeholder: false,
+      permission_reasons: [],
+    });
   });
 });

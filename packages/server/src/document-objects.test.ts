@@ -570,7 +570,7 @@ describe('document object routes', () => {
     });
   });
 
-  it('denies restricted document policy safely', async () => {
+  it('returns a restricted placeholder envelope for same-org document policy denial', async () => {
     const createRes = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
@@ -587,9 +587,25 @@ describe('document object routes', () => {
     const denied = await fetch(`${baseUrl}/api/document-objects/native-documents/restricted-native-doc`, {
       headers: { 'x-entity-org-id': 'org-a' },
     });
-    expect(denied.status).toBe(403);
+    expect(denied.status).toBe(200);
     const body = await readJson(denied);
-    expect(body).toMatchObject({ error: 'permission denied', code: 'permission_denied' });
+    expect(body).toMatchObject({
+      nativeDocument: {
+        id: 'restricted-native-doc',
+        object_id: 'restricted-native-doc',
+        object_type: 'native_document',
+        title: null,
+        permission_state: 'restricted',
+        entity_permission_state: 'restricted',
+        restricted: true,
+        placeholder: true,
+      },
+      permission: {
+        allowed: false,
+        object_type: 'native_document',
+        object_id: 'restricted-native-doc',
+      },
+    });
     expect(JSON.stringify(body)).not.toContain('Restricted people note');
   });
 });

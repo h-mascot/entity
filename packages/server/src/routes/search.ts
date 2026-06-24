@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { Router } from 'express';
 import { execFile } from 'child_process';
-import { requireRequestOrg } from '../request-permissions';
+import { permissionSafeRecord, requireRequestOrg } from '../request-permissions';
 
 type SearchMode = 'keyword' | 'semantic' | 'hybrid';
 type SearchCollection = 'all' | 'obsidian' | 'superada' | 'sessions' | 'scotty' | 'spock' | 'memory';
@@ -13,6 +13,10 @@ interface QmdJsonResult {
   title?: unknown;
   snippet?: unknown;
   body?: unknown;
+  org_id?: unknown;
+  sensitivity?: unknown;
+  acl_json?: unknown;
+  entity_visibility_policy_json?: unknown;
 }
 
 interface QmdCollectionListEntry {
@@ -611,7 +615,8 @@ export function createSearchRouter(): Router {
       return res.status(400).json({ error: 'full must be a boolean' });
     }
 
-    if (!requireRequestOrg(req, res)) return undefined;
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
 
     const { sshTarget, qmdBin, timeoutMs, maxBufferBytes } = getQmdExecConfig();
 
@@ -643,7 +648,7 @@ export function createSearchRouter(): Router {
         const resultCollection = parsedFile.collection ?? (collection === 'all' ? null : collection);
         const id = resultCollection ? `${resultCollection}/${path}` : parsedFile.id;
 
-        return {
+        const result = {
           id,
           docid,
           collection: resultCollection,
@@ -654,6 +659,19 @@ export function createSearchRouter(): Router {
           snippet: full ? null : snippet,
           content: full ? content : null,
         };
+        const object = {
+          object_type: 'search_result' as const,
+          object_id: id || docid || file || path,
+          org_id: typeof entry.org_id === 'string' && entry.org_id.trim() ? entry.org_id.trim() : binding.orgId,
+          title,
+          snippet,
+          content,
+          sensitivity: typeof entry.sensitivity === 'string' ? entry.sensitivity : null,
+          acl_json: typeof entry.acl_json === 'string' ? entry.acl_json : null,
+          entity_visibility_policy_json: typeof entry.entity_visibility_policy_json === 'string' ? entry.entity_visibility_policy_json : null,
+        };
+        const envelope = permissionSafeRecord(binding, object, result, full ? 'read' : 'search');
+        return { ...envelope.object, permission: envelope.permission };
       });
 
       return res.json({
