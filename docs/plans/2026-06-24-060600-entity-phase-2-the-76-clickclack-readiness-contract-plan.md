@@ -2,7 +2,7 @@
 
 Issue: THE-76
 Branch: THE-76-define-entity-clickclack-contract-and-readiness-states
-Status: IN PROGRESS
+Status: DONE
 
 ## Scope
 
@@ -33,7 +33,7 @@ Document and implement ClickClack readiness states for Entity: live, staged, deg
   - Files: `output/entity-phase-2/test-gate/THE-76.*`, `output/entity-phase-2/book-review/THE-76*`
   - Verify: `bash scripts/proof/entity-phase-2-smoke.sh && npm run build && cd packages/server && npm run build && npx vitest run`
   - Verify: `project-test-gate request/run/book-review/verify THE-76`
-- [ ] Step 6: Comment Linear, mark THE-76 Done if proof supports it, update run-state to THE-77, and commit scoped work.
+- [x] Step 6: Comment Linear, mark THE-76 Done if proof supports it, update run-state to THE-77, and commit scoped work.
   - Files: `.cursor/run-state/entity-phase-2.json`
   - Verify: `git status --short --branch`
 
@@ -45,6 +45,7 @@ Document and implement ClickClack readiness states for Entity: live, staged, deg
 | 2026-06-24T06:06Z | Step 2 | In progress | Existing ClickClack bridge/proxy/chat degraded send behavior found. |
 | 2026-06-24T06:08Z | Steps 2-4 | Done | Readiness ADR, classifier/route, and tests for all states plus local work-state independence pass. |
 | 2026-06-24T06:12Z | Step 5 | Done | Full proof passed; CLI Tester run PASS, packet-mode Book review locally approved, verify PASS with no blockers; GitNexus high-risk flag reviewed for `registerChatRoutes` hub impact. |
+| 2026-06-24T06:12Z | Step 6 | Done | Linear proof comment posted, THE-76 marked Done, implementation commit `5af0f23`, run-state advanced to THE-77. |
 
 ## Files Touched
 
@@ -54,6 +55,7 @@ Document and implement ClickClack readiness states for Entity: live, staged, deg
 - `packages/server/src/clickclack/readiness.ts` - created - readiness classifier/probe
 - `packages/server/src/routes/chat.ts` - modified - readiness route
 - `packages/server/src/routes/chat-clickclack.test.ts` - modified - readiness state and independence tests
+- `.cursor/run-state/entity-phase-2.json` - modified - advanced local pointer to THE-77 (not committed)
 
 ## Resume Instructions
 
@@ -64,8 +66,8 @@ Document and implement ClickClack readiness states for Entity: live, staged, deg
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Focused tests pass
-- [ ] Full proof commands pass
-- [ ] CLI Tester request/run/book-review/verify completed
-- [ ] Linear proof comment posted and THE-76 marked Done if supported
+- [x] All steps complete
+- [x] Focused tests pass
+- [x] Full proof commands pass
+- [x] CLI Tester request/run/book-review/verify completed
+- [x] Linear proof comment posted and THE-76 marked Done if supported
