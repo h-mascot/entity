@@ -4,6 +4,7 @@ import type { TaskBoardTask } from '../hooks/useTaskBoard';
 type RuntimeState = 'healthy' | 'degraded' | 'unavailable' | 'unknown';
 type RuntimeReadiness = 'ready' | 'degraded' | 'unavailable' | 'unknown';
 type BindingState = 'bound' | 'unbound' | 'stale' | 'unknown';
+type HelmLightControlAction = 'pause' | 'resume' | 'request_retry';
 
 interface HelmRuntimeStatusSummary {
   source: 'helm';
@@ -55,6 +56,25 @@ interface AgentManagementSurfaceProps {
   runtimeStatus?: HelmRuntimeStatusSummary;
   tasks: TaskBoardTask[];
 }
+
+interface ControlResult {
+  accepted: boolean;
+  status: 'accepted' | 'denied' | 'unavailable';
+  action: HelmLightControlAction;
+  reason: string;
+  audit?: {
+    event_type?: string;
+    policy_allowed?: boolean;
+    forwarded_to_helm?: boolean;
+    created_at?: string;
+  };
+}
+
+const SAFE_CONTROLS: Array<{ action: HelmLightControlAction; label: string }> = [
+  { action: 'pause', label: 'Pause' },
+  { action: 'resume', label: 'Resume' },
+  { action: 'request_retry', label: 'Request retry' },
+];
 
 function normalize(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -133,7 +153,7 @@ function formatRelative(iso: string | null | undefined): string {
 
 function statusClass(state: string | undefined): string {
   const normalized = (state ?? 'unknown').toLowerCase();
-  if (normalized === 'healthy' || normalized === 'ready' || normalized === 'bound' || normalized === 'active') {
+  if (normalized === 'healthy' || normalized === 'ready' || normalized === 'bound' || normalized === 'active' || normalized === 'accepted') {
     return 'entity-ops-chip-green';
   }
   if (normalized === 'degraded' || normalized === 'stale') {
@@ -181,6 +201,8 @@ export default function AgentManagementSurface({
 }: AgentManagementSurfaceProps) {
   const [registryAgents, setRegistryAgents] = useState<RegistryAgent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [controlResult, setControlResult] = useState<ControlResult | null>(null);
+  const [controlLoading, setControlLoading] = useState<HelmLightControlAction | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,6 +243,58 @@ export default function AgentManagementSurface({
   const schedules = recurringLabels(registryAgent, tasks, agentId, agentName);
   const runtimeLabel = registryAgent?.capabilities?.runtimeLabel || runtime;
   const currentWork = effectiveRuntimeStatus?.current_work || currentTaskTitle;
+  const runtimeBindingId = registryAgent?.runtime_binding_id || effectiveRuntimeStatus?.binding_id || '';
+  const helmDeepLink = effectiveRuntimeStatus?.helm_link && /^https?:\/\//.test(effectiveRuntimeStatus.helm_link)
+    ? effectiveRuntimeStatus.helm_link
+    : null;
+  const controlsAllowed = Boolean(
+    registryAgent?.helm_managed &&
+    runtimeBindingId &&
+    bindingState === 'bound' &&
+    effectiveRuntimeStatus?.state !== 'unavailable',
+  );
+  const controlDisabledReason = controlsAllowed
+    ? ''
+    : !registryAgent?.helm_managed
+      ? 'Not Helm-managed.'
+      : !runtimeBindingId
+        ? 'Missing runtime binding.'
+        : bindingState !== 'bound'
+          ? `Binding is ${titleCase(bindingState)}.`
+          : 'Runtime unavailable.';
+
+  const requestControl = async (action: HelmLightControlAction) => {
+    if (!registryAgent || !controlsAllowed) {
+      setControlResult({ accepted: false, status: 'denied', action, reason: controlDisabledReason || 'control_not_allowed' });
+      return;
+    }
+    setControlLoading(action);
+    setControlResult(null);
+    try {
+      const response = await fetch(`/api/agents/${encodeURIComponent(registryAgent.id)}/runtime-controls`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action, actorPrincipalId: 'entity-ui' }),
+      });
+      const json = await response.json().catch(() => ({})) as ControlResult & { error?: string };
+      setControlResult({
+        accepted: Boolean(json.accepted),
+        status: json.status ?? (response.ok ? 'accepted' : 'unavailable'),
+        action,
+        reason: json.reason || json.error || `runtime control ${response.status}`,
+        audit: json.audit,
+      });
+    } catch (err) {
+      setControlResult({
+        accepted: false,
+        status: 'unavailable',
+        action,
+        reason: err instanceof Error ? err.message : 'runtime control unavailable',
+      });
+    } finally {
+      setControlLoading(null);
+    }
+  };
 
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
@@ -283,6 +357,50 @@ export default function AgentManagementSurface({
         <p className="mt-3 text-xs text-[var(--text-secondary)]">
           Runtime setup and deep configuration stay outside Entity. This surface shows work-plane readiness only.
         </p>
+        <div className="mt-3 rounded border border-[var(--border-primary)] bg-[var(--bg-primary)]/35 px-3 py-2 text-xs">
+          <div className="text-[var(--text-muted)]">Helm deep link</div>
+          {helmDeepLink ? (
+            <a href={helmDeepLink} target="_blank" rel="noreferrer" className="mt-1 inline-flex text-[var(--accent)]">
+              Open in Helm for deep admin/configuration
+            </a>
+          ) : (
+            <div className="mt-1 text-[var(--text-secondary)]">No Helm deep link reported.</div>
+          )}
+        </div>
+      </section>
+
+      <section className="entity-ops-panel px-4 py-3 lg:col-span-2">
+        <div className="entity-ops-section-title">Safe Light Controls</div>
+        <p className="mt-2 text-sm text-[var(--text-secondary)]">
+          Entity only requests reversible actions after policy checks. Deep runtime administration remains in Helm.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {SAFE_CONTROLS.map((control) => (
+            <button
+              key={control.action}
+              type="button"
+              className="mc-shell-btn px-3 py-1.5 text-xs"
+              disabled={!controlsAllowed || controlLoading !== null}
+              title={controlsAllowed ? control.label : controlDisabledReason}
+              onClick={() => void requestControl(control.action)}
+            >
+              {controlLoading === control.action ? 'Requesting...' : control.label}
+            </button>
+          ))}
+        </div>
+        {!controlsAllowed && (
+          <div className="mt-2 text-xs text-[var(--text-muted)]">Controls unavailable: {controlDisabledReason}</div>
+        )}
+        {controlResult && (
+          <div className={`mt-3 rounded border border-[var(--border-primary)] px-3 py-2 text-xs ${controlResult.accepted ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`} role="status">
+            <div>
+              {titleCase(controlResult.action)}: {titleCase(controlResult.status)} - {titleCase(controlResult.reason)}
+            </div>
+            <div className="mt-1 text-[var(--text-muted)]">
+              Audit: {controlResult.audit?.event_type ?? 'local request'} · policy {String(controlResult.audit?.policy_allowed ?? controlResult.accepted)} · forwarded {String(controlResult.audit?.forwarded_to_helm ?? false)}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="entity-ops-panel px-4 py-3">

@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAgentRegistryRouter } from '../routes/agent-registry';
+import type { HelmLightControlAdapter } from '../agent/helm-light-controls';
 import type { HelmStatusAdapter } from '../agent/helm-status-adapter';
 import type {
   AgentModuleGrantRecord,
@@ -471,6 +472,209 @@ describe('agent registry Helm runtime status serialization', () => {
       expect(managedAgent?.capabilities.capabilityLabels).toEqual(['Mission Control']);
       expect(managedAgent?.capabilities.permissionLabels).toEqual(['Read', 'Review']);
       expect(managedAgent?.capabilities.scopeLabels).toEqual(['Projects: Entity']);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+});
+
+describe('agent registry Helm light controls', () => {
+  it('forwards only safe reversible controls with an audit fixture', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'controlbook',
+      name: 'Control Book',
+      emoji: 'C',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-controlbook',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'bound',
+      status: 'active',
+      metadata_json: '{}',
+    });
+    const sent: Array<{ bindingId: string; action: string; audit: unknown }> = [];
+    const helmLightControlAdapter: HelmLightControlAdapter = {
+      requestControl: async (agent, action, actorPrincipalId) => {
+        const audit = {
+          event_type: 'helm_light_control_requested' as const,
+          agent_id: agent.id,
+          action,
+          actor_principal_id: actorPrincipalId,
+          runtime_binding_id: agent.runtime_binding_id,
+          policy_allowed: true,
+          policy_reason: 'policy_allowed_reversible_control',
+          forwarded_to_helm: true,
+          created_at: now,
+        };
+        sent.push({ bindingId: agent.runtime_binding_id ?? '', action, audit });
+        return {
+          accepted: true,
+          status: 'accepted',
+          action,
+          reason: 'policy_allowed_reversible_control',
+          audit,
+          helm_link: 'https://helm.example/runtimes/runtime-controlbook',
+        };
+      },
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo, helmLightControlAdapter }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/controlbook/runtime-controls`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'pause', actorPrincipalId: 'human:reviewer' }),
+      });
+      expect(res.status).toBe(202);
+      const json = await res.json() as {
+        accepted: boolean;
+        status: string;
+        action: string;
+        reason: string;
+        helm_link: string;
+        audit: {
+          event_type: string;
+          action: string;
+          actor_principal_id: string;
+          runtime_binding_id: string;
+          policy_allowed: boolean;
+          forwarded_to_helm: boolean;
+        };
+        deep_admin?: unknown;
+        model_config?: unknown;
+        deployment_settings?: unknown;
+      };
+      expect(json).toMatchObject({
+        accepted: true,
+        status: 'accepted',
+        action: 'pause',
+        reason: 'policy_allowed_reversible_control',
+        helm_link: 'https://helm.example/runtimes/runtime-controlbook',
+        audit: {
+          event_type: 'helm_light_control_requested',
+          action: 'pause',
+          actor_principal_id: 'human:reviewer',
+          runtime_binding_id: 'runtime-controlbook',
+          policy_allowed: true,
+          forwarded_to_helm: true,
+        },
+      });
+      expect(json.deep_admin).toBeUndefined();
+      expect(json.model_config).toBeUndefined();
+      expect(json.deployment_settings).toBeUndefined();
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ bindingId: 'runtime-controlbook', action: 'pause' });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('denies controls for stale bindings and rejects deep admin actions', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'stalecontrol',
+      name: 'Stale Control',
+      emoji: 'S',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-stalecontrol',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'stale',
+      status: 'active',
+      metadata_json: '{}',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const denied = await fetch(`http://127.0.0.1:${address.port}/api/agents/stalecontrol/runtime-controls`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'resume', actorPrincipalId: 'human:reviewer' }),
+      });
+      expect(denied.status).toBe(403);
+      const deniedJson = await denied.json() as { accepted: boolean; reason: string; audit: { policy_allowed: boolean; forwarded_to_helm: boolean } };
+      expect(deniedJson).toMatchObject({
+        accepted: false,
+        reason: 'runtime_binding_stale',
+        audit: {
+          policy_allowed: false,
+          forwarded_to_helm: false,
+        },
+      });
+
+      const unsafe = await fetch(`http://127.0.0.1:${address.port}/api/agents/stalecontrol/runtime-controls`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'deploy_runtime', actorPrincipalId: 'human:reviewer' }),
+      });
+      expect(unsafe.status).toBe(400);
+      expect(await unsafe.json()).toEqual({ error: 'action must be one of: pause, resume, request_retry' });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('keeps Entity flows alive when Helm control forwarding is unavailable', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'unavailablecontrol',
+      name: 'Unavailable Control',
+      emoji: 'U',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-unavailablecontrol',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'bound',
+      status: 'active',
+      metadata_json: '{}',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/unavailablecontrol/runtime-controls`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'request_retry', actorPrincipalId: 'human:reviewer' }),
+      });
+      expect(res.status).toBe(503);
+      const json = await res.json() as {
+        accepted: boolean;
+        status: string;
+        reason: string;
+        audit: { policy_allowed: boolean; forwarded_to_helm: boolean; policy_reason: string };
+      };
+      expect(json).toMatchObject({
+        accepted: false,
+        status: 'unavailable',
+        reason: 'helm_control_provider_unavailable',
+        audit: {
+          policy_allowed: true,
+          forwarded_to_helm: false,
+          policy_reason: 'helm_control_provider_unavailable',
+        },
+      });
+
+      const registry = await fetch(`http://127.0.0.1:${address.port}/api/agents/registry`);
+      expect(registry.status).toBe(200);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }

@@ -8,16 +8,24 @@ import type {
   UpdateAgentRegistryInput,
 } from '../../../db/src';
 import { buildAgentCapabilityCard } from '../agent/agent-capability-card';
+import {
+  createHelmLightControlAdapter,
+  HELM_LIGHT_CONTROL_ACTIONS,
+  type HelmLightControlAction,
+  type HelmLightControlAdapter,
+} from '../agent/helm-light-controls';
 import { createHelmStatusAdapter, type HelmRuntimeStatusSummary, type HelmStatusAdapter } from '../agent/helm-status-adapter';
 
 interface AgentRegistryRouterDeps {
   agentRegistryRepo: AgentRegistryRepository;
   moduleRegistryRepo: ModuleRegistryRepository;
   helmStatusAdapter?: HelmStatusAdapter;
+  helmLightControlAdapter?: HelmLightControlAdapter;
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_.-]{1,63}$/;
 const STATUS_VALUES = new Set(['active', 'idle', 'disabled', 'template', 'archived']);
+const CONTROL_ACTIONS = new Set<string>(HELM_LIGHT_CONTROL_ACTIONS);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -176,10 +184,23 @@ function parseGrantInput(body: unknown, agentId: string, moduleIdFromPath?: stri
   };
 }
 
+function parseControlInput(body: unknown): { action: HelmLightControlAction; actorPrincipalId: string } {
+  if (!isRecord(body)) throw new Error('body must be an object');
+  const action = requiredString(body, 'action') as HelmLightControlAction;
+  if (!CONTROL_ACTIONS.has(action)) {
+    throw new Error(`action must be one of: ${HELM_LIGHT_CONTROL_ACTIONS.join(', ')}`);
+  }
+  return {
+    action,
+    actorPrincipalId: optionalString(body, 'actor_principal_id') ?? optionalString(body, 'actorPrincipalId') ?? 'unknown',
+  };
+}
+
 export function createAgentRegistryRouter(deps: AgentRegistryRouterDeps): Router {
   const router = createRouter();
   const { agentRegistryRepo, moduleRegistryRepo } = deps;
   const helmStatusAdapter = deps.helmStatusAdapter ?? createHelmStatusAdapter();
+  const helmLightControlAdapter = deps.helmLightControlAdapter ?? createHelmLightControlAdapter();
 
   router.get('/agents/registry', async (_req, res) => {
     const list = await Promise.all(agentRegistryRepo
@@ -211,6 +232,27 @@ export function createAgentRegistryRouter(deps: AgentRegistryRouterDeps): Router
       return res.json({ agent: serializeAgent(updated, moduleRegistryRepo, await helmStatusAdapter.getStatus(updated)) });
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid agent update payload.' });
+    }
+  });
+
+  router.post('/agents/:id/runtime-controls', async (req, res) => {
+    const agent = findAgent(agentRegistryRepo, String(req.params.id));
+    if (!agent) return res.status(404).json({ error: 'Agent not found.' });
+    try {
+      const input = parseControlInput(req.body);
+      const result = await helmLightControlAdapter.requestControl(agent, input.action, input.actorPrincipalId);
+      const statusCode = result.status === 'accepted' ? 202 : result.status === 'denied' ? 403 : 503;
+      return res.status(statusCode).json({
+        agent_id: agent.id,
+        action: input.action,
+        accepted: result.accepted,
+        status: result.status,
+        reason: result.reason,
+        audit: result.audit,
+        helm_link: result.helm_link,
+      });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid runtime control payload.' });
     }
   });
 
