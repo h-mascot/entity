@@ -128,7 +128,15 @@ interface TaskDetailData {
   taskmasterDrivable: boolean;
   submittedBy: string | null;
   reviewer: string | null;
+  reviewerPrincipalId: string | null;
+  reviewRequired: boolean;
+  reviewState: string;
   approver: string | null;
+  approverPrincipalId: string | null;
+  humanGateRequired: boolean;
+  humanGateState: string;
+  policyReasonChain: Array<Record<string, unknown>>;
+  overrideAudit: Array<Record<string, unknown>>;
   model: string | null;
   estimateHours: number | null;
   timeSpent: number | null;
@@ -716,6 +724,28 @@ function normalizeTaskDetail(raw: unknown): TaskDetailData | null {
   const metadataRecord = parseJsonRecord(record.metadata) ?? {};
   const rawAttachments = record.attachments ?? metadataRecord.attachments;
   const rawDependencies = record.dependencies ?? metadataRecord.dependencies;
+  const metadataReviewRequired = normalizeBoolean(metadataRecord.review_required ?? metadataRecord.reviewRequired);
+  const metadataHumanGateRequired = normalizeBoolean(metadataRecord.human_gate_required ?? metadataRecord.humanGateRequired);
+  const reviewRequired = normalizeBoolean(record.review_required ?? record.reviewRequired) || metadataReviewRequired;
+  const humanGateRequired = normalizeBoolean(record.human_gate_required ?? record.humanGateRequired) || metadataHumanGateRequired;
+  const rawReviewState = readFirstString(record.review_state, record.reviewState);
+  const metadataReviewState = readFirstString(metadataRecord.review_state, metadataRecord.reviewState, metadataRecord.review_decision);
+  const rawHumanGateState = readFirstString(record.human_gate_state, record.humanGateState);
+  const metadataHumanGateState = readFirstString(metadataRecord.human_gate_state, metadataRecord.humanGateState, metadataRecord.human_gate_decision);
+  const policyReasonChain = recordArrayFrom(
+    record.policy_reason_chain ??
+      record.policyReasonChain ??
+      metadataRecord.policy_reason_chain ??
+      metadataRecord.reason_chain ??
+      metadataRecord.policy_reasons
+  );
+  const overrideAudit = recordArrayFrom(
+    record.override_audit ??
+      record.overrideAudit ??
+      metadataRecord.override_audit ??
+      metadataRecord.review_override_audit ??
+      metadataRecord.human_gate_override_audit
+  );
   const activity = Array.isArray(record.activity)
     ? record.activity.map(normalizeActivity).filter((entry): entry is TaskActivity => entry !== null)
     : [];
@@ -743,7 +773,19 @@ function normalizeTaskDetail(raw: unknown): TaskDetailData | null {
     taskmasterDrivable: normalizeBoolean(record.taskmaster_drivable ?? record.taskmasterDrivable ?? metadataRecord.taskmaster_drivable ?? metadataRecord.taskmasterDrivable),
     submittedBy: readFirstString(record.submitted_by, record.submittedBy, metadataRecord.submitted_by, metadataRecord.submittedBy, metadataRecord.producer),
     reviewer: readFirstString(record.reviewer, metadataRecord.reviewer, metadataRecord.review_owner),
+    reviewerPrincipalId: readFirstString(record.reviewer_principal_id, record.reviewerPrincipalId, metadataRecord.reviewer_principal_id, metadataRecord.reviewerPrincipalId, metadataRecord.reviewer, metadataRecord.review_owner),
+    reviewRequired,
+    reviewState: reviewRequired
+      ? (rawReviewState && rawReviewState !== 'not_required' ? rawReviewState : metadataReviewState ?? 'pending')
+      : 'not_required',
     approver: readFirstString(record.approver, record.approver_principal_id, metadataRecord.approver, metadataRecord.approver_principal_id, metadataRecord.human_gate_approver, metadataRecord.gate_approver),
+    approverPrincipalId: readFirstString(record.approver_principal_id, record.approverPrincipalId, metadataRecord.approver_principal_id, metadataRecord.approverPrincipalId, metadataRecord.human_gate_approver, metadataRecord.gate_approver),
+    humanGateRequired,
+    humanGateState: humanGateRequired
+      ? (rawHumanGateState && rawHumanGateState !== 'not_required' ? rawHumanGateState : metadataHumanGateState ?? 'pending')
+      : 'not_required',
+    policyReasonChain,
+    overrideAudit,
     model: readFirstString(record.model, metadataRecord.model),
     estimateHours: normalizeNullableNumber(record.estimate_hours ?? metadataRecord.estimate_hours),
     timeSpent: normalizeNullableNumber(record.time_spent ?? metadataRecord.time_spent),
@@ -1048,6 +1090,50 @@ function reviewField(value: unknown, fallback = 'Not set'): string {
   return readNonEmptyString(value) ?? fallback;
 }
 
+function formatReviewGateToken(value: unknown, fallback = 'Not required'): string {
+  const raw = readNonEmptyString(value);
+  if (!raw) {
+    return fallback;
+  }
+  return raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function reviewGateToneClass(state: string, required: boolean): string {
+  const normalized = state.toLowerCase();
+  if (!required || normalized === 'not_required') {
+    return 'border-[var(--border-secondary)] bg-[var(--bg-primary)] text-[var(--text-muted)]';
+  }
+  if (normalized === 'accepted' || normalized === 'approved') {
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
+  }
+  if (normalized === 'request_fix' || normalized === 'rejected') {
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-100';
+  }
+  return 'border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]';
+}
+
+function normalizePrincipalAlias(value: unknown): string | null {
+  const normalized = readNonEmptyString(value)?.toLowerCase();
+  return normalized ?? null;
+}
+
+function principalMatches(actorAliases: string[], principal: string | null): boolean {
+  const normalizedPrincipal = normalizePrincipalAlias(principal);
+  return Boolean(normalizedPrincipal && actorAliases.includes(normalizedPrincipal));
+}
+
+function formatReasonChainEntry(entry: Record<string, unknown>, index: number): string {
+  const decision = formatReviewGateToken(entry.decision ?? entry.type ?? entry.reason, `Reason ${index + 1}`);
+  const value = readFirstString(entry.value, entry.target, entry.result);
+  const source = readFirstString(entry.source, entry.layer, entry.policy_source);
+  const reason = readFirstString(entry.reason, entry.message, entry.description);
+  return [source ? `${source}: ${decision}` : decision, value ? `=${value}` : null, reason ? `— ${reason}` : null]
+    .filter(Boolean)
+    .join(' ');
+}
+
 function formatAccountabilityField(value: string | null, fallback = 'Unknown'): { label: string; degraded: boolean } {
   const normalized = readNonEmptyString(value);
   if (!normalized || normalized.toLowerCase() === 'unknown') {
@@ -1079,7 +1165,7 @@ function reviewPacketSummary(metadata: Record<string, unknown>): string {
     : readNonEmptyString(packet.done_criteria)
       ? 1
       : 0;
-  return `${outcome}${criteria > 0 ? ` / ${criteria} criterion${criteria === 1 ? '' : 'a'}` : ''}`;
+  return `${outcome}${criteria > 0 ? ` / ${criteria} ${criteria === 1 ? 'criterion' : 'criteria'}` : ''}`;
 }
 
 function firstRecord(...values: unknown[]): Record<string, unknown> | null {
@@ -1557,6 +1643,9 @@ const REVIEW_DECISION_LABELS: Record<ReviewDecision, string> = {
 
 function normalizeReviewDecision(value: unknown): ReviewDecision {
   const normalized = readNonEmptyString(value)?.toLowerCase().replace(/[\s-]+/g, '_');
+  if (normalized === 'request_fix') {
+    return 'needs_fix';
+  }
   if (normalized === 'accepted' || normalized === 'needs_fix' || normalized === 'rejected') {
     return normalized;
   }
@@ -1855,6 +1944,11 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     () => composeAssigneeOptions(activeAgentNames, userProfile.displayName, form?.assignee),
     [activeAgentNames, form?.assignee, userProfile.displayName],
   );
+  const actorAliases = useMemo(
+    () => uniqueStrings([userProfile.displayName, userProfile.handle, userProfile.email])
+      .map((entry) => entry.toLowerCase()),
+    [userProfile.displayName, userProfile.email, userProfile.handle],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -1906,6 +2000,15 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const outputLinks = useMemo(() => extractTaskOutputLinks(task?.output ?? ''), [task?.output]);
   const receiptProof = useMemo(() => (task ? buildReceiptProofView(task, outputLinks) : null), [outputLinks, task]);
   const documentObjectViews = useMemo(() => (task ? buildTaskDocumentObjectViews(task, receiptProof) : []), [receiptProof, task]);
+  const reviewActorEligible = task
+    ? principalMatches(actorAliases, task.reviewerPrincipalId ?? task.reviewer)
+    : false;
+  const humanGateActorEligible = task
+    ? principalMatches(actorAliases, task.approverPrincipalId ?? task.approver)
+    : false;
+  const humanGateRequestEligible = task
+    ? humanGateActorEligible || principalMatches(actorAliases, task.ownerPrincipalId)
+    : false;
   const outputIsEmpty = task ? task.output.trim().length === 0 && outputLinks.length === 0 : true;
   const outputExpanded = !outputIsEmpty || outputSectionOpen;
   const subtasks = useMemo(() => {
@@ -2386,6 +2489,50 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
       return;
     }
 
+    if (task.reviewRequired && (decision === 'accepted' || decision === 'needs_fix')) {
+      const endpoint = decision === 'accepted' ? 'accept' : 'request-fix';
+      setBusyAction('review');
+      setError(null);
+      setSaveMessage(null);
+      try {
+        await requestJsonWithFallback({
+          urls: buildApiCandidates(`/tasks/${task.id}/review/${endpoint}`, apiBase),
+          init: {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              actor_principal_id: userProfile.displayName,
+              actor_type: 'human',
+              reason: decision === 'accepted'
+                ? 'Accepted from task detail review panel.'
+                : 'Fix requested from task detail review panel.',
+            }),
+          },
+          continueOnStatuses: [],
+          fallbackError: 'Unable to update review state.',
+        });
+        await loadSupplementalData(task.id, { preserveOutput: true, preserveDependencyInput: true });
+        if (options.complete && decision === 'accepted') {
+          await patchTask(
+            { column: 'done' },
+            {
+              successMessage: 'Review accepted and task moved to Done.',
+              action: 'review',
+            }
+          );
+        } else {
+          setStatus(`Review marked ${REVIEW_DECISION_LABELS[decision].toLowerCase()}.`);
+        }
+        void reloadTasks().catch(() => undefined);
+      } catch (saveError) {
+        setError(toErrorMessage(saveError, 'Unable to update review state.'));
+        await loadSupplementalData(task.id, { preserveOutput: true, preserveDependencyInput: true }).catch(() => undefined);
+      } finally {
+        setBusyAction(null);
+      }
+      return;
+    }
+
     const reviewer = userProfile.displayName || 'Reviewer';
     const metadata = buildReviewMetadataPatch(task, decision, reviewer);
     await patchTask(
@@ -2400,6 +2547,46 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
         action: 'review',
       }
     );
+  };
+
+  const saveHumanGateAction = async (action: 'request' | 'approve' | 'reject') => {
+    if (!task) {
+      return;
+    }
+
+    setBusyAction(`human-gate-${action}`);
+    setError(null);
+    setSaveMessage(null);
+    try {
+      await requestJsonWithFallback({
+        urls: buildApiCandidates(`/tasks/${task.id}/human-gate/${action}`, apiBase),
+        init: {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            actor_principal_id: userProfile.displayName,
+            actor_type: 'human',
+            reason: `Human gate ${action} from task detail panel.`,
+          }),
+        },
+        continueOnStatuses: [],
+        fallbackError: 'Unable to update human gate.',
+      });
+      await loadSupplementalData(task.id, { preserveOutput: true, preserveDependencyInput: true });
+      setStatus(
+        action === 'request'
+          ? 'Human gate requested.'
+          : action === 'approve'
+            ? 'Human gate approved.'
+            : 'Human gate rejected.'
+      );
+      void reloadTasks().catch(() => undefined);
+    } catch (saveError) {
+      setError(toErrorMessage(saveError, 'Unable to update human gate.'));
+      await loadSupplementalData(task.id, { preserveOutput: true, preserveDependencyInput: true }).catch(() => undefined);
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const addNote = async () => {
@@ -3165,82 +3352,169 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
 	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
 	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-	                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
-	                    Review
+	                  <div>
+	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                      Review Policy
+	                    </div>
+	                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+	                      Reviewer assignment, reason chain, and review decision.
+	                    </p>
 	                  </div>
-	                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${
-	                    hasReviewMetadata(task.metadataRecord)
-	                      ? 'border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]'
-	                      : 'border-amber-500/25 bg-amber-500/10 text-amber-200'
-	                  }`}>
-	                    {hasReviewMetadata(task.metadataRecord) ? 'Packet present' : 'Needs packet'}
+	                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${reviewGateToneClass(task.reviewState, task.reviewRequired)}`}>
+	                    {task.reviewRequired ? formatReviewGateToken(task.reviewState, 'Pending') : 'Not required'}
 	                  </span>
 	                </div>
 	                <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
 	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
-	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reviewer</div>
-	                    <div>{normalizeBoolean(task.metadataRecord.henry_required ?? task.metadataRecord.requires_henry) ? 'Henry' : reviewField(task.metadataRecord.reviewer ?? task.metadataRecord.review_owner)}</div>
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Eligible reviewer</div>
+	                    <div>{reviewField(task.reviewerPrincipalId ?? task.reviewer ?? task.metadataRecord.reviewer ?? task.metadataRecord.review_owner)}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+	                      {reviewActorEligible ? 'Controls available to you' : 'Controls hidden unless profile matches reviewer'}
+	                    </div>
 	                  </div>
 	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
 	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Decision</div>
-	                    <div>{reviewField(task.metadataRecord.review_decision, 'Pending')}</div>
+	                    <div>{formatReviewGateToken(task.reviewState, 'Pending')}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{reviewField(task.metadataRecord.review_decision_reason ?? task.metadataRecord.review_note, 'No note recorded')}</div>
 	                  </div>
 	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
 	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Type / Risk</div>
 	                    <div>{reviewField(task.metadataRecord.review_type ?? task.metadataRecord.review_class)} / {reviewField(task.metadataRecord.risk_level)}</div>
 	                  </div>
 	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
-	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reviewed By</div>
-	                    <div>{reviewField(task.metadataRecord.reviewed_by)}</div>
-	                  </div>
-	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
 	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Packet</div>
-	                    <div>{reviewPacketSummary(task.metadataRecord)}</div>
+	                    <div>{hasReviewMetadata(task.metadataRecord) ? reviewPacketSummary(task.metadataRecord) : 'No legacy packet metadata'}</div>
 	                  </div>
-	                  {readNonEmptyString(task.metadataRecord.review_note) ? (
+	                  {task.policyReasonChain.length > 0 ? (
 	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
-	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Review Note</div>
-	                      <div>{readNonEmptyString(task.metadataRecord.review_note)}</div>
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reason Chain</div>
+	                      <ol className="mt-1 list-decimal space-y-1 pl-4">
+	                        {task.policyReasonChain.slice(0, 5).map((entry, index) => (
+	                          <li key={`${index}-${readFirstString(entry.decision, entry.reason) ?? 'reason'}`}>{formatReasonChainEntry(entry, index)}</li>
+	                        ))}
+	                      </ol>
+	                    </div>
+	                  ) : null}
+	                  {task.overrideAudit.length > 0 ? (
+	                    <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-amber-100 sm:col-span-2">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-amber-200/80">Override Audit</div>
+	                      <ol className="mt-1 list-decimal space-y-1 pl-4">
+	                        {task.overrideAudit.slice(0, 4).map((entry, index) => (
+	                          <li key={`${index}-${readFirstString(entry.actor, entry.reason) ?? 'override'}`}>{formatReasonChainEntry(entry, index)}</li>
+	                        ))}
+	                      </ol>
 	                    </div>
 	                  ) : null}
 	                </div>
-                  {hasReviewMetadata(task.metadataRecord) ? (
+                  {task.reviewRequired ? (
                     <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--border-primary)] pt-3">
-                      <button
-                        type="button"
-                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
-                        onClick={() => void saveReviewDecision('accepted')}
-                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'accepted'}
-                      >
-                        Accept review
-                      </button>
-                      <button
-                        type="button"
-                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
-                        onClick={() => void saveReviewDecision('accepted', { complete: true })}
-                        disabled={busyAction !== null}
-                      >
-                        Accept + Done
-                      </button>
-                      <button
-                        type="button"
-                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
-                        onClick={() => void saveReviewDecision('needs_fix')}
-                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'needs_fix'}
-                      >
-                        Needs fix
-                      </button>
-                      <button
-                        type="button"
-                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
-                        onClick={() => void saveReviewDecision('rejected')}
-                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'rejected'}
-                      >
-                        Reject
-                      </button>
-                      {normalizeReviewDecision(task.metadataRecord.review_decision) !== 'accepted' ? (
+                      {reviewActorEligible ? (
+                        <>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveReviewDecision('accepted')}
+                            disabled={busyAction !== null || task.reviewState === 'accepted'}
+                          >
+                            Accept review
+                          </button>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveReviewDecision('accepted', { complete: true })}
+                            disabled={busyAction !== null || (task.humanGateRequired && task.humanGateState !== 'approved')}
+                          >
+                            Accept + Done
+                          </button>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveReviewDecision('needs_fix')}
+                            disabled={busyAction !== null || task.reviewState === 'request_fix'}
+                          >
+                            Request fix
+                          </button>
+                        </>
+                      ) : (
+                        <div className="text-[11px] text-[var(--text-muted)]">
+                          Review controls are hidden because your profile does not match the eligible reviewer.
+                        </div>
+                      )}
+                      {task.reviewState !== 'accepted' ? (
                         <div className="basis-full text-[11px] text-[var(--text-muted)]">
-                          Done is locked until the review decision is accepted.
+                          Done is locked until the required review is accepted.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+	              </section>
+
+	              <section style={{ order: 3 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
+	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+	                  <div>
+	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                      Human Gate
+	                    </div>
+	                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+	                      Separate approval state for high-risk or externally visible work.
+	                    </p>
+	                  </div>
+	                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${reviewGateToneClass(task.humanGateState, task.humanGateRequired)}`}>
+	                    {task.humanGateRequired ? formatReviewGateToken(task.humanGateState, 'Pending') : 'Not required'}
+	                  </span>
+	                </div>
+	                <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Human approver</div>
+	                    <div>{reviewField(task.approverPrincipalId ?? task.approver)}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+	                      {humanGateActorEligible ? 'Controls available to you' : 'Controls hidden unless profile matches approver'}
+	                    </div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Decision</div>
+	                    <div>{formatReviewGateToken(task.humanGateState)}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{reviewField(task.metadataRecord.human_gate_reason, 'No note recorded')}</div>
+	                  </div>
+	                </div>
+                  {task.humanGateRequired ? (
+                    <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--border-primary)] pt-3">
+                      {task.humanGateState === 'pending' && humanGateActorEligible ? (
+                        <>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveHumanGateAction('approve')}
+                            disabled={busyAction !== null}
+                          >
+                            Approve human gate
+                          </button>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveHumanGateAction('reject')}
+                            disabled={busyAction !== null}
+                          >
+                            Reject human gate
+                          </button>
+                        </>
+                      ) : task.humanGateState !== 'approved' && task.humanGateState !== 'rejected' && humanGateRequestEligible ? (
+                        <button
+                          type="button"
+                          className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                          onClick={() => void saveHumanGateAction('request')}
+                          disabled={busyAction !== null}
+                        >
+                          Request human gate
+                        </button>
+                      ) : (
+                        <div className="text-[11px] text-[var(--text-muted)]">
+                          Human-gate controls are hidden until the assigned human approver is viewing this task.
+                        </div>
+                      )}
+                      {task.humanGateState !== 'approved' ? (
+                        <div className="basis-full text-[11px] text-[var(--text-muted)]">
+                          Done is locked until the required human gate is approved.
                         </div>
                       ) : null}
                     </div>
