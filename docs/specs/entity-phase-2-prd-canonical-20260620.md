@@ -454,6 +454,7 @@ Phase 2 output is a PRD/spec and implementation ticket graph. It must not imply 
 * Google Docs may be canonical for human-authored/company-owned collaborative docs when a workspace already uses Google Workspace.
 * Entity-native markdown remains canonical for low-level `entity-mc` evidence/proof receipts.
 * External connector permission and Entity-side visibility are related but not identical. Entity must enforce its own visibility policy before rendering snippets or previews.
+* V1 posture, future write/export/sync gates, audit expectations, and security caveats are documented in `docs/context/entity-phase-2-google-connector-posture-and-future-write-gates.md`.
 
 ### Receipt and proof model
 
