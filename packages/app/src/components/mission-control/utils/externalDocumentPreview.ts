@@ -29,6 +29,18 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function readJsonRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string' || !value.trim()) {
+    return readRecord(value);
+  }
+
+  try {
+    return readRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -96,6 +108,40 @@ function readOpenUrl(record: Record<string, unknown>, metadata: Record<string, u
   );
 }
 
+function readPreviewPolicy(record: Record<string, unknown>, metadata: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...(readJsonRecord(record.entity_visibility_policy_json) ?? {}),
+    ...(readJsonRecord(record.entityVisibilityPolicyJson) ?? {}),
+    ...(readJsonRecord(record.entity_visibility_policy) ?? {}),
+    ...(readJsonRecord(record.entityVisibilityPolicy) ?? {}),
+    ...(readJsonRecord(metadata.entity_visibility_policy_json) ?? {}),
+    ...(readJsonRecord(metadata.entityVisibilityPolicyJson) ?? {}),
+    ...(readJsonRecord(metadata.entity_visibility_policy) ?? {}),
+    ...(readJsonRecord(metadata.entityVisibilityPolicy) ?? {}),
+  };
+}
+
+function previewRestricted(record: Record<string, unknown>, metadata: Record<string, unknown>): boolean {
+  const permissionState = readFirstString(
+    record.permission_state,
+    record.permissionState,
+    record.entity_permission_state,
+    record.entityPermissionState,
+    metadata.permission_state,
+    metadata.permissionState,
+    metadata.entity_permission_state,
+    metadata.entityPermissionState
+  )?.toLowerCase();
+  const policy = readPreviewPolicy(record, metadata);
+  return record.restricted === true ||
+    record.placeholder === true ||
+    metadata.restricted === true ||
+    metadata.placeholder === true ||
+    Boolean(permissionState && permissionState !== 'visible' && permissionState !== 'allowed') ||
+    policy.restricted === true ||
+    policy.allow_preview === false;
+}
+
 export function buildExternalDocumentPreviewView(
   record: Record<string, unknown>,
   now: Date = new Date()
@@ -104,6 +150,29 @@ export function buildExternalDocumentPreviewView(
   const connectorType = readFirstString(record.connector_type, record.connectorType, metadata.connector_type, metadata.connectorType);
   if (!connectorType || !GOOGLE_CONNECTORS.has(connectorType)) {
     return null;
+  }
+
+  const restricted = previewRestricted(record, metadata);
+  if (restricted) {
+    return {
+      title: 'Restricted external document',
+      connectorLabel: formatLabel(connectorType),
+      ownershipLabel: 'Externally owned Google Docs/Drive document',
+      openUrl: null,
+      canOpen: false,
+      previewText: null,
+      previewAvailable: false,
+      authLabel: 'restricted',
+      readinessLabel: 'restricted',
+      scopeLabel: 'Entity preview restricted',
+      mimeLabel: null,
+      externalPermissionSummary: null,
+      degraded: true,
+      degradedMessages: ['Restricted by Entity permissions. Snippets and previews are hidden.'],
+      tone: 'warning',
+      readOnlyMessage: 'Read-only preview only. Entity does not edit, export, sync, or write Google Docs/Drive in V1.',
+      mutationControlsVisible: false,
+    };
   }
 
   const effectiveAuthState = readFirstString(
@@ -145,9 +214,17 @@ export function buildExternalDocumentPreviewView(
   ];
   const connectorDegraded = metadata.degraded === true || record.degraded === true;
   const readinessDegraded = Boolean(readinessState && !['ready', 'live', 'unknown'].includes(readinessState));
-  const degraded = connectorDegraded || expired || insufficient || readinessDegraded || degradedReasons.length > 0;
+  const externalRefState = readFirstString(
+    metadata.external_ref_state,
+    metadata.externalRefState,
+    record.external_ref_state,
+    record.externalRefState,
+    'unknown'
+  );
+  const externalRefUnavailable = Boolean(externalRefState && !['available', 'unknown'].includes(externalRefState));
+  const degraded = connectorDegraded || expired || insufficient || readinessDegraded || externalRefUnavailable || degradedReasons.length > 0;
   const previewText = readPreviewText(record, metadata);
-  const previewAvailable = Boolean(previewText && !expired && !insufficient);
+  const previewAvailable = Boolean(previewText && !expired && !insufficient && !externalRefUnavailable);
   const externalPermissionSummary = readFirstString(
     metadata.external_permission_summary,
     metadata.externalPermissionSummary,
@@ -159,16 +236,18 @@ export function buildExternalDocumentPreviewView(
     expired ? 'Google connector auth is expired; preview may require reconnecting Google.' : null,
     insufficient ? `Google connector scopes are insufficient${missingScopes.length > 0 ? `; missing ${missingScopes.join(', ')}` : ''}.` : null,
     readinessDegraded ? `Connector readiness is ${formatLabel(readinessState)}.` : null,
+    externalRefUnavailable ? `External document state is ${formatLabel(externalRefState)}.` : null,
     ...degradedReasons.map((reason) => `Connector reported ${formatLabel(reason)}.`),
     !previewText ? 'No permitted preview snippet is available for this external document.' : null,
   ].filter((entry): entry is string => Boolean(entry));
+  const openUrl = readOpenUrl(record, metadata);
 
   return {
     title: readFirstString(metadata.title, record.title, record.name) ?? 'Untitled external document',
     connectorLabel: formatLabel(connectorType),
     ownershipLabel: 'Externally owned Google Docs/Drive document',
-    openUrl: readOpenUrl(record, metadata),
-    canOpen: Boolean(readOpenUrl(record, metadata)),
+    openUrl: externalRefUnavailable ? null : openUrl,
+    canOpen: Boolean(openUrl && !externalRefUnavailable),
     previewText: previewAvailable ? previewText : null,
     previewAvailable,
     authLabel: formatLabel(expired ? 'expired' : effectiveAuthState),

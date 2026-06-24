@@ -5,6 +5,7 @@ import {
   normalizeObjectRefs,
   type CreateEvidenceArtifactInput,
   type CreateExternalDocumentRefInput,
+  type ExternalDocumentRefRecord,
   type CreateNativeDocumentInput,
   type ListExternalDocumentRefsInput,
   type DocumentObjectRepository,
@@ -24,7 +25,7 @@ import {
   requireRequestOrg,
   type RequestOrgBinding,
 } from './request-permissions';
-import type { ProtectedObject } from './permissions';
+import type { PermissionAction, ProtectedObject } from './permissions';
 
 interface DocumentObjectRouterDeps {
   documentRepo?: DocumentObjectRepository;
@@ -210,6 +211,19 @@ function externalDocumentObject(record: { id: string; org_id: string; title: str
     title: record.title,
     entity_visibility_policy_json: record.entity_visibility_policy_json,
   };
+}
+
+function externalDocumentPermissionEnvelope(
+  binding: RequestOrgBinding,
+  record: ExternalDocumentRefRecord,
+  action: PermissionAction,
+) {
+  return permissionSafeRecord(
+    binding,
+    externalDocumentObject(record),
+    record as unknown as Record<string, unknown>,
+    action
+  );
 }
 
 function evidenceArtifactObject(record: { id: string; org_id: string; team_id: string | null; project_id: number | null; title: string; metadata_json: string }): ProtectedObject {
@@ -416,12 +430,7 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
       if (!binding) return undefined;
       const externalDocumentRefs = documentRepo.listExternalDocumentRefs(parseExternalDocumentListQuery(req, binding))
         .map((externalDocumentRef) => {
-          const envelope = permissionSafeRecord(
-            binding,
-            externalDocumentObject(externalDocumentRef),
-            externalDocumentRef as unknown as Record<string, unknown>,
-            'read'
-          );
+          const envelope = externalDocumentPermissionEnvelope(binding, externalDocumentRef, 'search');
           return {
             externalDocumentRef: envelope.object,
             metadata: envelope.permission.allowed ? buildGoogleExternalDocumentMetadata(externalDocumentRef) : null,
@@ -441,7 +450,7 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     if (!externalDocumentRef) return res.status(404).json({ error: 'external document ref not found' });
     const object = externalDocumentObject(externalDocumentRef);
     if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
-    const envelope = permissionSafeRecord(binding, object, externalDocumentRef as unknown as Record<string, unknown>, 'read');
+    const envelope = externalDocumentPermissionEnvelope(binding, externalDocumentRef, 'preview');
     return res.json({ externalDocumentRef: envelope.object, permission: envelope.permission });
   });
 
@@ -452,7 +461,7 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     if (!externalDocumentRef) return res.status(404).json({ error: 'external document ref not found' });
     const object = externalDocumentObject(externalDocumentRef);
     if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
-    const envelope = permissionSafeRecord(binding, object, externalDocumentRef as unknown as Record<string, unknown>, 'read');
+    const envelope = externalDocumentPermissionEnvelope(binding, externalDocumentRef, 'preview');
     return res.json({
       externalDocumentRef: envelope.object,
       metadata: envelope.permission.allowed ? buildGoogleExternalDocumentMetadata(externalDocumentRef) : null,
@@ -467,7 +476,7 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     if (!externalDocumentRef) return res.status(404).json({ error: 'external document ref not found' });
     const object = externalDocumentObject(externalDocumentRef);
     if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
-    const envelope = permissionSafeRecord(binding, object, externalDocumentRef as unknown as Record<string, unknown>, 'read');
+    const envelope = externalDocumentPermissionEnvelope(binding, externalDocumentRef, 'preview');
     return res.json({
       externalDocumentRef: envelope.object,
       open: envelope.permission.allowed

@@ -75,6 +75,10 @@ function googleOpenUrl(record: ExternalDocumentRefRecord): string | null {
   return record.external_canonical_url || record.external_url;
 }
 
+function canUseExternalRef(record: ExternalDocumentRefRecord): boolean {
+  return record.external_ref_state === 'available' && record.auth_state !== 'revoked' && record.auth_state !== 'unauthorized';
+}
+
 export function buildGoogleExternalDocumentMetadata(
   record: ExternalDocumentRefRecord,
   now: Date = new Date()
@@ -130,10 +134,11 @@ export function buildGoogleExternalDocumentOpen(
   now: Date = new Date()
 ): GoogleExternalDocumentOpen {
   const metadata = buildGoogleExternalDocumentMetadata(record, now);
+  const canUseRef = canUseExternalRef(record);
   return {
     target: 'external_google_doc',
-    can_open: Boolean(metadata.open_url),
-    url: metadata.open_url,
+    can_open: Boolean(metadata.open_url && canUseRef),
+    url: canUseRef ? metadata.open_url : null,
     degraded: metadata.degraded,
     degraded_reasons: metadata.degraded_reasons,
     effective_auth_state: metadata.effective_auth_state,

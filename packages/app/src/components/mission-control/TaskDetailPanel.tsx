@@ -1313,13 +1313,30 @@ function isRestrictedDocumentObject(record: Record<string, unknown>, metadata: R
     record.permission_state,
     record.permissionState,
     record.entity_permission_state,
+    record.entityPermissionState,
     metadata.permission_state,
+    metadata.permissionState,
+    metadata.entity_permission_state,
+    metadata.entityPermissionState,
     metadata.visibility_state
   )?.toLowerCase();
-  if (!permissionState) {
-    return false;
-  }
-  return permissionState !== 'visible' && permissionState !== 'allowed';
+  const policy = {
+    ...(parseJsonRecord(record.entity_visibility_policy_json) ?? {}),
+    ...(parseJsonRecord(record.entityVisibilityPolicyJson) ?? {}),
+    ...(parseJsonRecord(record.entity_visibility_policy) ?? {}),
+    ...(parseJsonRecord(record.entityVisibilityPolicy) ?? {}),
+    ...(parseJsonRecord(metadata.entity_visibility_policy_json) ?? {}),
+    ...(parseJsonRecord(metadata.entityVisibilityPolicyJson) ?? {}),
+    ...(parseJsonRecord(metadata.entity_visibility_policy) ?? {}),
+    ...(parseJsonRecord(metadata.entityVisibilityPolicy) ?? {}),
+  };
+  return record.restricted === true ||
+    record.placeholder === true ||
+    metadata.restricted === true ||
+    metadata.placeholder === true ||
+    Boolean(permissionState && permissionState !== 'visible' && permissionState !== 'allowed') ||
+    policy.restricted === true ||
+    policy.allow_preview === false;
 }
 
 function buildDocumentObjectView(

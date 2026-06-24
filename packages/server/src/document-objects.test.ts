@@ -666,6 +666,155 @@ describe('document object routes', () => {
     });
   });
 
+  it('suppresses restricted Google snippets, previews, titles, and open URLs before output', async () => {
+    const createRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'google-restricted-preview-doc',
+        connector_type: 'google_docs',
+        external_id: 'docs-restricted-84',
+        external_url: 'https://docs.google.com/document/d/restricted-84/edit',
+        external_canonical_url: 'https://docs.google.com/document/d/restricted-84',
+        title: 'Restricted customer renewal strategy',
+        auth_state: 'authorized',
+        readiness_state: 'ready',
+        granted_scopes: ['read', 'index', 'link', 'preview'],
+        external_ref_state: 'available',
+        metadata: { snippet: 'Do not leak customer renewal snippet', preview_text: 'Do not leak preview text' },
+        entity_visibility_policy: { allow_preview: false },
+      }),
+    });
+    expect(createRes.status).toBe(201);
+
+    const listRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs?connector_type=google_docs&q=renewal`);
+    expect(listRes.status).toBe(200);
+    const listBody = await readJson(listRes);
+    expect(listBody).toMatchObject({
+      externalDocumentRefs: [{
+        externalDocumentRef: {
+          id: 'google-restricted-preview-doc',
+          object_type: 'external_document_ref',
+          title: null,
+          permission_state: 'restricted',
+          entity_permission_state: 'restricted',
+          restricted: true,
+          placeholder: true,
+        },
+        metadata: null,
+        permission: {
+          allowed: false,
+          action: 'search',
+          reasons: ['object policy disables preview/search'],
+        },
+      }],
+    });
+    expect(JSON.stringify(listBody)).not.toContain('Restricted customer renewal strategy');
+    expect(JSON.stringify(listBody)).not.toContain('Do not leak customer renewal snippet');
+    expect(JSON.stringify(listBody)).not.toContain('https://docs.google.com/document/d/restricted-84');
+
+    const metadataRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs/google-restricted-preview-doc/metadata`);
+    expect(metadataRes.status).toBe(200);
+    const metadataBody = await readJson(metadataRes);
+    expect(metadataBody).toMatchObject({
+      externalDocumentRef: {
+        id: 'google-restricted-preview-doc',
+        title: null,
+        restricted: true,
+        placeholder: true,
+      },
+      metadata: null,
+      permission: {
+        allowed: false,
+        action: 'preview',
+      },
+    });
+    expect(JSON.stringify(metadataBody)).not.toContain('Do not leak preview text');
+
+    const openRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs/google-restricted-preview-doc/open`);
+    expect(openRes.status).toBe(200);
+    expect(await readJson(openRes)).toMatchObject({
+      open: {
+        target: 'external_google_doc',
+        can_open: false,
+        url: null,
+        degraded: true,
+        degraded_reasons: ['entity_permission_denied'],
+      },
+      permission: {
+        allowed: false,
+      },
+    });
+  });
+
+  it('marks deleted Google refs degraded without losing Entity-native proof artifacts', async () => {
+    const proofRes = await fetch(`${baseUrl}/api/document-objects/evidence-artifacts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'deleted-google-native-proof',
+        artifact_kind: 'raw_task_receipt',
+        title: 'Canonical Entity proof remains',
+        content_hash: 'sha256:deleted-google-proof',
+        origin_task_id: 84,
+        linked_object_refs: [{ object_type: 'task', object_id: '84', link_role: 'receipt' }],
+      }),
+    });
+    expect(proofRes.status).toBe(201);
+
+    const externalRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'google-deleted-doc',
+        connector_type: 'google_drive',
+        external_id: 'drive-deleted-84',
+        external_url: 'https://drive.google.com/file/d/deleted-84/view',
+        title: 'Deleted external context',
+        auth_state: 'revoked',
+        readiness_state: 'degraded',
+        granted_scopes: ['read', 'index', 'link', 'preview'],
+        external_ref_state: 'deleted',
+        external_permission_summary: 'Connector reports the Drive item was deleted',
+        linked_object_refs: [{ object_type: 'task', object_id: '84', link_role: 'source_context' }],
+      }),
+    });
+    expect(externalRes.status).toBe(201);
+
+    const metadataRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs/google-deleted-doc/metadata`);
+    expect(metadataRes.status).toBe(200);
+    expect(await readJson(metadataRes)).toMatchObject({
+      metadata: {
+        effective_auth_state: 'revoked',
+        effective_readiness_state: 'degraded',
+        degraded: true,
+        degraded_reasons: ['external_ref_deleted', 'readiness_degraded'],
+        external_ref_state: 'deleted',
+      },
+    });
+
+    const openRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs/google-deleted-doc/open`);
+    expect(openRes.status).toBe(200);
+    expect(await readJson(openRes)).toMatchObject({
+      open: {
+        can_open: false,
+        url: null,
+        degraded: true,
+      },
+    });
+
+    const proofRead = await fetch(`${baseUrl}/api/document-objects/evidence-artifacts/deleted-google-native-proof`);
+    expect(proofRead.status).toBe(200);
+    expect(await readJson(proofRead)).toMatchObject({
+      evidenceArtifact: {
+        id: 'deleted-google-native-proof',
+        title: 'Canonical Entity proof remains',
+        origin_task_id: 84,
+        availability_state: 'available',
+      },
+    });
+  });
+
   it('does not expose Google Docs create, update, write, export, or sync mutation endpoints', async () => {
     const createRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs`, {
       method: 'POST',
