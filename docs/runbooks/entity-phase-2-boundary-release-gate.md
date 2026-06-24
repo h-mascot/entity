@@ -22,7 +22,7 @@ The gate covers the THE-94 release risks:
 
 - Paperclip remains external reference context only and must not appear as an internal provider, product layer, module, or dependency.
 - Curacel remains design-customer context only and must not appear as hardcoded repo/demo/product framing.
-- Helm exposure is limited to status references and safe light controls, with no secrets, credential payloads, deep object browser, or runtime admin mutation.
+- Helm exposure is limited to status references and safe light controls, with no sensitive-material payloads, deep object browser, or runtime admin mutation.
 - Google Docs/Drive V1 remains read/index/link/preview only, with no create/update/write/export/sync helpers.
 - ClickClack unavailable/degraded state must not block Entity-owned docs, files, proof, review, task, or search flows.
 - Permission-denied and restricted objects must not return snippets, previews, activity body, evidence body, or open URLs.
