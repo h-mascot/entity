@@ -16,6 +16,7 @@ import {
 } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
 import { buildRoutingStateView, routingToneClass } from './utils/routingState';
+import TaskChatContextPanel from './TaskChatContextPanel';
 import {
   FALLBACK_WORKTYPE_REGISTRY,
   formatOverlayValue,
@@ -3675,6 +3676,14 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                     </div>
                   ) : null}
 	              </section>
+
+                  <TaskChatContextPanel
+                    taskId={task.id}
+                    apiBase={apiBase}
+                    proofAvailable={Boolean(receiptProof)}
+                    documentObjectCount={documentObjectViews.length}
+                    outputLinkCount={outputLinks.length}
+                  />
 
                   {receiptProof ? (
                     <section
