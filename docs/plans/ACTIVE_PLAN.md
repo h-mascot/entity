@@ -2,7 +2,7 @@
 
 Issue: THE-77
 Branch: THE-77-link-clickclack-threads-channels-to-entity-objects-with-objectref
-Status: IN PROGRESS
+Status: DONE
 
 ## Scope
 
@@ -33,7 +33,7 @@ Allow ClickClack-backed chat channels and threads to carry Entity-owned ObjectRe
   - Files: `output/entity-phase-2/test-gate/THE-77.*`, `output/entity-phase-2/book-review/THE-77*`
   - Verify: `bash scripts/proof/entity-phase-2-smoke.sh && npm run build && cd packages/server && npm run build && npx vitest run`
   - Verify: `project-test-gate request/run/book-review/verify THE-77`
-- [ ] Step 6: Comment Linear, mark THE-77 Done if proof supports it, update run-state to THE-78, and commit scoped work.
+- [x] Step 6: Comment Linear, mark THE-77 Done if proof supports it, update run-state to THE-78, and commit scoped work.
   - Files: `.cursor/run-state/entity-phase-2.json`
   - Verify: `git status --short --branch`
 
@@ -45,6 +45,7 @@ Allow ClickClack-backed chat channels and threads to carry Entity-owned ObjectRe
 | 2026-06-24T06:24Z | Step 2 | In progress | Existing ObjectRef normalization and chat repository located; implementation will add Entity-owned link columns/routes only. |
 | 2026-06-24T06:27Z | Steps 2-4 | Done | Chat channel/thread ObjectRefs persist in Entity DB; routes require request org and filter inaccessible refs; focused tests pass. |
 | 2026-06-24T06:29Z | Step 5 | Done | Full proof passed; CLI Tester run PASS, packet-mode Book review locally approved, verify PASS with no blockers; GitNexus high-risk hub contexts reviewed for `createChatRepository` and `registerChatRoutes`. |
+| 2026-06-24T06:30Z | Step 6 | Done | Linear proof comment posted, THE-77 marked Done, implementation commit `1faa37e`, run-state advanced to THE-78. |
 
 ## Files Touched
 
@@ -53,6 +54,7 @@ Allow ClickClack-backed chat channels and threads to carry Entity-owned ObjectRe
 - `packages/db/src/chat.ts` - modified - channel/thread linked ObjectRef persistence
 - `packages/server/src/routes/chat.ts` - modified - permission-filtered ObjectRef routes
 - `packages/server/src/routes/chat-object-refs.test.ts` - created - ObjectRef link and degraded readiness tests
+- `.cursor/run-state/entity-phase-2.json` - modified - advanced local pointer to THE-78 (not committed)
 
 ## Resume Instructions
 
@@ -63,8 +65,8 @@ Allow ClickClack-backed chat channels and threads to carry Entity-owned ObjectRe
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Focused tests pass
-- [ ] Full proof commands pass
-- [ ] CLI Tester request/run/book-review/verify completed
-- [ ] Linear proof comment posted and THE-77 marked Done if supported
+- [x] All steps complete
+- [x] Focused tests pass
+- [x] Full proof commands pass
+- [x] CLI Tester request/run/book-review/verify completed
+- [x] Linear proof comment posted and THE-77 marked Done if supported
