@@ -153,6 +153,77 @@ describe('file-source search routes', () => {
     });
   });
 
+  it('surfaces Helm status references without exposing deep Helm object search', async () => {
+    const helmStatusSource = source({
+      id: 'helm-status',
+      display_name: 'Helm Runtime Status',
+      type: 'local',
+      base_path: '/workspace/status/helm',
+      capabilities: JSON.stringify({
+        entity_visibility_policy: {
+          allow_preview: true,
+          reference_only: true,
+        },
+      }),
+    });
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [helmStatusSource]),
+        getSource: vi.fn((id: string) => (id === helmStatusSource.id ? helmStatusSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => [
+          indexRecord({
+            id: 'helm-status:runtimes/book-status.md',
+            source_id: helmStatusSource.id,
+            path: 'runtimes/book-status.md',
+            title: 'Book runtime status reference',
+            type: 'runtime_status_ref',
+            agent: 'book',
+            tags: JSON.stringify(['helm-status', 'runtime-reference']),
+            preview: 'Helm status reference: health degraded, readiness degraded, open in Helm for runtime details.',
+            content_hash: 'sha256:helm-status-ref',
+          }),
+        ]),
+        getLatestSyncRun: vi.fn(() => syncRun({ source_id: helmStatusSource.id })),
+      },
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=helm%20status&indexState=indexed`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0]).toMatchObject({
+        objectType: 'file',
+        object_type: 'file',
+        title: 'Book runtime status reference',
+        type: 'runtime_status_ref',
+        source: {
+          id: 'helm-status',
+          name: 'Helm Runtime Status',
+        },
+        deepLink: {
+          kind: 'file_source',
+          sourceId: 'helm-status',
+          path: 'runtimes/book-status.md',
+        },
+        provenance: {
+          indexed: true,
+          origin: 'task',
+          agent: 'book',
+          tags: ['helm-status', 'runtime-reference'],
+        },
+      });
+      const serialized = JSON.stringify(body);
+      expect(serialized).toContain('Helm status reference');
+      expect(serialized).not.toContain('helmObject');
+      expect(serialized).not.toContain('runtimeAdminPayload');
+      expect(serialized).not.toContain('deploymentMutation');
+      expect(serialized).not.toContain('/api/helm/objects');
+    });
+  });
+
   it('surfaces degraded connector and fallback index visibility with scoped filters', async () => {
     const degradedSource = source({
       id: 'degraded-docs',

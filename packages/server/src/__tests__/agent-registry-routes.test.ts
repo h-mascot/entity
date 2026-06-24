@@ -396,6 +396,108 @@ describe('agent registry Helm runtime status serialization', () => {
     }
   });
 
+  it('keeps OpenClaw, Hermes, and generic providers as runtime-backed agents', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    for (const input of [
+      {
+        slug: 'openclaw-runner',
+        name: 'OpenClaw Runner',
+        emoji: 'O',
+        adapter_type: 'openclaw',
+        runtime_type: 'remote',
+        runtime_binding_id: 'runtime-openclaw',
+        provider_type: 'custom',
+        helm_managed: true,
+        binding_state: 'bound',
+        status: 'active',
+        metadata_json: '{}',
+      },
+      {
+        slug: 'hermes-runner',
+        name: 'Hermes Runner',
+        emoji: 'H',
+        adapter_type: 'hermes',
+        runtime_type: 'remote',
+        runtime_binding_id: 'runtime-hermes',
+        provider_type: 'remote_http',
+        helm_managed: true,
+        binding_state: 'bound',
+        status: 'active',
+        metadata_json: '{}',
+      },
+      {
+        slug: 'generic-runner',
+        name: 'Generic Runner',
+        emoji: 'G',
+        adapter_type: 'generic-worker',
+        runtime_type: 'remote',
+        runtime_binding_id: 'runtime-generic',
+        provider_type: 'custom',
+        helm_managed: true,
+        binding_state: 'bound',
+        status: 'active',
+        metadata_json: '{}',
+      },
+    ] satisfies CreateAgentRegistryInput[]) {
+      agentRepo.createAgent(input);
+    }
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/registry`);
+      expect(res.status).toBe(200);
+      const json = await res.json() as {
+        list: Array<{
+          slug: string;
+          adapter_type: string;
+          provider_type: string;
+          runtime_binding_id: string | null;
+          helm_managed: boolean;
+          binding_state: string;
+          runtime_status: { state: string; reason: string };
+          capabilities: { runtimeLabel: string };
+          entity_model?: string;
+        }>;
+      };
+      const bySlug = new Map(json.list.map((agent) => [agent.slug, agent]));
+      expect(bySlug.get('openclaw-runner')).toMatchObject({
+        adapter_type: 'openclaw',
+        provider_type: 'custom',
+        runtime_binding_id: 'runtime-openclaw',
+        helm_managed: true,
+        binding_state: 'bound',
+        runtime_status: {
+          state: 'unavailable',
+          reason: 'helm_status_provider_unavailable',
+        },
+      });
+      expect(bySlug.get('hermes-runner')).toMatchObject({
+        adapter_type: 'hermes',
+        provider_type: 'remote_http',
+        runtime_binding_id: 'runtime-hermes',
+        helm_managed: true,
+      });
+      expect(bySlug.get('generic-runner')).toMatchObject({
+        adapter_type: 'generic-worker',
+        provider_type: 'custom',
+        runtime_binding_id: 'runtime-generic',
+        helm_managed: true,
+      });
+      expect(bySlug.get('openclaw-runner')?.capabilities.runtimeLabel).toBe('Openclaw · Remote · Active');
+      expect(bySlug.get('hermes-runner')?.capabilities.runtimeLabel).toBe('Hermes · Remote · Active');
+      expect(bySlug.get('generic-runner')?.capabilities.runtimeLabel).toBe('Generic Worker · Remote · Active');
+      expect(json.list.some((agent) => agent.entity_model === 'openclaw' || agent.entity_model === 'hermes')).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
   it('exposes management-surface fields for degraded runtime bindings', async () => {
     const { agentRepo, moduleRepo } = createRepos();
     agentRepo.createAgent({
