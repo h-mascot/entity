@@ -2,7 +2,7 @@
 
 Issue: THE-74
 Branch: THE-74-implement-safe-light-controls-and-helm-deep-links
-Status: IN PROGRESS
+Status: DONE
 
 ## Scope
 
@@ -34,7 +34,7 @@ Expose only policy-allowed, reversible, audited light controls for Helm-managed 
   - Files: `output/entity-phase-2/test-gate/THE-74.*`, `output/entity-phase-2/book-review/THE-74*`
   - Verify: `bash scripts/proof/entity-phase-2-smoke.sh && npm run build && cd packages/server && npm run build && npx vitest run`
   - Verify: `project-test-gate request/run/book-review/verify THE-74`
-- [ ] Step 6: Comment Linear, mark THE-74 Done if proof supports it, update run-state to THE-75, and commit scoped work.
+- [x] Step 6: Comment Linear, mark THE-74 Done if proof supports it, update run-state to THE-75, and commit scoped work.
   - Files: `.cursor/run-state/entity-phase-2.json`
   - Verify: `git status --short --branch`
 
@@ -46,6 +46,7 @@ Expose only policy-allowed, reversible, audited light controls for Helm-managed 
 | 2026-06-24T05:41Z | Step 2 | In progress | Existing status adapter, Agent Management surface, and current Helm deep-link rendering found. |
 | 2026-06-24T05:48Z | Steps 2-4 | Done | Safe-control route/audit contract added, focused tests pass, workspace build passes, browser proof wrote THE-74 DOM/screenshot receipts. |
 | 2026-06-24T05:51Z | Step 5 | Done | Full proof passed with Node 22, CLI Tester run PASS, packet-mode Book review locally approved, verify PASS with `nextChildBlocked=false`; GitNexus risk low. |
+| 2026-06-24T05:56Z | Step 6 | Done | Linear proof comment posted, THE-74 marked Done, implementation commit `470749f`, run-state advanced to THE-75. |
 
 ## Files Touched
 
@@ -55,6 +56,7 @@ Expose only policy-allowed, reversible, audited light controls for Helm-managed 
 - `packages/server/src/routes/agent-registry.ts` - modified - safe control endpoint
 - `packages/server/src/__tests__/agent-registry-routes.test.ts` - modified - boundary/audit tests
 - `packages/app/src/components/AgentManagementSurface.tsx` - modified - safe controls and Helm deep-link UI
+- `.cursor/run-state/entity-phase-2.json` - modified - advanced local pointer to THE-75 (not committed)
 
 ## Resume Instructions
 
@@ -65,8 +67,8 @@ Expose only policy-allowed, reversible, audited light controls for Helm-managed 
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Focused tests pass
-- [ ] Full proof commands pass
-- [ ] CLI Tester request/run/book-review/verify completed
-- [ ] Linear proof comment posted and THE-74 marked Done if supported
+- [x] All steps complete
+- [x] Focused tests pass
+- [x] Full proof commands pass
+- [x] CLI Tester request/run/book-review/verify completed
+- [x] Linear proof comment posted and THE-74 marked Done if supported
