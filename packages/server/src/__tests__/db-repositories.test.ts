@@ -241,6 +241,136 @@ describe('TaskRepository', () => {
     });
   });
 
+  it('validates versioned worktype overlays and applies registry risk defaults', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const registryEntry = dbMod.getWorktypeRegistryEntry('customer_success');
+
+    expect(registryEntry).toMatchObject({
+      schema_name: 'entity.worktype.customer_success',
+      schema_version: 1,
+      risk_default: 'medium',
+      sensitivity: 'customer',
+    });
+
+    const task = repo.createTask({
+      name: 'Customer success overlay fixture',
+      worktype: 'customer_success',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            customer_tier: 'enterprise',
+            customer_impact: 'high',
+            reviewer_principal_id: 'reviewer-cs',
+          },
+        },
+      }),
+    });
+
+    expect(task.risk_level).toBe('medium');
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+    expect(envelope.layers.worktype).toMatchObject({
+      worktype: 'customer_success',
+      schema_name: 'entity.worktype.customer_success',
+      schema_version: 1,
+      risk_default: 'medium',
+      sensitivity: 'customer',
+      customer_tier: 'enterprise',
+      customer_impact: 'high',
+      reviewer_principal_id: 'reviewer-cs',
+    });
+    expect(envelope.layers.worktype.field_definitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'customer_tier',
+          allowed_values: ['enterprise', 'mid_market', 'smb'],
+          plan_label: 'Customer tier',
+        }),
+      ]),
+    );
+  });
+
+  it('rejects invalid values for registered worktype overlays on create and update', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    expect(() => repo.createTask({
+      name: 'Invalid customer overlay fixture',
+      worktype: 'customer_success',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            customer_tier: 'strategic',
+          },
+        },
+      }),
+    })).toThrow('customer_tier must be one of enterprise, mid_market, smb');
+
+    const task = repo.createTask({
+      name: 'Valid business ops overlay fixture',
+      worktype: 'business_ops',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            process_area: 'ops',
+          },
+        },
+      }),
+    });
+
+    expect(() => repo.updateTask(task.id, {
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            process_area: 'security',
+          },
+        },
+      }),
+    })).toThrow('process_area must be one of finance, legal, people, ops, sales');
+  });
+
+  it('degrades unknown legacy worktype overlays without blocking persistence', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const validation = dbMod.validateWorktypePolicyInputs('legacy_ops', JSON.stringify({
+      layers: {
+        worktype: {
+          legacy_field: 'preserved',
+        },
+      },
+    }));
+
+    expect(validation).toMatchObject({
+      ok: true,
+      degraded: true,
+      worktype: 'legacy_ops',
+      schema_name: null,
+      schema_version: null,
+      warnings: ['unknown worktype legacy_ops; preserving overlay as legacy data'],
+    });
+
+    const task = repo.createTask({
+      name: 'Legacy worktype overlay fixture',
+      worktype: 'legacy_ops',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            legacy_field: 'preserved',
+          },
+        },
+      }),
+    });
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+
+    expect(task.worktype).toBe('legacy_ops');
+    expect(envelope.layers.worktype).toMatchObject({
+      worktype: 'legacy_ops',
+      registry_status: 'legacy_unknown',
+      legacy_field: 'preserved',
+    });
+  });
+
   it('keeps human gate state independent from review state and rejects malformed side effects', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();

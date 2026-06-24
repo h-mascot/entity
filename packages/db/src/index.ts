@@ -58,6 +58,94 @@ export type ExternalSideEffectSensitivity =
   | 'confidential'
   | 'workspace_restricted';
 
+export type WorktypeFieldType = 'string' | 'enum' | 'boolean' | 'number' | 'string_array';
+
+export interface WorktypeRegistryField {
+  name: string;
+  type: WorktypeFieldType;
+  allowed_values?: readonly string[];
+  risk_default?: PolicyRiskLevel;
+  indexable: boolean;
+  sensitivity: ExternalSideEffectSensitivity;
+  plan_label: string;
+}
+
+export interface WorktypeRegistryEntry {
+  worktype: string;
+  schema_name: string;
+  schema_version: number;
+  risk_default: PolicyRiskLevel;
+  indexable: boolean;
+  sensitivity: ExternalSideEffectSensitivity;
+  plan_labels: readonly string[];
+  fields: readonly WorktypeRegistryField[];
+}
+
+export interface WorktypeOverlayValidationResult {
+  ok: boolean;
+  degraded: boolean;
+  worktype: string;
+  schema_name: string | null;
+  schema_version: number | null;
+  registry?: WorktypeRegistryEntry;
+  overlay: Record<string, unknown>;
+  warnings: string[];
+  errors: string[];
+}
+
+export const WORKTYPE_REGISTRY: Record<string, WorktypeRegistryEntry> = {
+  general: {
+    worktype: 'general',
+    schema_name: 'entity.worktype.general',
+    schema_version: 1,
+    risk_default: 'low',
+    indexable: true,
+    sensitivity: 'none',
+    plan_labels: ['General work'],
+    fields: [
+      { name: 'summary', type: 'string', indexable: true, sensitivity: 'none', plan_label: 'Summary' },
+      { name: 'acceptance_criteria', type: 'string_array', indexable: true, sensitivity: 'none', plan_label: 'Acceptance criteria' },
+      { name: 'reviewer_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Reviewer' },
+      { name: 'taskmaster_drivable', type: 'boolean', indexable: false, sensitivity: 'none', plan_label: 'Task Master drivable' },
+      { name: 'auto_reassign_after_hours', type: 'number', indexable: false, sensitivity: 'none', plan_label: 'Auto-reassign threshold' },
+    ],
+  },
+  customer_success: {
+    worktype: 'customer_success',
+    schema_name: 'entity.worktype.customer_success',
+    schema_version: 1,
+    risk_default: 'medium',
+    indexable: true,
+    sensitivity: 'customer',
+    plan_labels: ['Customer success', 'Customer commitment'],
+    fields: [
+      { name: 'customer_tier', type: 'enum', allowed_values: ['enterprise', 'mid_market', 'smb'], risk_default: 'medium', indexable: true, sensitivity: 'customer', plan_label: 'Customer tier' },
+      { name: 'customer_impact', type: 'enum', allowed_values: ['low', 'medium', 'high'], risk_default: 'medium', indexable: true, sensitivity: 'customer', plan_label: 'Customer impact' },
+      { name: 'renewal_risk', type: 'boolean', risk_default: 'high', indexable: true, sensitivity: 'customer', plan_label: 'Renewal risk' },
+      { name: 'reviewer_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Reviewer' },
+      { name: 'taskmaster_drivable', type: 'boolean', indexable: false, sensitivity: 'none', plan_label: 'Task Master drivable' },
+      { name: 'auto_reassign_after_hours', type: 'number', indexable: false, sensitivity: 'none', plan_label: 'Auto-reassign threshold' },
+    ],
+  },
+  business_ops: {
+    worktype: 'business_ops',
+    schema_name: 'entity.worktype.business_ops',
+    schema_version: 1,
+    risk_default: 'medium',
+    indexable: true,
+    sensitivity: 'workspace_restricted',
+    plan_labels: ['Business operations', 'Operational checklist'],
+    fields: [
+      { name: 'process_area', type: 'enum', allowed_values: ['finance', 'legal', 'people', 'ops', 'sales'], risk_default: 'medium', indexable: true, sensitivity: 'workspace_restricted', plan_label: 'Process area' },
+      { name: 'approval_path', type: 'string_array', indexable: false, sensitivity: 'workspace_restricted', plan_label: 'Approval path' },
+      { name: 'reviewer_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Reviewer' },
+      { name: 'approver_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Approver' },
+      { name: 'taskmaster_drivable', type: 'boolean', indexable: false, sensitivity: 'none', plan_label: 'Task Master drivable' },
+      { name: 'auto_reassign_after_hours', type: 'number', indexable: false, sensitivity: 'none', plan_label: 'Auto-reassign threshold' },
+    ],
+  },
+};
+
 export interface ExternalSideEffect {
   type: ExternalSideEffectType;
   target_system: string;
@@ -1716,6 +1804,139 @@ function normalizeAgentTrustLevel(value: unknown): AgentTrustLevel {
   return value === 'low' || value === 'standard' || value === 'high' ? value : 'unknown';
 }
 
+function normalizeWorktype(value: unknown): string {
+  const normalized = normalizeBlockerReason(value)?.toLowerCase().replace(/[^a-z0-9_:-]+/g, '_').replace(/^_+|_+$/g, '');
+  return normalized || 'general';
+}
+
+export function getWorktypeRegistryEntry(worktype: unknown): WorktypeRegistryEntry | undefined {
+  return WORKTYPE_REGISTRY[normalizeWorktype(worktype)];
+}
+
+function validateWorktypeFieldValue(field: WorktypeRegistryField, value: unknown): string | null {
+  if (typeof value === 'undefined' || value === null) {
+    return null;
+  }
+  switch (field.type) {
+    case 'string':
+      return typeof value === 'string'
+        ? null
+        : `${field.name} must be a string`;
+    case 'enum':
+      return typeof value === 'string' && field.allowed_values?.includes(value)
+        ? null
+        : `${field.name} must be one of ${(field.allowed_values ?? []).join(', ')}`;
+    case 'boolean':
+      return typeof value === 'boolean'
+        ? null
+        : `${field.name} must be a boolean`;
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value)
+        ? null
+        : `${field.name} must be a finite number`;
+    case 'string_array':
+      return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+        ? null
+        : `${field.name} must be an array of strings`;
+    default:
+      return null;
+  }
+}
+
+export function validateWorktypeOverlay(worktype: unknown, overlay: unknown): WorktypeOverlayValidationResult {
+  const normalizedWorktype = normalizeWorktype(worktype);
+  const overlayRecord = overlay && typeof overlay === 'object' && !Array.isArray(overlay)
+    ? overlay as Record<string, unknown>
+    : {};
+  const registry = getWorktypeRegistryEntry(normalizedWorktype);
+  if (!registry) {
+    return {
+      ok: true,
+      degraded: true,
+      worktype: normalizedWorktype,
+      schema_name: null,
+      schema_version: null,
+      overlay: overlayRecord,
+      warnings: [`unknown worktype ${normalizedWorktype}; preserving overlay as legacy data`],
+      errors: [],
+    };
+  }
+
+  const fieldMap = new Map(registry.fields.map((field) => [field.name, field]));
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  for (const [key, value] of Object.entries(overlayRecord)) {
+    if (key === 'schema_name' || key === 'schema_version' || key === 'worktype') {
+      continue;
+    }
+    const field = fieldMap.get(key);
+    if (!field) {
+      warnings.push(`field ${key} is not registered for worktype ${normalizedWorktype}; preserving as legacy data`);
+      continue;
+    }
+    const error = validateWorktypeFieldValue(field, value);
+    if (error) {
+      errors.push(error);
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    degraded: warnings.length > 0,
+    worktype: normalizedWorktype,
+    schema_name: registry.schema_name,
+    schema_version: registry.schema_version,
+    registry,
+    overlay: overlayRecord,
+    warnings,
+    errors,
+  };
+}
+
+export function validateWorktypePolicyInputs(
+  worktype: unknown,
+  policyInputsJson: unknown,
+): WorktypeOverlayValidationResult {
+  const layers = readTaskPolicyLayers(policyInputsJson);
+  return validateWorktypeOverlay(worktype, layers.worktype ?? {});
+}
+
+function assertValidWorktypePolicyInputs(worktype: unknown, policyInputsJson: unknown): void {
+  const result = validateWorktypePolicyInputs(worktype, policyInputsJson);
+  if (!result.ok) {
+    throw new Error(`worktype overlay invalid: ${result.errors.join('; ')}`);
+  }
+}
+
+function buildWorktypeRegistryPolicyLayer(worktype: unknown): Record<string, unknown> {
+  const normalizedWorktype = normalizeWorktype(worktype);
+  const registry = getWorktypeRegistryEntry(normalizedWorktype);
+  if (!registry) {
+    return {
+      worktype: normalizedWorktype,
+      registry_status: 'legacy_unknown',
+    };
+  }
+  return {
+    worktype: normalizedWorktype,
+    schema_name: registry.schema_name,
+    schema_version: registry.schema_version,
+    risk_default: registry.risk_default,
+    indexable: registry.indexable,
+    sensitivity: registry.sensitivity,
+    plan_labels: [...registry.plan_labels],
+    field_definitions: registry.fields.map((field) => ({
+      name: field.name,
+      type: field.type,
+      allowed_values: field.allowed_values ? [...field.allowed_values] : undefined,
+      risk_default: field.risk_default,
+      indexable: field.indexable,
+      sensitivity: field.sensitivity,
+      plan_label: field.plan_label,
+    })),
+  };
+}
+
 function normalizeReviewPolicyState(value: unknown, required: boolean): ReviewPolicyState {
   if (value === 'pending' || value === 'accepted' || value === 'request_fix' || value === 'skipped_by_policy') {
     return value;
@@ -1879,7 +2100,10 @@ export function buildTaskPolicyInputEnvelope(
       org: storedLayers.org ?? { org_id: task.org_id ?? DEFAULT_WORKSPACE_ORG_ID },
       team: storedLayers.team ?? { team_id: task.team_id ?? DEFAULT_WORKSPACE_TEAM_ID },
       project: storedLayers.project ?? { project_id: task.project_id ?? null },
-      worktype: storedLayers.worktype ?? { worktype: task.worktype ?? 'general' },
+      worktype: {
+        ...buildWorktypeRegistryPolicyLayer(task.worktype ?? 'general'),
+        ...(storedLayers.worktype ?? {}),
+      },
       task: taskLayer,
       risk: storedLayers.risk ?? {
         risk_level: task.risk_level ?? 'low',
@@ -5693,6 +5917,8 @@ export function createTaskRepository(): TaskRepository {
       const hasExecutor = Boolean(input.executor_principal_id?.trim());
       const reviewRequired = normalizeBlocked(input.review_required);
       const humanGateRequired = normalizeBlocked(input.human_gate_required);
+      const normalizedWorktype = normalizeWorktype(input.worktype);
+      const worktypeRiskDefault = getWorktypeRegistryEntry(normalizedWorktype)?.risk_default;
       const policyTaskDraft: Pick<
         TaskRecord,
         | 'id'
@@ -5725,10 +5951,10 @@ export function createTaskRepository(): TaskRepository {
         owner_principal_id: input.owner_principal_id?.trim() || 'legacy-owner',
         executor_principal_id: input.executor_principal_id?.trim() || null,
         assignee: input.assignee?.trim() || 'Unassigned',
-        worktype: input.worktype?.trim() || 'general',
+        worktype: normalizedWorktype,
         column: normalizeTaskColumn(input.column),
         taskmaster_drivable: normalizeBlocked(input.taskmaster_drivable),
-        risk_level: normalizePolicyRiskLevel(input.risk_level),
+        risk_level: normalizePolicyRiskLevel(input.risk_level ?? worktypeRiskDefault),
         agent_trust_level: normalizeAgentTrustLevel(input.agent_trust_level),
         policy_inputs_json: normalizeJsonObjectString(input.policy_inputs_json),
         external_side_effects_json: normalizeExternalSideEffectsJson(input.external_side_effects_json),
@@ -5737,6 +5963,7 @@ export function createTaskRepository(): TaskRepository {
         human_gate_required: humanGateRequired,
         human_gate_state: normalizeHumanGatePolicyState(input.human_gate_state, humanGateRequired),
       };
+      assertValidWorktypePolicyInputs(policyTaskDraft.worktype, policyTaskDraft.policy_inputs_json);
       const policyResolution = resolveTaskPolicy(buildTaskPolicyInputEnvelope(policyTaskDraft));
       const taskmasterDrivable = policyResolution.routing_policy_projection.taskmaster_drivable;
       const assignmentState =
@@ -5806,6 +6033,15 @@ export function createTaskRepository(): TaskRepository {
 
       const fields: string[] = [];
       const values: unknown[] = [];
+      const nextWorktype = typeof updates.worktype === 'string'
+        ? normalizeWorktype(updates.worktype)
+        : normalizeWorktype(existingTask.worktype);
+      const nextPolicyInputsJson = typeof updates.policy_inputs_json !== 'undefined'
+        ? normalizeJsonObjectString(updates.policy_inputs_json)
+        : normalizeJsonObjectString(existingTask.policy_inputs_json);
+      if (typeof updates.worktype === 'string' || typeof updates.policy_inputs_json !== 'undefined') {
+        assertValidWorktypePolicyInputs(nextWorktype, nextPolicyInputsJson);
+      }
 
       if (typeof updates.name === 'string') {
         fields.push('name = ?');
@@ -5965,7 +6201,7 @@ export function createTaskRepository(): TaskRepository {
 
       if (typeof updates.worktype === 'string') {
         fields.push('worktype = ?');
-        values.push(updates.worktype.trim() || 'general');
+        values.push(nextWorktype);
       }
 
       if (typeof updates.risk_level !== 'undefined') {
@@ -5980,7 +6216,7 @@ export function createTaskRepository(): TaskRepository {
 
       if (typeof updates.policy_inputs_json !== 'undefined') {
         fields.push('policy_inputs_json = ?');
-        values.push(normalizeJsonObjectString(updates.policy_inputs_json));
+        values.push(nextPolicyInputsJson);
       }
 
       if (typeof updates.external_side_effects_json !== 'undefined') {
