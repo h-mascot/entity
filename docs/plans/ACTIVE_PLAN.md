@@ -2,7 +2,7 @@
 
 Issue: THE-72
 Branch: THE-72-implement-helm-status-adapter-and-degraded-runtime-states
-Status: IN PROGRESS
+Status: DONE
 
 ## Scope
 
@@ -24,7 +24,7 @@ Implement a bounded Helm status adapter keyed by `runtime_binding_id` so Entity 
   - Verify: `cd packages/server && npx vitest run src/__tests__/agent-registry-routes.test.ts`
 - [x] Render runtime status honestly in the agent dashboard using existing agent fields.
   - Verify: `npm run build`
-- [ ] Run full proof and CLI Tester gate.
+- [x] Run full proof and CLI Tester gate.
   - Verify: `bash scripts/proof/entity-phase-2-smoke.sh && npm run build && cd packages/server && npm run build && npx vitest run`
   - Verify: `project-test-gate request/run/book-review/verify THE-72`
 - [ ] Comment Linear, mark Done, update run-state to THE-73, and commit scoped work.
@@ -45,6 +45,7 @@ Implement a bounded Helm status adapter keyed by `runtime_binding_id` so Entity 
 
 - 2026-06-24T05:10Z: Linear body read; branch created; plan written.
 - 2026-06-24T05:13Z: Focused adapter/route tests passed; full repo build passed.
+- 2026-06-24T05:15Z: Implementation committed at `d60f17a`; full proof and CLI Tester request/run/book-review/verify passed.
 
 ## Resume Instructions
 
