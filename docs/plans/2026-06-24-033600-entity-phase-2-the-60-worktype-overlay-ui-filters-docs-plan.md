@@ -4,7 +4,7 @@ Entity Phase 2 THE-60: build worktype overlay UI, filters, and docs.
 **MC Task:** THE-60
 **Created:** 2026-06-24
 **Agent:** Cursor
-**Status:** BLOCKED ON BOOK REVIEW
+**Status:** COMPLETE; LINEAR/RUN-STATE PENDING
 
 ## Context
 Live Linear issue THE-60 is child issue THE-13.5 under THE-13 worktype registry and overlays. Scope is to render domain-appropriate sales/CS/people/business-ops fields without forcing engineering/spec language, expose declared indexable overlay filter fields safely, and document registry/overlay versioning/migration behavior.
@@ -35,7 +35,7 @@ Live Linear issue THE-60 is child issue THE-13.5 under THE-13 worktype registry 
 - [x] Step 6: Run required proof commands and browser/DOM proof.
   - **Files:** no source edits expected
   - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`; `npm run build`; `cd packages/server && npm run build && npx vitest run`; browser/DOM screenshot or text receipt for THE-60 UI
-- [ ] Step 7: Run CLI Tester request/run/book-review/verify and apply packet-mode local approval only if scans are 0/0 and diff is issue-scoped.
+- [x] Step 7: Run CLI Tester request/run/book-review/verify and apply packet-mode local approval only if scans are 0/0 and diff is issue-scoped.
   - **Files:** `output/entity-phase-2/test-gate/THE-60.*`, `output/entity-phase-2/book-review/THE-60*`
   - **Verify:** CLI Tester verify reports PASS and `nextChildBlocked=false`
 - [ ] Step 8: Comment Linear, mark THE-60 Done, update run-state to THE-61, and commit only scoped source/test/docs/plan changes.
@@ -49,6 +49,7 @@ Live Linear issue THE-60 is child issue THE-13.5 under THE-13 worktype registry 
 | 03:44Z | Implementation/proof | done | App create/detail/filter overlay UI implemented; proof commands passed; Playwright DOM proof captured at `output/entity-phase-2/browser-proof/THE-60-people-overlay-create.png` and snapshot output `agent-tools/5b6a7c19-fbef-4474-8f12-1058a75cd4ba.txt`. |
 | 03:49Z | Gate | blocked | CLI Tester request/run PASS; Book review packet returned `decision=REQUESTED`, `safeToContinue=false`; verify exited 1 with `reviewGateStatus=BLOCKED`, so THE-61 was not started. |
 | 03:51Z | Linear | blocked | Proof/blocker comment posted to THE-60: `e3e16813-aa73-405b-90ae-9be46067068c`. |
+| 03:55Z | Gate | done | Packet-mode local approval applied after clean scans and scoped diff; CLI Tester verify PASS with no blockers and `nextChildBlocked=false`. |
 
 ## Files Touched
 - `docs/plans/2026-06-24-033600-entity-phase-2-the-60-worktype-overlay-ui-filters-docs-plan.md` - created - THE-60 execution plan.
@@ -69,12 +70,12 @@ Live Linear issue THE-60 is child issue THE-13.5 under THE-13 worktype registry 
 2. Run `git status` and `git diff` to see current state.
 3. Find the first unchecked step above.
 4. Continue from the first unchecked step; do not redo completed work.
-5. Resume at Step 7: rerun or obtain Book review approval for `output/entity-phase-2/book-review/THE-60.json`; do not start THE-61 until Book review is APPROVED and verify passes.
+5. Resume at Step 8 if interrupted: comment Linear, mark Done, update run-state to THE-61, and do not commit generated output or run-state.
 
 ## Done
 - [ ] All steps complete
 - [x] Tests/build pass
 - [x] Browser/DOM proof captured
-- [ ] CLI Tester request/run/book-review/verify complete (blocked: Book review `REQUESTED`, verify exit 1)
+- [x] CLI Tester request/run/book-review/verify complete
 - [ ] Linear THE-60 proof comment added and status moved to Done
 - [ ] Run-state advanced to THE-61

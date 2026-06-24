@@ -13,7 +13,7 @@ Each registered worktype declares:
 - user-facing `plan_labels`
 - field definitions with type, allowed values, indexability, sensitivity, and display label
 
-The UI consumes only registry metadata and task overlay values. It does not expose secrets, provider settings, or runtime controls.
+The UI consumes only registry metadata and task overlay values. It does not expose credentials, provider settings, or runtime controls.
 
 ## Current Overlays
 
