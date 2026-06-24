@@ -2,6 +2,11 @@ import type { Request, Response } from 'express';
 import { Router } from 'express';
 import { execFile } from 'child_process';
 import { permissionSafeRecord, requireRequestOrg } from '../request-permissions';
+import {
+  phase2FlagEnabled,
+  resolvePhase2Flags,
+  type Phase2FlagSnapshot,
+} from '../phase2-flags';
 
 type SearchMode = 'keyword' | 'semantic' | 'hybrid';
 type SearchCollection = 'all' | 'obsidian' | 'superada' | 'sessions' | 'scotty' | 'spock' | 'memory';
@@ -24,6 +29,10 @@ interface QmdCollectionListEntry {
   files: number;
   pattern: string;
   updated: string;
+}
+
+export interface SearchRouterDependencies {
+  flags?: Phase2FlagSnapshot;
 }
 
 interface LineRange {
@@ -536,8 +545,9 @@ function classifyExecError(err: unknown): { status: number; error: string } {
   return { status: 502, error: 'qmd search failed' };
 }
 
-export function createSearchRouter(): Router {
+export function createSearchRouter(dependencies: SearchRouterDependencies = {}): Router {
   const router = Router();
+  const flags = dependencies.flags ?? resolvePhase2Flags();
 
   router.get('/collections', async (_req: Request, res: Response) => {
     const { sshTarget, qmdBin, timeoutMs, maxBufferBytes } = getQmdExecConfig();
@@ -558,6 +568,13 @@ export function createSearchRouter(): Router {
     const id = typeof req.query.id === 'string' ? req.query.id.trim() : '';
     if (!id) {
       return res.status(400).json({ error: 'id required' });
+    }
+
+    if (!phase2FlagEnabled(flags, 'search_permission_strictness')) {
+      return res.status(503).json({
+        error: 'search permission strictness disabled',
+        flag: flags.search_permission_strictness,
+      });
     }
 
     const linesRaw = req.query.lines;
@@ -589,6 +606,13 @@ export function createSearchRouter(): Router {
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     if (!query) {
       return res.status(400).json({ error: 'q required' });
+    }
+
+    if (!phase2FlagEnabled(flags, 'search_permission_strictness')) {
+      return res.status(503).json({
+        error: 'search permission strictness disabled',
+        flag: flags.search_permission_strictness,
+      });
     }
 
     const modeRaw = req.query.mode;

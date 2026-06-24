@@ -129,6 +129,11 @@ import { createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
 import { createMigrationCleanupQueueRouter } from "./routes/migration-cleanup-queues";
 import {
+  phase2FlagEnabled,
+  resolvePhase2Flags,
+  serializePhase2FlagDiagnostics,
+} from "./phase2-flags";
+import {
   buildTaskMutationActivityEvent,
   createActivityEventRouter,
   createActivityEventService,
@@ -164,6 +169,7 @@ import {
 const app = express();
 const DEFAULT_PORT = 3000;
 const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
+const phase2Flags = resolvePhase2Flags();
 
 applySecurityHardening(app);
 app.use(cors());
@@ -187,10 +193,18 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+function registerPhase2DiagnosticsRoutes(prefix: "" | "/api") {
+  app.get(`${prefix}/phase2/diagnostics`, (_req, res) => {
+    res.json({ phase2: serializePhase2FlagDiagnostics(phase2Flags) });
+  });
+}
+
+registerPhase2DiagnosticsRoutes("");
+registerPhase2DiagnosticsRoutes("/api");
 registerConfigRoutes(app);
 app.use("/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/notifications", createNotificationRouter({ notificationRepository }));
-app.use("/api/search", createSearchRouter());
+app.use("/api/search", createSearchRouter({ flags: phase2Flags }));
 registerDocsApiRoutes(app);
 
 const WORKSPACE = process.env.WORKSPACE || path.resolve(__dirname, "../../..");
@@ -324,7 +338,7 @@ app.use("/api/document-objects", createDocumentObjectRouter({
   documentRepo: documentObjectRepository,
   artifactRepo: evidenceArtifactRepository,
 }));
-app.use("/api/migration-cleanup-queues", createMigrationCleanupQueueRouter());
+app.use("/api/migration-cleanup-queues", createMigrationCleanupQueueRouter({ flags: phase2Flags }));
 wss.on("connection", (ws) => {
   wsClients.add(ws);
   terminalBridge.handleSocketConnection(ws);
@@ -2806,7 +2820,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
         nextColumn,
       );
       const normalizedOutput = normalizeTaskOutputLinks(output) ?? undefined;
-      if (movingToReview) {
+      if (movingToReview && phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement")) {
         const reviewEntry = validateReviewEntry(
           metadata ?? existingTask.metadata,
         );
@@ -2865,7 +2879,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
       const movingToDone =
         nextColumn === "done" &&
         existingTask.column !== "done";
-      if (movingToDone) {
+      if (movingToDone && phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement")) {
         const reviewGateState = validateTaskDoneReviewGateState(existingTask);
         if (!reviewGateState.ok) {
           return res.status(reviewGateState.status).json({
@@ -2874,7 +2888,11 @@ function registerTaskRoutes(prefix: "" | "/api") {
           });
         }
       }
-      if (movingToDone && isReviewGatedTask(completionMetadata)) {
+      if (
+        movingToDone &&
+        phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement") &&
+        isReviewGatedTask(completionMetadata)
+      ) {
         const completionCheck = validateReviewCompletion(
           { ...existingTask, metadata: completionMetadata },
           getTaskActorFromRequest(req),
@@ -2916,7 +2934,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
 
       let receiptArtifactId: string | null = null;
       let receiptContentHash: string | undefined;
-      const task = movingToDone
+      const task = movingToDone && phase2FlagEnabled(phase2Flags, "receipt_completion_enforcement")
         ? (await completeTaskWithReceipt(
             {
               previousTask: existingTask,
@@ -3191,7 +3209,10 @@ function registerTaskRoutes(prefix: "" | "/api") {
         });
       }
 
-      if (shouldValidateReviewEntryOnTransition(existingTask.column, column)) {
+      if (
+        shouldValidateReviewEntryOnTransition(existingTask.column, column) &&
+        phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement")
+      ) {
         const reviewEntry = validateReviewEntry(existingTask.metadata);
         if (!reviewEntry.ok) {
           return res.status(400).json({
@@ -3224,7 +3245,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
 
       if (
         column === "done" &&
-        existingTask.column !== "done"
+        existingTask.column !== "done" &&
+        phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement")
       ) {
         const reviewGateState = validateTaskDoneReviewGateState(existingTask);
         if (!reviewGateState.ok) {
@@ -3238,6 +3260,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
       if (
         column === "done" &&
         existingTask.column !== "done" &&
+        phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement") &&
         isReviewGatedTask(existingTask.metadata)
       ) {
         const completionCheck = validateReviewCompletion(
@@ -3256,7 +3279,9 @@ function registerTaskRoutes(prefix: "" | "/api") {
 
       let receiptArtifactId: string | null = null;
       let receiptContentHash: string | undefined;
-      const task = column === "done" && existingTask.column !== "done"
+      const task = column === "done" &&
+        existingTask.column !== "done" &&
+        phase2FlagEnabled(phase2Flags, "receipt_completion_enforcement")
         ? (await completeTaskWithReceipt(
             {
               previousTask: existingTask,
@@ -5885,8 +5910,8 @@ app.use(createTaskMasterClaimRouter(taskMasterClaimService));
 app.use("/api", createTaskMasterClaimRouter(taskMasterClaimService));
 registerActivityRoutes("");
 registerActivityRoutes("/api");
-app.use("/worktype-registry", createWorktypeRegistryRouter());
-app.use("/api/worktype-registry", createWorktypeRegistryRouter());
+app.use("/worktype-registry", createWorktypeRegistryRouter({ flags: phase2Flags }));
+app.use("/api/worktype-registry", createWorktypeRegistryRouter({ flags: phase2Flags }));
 registerTaskRoutes("");
 registerTaskRoutes("/api");
 app.use("/tasks", createTaskReviewGateRouter({

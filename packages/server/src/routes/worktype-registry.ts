@@ -1,5 +1,10 @@
 import express from 'express';
 import { WORKTYPE_REGISTRY } from '../../../db/src';
+import {
+  phase2FlagEnabled,
+  resolvePhase2Flags,
+  type Phase2FlagSnapshot,
+} from '../phase2-flags';
 
 export function serializeWorktypeRegistry() {
   return Object.values(WORKTYPE_REGISTRY).map((entry) => ({
@@ -22,9 +27,22 @@ export function serializeWorktypeRegistry() {
   }));
 }
 
-export function createWorktypeRegistryRouter(): express.Router {
+export interface WorktypeRegistryRouterDependencies {
+  flags?: Phase2FlagSnapshot;
+}
+
+export function createWorktypeRegistryRouter(
+  dependencies: WorktypeRegistryRouterDependencies = {},
+): express.Router {
   const router = express.Router();
+  const flags = dependencies.flags ?? resolvePhase2Flags();
   router.get('/', (_req, res) => {
+    if (!phase2FlagEnabled(flags, 'worktype_registry_surface')) {
+      return res.status(503).json({
+        error: 'worktype registry disabled',
+        flag: flags.worktype_registry_surface,
+      });
+    }
     res.json({ worktypes: serializeWorktypeRegistry() });
   });
   return router;

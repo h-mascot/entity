@@ -114,6 +114,14 @@ describe('migration cleanup queue route', () => {
     expect(response.status).toBe(200);
 
     const body = await readJson(response);
+    expect(body.phase2_flags).toMatchObject({
+      migration_enforcement: {
+        key: 'migration_enforcement',
+        enabled: false,
+        stage: 'observation_only',
+      },
+      old_tasks_remain_visible: true,
+    });
     expect(body.items).toEqual([
       expect.objectContaining({
         code: 'missing_owner',

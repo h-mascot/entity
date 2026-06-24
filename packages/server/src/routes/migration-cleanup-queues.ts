@@ -7,10 +7,12 @@ import {
   type MigrationCleanupQueueOptions,
   type MigrationCleanupQueueReport,
 } from '../../../db/src';
+import { resolvePhase2Flags, type Phase2FlagSnapshot } from '../phase2-flags';
 
 export interface MigrationCleanupQueueRouterDependencies {
   buildQueues?: (options?: MigrationCleanupQueueOptions) => MigrationCleanupQueueReport;
   applyCorrection?: (input: ApplyMigrationCleanupCorrectionInput) => ApplyMigrationCleanupCorrectionResult;
+  flags?: Phase2FlagSnapshot;
 }
 
 function parsePositiveLimit(value: unknown): number | undefined {
@@ -45,6 +47,7 @@ export function createMigrationCleanupQueueRouter(
   const router = Router();
   const buildQueues = dependencies.buildQueues ?? buildMigrationCleanupQueuesForPhase2;
   const applyCorrection = dependencies.applyCorrection ?? applyMigrationCleanupCorrectionForPhase2;
+  const flags = dependencies.flags ?? resolvePhase2Flags();
 
   router.get('/', (req, res) => {
     try {
@@ -52,7 +55,13 @@ export function createMigrationCleanupQueueRouter(
         limit: parsePositiveLimit(req.query.limit),
         includeCorrected: parseBooleanQuery(req.query.include_corrected ?? req.query.includeCorrected),
       });
-      return res.json(report);
+      return res.json({
+        ...report,
+        phase2_flags: {
+          migration_enforcement: flags.migration_enforcement,
+          old_tasks_remain_visible: true,
+        },
+      });
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to build cleanup queues' });
     }
