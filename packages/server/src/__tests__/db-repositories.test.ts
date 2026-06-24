@@ -2731,6 +2731,129 @@ describe('DocumentObjectRepository', () => {
     }
   });
 
+  it('proves THE-90 migration runbook invariants without fabricating historical certainty', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const taskRepo = dbMod.createTaskRepository();
+    const task = taskRepo.createTask({
+      name: 'Historical runbook task',
+      column: 'done',
+      assignee: 'Ada',
+      created_by_principal_id: 'requester-1',
+      worktype: 'legacy_ops',
+      output: '/documents/native/historical-summary.md',
+      metadata: JSON.stringify({
+        review_packet: {
+          evidence: [],
+          done_criteria: ['Migration runbook reviewed'],
+        },
+      }),
+    });
+
+    const rawDb = new Database(tmpDbPath);
+    try {
+      const inventory = dbMod.dryRunPhase2MigrationInventory({ db: rawDb });
+      expect(inventory.noMutationProof).toMatchObject({
+        unchanged: true,
+        writeStatementsExecuted: 0,
+      });
+      expect(inventory.gapCategories.find((gap) => gap.code === 'missing_receipt')).toMatchObject({
+        count: 1,
+        severity: 'blocking_for_done',
+      });
+      expect(taskRepo.getTask(task.id)).toMatchObject({
+        id: task.id,
+        name: 'Historical runbook task',
+        column: 'done',
+      });
+
+      const mapped = dbMod.mapReviewPacketsAndEvidenceForPhase2({ dryRun: false, db: rawDb });
+      const mappedTask = mapped.taskResults.find((result) => result.task_id === task.id);
+      expect(mappedTask).toMatchObject({
+        receipt_status: 'missing_receipt',
+        applied: true,
+      });
+      expect(mappedTask?.warnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'missing_receipt' }),
+          expect.objectContaining({ code: 'missing_evidence' }),
+        ]),
+      );
+
+      const cleanup = dbMod.buildMigrationCleanupQueuesForPhase2({ db: rawDb });
+      expect(cleanup.items.find((item) => item.code === 'missing_receipt' && item.task_id === task.id)).toMatchObject({
+        status: 'open',
+        field_name: 'acknowledgement',
+        old_task_visible: true,
+      });
+
+      const acknowledgement = dbMod.applyMigrationCleanupCorrectionForPhase2({
+        db: rawDb,
+        task_id: task.id,
+        code: 'missing_receipt',
+        field_name: 'acknowledgement',
+        corrected_value: 'acknowledged-missing-historical-receipt',
+        corrected_by_principal_id: 'reviewer-1',
+        corrected_at: '2026-06-24T16:45:00.000Z',
+        note: 'Historical task predates canonical receipt writer.',
+      });
+      expect(acknowledgement.correction).toMatchObject({
+        code: 'missing_receipt',
+        field_name: 'acknowledgement',
+        corrected_value: 'acknowledged-missing-historical-receipt',
+        authoritative: true,
+      });
+
+      dbMod.applyMigrationCleanupCorrectionForPhase2({
+        db: rawDb,
+        task_id: task.id,
+        code: 'missing_owner',
+        field_name: 'owner_principal_id',
+        corrected_value: 'human-owner',
+        corrected_by_principal_id: 'reviewer-1',
+        corrected_at: '2026-06-24T16:46:00.000Z',
+        note: 'Owner confirmed during migration runbook review.',
+      });
+
+      const afterCorrections = dbMod.buildMigrationCleanupQueuesForPhase2({ db: rawDb, includeCorrected: true });
+      expect(afterCorrections.items.find((item) => item.code === 'missing_receipt' && item.task_id === task.id)).toMatchObject({
+        status: 'corrected',
+        old_task_visible: true,
+        correction: expect.objectContaining({
+          corrected_value: 'acknowledged-missing-historical-receipt',
+        }),
+      });
+      expect(afterCorrections.items.find((item) => item.code === 'missing_owner' && item.task_id === task.id)).toMatchObject({
+        status: 'corrected',
+        correction: expect.objectContaining({
+          corrected_value: 'human-owner',
+        }),
+      });
+
+      const firstBackfillRerun = dbMod.backfillTaskHierarchyAndAccountability({ dryRun: false, db: rawDb });
+      const firstBackfillTask = firstBackfillRerun.taskResults.find((result) => result.task_id === task.id);
+      expect(firstBackfillTask?.inferred_fields).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ field_name: 'owner_principal_id' })]),
+      );
+      expect(rawDb.prepare('SELECT owner_principal_id FROM tasks WHERE id = ?').get(task.id)).toMatchObject({
+        owner_principal_id: 'human-owner',
+      });
+
+      const secondMapping = dbMod.mapReviewPacketsAndEvidenceForPhase2({ dryRun: false, db: rawDb });
+      expect(secondMapping.taskResults.find((result) => result.task_id === task.id)?.would_update).toBe(false);
+
+      const secondBackfillRerun = dbMod.backfillTaskHierarchyAndAccountability({ dryRun: false, db: rawDb });
+      expect(secondBackfillRerun.taskResults.find((result) => result.task_id === task.id)?.would_update).toBe(false);
+
+      expect(rawDb.prepare(`
+        SELECT COUNT(*) AS count
+        FROM evidence_artifacts
+        WHERE origin_task_id = ? AND artifact_kind = 'raw_task_receipt'
+      `).get(task.id)).toMatchObject({ count: 0 });
+    } finally {
+      rawDb.close();
+    }
+  });
+
   it('suppresses restricted and degraded document-object previews before snippets can leak', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
 
