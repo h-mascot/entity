@@ -4,7 +4,7 @@ Entity Phase 2 THE-65: harden restricted snippet suppression and search UI.
 **MC Task:** THE-65
 **Created:** 2026-06-24
 **Agent:** Cursor
-**Status:** IN PROGRESS
+**Status:** VERIFIED - LINEAR HANDOFF PENDING
 
 ## Context
 Live Linear issue THE-65 is child issue THE-14.5 under THE-14 permissions, sensitivity, and search envelope. Scope is proving and hardening that permission filtering happens before snippets/previews render, including indexed restricted content after permission changes, and that search UI explains restricted results without leaking content.
@@ -26,7 +26,7 @@ Live Linear issue THE-65 is child issue THE-14.5 under THE-14 permissions, sensi
 - [x] Step 3: Update search UI to render explicit restricted-access placeholders without snippet/preview content.
   - **Files:** app search components/tests as needed
   - **Verify:** DOM/browser proof shows restricted explanation and no leaked content
-- [ ] Step 4: Run required proof commands, browser/DOM proof, GitNexus detect-changes, and CLI Tester request/run/book-review/verify.
+- [x] Step 4: Run required proof commands, browser/DOM proof, GitNexus detect-changes, and CLI Tester request/run/book-review/verify.
   - **Files:** `output/entity-phase-2/test-gate/THE-65.*`, `output/entity-phase-2/book-review/THE-65*`
   - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`; `npm run build`; `cd packages/server && npm run build && npx vitest run`; UI proof attached
 - [ ] Step 5: Comment Linear, mark THE-65 Done, update run-state to THE-66, and commit scoped changes.
@@ -38,6 +38,7 @@ Live Linear issue THE-65 is child issue THE-14.5 under THE-14 permissions, sensi
 |------|------|--------|-------|
 | 03:40Z | Setup | done | Read live child issue; branch created after THE-64 completion. |
 | 03:45Z | Implementation | done | Added file-index permission metadata, propagated adapter metadata, suppressed restricted indexed/fallback previews, and rendered non-clickable restricted UI placeholders. |
+| 03:51Z | Proof | done | Focused tests, smoke, root build, server build, full server Vitest, DOM source proof, GitNexus detect-changes, and CLI Tester request/run/book-review/verify passed; Book packet-mode locally approved under hard rule 22 with clean scans. |
 
 ## Files Touched
 - `docs/plans/2026-06-24-044000-entity-phase-2-the-65-restricted-snippet-search-ui-plan.md` - created - THE-65 execution plan.
@@ -51,6 +52,8 @@ Live Linear issue THE-65 is child issue THE-14.5 under THE-14 permissions, sensi
 - `packages/app/src/components/UnifiedFileDashboard.tsx` - updated - restricted placeholder rendering.
 - `packages/app/src/components/QuickSwitcher.tsx` - updated - restricted quick switcher placeholders.
 - `packages/app/src/components/SourceFileTree.tsx` - updated - restricted source-tree search placeholders.
+- `output/entity-phase-2/browser-proof/THE-65-dom-proof.json` - created - DOM source proof receipt, not staged.
+- `output/entity-phase-2/audits/THE-65-private-scan-audit.md` - created - local packet-mode approval audit, not staged.
 
 ## Resume Instructions
 1. Re-read this file fully.
@@ -61,7 +64,7 @@ Live Linear issue THE-65 is child issue THE-14.5 under THE-14 permissions, sensi
 
 ## Done
 - [ ] All steps complete
-- [ ] Tests/build pass
-- [ ] CLI Tester request/run/book-review/verify complete
+- [x] Tests/build pass
+- [x] CLI Tester request/run/book-review/verify complete
 - [ ] Linear THE-65 proof comment added and status moved to Done
 - [ ] Run-state advanced to THE-66
