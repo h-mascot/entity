@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAgentRegistryRouter } from '../routes/agent-registry';
+import type { HelmStatusAdapter } from '../agent/helm-status-adapter';
 import type {
   AgentModuleGrantRecord,
   AgentRegistryRecord,
@@ -220,6 +221,15 @@ describe('agent registry mutation routes', () => {
         provider_type: string;
         helm_managed: boolean;
         binding_state: string;
+        runtime_status: {
+          source: string;
+          state: string;
+          readiness: string;
+          reason: string;
+        };
+        runtimeStatus: {
+          state: string;
+        };
         capabilities?: { runtimeLabel?: string; capabilityLabels: string[] };
       }>;
     };
@@ -230,7 +240,14 @@ describe('agent registry mutation routes', () => {
       provider_type: 'unknown',
       helm_managed: false,
       binding_state: 'unknown',
+      runtime_status: {
+        source: 'helm',
+        state: 'unknown',
+        readiness: 'unknown',
+        reason: 'not_helm_managed',
+      },
     });
+    expect(json.list[0].runtimeStatus.state).toBe('unknown');
     expect(json.list[0].capabilities?.runtimeLabel).toBe('Hermes · Remote · Active');
     expect(json.list[0].capabilities?.capabilityLabels).toEqual(['Docs']);
   });
@@ -319,5 +336,62 @@ describe('agent registry mutation routes', () => {
       body: JSON.stringify({ module_id: 'missing' }),
     });
     expect(badGrant.status).toBe(404);
+  });
+});
+
+describe('agent registry Helm runtime status serialization', () => {
+  it('includes sanitized adapter status without changing agent lifecycle state', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'helmbook',
+      name: 'Helm Book',
+      emoji: 'H',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-helmbook',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'bound',
+      status: 'active',
+      metadata_json: '{}',
+    });
+    const helmStatusAdapter: HelmStatusAdapter = {
+      getStatus: async (agent) => ({
+        source: 'helm',
+        binding_id: agent.runtime_binding_id,
+        state: 'degraded',
+        health: 'degraded',
+        readiness: 'degraded',
+        current_work: 'Waiting for review',
+        heartbeat_at: '2026-05-01T00:00:00.000Z',
+        checked_at: '2026-05-01T00:00:10.000Z',
+        stale: true,
+        reason: 'stale_helm_heartbeat',
+        helm_link: null,
+      }),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo, helmStatusAdapter }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/registry`);
+      expect(res.status).toBe(200);
+      const json = await res.json() as { list: Array<{ slug: string; status: string; runtime_status: { state: string; current_work: string; reason: string } }> };
+      const helmAgent = json.list.find((entry) => entry.slug === 'helmbook');
+      expect(helmAgent).toMatchObject({
+        status: 'active',
+        runtime_status: {
+          state: 'degraded',
+          current_work: 'Waiting for review',
+          reason: 'stale_helm_heartbeat',
+        },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 });

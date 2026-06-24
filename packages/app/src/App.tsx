@@ -110,6 +110,20 @@ interface AgentCapability {
   identityLabel?: string;
 }
 
+interface AgentRuntimeStatusSummary {
+  source: 'helm';
+  binding_id: string | null;
+  state: 'healthy' | 'degraded' | 'unavailable' | 'unknown';
+  health: 'healthy' | 'degraded' | 'unavailable' | 'unknown';
+  readiness: 'ready' | 'degraded' | 'unavailable' | 'unknown';
+  current_work: string | null;
+  heartbeat_at: string | null;
+  checked_at: string;
+  stale: boolean;
+  reason: string;
+  helm_link: string | null;
+}
+
 interface Agent {
   id: string;
   slug?: string;
@@ -125,6 +139,7 @@ interface Agent {
   adapterType?: string;
   runtimeType?: string;
   capabilities?: AgentCapability;
+  runtimeStatus?: AgentRuntimeStatusSummary;
   metadata?: Record<string, unknown> | null;
   lastActivity?: {
     action: string;
@@ -430,6 +445,42 @@ function parseJsonRecord(value: unknown): Record<string, unknown> | null {
   }
 }
 
+function normalizeRuntimeStatus(value: unknown): AgentRuntimeStatusSummary | undefined {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  if (!record || record.source !== 'helm') {
+    return undefined;
+  }
+
+  const state = String(record.state ?? '').toLowerCase();
+  const health = String(record.health ?? '').toLowerCase();
+  const readiness = String(record.readiness ?? '').toLowerCase();
+  const normalizedState = state === 'healthy' || state === 'degraded' || state === 'unavailable' || state === 'unknown'
+    ? state
+    : 'unknown';
+  const normalizedHealth = health === 'healthy' || health === 'degraded' || health === 'unavailable' || health === 'unknown'
+    ? health
+    : 'unknown';
+  const normalizedReadiness = readiness === 'ready' || readiness === 'degraded' || readiness === 'unavailable' || readiness === 'unknown'
+    ? readiness
+    : 'unknown';
+
+  return {
+    source: 'helm',
+    binding_id: typeof record.binding_id === 'string' && record.binding_id.trim() ? record.binding_id.trim() : null,
+    state: normalizedState,
+    health: normalizedHealth,
+    readiness: normalizedReadiness,
+    current_work: typeof record.current_work === 'string' && record.current_work.trim() ? record.current_work.trim() : null,
+    heartbeat_at: typeof record.heartbeat_at === 'string' && record.heartbeat_at.trim() ? record.heartbeat_at.trim() : null,
+    checked_at: typeof record.checked_at === 'string' && record.checked_at.trim() ? record.checked_at.trim() : new Date().toISOString(),
+    stale: record.stale === true,
+    reason: typeof record.reason === 'string' && record.reason.trim() ? record.reason.trim() : 'helm_status_unknown',
+    helm_link: typeof record.helm_link === 'string' && /^https?:\/\//.test(record.helm_link) ? record.helm_link : null,
+  };
+}
+
 function normalizeAgentStatus(value: unknown): 'online' | 'offline' {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return ['online', 'active', 'running', 'ready'].includes(normalized) ? 'online' : 'offline';
@@ -535,6 +586,7 @@ function normalizeAgentFromApi(entry: any, userDisplayName?: string): Agent | nu
     entry?.capabilities?.adapterType;
   const runtimeType = entry?.runtimeType || entry?.runtime_type || entry?.capabilities?.runtimeType;
   const rawStatus = String(entry?.status ?? entry?.rawStatus ?? entry?.capabilities?.status ?? '').trim();
+  const runtimeStatus = normalizeRuntimeStatus(entry?.runtime_status ?? entry?.runtimeStatus);
   const capabilities = entry?.capabilities
     ? {
         ...entry.capabilities,
@@ -558,6 +610,7 @@ function normalizeAgentFromApi(entry: any, userDisplayName?: string): Agent | nu
     adapterType: adapterType || undefined,
     runtimeType: runtimeType || undefined,
     capabilities,
+    runtimeStatus,
     metadata,
     avatarUrl: resolveAgentAvatarUrl(id) || resolveAgentAvatarUrl(slug) || registryRecord?.avatarUrl || entry?.avatarUrl || entry?.avatar_url || undefined,
   };

@@ -8,10 +8,12 @@ import type {
   UpdateAgentRegistryInput,
 } from '../../../db/src';
 import { buildAgentCapabilityCard } from '../agent/agent-capability-card';
+import { createHelmStatusAdapter, type HelmRuntimeStatusSummary, type HelmStatusAdapter } from '../agent/helm-status-adapter';
 
 interface AgentRegistryRouterDeps {
   agentRegistryRepo: AgentRegistryRepository;
   moduleRegistryRepo: ModuleRegistryRepository;
+  helmStatusAdapter?: HelmStatusAdapter;
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_.-]{1,63}$/;
@@ -69,13 +71,21 @@ function validateStatus(status: string | null | undefined): string | undefined {
 function serializeAgent(
   agent: AgentRegistryRecord,
   moduleRegistryRepo: ModuleRegistryRepository,
-): AgentRegistryRecord & { avatarUrl?: string; capabilities: ReturnType<typeof buildAgentCapabilityCard> } {
+  runtimeStatus: HelmRuntimeStatusSummary,
+): AgentRegistryRecord & {
+  avatarUrl?: string;
+  capabilities: ReturnType<typeof buildAgentCapabilityCard>;
+  runtime_status: HelmRuntimeStatusSummary;
+  runtimeStatus: HelmRuntimeStatusSummary;
+} {
   const grants = moduleRegistryRepo.listAgentModuleGrants(agent.id);
   const modules = moduleRegistryRepo.listModules();
   return {
     ...agent,
     avatarUrl: agent.avatar_url || undefined,
     capabilities: buildAgentCapabilityCard({ agent, grants, modules }),
+    runtime_status: runtimeStatus,
+    runtimeStatus,
   };
 }
 
@@ -169,35 +179,36 @@ function parseGrantInput(body: unknown, agentId: string, moduleIdFromPath?: stri
 export function createAgentRegistryRouter(deps: AgentRegistryRouterDeps): Router {
   const router = createRouter();
   const { agentRegistryRepo, moduleRegistryRepo } = deps;
+  const helmStatusAdapter = deps.helmStatusAdapter ?? createHelmStatusAdapter();
 
-  router.get('/agents/registry', (_req, res) => {
-    const list = agentRegistryRepo
+  router.get('/agents/registry', async (_req, res) => {
+    const list = await Promise.all(agentRegistryRepo
       .listAgents()
-      .map((agent) => serializeAgent(agent, moduleRegistryRepo));
+      .map(async (agent) => serializeAgent(agent, moduleRegistryRepo, await helmStatusAdapter.getStatus(agent))));
     return res.json({ list });
   });
 
-  router.post('/agents', (req, res) => {
+  router.post('/agents', async (req, res) => {
     try {
       const input = parseCreateAgentInput(req.body);
       if (agentRegistryRepo.getAgent(input.id ?? input.slug) || agentRegistryRepo.getAgentBySlug(input.slug)) {
         return res.status(409).json({ error: 'Agent already exists.' });
       }
       const agent = agentRegistryRepo.createAgent(input);
-      return res.status(201).json({ agent: serializeAgent(agent, moduleRegistryRepo) });
+      return res.status(201).json({ agent: serializeAgent(agent, moduleRegistryRepo, await helmStatusAdapter.getStatus(agent)) });
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid agent payload.' });
     }
   });
 
-  router.patch('/agents/:id', (req, res) => {
+  router.patch('/agents/:id', async (req, res) => {
     const agent = findAgent(agentRegistryRepo, String(req.params.id));
     if (!agent) return res.status(404).json({ error: 'Agent not found.' });
     try {
       const updates = parseUpdateAgentInput(req.body);
       const updated = agentRegistryRepo.updateAgent(agent.id, updates);
       if (!updated) return res.status(404).json({ error: 'Agent not found.' });
-      return res.json({ agent: serializeAgent(updated, moduleRegistryRepo) });
+      return res.json({ agent: serializeAgent(updated, moduleRegistryRepo, await helmStatusAdapter.getStatus(updated)) });
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid agent update payload.' });
     }
