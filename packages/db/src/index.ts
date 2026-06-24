@@ -58,7 +58,7 @@ export type ExternalSideEffectSensitivity =
   | 'confidential'
   | 'workspace_restricted';
 
-export type WorktypeFieldType = 'string' | 'enum' | 'boolean' | 'number' | 'string_array';
+export type WorktypeFieldType = 'string' | 'enum' | 'boolean' | 'number' | 'string_array' | 'object';
 
 export interface WorktypeRegistryField {
   name: string;
@@ -140,6 +140,26 @@ export const WORKTYPE_REGISTRY: Record<string, WorktypeRegistryEntry> = {
       { name: 'approval_path', type: 'string_array', indexable: false, sensitivity: 'workspace_restricted', plan_label: 'Approval path' },
       { name: 'reviewer_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Reviewer' },
       { name: 'approver_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Approver' },
+      { name: 'taskmaster_drivable', type: 'boolean', indexable: false, sensitivity: 'none', plan_label: 'Task Master drivable' },
+      { name: 'auto_reassign_after_hours', type: 'number', indexable: false, sensitivity: 'none', plan_label: 'Auto-reassign threshold' },
+    ],
+  },
+  sales: {
+    worktype: 'sales',
+    schema_name: 'entity.worktype.sales',
+    schema_version: 1,
+    risk_default: 'medium',
+    indexable: true,
+    sensitivity: 'customer',
+    plan_labels: ['Sales overlay', 'Account plan'],
+    fields: [
+      { name: 'account', type: 'string', indexable: true, sensitivity: 'customer', plan_label: 'Account' },
+      { name: 'deal_stage', type: 'enum', allowed_values: ['lead', 'qualified', 'proposal', 'negotiation', 'closed_won', 'closed_lost'], risk_default: 'medium', indexable: true, sensitivity: 'customer', plan_label: 'Deal stage' },
+      { name: 'next_action', type: 'string', indexable: true, sensitivity: 'customer', plan_label: 'Next action' },
+      { name: 'stakeholder_map', type: 'object', indexable: false, sensitivity: 'customer', plan_label: 'Stakeholder map' },
+      { name: 'external_send_risk', type: 'enum', allowed_values: ['none', 'low', 'medium', 'high', 'critical'], risk_default: 'high', indexable: false, sensitivity: 'customer', plan_label: 'External send risk' },
+      { name: 'crm_side_effect_type', type: 'enum', allowed_values: ['none', 'crm_update', 'customer_commitment'], risk_default: 'medium', indexable: false, sensitivity: 'customer', plan_label: 'CRM side effect' },
+      { name: 'reviewer_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Reviewer' },
       { name: 'taskmaster_drivable', type: 'boolean', indexable: false, sensitivity: 'none', plan_label: 'Task Master drivable' },
       { name: 'auto_reassign_after_hours', type: 'number', indexable: false, sensitivity: 'none', plan_label: 'Auto-reassign threshold' },
     ],
@@ -1838,6 +1858,10 @@ function validateWorktypeFieldValue(field: WorktypeRegistryField, value: unknown
       return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
         ? null
         : `${field.name} must be an array of strings`;
+    case 'object':
+      return value && typeof value === 'object' && !Array.isArray(value)
+        ? null
+        : `${field.name} must be an object`;
     default:
       return null;
   }
@@ -2094,20 +2118,24 @@ export function buildTaskPolicyInputEnvelope(
     ...(task.taskmaster_drivable ? { taskmaster_drivable: true } : {}),
     ...(storedLayers.task ?? {}),
   };
+  const worktypeLayer = {
+    ...buildWorktypeRegistryPolicyLayer(task.worktype ?? 'general'),
+    ...(storedLayers.worktype ?? {}),
+  };
+  const explicitExternalSideEffects = parseExternalSideEffects(task.external_side_effects_json);
+  const derivedExternalSideEffects = deriveSalesOverlayExternalSideEffects(worktypeLayer, task);
+  const externalSideEffects = [...explicitExternalSideEffects, ...derivedExternalSideEffects];
   return {
     layers: {
       workspace: storedLayers.workspace ?? { org_id: task.org_id ?? DEFAULT_WORKSPACE_ORG_ID },
       org: storedLayers.org ?? { org_id: task.org_id ?? DEFAULT_WORKSPACE_ORG_ID },
       team: storedLayers.team ?? { team_id: task.team_id ?? DEFAULT_WORKSPACE_TEAM_ID },
       project: storedLayers.project ?? { project_id: task.project_id ?? null },
-      worktype: {
-        ...buildWorktypeRegistryPolicyLayer(task.worktype ?? 'general'),
-        ...(storedLayers.worktype ?? {}),
-      },
+      worktype: worktypeLayer,
       task: taskLayer,
       risk: storedLayers.risk ?? {
         risk_level: task.risk_level ?? 'low',
-        external_side_effect_count: parseExternalSideEffects(task.external_side_effects_json).length,
+        external_side_effect_count: externalSideEffects.length,
       },
       agent_trust: storedLayers.agent_trust ?? { trust_level: task.agent_trust_level ?? 'unknown' },
     },
@@ -2127,7 +2155,7 @@ export function buildTaskPolicyInputEnvelope(
       required: Boolean(task.human_gate_required),
       state: task.human_gate_state ?? 'not_required',
     },
-    external_side_effects: parseExternalSideEffects(task.external_side_effects_json),
+    external_side_effects: externalSideEffects,
   };
 }
 
@@ -2176,6 +2204,96 @@ function readPolicyRoutes(layer: Record<string, unknown>): string[] {
 
   const singleRoute = normalizeBlockerReason(layer.notification_route);
   return singleRoute ? [singleRoute] : [];
+}
+
+function readPolicyActor(task: Pick<
+  TaskRecord,
+  | 'created_by_principal_id'
+  | 'initiator_principal_id'
+  | 'owner_principal_id'
+  | 'executor_principal_id'
+  | 'assignee'
+>): string {
+  const candidates = [
+    task.executor_principal_id,
+    task.assignee,
+    task.owner_principal_id,
+    task.initiator_principal_id,
+    task.created_by_principal_id,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeBlockerReason(candidate);
+    if (!normalized) {
+      continue;
+    }
+    const lowered = normalized.toLowerCase();
+    if (lowered === 'unassigned' || lowered.startsWith('legacy-') || lowered === 'unknown') {
+      continue;
+    }
+    return normalized;
+  }
+  return 'unknown';
+}
+
+function deriveSalesOverlayExternalSideEffects(
+  worktypeLayer: Record<string, unknown>,
+  task: Pick<
+    TaskRecord,
+    | 'created_by_principal_id'
+    | 'initiator_principal_id'
+    | 'owner_principal_id'
+    | 'executor_principal_id'
+    | 'assignee'
+  >,
+): ExternalSideEffect[] {
+  if (normalizeWorktype(worktypeLayer.worktype) !== 'sales') {
+    return [];
+  }
+
+  const requestedActor = readPolicyActor(task);
+  const account = normalizeBlockerReason(worktypeLayer.account);
+  const externalSendRiskRaw = normalizeBlockerReason(worktypeLayer.external_send_risk);
+  const externalSendRisk = externalSendRiskRaw && externalSendRiskRaw !== 'none'
+    ? normalizePolicyRiskLevel(externalSendRiskRaw)
+    : null;
+  const crmSideEffectType = normalizeBlockerReason(worktypeLayer.crm_side_effect_type);
+  const sideEffects: ExternalSideEffect[] = [];
+
+  if (externalSendRisk) {
+    sideEffects.push({
+      type: 'email_send',
+      target_system: 'customer_email',
+      risk_level: externalSendRisk,
+      sensitivity: 'customer',
+      required_gate: externalSendRisk === 'critical',
+      requested_actor_principal_id: requestedActor,
+      resolution_state: 'requested',
+      metadata: {
+        source: 'sales_overlay',
+        account,
+      },
+    });
+  }
+
+  if (crmSideEffectType && crmSideEffectType !== 'none') {
+    const riskLevel = externalSendRisk ?? 'medium';
+    sideEffects.push({
+      type: crmSideEffectType === 'customer_commitment' ? 'customer_commitment' : 'crm_update',
+      target_system: 'crm',
+      risk_level: riskLevel,
+      sensitivity: 'customer',
+      required_gate: riskLevel === 'critical',
+      requested_actor_principal_id: requestedActor,
+      resolution_state: 'requested',
+      metadata: {
+        source: 'sales_overlay',
+        account,
+        deal_stage: normalizeBlockerReason(worktypeLayer.deal_stage),
+      },
+    });
+  }
+
+  return sideEffects;
 }
 
 function appendUnique(values: string[], nextValues: string[]): string[] {

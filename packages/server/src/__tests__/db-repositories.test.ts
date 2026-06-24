@@ -371,6 +371,126 @@ describe('TaskRepository', () => {
     });
   });
 
+  it('declares and validates sales overlay fields and indexable search fields', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const registryEntry = dbMod.getWorktypeRegistryEntry('sales');
+
+    expect(registryEntry).toMatchObject({
+      schema_name: 'entity.worktype.sales',
+      schema_version: 1,
+      risk_default: 'medium',
+      sensitivity: 'customer',
+      plan_labels: ['Sales overlay', 'Account plan'],
+    });
+    expect(registryEntry?.fields.filter((field) => field.indexable).map((field) => field.name)).toEqual(
+      expect.arrayContaining(['account', 'deal_stage', 'next_action']),
+    );
+
+    const task = repo.createTask({
+      name: 'Sales overlay validation fixture',
+      worktype: 'sales',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            account: 'Acme',
+            deal_stage: 'proposal',
+            next_action: 'Send proposal follow-up',
+            stakeholder_map: {
+              buyer: 'Jane',
+              legal: 'Sam',
+            },
+            external_send_risk: 'medium',
+            crm_side_effect_type: 'crm_update',
+          },
+        },
+      }),
+    });
+
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+    expect(envelope.layers.worktype).toMatchObject({
+      worktype: 'sales',
+      account: 'Acme',
+      deal_stage: 'proposal',
+      next_action: 'Send proposal follow-up',
+      external_send_risk: 'medium',
+      crm_side_effect_type: 'crm_update',
+    });
+
+    expect(() => repo.updateTask(task.id, {
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            account: 'Acme',
+            deal_stage: 'procurement',
+          },
+        },
+      }),
+    })).toThrow('deal_stage must be one of lead, qualified, proposal, negotiation, closed_won, closed_lost');
+  });
+
+  it('contributes sales external-send and CRM risk to policy resolution', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Sales policy risk fixture',
+      worktype: 'sales',
+      risk_level: 'low',
+      agent_trust_level: 'high',
+      owner_principal_id: 'owner-sales',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            account: 'Acme',
+            deal_stage: 'negotiation',
+            next_action: 'Send revised commercial terms',
+            external_send_risk: 'high',
+            crm_side_effect_type: 'crm_update',
+          },
+          agent_trust: { trust_level: 'high' },
+          risk: { risk_level: 'low' },
+        },
+      }),
+    });
+
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+    expect(envelope.layers.risk).toMatchObject({ risk_level: 'low' });
+    expect(envelope.external_side_effects).toHaveLength(2);
+    expect(envelope.external_side_effects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'email_send',
+          target_system: 'customer_email',
+          risk_level: 'high',
+          sensitivity: 'customer',
+          requested_actor_principal_id: 'owner-sales',
+        }),
+        expect.objectContaining({
+          type: 'crm_update',
+          target_system: 'crm',
+          risk_level: 'high',
+          sensitivity: 'customer',
+          requested_actor_principal_id: 'owner-sales',
+        }),
+      ]),
+    );
+
+    const resolution = dbMod.resolveTaskPolicy(envelope);
+    expect(resolution.review_required).toBe(true);
+    expect(resolution.human_gate_required).toBe(false);
+    expect(resolution.reason_chain).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'external_side_effect',
+          decision: 'review_required',
+          reason: 'external side effect 1 requires review',
+        }),
+      ]),
+    );
+  });
+
   it('keeps human gate state independent from review state and rejects malformed side effects', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();
