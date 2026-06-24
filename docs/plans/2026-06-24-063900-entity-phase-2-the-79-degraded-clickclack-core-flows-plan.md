@@ -2,7 +2,7 @@
 
 Issue: THE-79
 Branch: THE-79-guarantee-degraded-clickclack-does-not-block-core-entity-flows
-Status: IN PROGRESS
+Status: DONE
 
 ## Scope
 
@@ -30,7 +30,7 @@ Prove and harden that ClickClack degraded/unavailable state cannot block core En
   - Files: `output/entity-phase-2/test-gate/THE-79.*`, `output/entity-phase-2/book-review/THE-79*`
   - Verify: `bash scripts/proof/entity-phase-2-smoke.sh && npm run build && cd packages/server && npm run build && npx vitest run`
   - Verify: `project-test-gate request/run/book-review/verify THE-79`
-- [ ] Step 5: Comment Linear, mark THE-79 Done if proof supports it, update run-state to THE-80, and commit scoped work.
+- [x] Step 5: Comment Linear, mark THE-79 Done if proof supports it, update run-state to THE-80, and commit scoped work.
   - Files: `.cursor/run-state/entity-phase-2.json`
   - Verify: `git status --short --branch`
 
@@ -42,12 +42,14 @@ Prove and harden that ClickClack degraded/unavailable state cannot block core En
 | 2026-06-24T06:39Z | Step 2 | In progress | Existing ClickClack degraded send tests and core route registrations located. |
 | 2026-06-24T06:42Z | Steps 2-3 | Done | Degraded core-flow test passes; no production hardening needed. |
 | 2026-06-24T06:44Z | Step 4 | Done | Full proof passed; CLI Tester run PASS, packet-mode Book review locally approved, verify PASS with no blockers; GitNexus low risk. |
+| 2026-06-24T06:45Z | Step 5 | Done | Linear proof comment posted, THE-79 marked Done, implementation commit `a6f12bc`, run-state advanced to THE-80. |
 
 ## Files Touched
 
 - `docs/plans/2026-06-24-063900-entity-phase-2-the-79-degraded-clickclack-core-flows-plan.md` - created - compaction-survivable plan
 - `docs/plans/ACTIVE_PLAN.md` - modified - mirrored active plan
 - `packages/server/src/routes/chat-degraded-core-flows.test.ts` - created - degraded chat/core Entity flow test
+- `.cursor/run-state/entity-phase-2.json` - modified - advanced local pointer to THE-80 (not committed)
 
 ## Resume Instructions
 
@@ -58,8 +60,8 @@ Prove and harden that ClickClack degraded/unavailable state cannot block core En
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Focused tests pass
-- [ ] Full proof commands pass
-- [ ] CLI Tester request/run/book-review/verify completed
-- [ ] Linear proof comment posted and THE-79 marked Done if supported
+- [x] All steps complete
+- [x] Focused tests pass
+- [x] Full proof commands pass
+- [x] CLI Tester request/run/book-review/verify completed
+- [x] Linear proof comment posted and THE-79 marked Done if supported
