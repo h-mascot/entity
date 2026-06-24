@@ -172,6 +172,28 @@ export const WORKTYPE_REGISTRY: Record<string, WorktypeRegistryEntry> = {
       { name: 'auto_reassign_after_hours', type: 'number', indexable: false, sensitivity: 'none', plan_label: 'Auto-reassign threshold' },
     ],
   },
+  people: {
+    worktype: 'people',
+    schema_name: 'entity.worktype.people',
+    schema_version: 1,
+    risk_default: 'high',
+    indexable: true,
+    sensitivity: 'workspace_restricted',
+    plan_labels: ['People overlay', 'HR workflow'],
+    fields: [
+      { name: 'candidate_ref', type: 'string', indexable: true, sensitivity: 'workspace_restricted', plan_label: 'Candidate reference' },
+      { name: 'employee_ref', type: 'string', indexable: true, sensitivity: 'workspace_restricted', plan_label: 'Employee reference' },
+      { name: 'workflow_stage', type: 'enum', allowed_values: ['sourcing', 'interviewing', 'offer', 'onboarding', 'employee_update', 'offboarding'], risk_default: 'medium', indexable: true, sensitivity: 'workspace_restricted', plan_label: 'Workflow stage' },
+      { name: 'sensitivity_class', type: 'enum', allowed_values: ['standard', 'people', 'confidential', 'restricted'], risk_default: 'high', indexable: false, sensitivity: 'workspace_restricted', plan_label: 'Sensitivity class' },
+      { name: 'hr_side_effect_type', type: 'enum', allowed_values: ['none', 'candidate_message', 'employee_record_update', 'compensation_change', 'access_change', 'termination'], risk_default: 'high', indexable: false, sensitivity: 'workspace_restricted', plan_label: 'HR side effect' },
+      { name: 'checklist_state', type: 'enum', allowed_values: ['not_started', 'in_progress', 'blocked', 'complete'], risk_default: 'medium', indexable: true, sensitivity: 'workspace_restricted', plan_label: 'Checklist state' },
+      { name: 'approval_required', type: 'boolean', risk_default: 'high', indexable: false, sensitivity: 'none', plan_label: 'Approval required' },
+      { name: 'reviewer_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Reviewer' },
+      { name: 'approver_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Approver' },
+      { name: 'taskmaster_drivable', type: 'boolean', indexable: false, sensitivity: 'none', plan_label: 'Task Master drivable' },
+      { name: 'auto_reassign_after_hours', type: 'number', indexable: false, sensitivity: 'none', plan_label: 'Auto-reassign threshold' },
+    ],
+  },
 };
 
 export interface ExternalSideEffect {
@@ -2134,6 +2156,7 @@ export function buildTaskPolicyInputEnvelope(
   const derivedExternalSideEffects = [
     ...deriveSalesOverlayExternalSideEffects(worktypeLayer, task),
     ...deriveCustomerSuccessOverlayExternalSideEffects(worktypeLayer, task),
+    ...derivePeopleOverlayExternalSideEffects(worktypeLayer, task),
   ];
   const externalSideEffects = [...explicitExternalSideEffects, ...derivedExternalSideEffects];
   return {
@@ -2382,6 +2405,69 @@ function deriveCustomerSuccessOverlayExternalSideEffects(
   }
 
   return sideEffects;
+}
+
+function normalizePeopleSensitivityClass(value: unknown): ExternalSideEffectSensitivity | null {
+  const normalized = normalizeBlockerReason(value);
+  if (!normalized || normalized === 'standard') {
+    return null;
+  }
+  if (normalized === 'restricted') {
+    return 'workspace_restricted';
+  }
+  if (normalized === 'people' || normalized === 'confidential') {
+    return normalized;
+  }
+  return null;
+}
+
+function derivePeopleOverlayExternalSideEffects(
+  worktypeLayer: Record<string, unknown>,
+  task: Pick<
+    TaskRecord,
+    | 'created_by_principal_id'
+    | 'initiator_principal_id'
+    | 'owner_principal_id'
+    | 'executor_principal_id'
+    | 'assignee'
+  >,
+): ExternalSideEffect[] {
+  if (normalizeWorktype(worktypeLayer.worktype) !== 'people') {
+    return [];
+  }
+
+  const sideEffectType = normalizeBlockerReason(worktypeLayer.hr_side_effect_type) ?? 'none';
+  const sensitivity = normalizePeopleSensitivityClass(worktypeLayer.sensitivity_class);
+  const approvalRequired = normalizeBlocked(worktypeLayer.approval_required);
+  const highImpactHrAction =
+    sideEffectType === 'compensation_change' ||
+    sideEffectType === 'access_change' ||
+    sideEffectType === 'termination';
+  const requiredGate = approvalRequired || sensitivity === 'confidential' || sensitivity === 'workspace_restricted' || highImpactHrAction;
+  const hasHrPolicySignal = sideEffectType !== 'none' || Boolean(sensitivity) || approvalRequired;
+
+  if (!hasHrPolicySignal) {
+    return [];
+  }
+
+  return [{
+    type: 'hr_action',
+    target_system: 'people_ops',
+    risk_level: requiredGate ? 'critical' : 'high',
+    sensitivity: sensitivity ?? 'people',
+    required_gate: requiredGate,
+    requested_actor_principal_id: readPolicyActor(task),
+    resolution_state: 'requested',
+    metadata: {
+      source: 'people_overlay',
+      candidate_ref: normalizeBlockerReason(worktypeLayer.candidate_ref),
+      employee_ref: normalizeBlockerReason(worktypeLayer.employee_ref),
+      workflow_stage: normalizeBlockerReason(worktypeLayer.workflow_stage),
+      hr_side_effect_type: sideEffectType,
+      checklist_state: normalizeBlockerReason(worktypeLayer.checklist_state),
+      approval_required: approvalRequired,
+    },
+  }];
 }
 
 function appendUnique(values: string[], nextValues: string[]): string[] {

@@ -604,6 +604,150 @@ describe('TaskRepository', () => {
     );
   });
 
+  it('declares and validates people overlay fields and search fields', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const registryEntry = dbMod.getWorktypeRegistryEntry('people');
+
+    expect(registryEntry).toMatchObject({
+      worktype: 'people',
+      schema_name: 'entity.worktype.people',
+      risk_default: 'high',
+      sensitivity: 'workspace_restricted',
+      plan_labels: ['People overlay', 'HR workflow'],
+    });
+    expect(registryEntry?.fields.filter((field) => field.indexable).map((field) => field.name)).toEqual(
+      expect.arrayContaining(['candidate_ref', 'employee_ref', 'workflow_stage', 'checklist_state']),
+    );
+
+    const task = repo.createTask({
+      name: 'People overlay validation fixture',
+      worktype: 'people',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            candidate_ref: 'candidate-123',
+            employee_ref: 'employee-456',
+            workflow_stage: 'onboarding',
+            sensitivity_class: 'people',
+            hr_side_effect_type: 'employee_record_update',
+            checklist_state: 'in_progress',
+            approval_required: false,
+          },
+        },
+      }),
+    });
+
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+    expect(envelope.layers.worktype).toMatchObject({
+      worktype: 'people',
+      candidate_ref: 'candidate-123',
+      employee_ref: 'employee-456',
+      workflow_stage: 'onboarding',
+      checklist_state: 'in_progress',
+    });
+
+    expect(() => repo.updateTask(task.id, {
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            workflow_stage: 'payroll',
+          },
+        },
+      }),
+    })).toThrow('workflow_stage must be one of sourcing, interviewing, offer, onboarding, employee_update, offboarding');
+  });
+
+  it('contributes people overlay HR sensitivity to review and human gate policy', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'People overlay policy fixture',
+      worktype: 'people',
+      risk_level: 'low',
+      agent_trust_level: 'high',
+      owner_principal_id: 'owner-people',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            candidate_ref: 'candidate-123',
+            employee_ref: 'employee-456',
+            workflow_stage: 'offer',
+            sensitivity_class: 'confidential',
+            hr_side_effect_type: 'compensation_change',
+            checklist_state: 'blocked',
+            approval_required: true,
+          },
+          agent_trust: { trust_level: 'high' },
+          risk: { risk_level: 'low' },
+        },
+      }),
+    });
+
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+    expect(envelope.external_side_effects).toEqual([
+      expect.objectContaining({
+        type: 'hr_action',
+        target_system: 'people_ops',
+        risk_level: 'critical',
+        sensitivity: 'confidential',
+        required_gate: true,
+        requested_actor_principal_id: 'owner-people',
+      }),
+    ]);
+
+    const resolution = dbMod.resolveTaskPolicy(envelope);
+    expect(resolution.review_required).toBe(true);
+    expect(resolution.human_gate_required).toBe(true);
+    expect(resolution.reason_chain).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'external_side_effect',
+          decision: 'human_gate_required',
+          reason: 'external side effect 1 requires human gate',
+        }),
+      ]),
+    );
+  });
+
+  it('suppresses people overlay restricted snippets and previews', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'People restricted preview fixture',
+      worktype: 'people',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            candidate_ref: 'candidate-123',
+            workflow_stage: 'interviewing',
+            sensitivity_class: 'people',
+            hr_side_effect_type: 'candidate_message',
+            checklist_state: 'in_progress',
+          },
+        },
+      }),
+    });
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+
+    expect(dbMod.buildDocumentObjectPreviewEnvelope({
+      object_type: 'evidence_artifact',
+      title: 'Candidate loop notes',
+      snippet: 'Compensation expectation and interview feedback',
+      content: 'Compensation expectation and interview feedback',
+      sensitivity: String(envelope.layers.worktype.sensitivity_class),
+      entity_visibility_policy_json: JSON.stringify({ allow_preview: true }),
+    })).toMatchObject({
+      permission_state: 'restricted',
+      snippet: null,
+      content: null,
+      reasons: ['preview_restricted_by_entity_policy'],
+    });
+  });
+
   it('keeps human gate state independent from review state and rejects malformed side effects', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();
