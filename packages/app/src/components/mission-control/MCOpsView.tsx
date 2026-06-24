@@ -41,6 +41,7 @@ interface MCOpsViewProps {
 type BoardColumn = TaskColumn | 'archive';
 type BoardStatusFilter = 'all' | 'active' | 'review' | 'blocked' | 'starred';
 type OverlayFilter = { worktype: string; field: WorktypeFieldDefinition };
+type OwnerInboxGroup = 'stalled' | 'escalated' | 'review_blocked' | 'gate_pending' | 'receipt_failed' | 'migration_warning';
 
 function matchesStatusFilter(task: TaskBoardTask, filter: BoardStatusFilter): boolean {
   switch (filter) {
@@ -102,6 +103,49 @@ function buildTaskWorktypeMetadata(task: TaskBoardTask): Record<string, unknown>
     worktype: task.worktype ?? metadata.worktype,
     policy_inputs_json: task.policy_inputs_json ?? metadata.policy_inputs_json,
   };
+}
+
+const OWNER_INBOX_LABELS: Record<OwnerInboxGroup, string> = {
+  stalled: 'Stalled',
+  escalated: 'Escalated',
+  review_blocked: 'Review blocked',
+  gate_pending: 'Gate pending',
+  receipt_failed: 'Receipt failed',
+  migration_warning: 'Migration warning',
+};
+
+function ownerInboxGroups(task: TaskBoardTask, now = Date.now()): OwnerInboxGroup[] {
+  const metadata = buildTaskWorktypeMetadata(task);
+  const groups: OwnerInboxGroup[] = [];
+  const add = (group: OwnerInboxGroup) => {
+    if (!groups.includes(group)) groups.push(group);
+  };
+  const updatedAt = Date.parse(task.updated_at || task.created_at);
+  const staleHours = Number.isNaN(updatedAt) ? 0 : (now - updatedAt) / (1000 * 60 * 60);
+  const blockerReason = task.blocker_reason?.toLowerCase() ?? '';
+  const hasOwnerEscalations = Array.isArray(metadata.owner_escalations)
+    ? metadata.owner_escalations.length > 0
+    : Boolean(metadata.owner_escalations);
+
+  if ((task.column === 'todo' || task.column === 'doing' || task.column === 'review') && staleHours >= 24) add('stalled');
+  if (
+    metadata.escalated === true ||
+    hasOwnerEscalations ||
+    (typeof metadata.escalation_marker === 'string' && metadata.escalation_marker !== 'none') ||
+    blockerReason.includes('escalat')
+  ) add('escalated');
+  if (task.column === 'review' || (task.review_required && task.review_state !== 'accepted')) add('review_blocked');
+  if (task.human_gate_required && task.human_gate_state !== 'approved') add('gate_pending');
+  if (
+    metadata.receipt_failed === true ||
+    metadata.missing_receipt === true ||
+    metadata.receipt_status === 'failed' ||
+    metadata.receipt_status === 'missing_receipt' ||
+    blockerReason.includes('receipt')
+  ) add('receipt_failed');
+  if (metadata.migration_warning === true || blockerReason.includes('migration')) add('migration_warning');
+
+  return groups;
 }
 
 function matchesOverlayFilter(task: TaskBoardTask, filter: OverlayFilter | null, query: string): boolean {
@@ -166,6 +210,34 @@ export default function MCOpsView({
   const blockedTasksCount = filteredTasks.filter((task) => task.blocked && task.column !== 'done').length;
   const reviewTasksCount = filteredTasks.filter((task) => task.column === 'review').length;
   const starredTasksCount = filteredTasks.filter((task) => isTaskBookmarked(task)).length;
+  const userProfile = readUserProfile();
+  const ownerPrincipalOverride = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('ownerPrincipalId')?.trim()
+    : null;
+  const ownerPrincipal = ownerPrincipalOverride || userProfile.handle || userProfile.displayName;
+  const ownerInboxItems = filteredTasks
+    .filter((task) => !task.archived && task.column !== 'done' && task.owner_principal_id === ownerPrincipal)
+    .map((task) => ({ task, groups: ownerInboxGroups(task) }))
+    .filter((entry) => entry.groups.length > 0);
+  const ownerInboxCounts = ownerInboxItems.reduce<Record<OwnerInboxGroup, number>>((counts, item) => {
+    item.groups.forEach((group) => {
+      counts[group] += 1;
+    });
+    return counts;
+  }, {
+    stalled: 0,
+    escalated: 0,
+    review_blocked: 0,
+    gate_pending: 0,
+    receipt_failed: 0,
+    migration_warning: 0,
+  });
+  const ownerInboxGroupsByGroup = (Object.keys(OWNER_INBOX_LABELS) as OwnerInboxGroup[])
+    .map((group) => ({
+      group,
+      items: ownerInboxItems.filter((item) => item.groups.includes(group)),
+    }))
+    .filter((entry) => entry.items.length > 0);
   const summaryStateClass = blockedTasksCount > 0 ? 'state-error' : activeTasksCount > 0 ? 'state-active' : 'state-idle';
   // Stat chips reflect totals; the status filter narrows which cards render on the board.
   const statusVisibleTasks = filteredTasks.filter((task) => matchesStatusFilter(task, statusFilter));
@@ -526,6 +598,58 @@ export default function MCOpsView({
               />
             ) : null}
           </div>
+          {ownerInboxItems.length > 0 ? (
+            <section
+              data-testid="owner-accountability-inbox"
+              className="mt-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)]/75 p-3 text-xs text-[var(--text-secondary)]"
+              aria-label="Owner accountability inbox"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-semibold text-[var(--text-primary)]">Owner accountability inbox</div>
+                  <div>{ownerPrincipal} has {ownerInboxItems.length} accountable task(s) needing attention</div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {(Object.keys(OWNER_INBOX_LABELS) as OwnerInboxGroup[])
+                    .filter((group) => ownerInboxCounts[group] > 0)
+                    .map((group) => (
+                      <span key={group} className="entity-ops-chip">
+                        {OWNER_INBOX_LABELS[group]}: {ownerInboxCounts[group]}
+                      </span>
+                    ))}
+                </div>
+              </div>
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                {ownerInboxGroupsByGroup.map(({ group, items }) => (
+                  <div
+                    key={group}
+                    data-testid={`owner-accountability-group-${group}`}
+                    className="rounded-lg border border-[var(--border-secondary)] bg-[var(--bg-primary)] p-2"
+                  >
+                    <div className="font-semibold text-[var(--text-primary)]">
+                      {OWNER_INBOX_LABELS[group]} ({items.length})
+                    </div>
+                    <div className="mt-1 space-y-1">
+                      {items.slice(0, 3).map(({ task }) => (
+                        <a
+                          key={`${group}-${task.id}`}
+                          href={`/tasks/${task.id}`}
+                          data-testid={`owner-accountability-task-${task.id}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            handleOpenTask(task.id);
+                          }}
+                          className="block rounded border border-transparent px-2 py-1 text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--text-primary)]"
+                        >
+                          <span className="font-medium text-[var(--text-primary)]">#{task.id}</span> {task.name}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
           {selectedCount > 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--accent)]/40 bg-[var(--surface-accent)] p-2">
               <span className="px-2 text-xs font-semibold text-[var(--accent)]">{selectedCount} selected</span>

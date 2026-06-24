@@ -1,4 +1,5 @@
 import { hasAssignedOwner, isActiveTaskColumn } from './agent';
+import type { TaskRecord } from '../../db/src';
 
 export interface TaskAccountabilityInput {
   created_by_principal_id?: string;
@@ -168,4 +169,153 @@ export function validateTaskAccountability(input: {
   }
 
   return { ok: true };
+}
+
+export type OwnerAccountabilityGroup =
+  | 'stalled'
+  | 'escalated'
+  | 'review_blocked'
+  | 'gate_pending'
+  | 'receipt_failed'
+  | 'migration_warning';
+
+export interface OwnerAccountabilityInboxItem {
+  task: TaskRecord;
+  groups: OwnerAccountabilityGroup[];
+  deepLink: string;
+  reasons: string[];
+}
+
+export interface OwnerAccountabilityInbox {
+  owner_principal_id: string;
+  generated_at: string;
+  total: number;
+  groups: Record<OwnerAccountabilityGroup, OwnerAccountabilityInboxItem[]>;
+  items: OwnerAccountabilityInboxItem[];
+}
+
+const OWNER_GROUPS: OwnerAccountabilityGroup[] = [
+  'stalled',
+  'escalated',
+  'review_blocked',
+  'gate_pending',
+  'receipt_failed',
+  'migration_warning',
+];
+
+function parseTaskMetadata(task: Pick<TaskRecord, 'metadata'>): Record<string, unknown> {
+  if (!task.metadata) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(task.metadata);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function textIncludes(value: unknown, needle: string): boolean {
+  return typeof value === 'string' && value.toLowerCase().includes(needle);
+}
+
+function hasNonEmptyValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === 'object') return Object.keys(value).length > 0;
+  return Boolean(value);
+}
+
+function addGroup(
+  groups: OwnerAccountabilityGroup[],
+  reasons: string[],
+  group: OwnerAccountabilityGroup,
+  reason: string,
+) {
+  if (!groups.includes(group)) {
+    groups.push(group);
+  }
+  reasons.push(reason);
+}
+
+export function buildOwnerAccountabilityInbox(input: {
+  ownerPrincipalId: string;
+  tasks: TaskRecord[];
+  now?: Date;
+  stalledHours?: number;
+}): OwnerAccountabilityInbox {
+  const ownerPrincipalId = input.ownerPrincipalId.trim();
+  const now = input.now ?? new Date();
+  const stalledHours = input.stalledHours ?? 24;
+  const grouped = Object.fromEntries(OWNER_GROUPS.map((group) => [group, []])) as unknown as Record<OwnerAccountabilityGroup, OwnerAccountabilityInboxItem[]>;
+  const items: OwnerAccountabilityInboxItem[] = [];
+
+  for (const task of input.tasks) {
+    if (!ownerPrincipalId || task.owner_principal_id !== ownerPrincipalId || task.archived || task.column === 'done') {
+      continue;
+    }
+
+    const metadata = parseTaskMetadata(task);
+    const groups: OwnerAccountabilityGroup[] = [];
+    const reasons: string[] = [];
+    const updatedAt = Date.parse(task.updated_at || task.created_at);
+    const ageHours = Number.isNaN(updatedAt) ? null : (now.getTime() - updatedAt) / (1000 * 60 * 60);
+
+    if (isActiveTaskColumn(task.column) && ageHours !== null && ageHours >= stalledHours) {
+      addGroup(groups, reasons, 'stalled', `No update for ${Math.floor(ageHours)}h`);
+    }
+    if (
+      metadata.escalated === true ||
+      hasNonEmptyValue(metadata.owner_escalations) ||
+      (typeof metadata.escalation_marker === 'string' && metadata.escalation_marker !== 'none') ||
+      textIncludes(metadata.review_decision, 'escalated') ||
+      textIncludes(task.blocker_reason, 'escalat')
+    ) {
+      addGroup(groups, reasons, 'escalated', 'Escalation marker present');
+    }
+    if (task.column === 'review' || (task.review_required && task.review_state !== 'accepted')) {
+      addGroup(groups, reasons, 'review_blocked', 'Review is required or in progress');
+    }
+    if (task.human_gate_required && task.human_gate_state !== 'approved') {
+      addGroup(groups, reasons, 'gate_pending', 'Human gate is pending');
+    }
+    if (
+      textIncludes(metadata.receipt_status, 'failed') ||
+      textIncludes(metadata.receipt_status, 'missing_receipt') ||
+      metadata.receipt_failed === true ||
+      metadata.missing_receipt === true ||
+      textIncludes(task.blocker_reason, 'receipt')
+    ) {
+      addGroup(groups, reasons, 'receipt_failed', 'Receipt failure needs owner attention');
+    }
+    if (
+      metadata.migration_warning === true ||
+      textIncludes(metadata.migration_state, 'warning') ||
+      textIncludes(task.blocker_reason, 'migration')
+    ) {
+      addGroup(groups, reasons, 'migration_warning', 'Migration warning is attached');
+    }
+
+    if (groups.length === 0) {
+      continue;
+    }
+
+    const item: OwnerAccountabilityInboxItem = {
+      task,
+      groups,
+      deepLink: `/tasks/${task.id}`,
+      reasons,
+    };
+    items.push(item);
+    for (const group of groups) {
+      grouped[group].push(item);
+    }
+  }
+
+  return {
+    owner_principal_id: ownerPrincipalId,
+    generated_at: now.toISOString(),
+    total: items.length,
+    groups: grouped,
+    items,
+  };
 }

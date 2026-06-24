@@ -69,6 +69,10 @@ export interface TaskBoardTask {
   metadata: string | null;
   worktype: string | null;
   policy_inputs_json: string | null;
+  review_required?: boolean;
+  review_state?: string | null;
+  human_gate_required?: boolean;
+  human_gate_state?: string | null;
   output: string | null;
   output_links_count: number;
   parent_task_id: number | null;
@@ -517,6 +521,10 @@ function normalizeTask(raw: unknown): TaskBoardTask | null {
     metadata,
     worktype: normalizeOptionalString(row.worktype ?? metadataRecord?.worktype),
     policy_inputs_json: typeof row.policy_inputs_json === 'string' ? row.policy_inputs_json : null,
+    review_required: normalizeBlocked(row.review_required ?? row.reviewRequired ?? metadataRecord?.review_required),
+    review_state: normalizeOptionalString(row.review_state ?? row.reviewState ?? metadataRecord?.review_state),
+    human_gate_required: normalizeBlocked(row.human_gate_required ?? row.humanGateRequired ?? metadataRecord?.human_gate_required),
+    human_gate_state: normalizeOptionalString(row.human_gate_state ?? row.humanGateState ?? metadataRecord?.human_gate_state),
     output: outputValue,
     output_links_count: outputLinksCount,
     parent_task_id: parentTaskId,

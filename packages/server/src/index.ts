@@ -88,6 +88,7 @@ import {
   taskHasProjectName,
 } from "./task-projects";
 import {
+  buildOwnerAccountabilityInbox,
   parseTaskAccountabilityForCreate,
   parseTaskAccountabilityUpdates,
   validateTaskAccountability,
@@ -2260,6 +2261,33 @@ function registerTaskRoutes(prefix: "" | "/api") {
         count: stale.length,
         tasks: stale,
       });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  app.get(`${tasksBase}/owner-inbox`, async (req, res) => {
+    const ownerPrincipalId =
+      typeof req.query.ownerPrincipalId === "string"
+        ? req.query.ownerPrincipalId.trim()
+        : typeof req.query.owner_principal_id === "string"
+          ? req.query.owner_principal_id.trim()
+          : "";
+    if (!ownerPrincipalId) {
+      return res.status(400).json({ error: "ownerPrincipalId query parameter is required" });
+    }
+
+    const stalledHoursRaw = Number(req.query.stalledHours);
+    const stalledHours = Number.isFinite(stalledHoursRaw) && stalledHoursRaw > 0 ? stalledHoursRaw : 24;
+
+    try {
+      const tasks = await taskSyncLayer.listTasks();
+      return res.json(buildOwnerAccountabilityInbox({
+        ownerPrincipalId,
+        tasks,
+        stalledHours,
+      }));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return res.status(500).json({ error: message });
