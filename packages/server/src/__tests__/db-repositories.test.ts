@@ -136,12 +136,29 @@ describe('TaskRepository', () => {
       assignment_state: 'assigned',
     });
     const metadata = JSON.parse(updated?.metadata ?? '{}') as {
-      phase2_backfill?: { version?: string; inferred_fields?: Array<{ field_name: string; confidence: string }> };
+      phase2_backfill?: {
+        version?: string;
+        inferred_fields?: Array<{
+          field_name: string;
+          previous_value: unknown;
+          inferred_value: unknown;
+          source: string;
+          confidence: string;
+        }>;
+      };
     };
-    expect(metadata.phase2_backfill?.version).toBe('THE-30');
+    expect(metadata.phase2_backfill?.version).toBe('THE-87');
     expect(metadata.phase2_backfill?.inferred_fields).toContainEqual(
-      expect.objectContaining({ field_name: 'owner_principal_id', confidence: 'medium' }),
+      expect.objectContaining({
+        field_name: 'owner_principal_id',
+        previous_value: 'legacy-owner',
+        inferred_value: 'Ada',
+        source: 'assignee',
+        confidence: 'medium',
+      }),
     );
+    expect(applied.markdown).toContain('legacy-owner -> Ada');
+    expect(applied.rollbackNotes.join('\n')).toContain('previous_value');
 
     const secondApply = dbMod.backfillTaskHierarchyAndAccountability({ dryRun: false });
     const secondTask = secondApply.taskResults.find((result) => result.task_id === task.id);

@@ -12,8 +12,6 @@ Implement THE-19.2 from the migration/backfill parent. THE-87 must backfill org/
 Branch: `THE-87-backfill-required-hierarchy-accountability-fields`
 Linear: `THE-87` / parent `THE-19`
 
-Detailed plan: `docs/plans/2026-06-24T120100Z-entity-phase-2-the-87-backfill-required-fields-plan.md`
-
 ## Dependencies
 
 - [x] Live Linear parent `THE-19` body was read.
@@ -26,16 +24,22 @@ Detailed plan: `docs/plans/2026-06-24T120100Z-entity-phase-2-the-87-backfill-req
 ## Plan
 
 - [x] Step 1: Inspect existing migration inventory and task backfill helper.
+  - **Files:** `packages/db/src/index.ts`, `packages/server/src/__tests__/db-repositories.test.ts`, `scripts/entity-phase-2-migration-inventory.mjs`
   - **Verify:** `rg "backfillTaskHierarchyAndAccountability|phase2_backfill|THE-87" packages scripts docs`
 - [x] Step 2: Tighten THE-87 backfill audit metadata and CLI report writer.
+  - **Files:** `packages/db/src/index.ts`, `scripts/entity-phase-2-task-backfill.mjs`
   - **Verify:** `npm --prefix packages/db run build`
 - [x] Step 3: Update focused tests for before/after fixture, idempotency, and cleanup warnings.
+  - **Files:** `packages/server/src/__tests__/db-repositories.test.ts`
   - **Verify:** `cd packages/server && nvm use 22.22.2 && npx vitest run src/__tests__/db-repositories.test.ts`
 - [x] Step 4: Generate THE-87 dry-run report plus isolated apply fixture and rollback notes.
+  - **Files:** `output/entity-phase-2/task-backfill/THE-87*.{md,json}` (ignored)
   - **Verify:** `node scripts/entity-phase-2-task-backfill.mjs --out output/entity-phase-2/task-backfill/THE-87-dry-run.md && node scripts/entity-phase-2-task-backfill.mjs --json --out output/entity-phase-2/task-backfill/THE-87-dry-run.json`
 - [ ] Step 5: Run required proof commands and CLI Tester request/run/book-review/verify.
+  - **Files:** `output/entity-phase-2/test-gate/THE-87.*`, `output/entity-phase-2/book-review/THE-87*`
   - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh && npm run build && cd packages/server && npm run build && npx vitest run`
 - [ ] Step 6: Commit scoped work, update Linear proof comment/status, and advance run-state to THE-88 if verify allows.
+  - **Files:** `.cursor/run-state/entity-phase-2.json` (ignored), Linear comment
   - **Verify:** `git status --short --branch`
 
 ## Checkpoints

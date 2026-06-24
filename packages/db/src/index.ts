@@ -2027,6 +2027,7 @@ export interface TaskBackfillInferredField {
     | 'owner_principal_type'
     | 'assignment_state';
   inferred_value: string | number | boolean | null;
+  previous_value: string | number | boolean | null;
   source: 'project_link' | 'created_by' | 'assignee' | 'task_state';
   confidence: TaskBackfillConfidence;
 }
@@ -4895,7 +4896,7 @@ function openEntityDatabase(): Database.Database {
   });
 }
 
-const TASK_BACKFILL_VERSION = 'THE-30';
+const TASK_BACKFILL_VERSION = 'THE-87';
 
 type TaskBackfillRow = Record<string, unknown> & {
   id: number;
@@ -4963,6 +4964,7 @@ function pushBackfillField(
   taskId: number,
   field_name: TaskBackfillInferredField['field_name'],
   inferred_value: TaskBackfillInferredField['inferred_value'],
+  previous_value: TaskBackfillInferredField['previous_value'],
   source: TaskBackfillInferredField['source'],
   confidence: TaskBackfillConfidence
 ): void {
@@ -4970,6 +4972,7 @@ function pushBackfillField(
     task_id: taskId,
     field_name,
     inferred_value,
+    previous_value,
     source,
     confidence,
   });
@@ -4992,7 +4995,7 @@ function pushBackfillWarning(
 
 function renderTaskBackfillMarkdown(report: Omit<TaskHierarchyBackfillReport, 'markdown'>): string {
   const lines = [
-    '# THE-30 Task Hierarchy/Accountability Backfill Report',
+    '# THE-87 Task Hierarchy/Accountability Backfill Report',
     '',
     `- Mode: ${report.dryRun ? 'dry-run' : 'apply'}`,
     `- Total tasks scanned: ${report.totalTasks}`,
@@ -5009,6 +5012,11 @@ function renderTaskBackfillMarkdown(report: Omit<TaskHierarchyBackfillReport, 'm
   } else {
     for (const result of sample) {
       lines.push(`- Task ${result.task_id} (${result.title}): ${result.inferred_fields.length} inferred field(s), ${result.warnings.length} warning(s), applied=${result.applied}`);
+      for (const field of result.inferred_fields.slice(0, 5)) {
+        lines.push(
+          `  - ${field.field_name}: ${String(field.previous_value)} -> ${String(field.inferred_value)} (source=${field.source}, confidence=${field.confidence})`
+        );
+      }
     }
   }
 
@@ -5087,17 +5095,17 @@ export function backfillTaskHierarchyAndAccountability(
 
     if (!normalizeBlockerReason(row.org_id) && linkedProjectOrgId) {
       updates.org_id = linkedProjectOrgId;
-      pushBackfillField(inferredFields, taskId, 'org_id', linkedProjectOrgId, 'project_link', 'high');
+      pushBackfillField(inferredFields, taskId, 'org_id', linkedProjectOrgId, row.org_id ?? null, 'project_link', 'high');
     }
 
     if (!normalizeBlockerReason(row.team_id) && linkedProjectTeamId) {
       updates.team_id = linkedProjectTeamId;
-      pushBackfillField(inferredFields, taskId, 'team_id', linkedProjectTeamId, 'project_link', 'high');
+      pushBackfillField(inferredFields, taskId, 'team_id', linkedProjectTeamId, row.team_id ?? null, 'project_link', 'high');
     }
 
     if (!currentProjectId && linkedProjectId) {
       updates.project_id = linkedProjectId;
-      pushBackfillField(inferredFields, taskId, 'project_id', linkedProjectId, 'project_link', 'high');
+      pushBackfillField(inferredFields, taskId, 'project_id', linkedProjectId, row.project_id ?? null, 'project_link', 'high');
     } else if (!currentProjectId) {
       pushBackfillWarning(
         warnings,
@@ -5113,8 +5121,16 @@ export function backfillTaskHierarchyAndAccountability(
       if (createdBy && !isLegacyPrincipalMarker(createdBy, ['legacy-system', 'system', 'unknown'])) {
         updates.initiator_principal_id = createdBy;
         updates.initiator_type = 'human';
-        pushBackfillField(inferredFields, taskId, 'initiator_principal_id', createdBy, 'created_by', 'medium');
-        pushBackfillField(inferredFields, taskId, 'initiator_type', 'human', 'created_by', 'medium');
+        pushBackfillField(
+          inferredFields,
+          taskId,
+          'initiator_principal_id',
+          createdBy,
+          row.initiator_principal_id ?? null,
+          'created_by',
+          'medium'
+        );
+        pushBackfillField(inferredFields, taskId, 'initiator_type', 'human', row.initiator_type ?? null, 'created_by', 'medium');
       } else {
         pushBackfillWarning(
           warnings,
@@ -5131,8 +5147,16 @@ export function backfillTaskHierarchyAndAccountability(
       if (assignee) {
         updates.owner_principal_id = assignee;
         updates.owner_principal_type = 'human';
-        pushBackfillField(inferredFields, taskId, 'owner_principal_id', assignee, 'assignee', 'medium');
-        pushBackfillField(inferredFields, taskId, 'owner_principal_type', 'human', 'assignee', 'medium');
+        pushBackfillField(inferredFields, taskId, 'owner_principal_id', assignee, row.owner_principal_id ?? null, 'assignee', 'medium');
+        pushBackfillField(
+          inferredFields,
+          taskId,
+          'owner_principal_type',
+          'human',
+          row.owner_principal_type ?? null,
+          'assignee',
+          'medium'
+        );
       } else {
         pushBackfillWarning(
           warnings,
@@ -5152,7 +5176,15 @@ export function backfillTaskHierarchyAndAccountability(
       const executor = isAssignablePrincipal(row.executor_principal_id);
       if (assignee || executor) {
         updates.assignment_state = 'assigned';
-        pushBackfillField(inferredFields, taskId, 'assignment_state', 'assigned', 'task_state', 'medium');
+        pushBackfillField(
+          inferredFields,
+          taskId,
+          'assignment_state',
+          'assigned',
+          row.assignment_state ?? null,
+          'task_state',
+          'medium'
+        );
       }
     }
 
@@ -5239,7 +5271,8 @@ export function backfillTaskHierarchyAndAccountability(
       'Dry-run mode performs no writes.',
       'Apply mode only updates task hierarchy/accountability columns when a conservative source exists.',
       'Unresolved owner, initiator, project, or assignee data is recorded as cleanup warnings instead of fabricated values.',
-      'Applied inferences are recorded in tasks.metadata.phase2_backfill for audit and can be manually reverted from the report before stricter migration enforcement.',
+      'Applied inferences are recorded in tasks.metadata.phase2_backfill with previous_value, inferred_value, source, and confidence.',
+      'Rollback is manual and narrow: use the saved report to restore only the listed previous_value fields for affected task IDs, then remove or supersede the phase2_backfill audit entry.',
     ],
   };
 
