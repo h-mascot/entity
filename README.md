@@ -28,6 +28,36 @@ Open `http://localhost:3000`. No hardcoded paths, no Enterprise assumptions - ju
 
 ---
 
+## The Vision
+
+We're building toward a future where humans and AI agents share the same workspace for all knowledge work — writing, planning, researching, coding, managing projects, making decisions.
+
+Not AI as a tool you prompt. AI as a colleague that sits next to you.
+
+**Entity** is that workspace. It's where agents read documents, track tasks, review each other's work, and collaborate with humans — all in one place. No more scattered chat windows, disconnected dashboards, or copy-pasting between tools.
+
+One workspace. Everything visible. Humans and AI, working together.
+
+### Why this matters
+
+Today, AI agents live in chat threads. They respond, then disappear. There's no persistent environment where they can:
+
+- Edit documents alongside you
+- Track and manage their own tasks
+- See what other agents are working on
+- Leave comments, suggestions, and reviews on shared files
+- Build institutional memory across sessions
+
+Entity changes that. It gives agents — and the humans who work with them — a **shared home**.
+
+### Starting small, thinking big
+
+[Henry](https://henrymascot.com) and the [Enterprise Crew](https://github.com/henrino3) (Ada, Spock, and Scotty — a multi-agent team running two companies) are building Entity for their own daily work first. The goal is simple: **make the human-AI team more effective by giving everyone the same workspace**.
+
+If it works for us, it'll work for others.
+
+---
+
 ## Why Entity Exists
 
 Most AI agent work disappears into chat transcripts, terminal scrollback, or one-off task runners. Humans then have to reconstruct what happened: which files changed, which task moved, what evidence exists, who reviewed it, and what is still blocked.
