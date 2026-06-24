@@ -25,6 +25,10 @@ import {
   readWorktype,
   readWorktypeLayer,
 } from './utils/worktypeRegistry';
+import {
+  buildExternalDocumentPreviewView,
+  type ExternalDocumentPreviewView,
+} from './utils/externalDocumentPreview';
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
@@ -207,6 +211,7 @@ interface DocumentObjectView {
   objectRefs: ActivityObjectRef[];
   restricted: boolean;
   degradedMessages: string[];
+  externalPreview: ExternalDocumentPreviewView | null;
 }
 
 interface TaskFormState {
@@ -1411,6 +1416,9 @@ function buildDocumentObjectView(
     objectRefs: refs,
     restricted,
     degradedMessages,
+    externalPreview: displayKind === 'external' && !restricted
+      ? buildExternalDocumentPreviewView(record)
+      : null,
   };
 }
 
@@ -3936,6 +3944,102 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                                 </span>
                               ))}
                             </div>
+
+                            {object.externalPreview ? (
+                              <div
+                                className={`mt-3 rounded-md border px-2.5 py-2 ${
+                                  object.externalPreview.degraded
+                                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+                                    : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-100'
+                                }`}
+                                data-testid="task-external-doc-preview"
+                                data-read-only-google-mutation-controls="none"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                                      External Preview
+                                    </div>
+                                    <div className="mt-0.5 truncate text-sm font-semibold">
+                                      {object.externalPreview.title}
+                                    </div>
+                                    <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                                      {object.externalPreview.ownershipLabel}
+                                    </div>
+                                  </div>
+                                  {object.externalPreview.canOpen && object.externalPreview.openUrl ? (
+                                    <a
+                                      href={object.externalPreview.openUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="rounded border border-sky-400/30 bg-sky-500/10 px-2 py-1 text-[11px] font-medium text-sky-200 hover:text-sky-100"
+                                      data-testid="task-external-doc-open-link"
+                                    >
+                                      Open external doc
+                                    </a>
+                                  ) : (
+                                    <span className="rounded border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1 text-[11px] text-[var(--text-muted)]">
+                                      No external link available
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="mt-2 grid gap-1.5 text-[11px] text-[var(--text-secondary)] sm:grid-cols-2">
+                                  <div>
+                                    <span className="text-[var(--text-muted)]">Connector: </span>
+                                    {object.externalPreview.connectorLabel}
+                                  </div>
+                                  <div>
+                                    <span className="text-[var(--text-muted)]">Auth: </span>
+                                    {object.externalPreview.authLabel}
+                                  </div>
+                                  <div>
+                                    <span className="text-[var(--text-muted)]">Readiness: </span>
+                                    {object.externalPreview.readinessLabel}
+                                  </div>
+                                  <div>
+                                    <span className="text-[var(--text-muted)]">Scopes: </span>
+                                    {object.externalPreview.scopeLabel}
+                                  </div>
+                                  {object.externalPreview.mimeLabel ? (
+                                    <div className="sm:col-span-2">
+                                      <span className="text-[var(--text-muted)]">MIME: </span>
+                                      {object.externalPreview.mimeLabel}
+                                    </div>
+                                  ) : null}
+                                  {object.externalPreview.externalPermissionSummary ? (
+                                    <div className="sm:col-span-2">
+                                      <span className="text-[var(--text-muted)]">External permission: </span>
+                                      {object.externalPreview.externalPermissionSummary}
+                                    </div>
+                                  ) : null}
+                                </div>
+
+                                <div
+                                  className="mt-2 rounded border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 text-[11px]"
+                                  data-testid="task-external-doc-preview-snippet"
+                                >
+                                  {object.externalPreview.previewAvailable && object.externalPreview.previewText
+                                    ? object.externalPreview.previewText
+                                    : 'Preview unavailable until Google auth and preview scope are healthy.'}
+                                </div>
+
+                                <div
+                                  className="mt-2 rounded border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 text-[11px] text-[var(--text-secondary)]"
+                                  data-testid="task-external-doc-readonly-posture"
+                                >
+                                  {object.externalPreview.readOnlyMessage}
+                                </div>
+
+                                {object.externalPreview.degradedMessages.length > 0 ? (
+                                  <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px]">
+                                    {object.externalPreview.degradedMessages.map((message) => (
+                                      <li key={message}>{message}</li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </div>
+                            ) : null}
 
                             {object.restricted ? (
                               <div
