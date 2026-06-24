@@ -128,6 +128,10 @@ import {
   createActivityEventRouter,
   createActivityEventService,
 } from "./activity-events";
+import {
+  createTaskMasterClaimRouter,
+  createTaskMasterClaimService,
+} from "./task-master-claims";
 import { completeTaskWithReceipt } from "./receipt-writer";
 import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
@@ -354,6 +358,10 @@ const fileSourceRepository = createFileSourceRepository();
 const activityEventService = createActivityEventService({
   activityRepository,
   getTask: (taskId) => taskSyncLayer.getTask(taskId),
+});
+const taskMasterClaimService = createTaskMasterClaimService({
+  taskSyncLayer,
+  activityRepository,
 });
 
 // Responds to @agent mentions in task comments (reads the card, replies, optional pickup).
@@ -5825,6 +5833,8 @@ registerAgentRoutes("");
 registerAgentRoutes("/api");
 app.use(createActivityEventRouter(activityEventService));
 app.use("/api", createActivityEventRouter(activityEventService));
+app.use(createTaskMasterClaimRouter(taskMasterClaimService));
+app.use("/api", createTaskMasterClaimRouter(taskMasterClaimService));
 registerActivityRoutes("");
 registerActivityRoutes("/api");
 registerTaskRoutes("");

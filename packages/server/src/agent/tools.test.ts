@@ -98,6 +98,11 @@ function makeDependencies(): {
     getTask: vi.fn().mockResolvedValue(undefined),
     createTask: vi.fn(),
     updateTask: vi.fn().mockResolvedValue(undefined),
+    claimTaskForTaskMaster: vi.fn().mockResolvedValue({
+      status: 'not_found',
+      claimed: false,
+      reason: 'task not found',
+    }),
     moveTask: vi.fn().mockResolvedValue(undefined),
     deleteTask: vi.fn().mockResolvedValue(true),
   };

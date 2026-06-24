@@ -1,6 +1,8 @@
 import {
   createTaskRepository,
+  type ClaimTaskForTaskMasterInput,
   type CreateTaskInput,
+  type TaskMasterClaimResult,
   type TaskRecord,
   type TaskRepository,
   type UpdateTaskInput,
@@ -21,6 +23,10 @@ export function createLocalTaskAdapter(options: LocalTaskAdapterOptions = {}): T
     createTask: async (input: CreateTaskInput): Promise<TaskRecord> => repository.createTask(input),
     updateTask: async (id: number, updates: UpdateTaskInput): Promise<TaskRecord | undefined> =>
       repository.updateTask(id, updates),
+    claimTaskForTaskMaster: async (
+      id: number,
+      input?: ClaimTaskForTaskMasterInput,
+    ): Promise<TaskMasterClaimResult> => repository.claimTaskForTaskMaster(id, input),
     moveTask: async (id: number, nextColumn: string): Promise<TaskRecord | undefined> =>
       repository.moveTask(id, nextColumn),
     deleteTask: async (id: number): Promise<boolean> => repository.deleteTask(id),

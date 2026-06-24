@@ -89,6 +89,11 @@ function makeTaskSyncLayer(task: TaskRecord): TaskSyncLayer {
     getTask: vi.fn().mockResolvedValue(task),
     createTask: vi.fn().mockResolvedValue(task),
     updateTask: vi.fn().mockResolvedValue(task),
+    claimTaskForTaskMaster: vi.fn().mockResolvedValue({
+      status: 'already_claimed',
+      claimed: false,
+      task,
+    }),
     moveTask: vi.fn().mockResolvedValue({ ...task, column: 'doing' }),
     deleteTask: vi.fn().mockResolvedValue(true),
   };

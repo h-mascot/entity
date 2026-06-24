@@ -592,6 +592,150 @@ describe('TaskRepository', () => {
     });
   });
 
+  it('atomically claims unassigned Task-Master-drivable work and preserves the original unassigned state', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Claimable Task Master work',
+      column: 'todo',
+      taskmaster_drivable: true,
+      risk_level: 'low',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          task: { taskmaster_drivable: true },
+          risk: { risk_level: 'low' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const result = repo.claimTaskForTaskMaster(task.id, {
+      taskmaster_principal_id: 'task-master',
+      claimed_at: '2026-06-24T01:00:00.000Z',
+      claim_request_id: 'claim-1',
+      policy_reason: 'policy marked the unassigned task drivable',
+    });
+
+    expect(result).toMatchObject({
+      status: 'claimed',
+      claimed: true,
+      previousTask: {
+        assignee: 'Unassigned',
+        executor_principal_id: null,
+        assignment_state: 'unassigned',
+        taskmaster_drivable: true,
+      },
+      task: {
+        assignee: 'Unassigned',
+        executor_principal_id: 'task-master',
+        assignment_state: 'claimed',
+        taskmaster_drivable: true,
+      },
+      claim: {
+        taskmaster_principal_id: 'task-master',
+        claimed_at: '2026-06-24T01:00:00.000Z',
+        claim_request_id: 'claim-1',
+        previous_assignee: 'Unassigned',
+        previous_executor_principal_id: null,
+        previous_assignment_state: 'unassigned',
+        previous_taskmaster_drivable: true,
+      },
+    });
+
+    const metadata = JSON.parse(result.task?.metadata ?? '{}') as Record<string, unknown>;
+    expect(metadata.taskmaster_claim).toMatchObject({
+      claim_request_id: 'claim-1',
+      previous_assignment_state: 'unassigned',
+    });
+    expect(metadata.taskmaster_claim_original_unassigned).toMatchObject({
+      assignee: 'Unassigned',
+      executor_principal_id: null,
+      assignment_state: 'unassigned',
+      taskmaster_drivable: true,
+    });
+  });
+
+  it('refuses Task Master claims for assigned or non-drivable work', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const assigned = repo.createTask({
+      name: 'Assigned work stays owned',
+      column: 'todo',
+      assignee: 'Ada',
+      executor_principal_id: 'agent-1',
+      taskmaster_drivable: true,
+    });
+    const nonDrivable = repo.createTask({
+      name: 'Non-drivable unassigned work',
+      column: 'todo',
+      taskmaster_drivable: false,
+    });
+
+    expect(repo.claimTaskForTaskMaster(assigned.id)).toMatchObject({
+      status: 'not_claimable',
+      claimed: false,
+      task: {
+        executor_principal_id: 'agent-1',
+        assignment_state: 'assigned',
+      },
+    });
+    expect(repo.claimTaskForTaskMaster(nonDrivable.id)).toMatchObject({
+      status: 'not_claimable',
+      claimed: false,
+      task: {
+        executor_principal_id: null,
+        assignment_state: 'routing_problem',
+        taskmaster_drivable: false,
+      },
+    });
+  });
+
+  it('handles double-claim races deterministically with one transition winner', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Race claim fixture',
+      column: 'todo',
+      taskmaster_drivable: true,
+      risk_level: 'low',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          task: { taskmaster_drivable: true },
+          risk: { risk_level: 'low' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const results = await Promise.all([
+      Promise.resolve().then(() =>
+        repo.claimTaskForTaskMaster(task.id, {
+          taskmaster_principal_id: 'task-master',
+          claim_request_id: 'claim-a',
+        }),
+      ),
+      Promise.resolve().then(() =>
+        repo.claimTaskForTaskMaster(task.id, {
+          taskmaster_principal_id: 'task-master',
+          claim_request_id: 'claim-b',
+        }),
+      ),
+    ]);
+
+    expect(results.filter((result) => result.status === 'claimed')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'already_claimed')).toHaveLength(1);
+    expect(results.filter((result) => result.claimed)).toHaveLength(1);
+    expect(repo.getTask(task.id)).toMatchObject({
+      executor_principal_id: 'task-master',
+      assignment_state: 'claimed',
+    });
+  });
+
   it('escalates review and human gate requirements from risk, trust, and external side effects', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();

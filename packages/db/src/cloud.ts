@@ -1,7 +1,11 @@
 import {
   TASK_COLUMNS,
+  type ClaimTaskForTaskMasterInput,
   type CreateTaskInput,
   type ProjectRecord,
+  type TaskMasterClaimRecord,
+  type TaskMasterClaimResult,
+  type TaskMasterClaimStatus,
   type TaskColumn,
   type TaskRecord,
   type UpdateTaskInput,
@@ -258,6 +262,73 @@ function toSingleTask(payload: unknown): TaskRecord | null {
   return null;
 }
 
+function normalizeClaimStatus(value: unknown, statusCode: number): TaskMasterClaimStatus {
+  if (
+    value === 'claimed' ||
+    value === 'already_claimed' ||
+    value === 'not_found' ||
+    value === 'not_claimable'
+  ) {
+    return value;
+  }
+  if (statusCode === 404) return 'not_found';
+  if (statusCode === 409 || statusCode === 400) return 'not_claimable';
+  return 'not_claimable';
+}
+
+function normalizeClaimRecord(value: unknown): TaskMasterClaimRecord | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    taskmaster_principal_id:
+      typeof record.taskmaster_principal_id === 'string' && record.taskmaster_principal_id.trim()
+        ? record.taskmaster_principal_id.trim()
+        : 'task-master',
+    claimed_at: normalizeTimestamp(record.claimed_at),
+    claim_request_id:
+      typeof record.claim_request_id === 'string' && record.claim_request_id.trim()
+        ? record.claim_request_id.trim()
+        : 'unknown',
+    policy_reason:
+      typeof record.policy_reason === 'string' && record.policy_reason.trim()
+        ? record.policy_reason.trim()
+        : 'Task Master claimed unassigned policy-drivable work.',
+    previous_assignee: typeof record.previous_assignee === 'string' ? record.previous_assignee : null,
+    previous_executor_principal_id:
+      typeof record.previous_executor_principal_id === 'string' ? record.previous_executor_principal_id : null,
+    previous_assignment_state:
+      typeof record.previous_assignment_state === 'string' ? record.previous_assignment_state : null,
+    previous_taskmaster_drivable:
+      typeof record.previous_taskmaster_drivable === 'boolean'
+        ? record.previous_taskmaster_drivable
+        : typeof record.previous_taskmaster_drivable === 'number'
+          ? record.previous_taskmaster_drivable !== 0
+          : false,
+  };
+}
+
+function toClaimResult(payload: unknown, statusCode: number): TaskMasterClaimResult {
+  const record = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const status = normalizeClaimStatus(record.status, statusCode);
+  const task = toSingleTask(record.task ?? payload) ?? undefined;
+  const previousTask = toSingleTask(record.previousTask ?? record.previous_task) ?? undefined;
+  const claim = normalizeClaimRecord(record.claim);
+  return {
+    status,
+    claimed: typeof record.claimed === 'boolean' ? record.claimed : status === 'claimed',
+    ...(task ? { task } : {}),
+    ...(previousTask ? { previousTask } : {}),
+    ...(claim ? { claim } : {}),
+    reason: typeof record.reason === 'string' && record.reason.trim()
+      ? record.reason.trim()
+      : typeof record.error === 'string' && record.error.trim()
+        ? record.error.trim()
+        : undefined,
+  };
+}
+
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) {
@@ -415,6 +486,42 @@ export function createCloudTaskAdapter(options: CloudTaskAdapterOptions): TaskAd
     return toSingleTask(payload) ?? undefined;
   }
 
+  async function claimTaskForTaskMaster(
+    id: number,
+    input: ClaimTaskForTaskMasterInput = {},
+  ): Promise<TaskMasterClaimResult> {
+    const urls = buildTaskUrls(baseUrl, `/tasks/${id}/claim`);
+    let lastError: Error | null = null;
+
+    for (let index = 0; index < urls.length; index += 1) {
+      try {
+        const response = await fetchImpl(urls[index], {
+          method: 'POST',
+          body: JSON.stringify(input),
+          headers: {
+            'Content-Type': 'application/json',
+            ...baseHeaders,
+          },
+        });
+        const payload = await readJson(response);
+        if (response.status === 404 && index < urls.length - 1) {
+          continue;
+        }
+        if (response.ok || response.status === 400 || response.status === 404 || response.status === 409) {
+          return toClaimResult(payload, response.status);
+        }
+        throw new Error(extractErrorMessage(payload, response.status));
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Cloud claim request failed.');
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+    return { status: 'not_found', claimed: false, reason: 'task not found' };
+  }
+
   async function moveTask(id: number, nextColumn: string): Promise<TaskRecord | undefined> {
     const { payload, notFound } = await requestTaskApi(
       baseUrl,
@@ -459,6 +566,7 @@ export function createCloudTaskAdapter(options: CloudTaskAdapterOptions): TaskAd
     getTask,
     createTask,
     updateTask,
+    claimTaskForTaskMaster,
     moveTask,
     deleteTask,
   };

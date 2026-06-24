@@ -229,6 +229,35 @@ export interface TaskRecord {
   projects?: ProjectRecord[];
 }
 
+export interface ClaimTaskForTaskMasterInput {
+  taskmaster_principal_id?: string;
+  claimed_at?: string;
+  claim_request_id?: string;
+  policy_reason?: string;
+}
+
+export type TaskMasterClaimStatus = 'claimed' | 'already_claimed' | 'not_found' | 'not_claimable';
+
+export interface TaskMasterClaimRecord {
+  taskmaster_principal_id: string;
+  claimed_at: string;
+  claim_request_id: string;
+  policy_reason: string;
+  previous_assignee: string | null;
+  previous_executor_principal_id: string | null;
+  previous_assignment_state: string | null;
+  previous_taskmaster_drivable: boolean;
+}
+
+export interface TaskMasterClaimResult {
+  status: TaskMasterClaimStatus;
+  claimed: boolean;
+  task?: TaskRecord;
+  previousTask?: TaskRecord;
+  claim?: TaskMasterClaimRecord;
+  reason?: string;
+}
+
 export interface CreateTaskInput {
   org_id?: string;
   team_id?: string;
@@ -424,6 +453,7 @@ export interface TaskRepository {
   getTask: (id: number) => TaskRecord | undefined;
   createTask: (input: CreateTaskInput) => TaskRecord;
   updateTask: (id: number, updates: UpdateTaskInput) => TaskRecord | undefined;
+  claimTaskForTaskMaster: (id: number, input?: ClaimTaskForTaskMasterInput) => TaskMasterClaimResult;
   moveTask: (id: number, nextColumn: string) => TaskRecord | undefined;
   deleteTask: (id: number) => boolean;
 }
@@ -2359,6 +2389,47 @@ function writeTaskMetadataWithRoutingPolicyProjection(
     notification_routes: resolution.routing_policy_projection.notification_routes,
     policy_reason_chain: resolution.reason_chain,
     routing_policy_projection: buildRoutingPolicyProjectionMetadata(resolution.routing_policy_projection),
+  });
+}
+
+function normalizeTaskMasterPrincipalId(value: unknown): string {
+  return normalizeBlockerReason(value) ?? 'task-master';
+}
+
+function buildTaskMasterClaimRecord(
+  previousTask: TaskRecord,
+  input: ClaimTaskForTaskMasterInput = {},
+): TaskMasterClaimRecord {
+  const taskmasterPrincipalId = normalizeTaskMasterPrincipalId(input.taskmaster_principal_id);
+  return {
+    taskmaster_principal_id: taskmasterPrincipalId,
+    claimed_at: normalizeTimestamp(input.claimed_at ?? new Date().toISOString()),
+    claim_request_id: normalizeBlockerReason(input.claim_request_id) ?? randomUUID(),
+    policy_reason:
+      normalizeBlockerReason(input.policy_reason) ??
+      'Task Master claimed unassigned policy-drivable work.',
+    previous_assignee: normalizeBlockerReason(previousTask.assignee),
+    previous_executor_principal_id: normalizeBlockerReason(previousTask.executor_principal_id),
+    previous_assignment_state: normalizeBlockerReason(previousTask.assignment_state),
+    previous_taskmaster_drivable: Boolean(previousTask.taskmaster_drivable),
+  };
+}
+
+function writeTaskMetadataWithTaskMasterClaim(
+  metadata: unknown,
+  claim: TaskMasterClaimRecord,
+  previousTask: TaskRecord,
+): string {
+  const metadataRecord = readTaskMetadataRecord(metadata);
+  return writeTaskMetadataRecord({
+    ...metadataRecord,
+    taskmaster_claim: claim,
+    taskmaster_claim_original_unassigned: {
+      assignee: previousTask.assignee ?? null,
+      executor_principal_id: previousTask.executor_principal_id ?? null,
+      assignment_state: previousTask.assignment_state ?? null,
+      taskmaster_drivable: Boolean(previousTask.taskmaster_drivable),
+    },
   });
 }
 
@@ -5972,6 +6043,101 @@ export function createTaskRepository(): TaskRepository {
       return updatedTask;
     },
 
+    claimTaskForTaskMaster: (id: number, input: ClaimTaskForTaskMasterInput = {}) => {
+      if (!Number.isInteger(id) || id < 1) {
+        return {
+          status: 'not_found',
+          claimed: false,
+          reason: 'task not found',
+        };
+      }
+
+      const taskmasterPrincipalId = normalizeTaskMasterPrincipalId(input.taskmaster_principal_id);
+      const transaction = db.transaction((): TaskMasterClaimResult => {
+        const existingRow = getStmt.get(id) as Record<string, unknown> | undefined;
+        if (!existingRow) {
+          return {
+            status: 'not_found',
+            claimed: false,
+            reason: 'task not found',
+          };
+        }
+
+        const [existingTask] = attachProjectsToTasks(db, [mapTaskRow(existingRow)]);
+        if (
+          existingTask.executor_principal_id === taskmasterPrincipalId &&
+          existingTask.assignment_state === 'claimed'
+        ) {
+          return {
+            status: 'already_claimed',
+            claimed: false,
+            task: existingTask,
+            reason: 'task is already claimed by Task Master',
+          };
+        }
+
+        const claim = buildTaskMasterClaimRecord(existingTask, {
+          ...input,
+          taskmaster_principal_id: taskmasterPrincipalId,
+        });
+        const nextMetadata = writeTaskMetadataWithTaskMasterClaim(existingTask.metadata, claim, existingTask);
+        const result = db.prepare(`
+          UPDATE tasks
+          SET executor_principal_id = ?,
+              assignment_state = 'claimed',
+              metadata = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+            AND taskmaster_drivable = 1
+            AND (assignee IS NULL OR TRIM(assignee) = '' OR LOWER(TRIM(assignee)) = 'unassigned')
+            AND (executor_principal_id IS NULL OR TRIM(executor_principal_id) = '')
+            AND (assignment_state IS NULL OR TRIM(assignment_state) = '' OR LOWER(TRIM(assignment_state)) = 'unassigned')
+        `).run(taskmasterPrincipalId, nextMetadata, id);
+
+        const refreshedRow = getStmt.get(id) as Record<string, unknown> | undefined;
+        if (!refreshedRow) {
+          return {
+            status: 'not_found',
+            claimed: false,
+            reason: 'task not found',
+          };
+        }
+        const [refreshedTask] = attachProjectsToTasks(db, [mapTaskRow(refreshedRow)]);
+
+        if (result.changes > 0) {
+          return {
+            status: 'claimed',
+            claimed: true,
+            task: refreshedTask,
+            previousTask: existingTask,
+            claim,
+          };
+        }
+
+        if (
+          refreshedTask.executor_principal_id === taskmasterPrincipalId &&
+          refreshedTask.assignment_state === 'claimed'
+        ) {
+          return {
+            status: 'already_claimed',
+            claimed: false,
+            task: refreshedTask,
+            reason: 'task is already claimed by Task Master',
+          };
+        }
+
+        return {
+          status: 'not_claimable',
+          claimed: false,
+          task: refreshedTask,
+          previousTask: existingTask,
+          reason: 'task is not unassigned Task-Master-drivable work',
+        };
+      });
+
+      return transaction();
+    },
+
     moveTask: (id: number, nextColumn: string) => {
       const normalizedColumn = normalizeTaskColumn(nextColumn);
       db.prepare('UPDATE tasks SET column = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(normalizedColumn, id);
@@ -6525,6 +6691,32 @@ export function createOrgScopedTaskRepository(context: OrgQueryContext): OrgScop
 
       const [task] = attachProjectsToTasksForOrg(db, orgId, [mapTaskRow(row)]);
       return task;
+    },
+
+    claimTaskForTaskMaster: (id: number, input?: ClaimTaskForTaskMasterInput) => {
+      const existing = getStmt.get(id, orgId) as Record<string, unknown> | undefined;
+      if (!existing) {
+        return {
+          status: 'not_found',
+          claimed: false,
+          reason: 'task not found',
+        };
+      }
+
+      const result = legacyRepository.claimTaskForTaskMaster(id, input);
+      if (result.task) {
+        const scopedRow = getStmt.get(id, orgId) as Record<string, unknown> | undefined;
+        if (!scopedRow) {
+          return {
+            status: 'not_found',
+            claimed: false,
+            reason: 'task not found',
+          };
+        }
+        const [task] = attachProjectsToTasksForOrg(db, orgId, [mapTaskRow(scopedRow)]);
+        result.task = task;
+      }
+      return result;
     },
 
     moveTask: (id: number, nextColumn: string) => {
