@@ -268,6 +268,25 @@ describe('ClickClack proxy routes', () => {
     expect(upstreamHits).toContain('/api/upload:--x\r\nhello\r\n--x--\r\n');
   });
 
+  it('surfaces unavailable ClickClack proxy API routes as explicit degraded failures', async () => {
+    const entityApp = express();
+    registerClickClackProxyRoutes(entityApp, {
+      baseUrl: 'http://127.0.0.1:9',
+      devIdentityHeader: 'usr_human',
+    });
+    const entityBinding = await listen(entityApp);
+
+    try {
+      const response = await fetch(`${entityBinding.baseUrl}/api/clickclack/me`);
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({
+        error: 'clickclack_proxy_failed',
+      });
+    } finally {
+      await close(entityBinding.server);
+    }
+  });
+
   it('preserves SvelteKit route manifest keys when rewriting app links', async () => {
     const upstreamApp = express();
     upstreamApp.get('/_app/immutable/entry/app.js', (_req, res) => {
