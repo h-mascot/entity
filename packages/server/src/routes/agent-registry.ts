@@ -95,6 +95,12 @@ function parseCreateAgentInput(body: unknown): CreateAgentRegistryInput {
     description: optionalString(body, 'description') ?? null,
     adapter_type: optionalString(body, 'adapter_type') ?? optionalString(body, 'adapterType') ?? null,
     runtime_type: optionalString(body, 'runtime_type') ?? optionalString(body, 'runtimeType') ?? null,
+    runtime_binding_id: optionalString(body, 'runtime_binding_id') ?? optionalString(body, 'runtimeBindingId') ?? null,
+    provider_type: optionalString(body, 'provider_type') ?? optionalString(body, 'providerType') ?? null,
+    helm_managed: body.helm_managed === undefined && body.helmManaged === undefined
+      ? false
+      : Boolean(body.helm_managed ?? body.helmManaged),
+    binding_state: optionalString(body, 'binding_state') ?? optionalString(body, 'bindingState') ?? null,
     status: validateStatus(optionalString(body, 'status')) ?? 'active',
     instructions_path: optionalString(body, 'instructions_path') ?? optionalString(body, 'instructionsPath') ?? null,
     metadata_json: normalizeJsonField(body.metadata_json ?? body.metadata ?? undefined, '{}', 'metadata_json'),
@@ -116,6 +122,9 @@ function parseUpdateAgentInput(body: unknown): UpdateAgentRegistryInput {
     ['description', 'description'],
     ['adapter_type', 'adapter_type'],
     ['runtime_type', 'runtime_type'],
+    ['runtime_binding_id', 'runtime_binding_id'],
+    ['provider_type', 'provider_type'],
+    ['binding_state', 'binding_state'],
     ['instructions_path', 'instructions_path'],
   ] as Array<[string, keyof UpdateAgentRegistryInput]>) {
     const value = optionalString(body, bodyKey);
@@ -128,6 +137,15 @@ function parseUpdateAgentInput(body: unknown): UpdateAgentRegistryInput {
   if (adapterType !== undefined) updates.adapter_type = adapterType;
   const runtimeType = optionalString(body, 'runtimeType');
   if (runtimeType !== undefined) updates.runtime_type = runtimeType;
+  const runtimeBindingId = optionalString(body, 'runtimeBindingId');
+  if (runtimeBindingId !== undefined) updates.runtime_binding_id = runtimeBindingId;
+  const providerType = optionalString(body, 'providerType');
+  if (providerType !== undefined) updates.provider_type = providerType;
+  const bindingState = optionalString(body, 'bindingState');
+  if (bindingState !== undefined) updates.binding_state = bindingState;
+  if ('helm_managed' in body || 'helmManaged' in body) {
+    updates.helm_managed = Boolean(body.helm_managed ?? body.helmManaged);
+  }
   const instructionsPath = optionalString(body, 'instructionsPath');
   if (instructionsPath !== undefined) updates.instructions_path = instructionsPath;
   if ('metadata_json' in body || 'metadata' in body) {

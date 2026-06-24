@@ -20,6 +20,7 @@ export function mergeRegistryAgentDisplay(input: {
 
   const agentRuntime = present(registryAgent.adapter_type);
   const runtimeType = present(registryAgent.runtime_type);
+  const runtimeBindingId = present(registryAgent.runtime_binding_id);
   const avatarUrl =
     present(registryAgent.avatar_url) ??
     present(entry.avatarUrl) ??
@@ -40,6 +41,14 @@ export function mergeRegistryAgentDisplay(input: {
     agentRuntime,
     runtime_type: runtimeType ?? null,
     runtimeType,
+    runtime_binding_id: runtimeBindingId ?? null,
+    runtimeBindingId,
+    provider_type: registryAgent.provider_type,
+    providerType: registryAgent.provider_type,
+    helm_managed: registryAgent.helm_managed,
+    helmManaged: registryAgent.helm_managed,
+    binding_state: registryAgent.binding_state,
+    bindingState: registryAgent.binding_state,
     capabilities: capabilities ?? entry.capabilities,
   };
 }

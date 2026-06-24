@@ -14,6 +14,10 @@ function registryAgent(overrides: Partial<AgentRegistryRecord> = {}): AgentRegis
     description: "Hermes continuity operator",
     adapter_type: "hermes",
     runtime_type: "remote",
+    runtime_binding_id: null,
+    provider_type: "unknown",
+    helm_managed: false,
+    binding_state: "unknown",
     status: "active",
     instructions_path: null,
     metadata_json: "{}",
@@ -44,6 +48,10 @@ describe("mergeRegistryAgentDisplay", () => {
     expect(merged.agentRuntime).toBe("hermes");
     expect(merged.runtime_type).toBe("remote");
     expect(merged.runtimeType).toBe("remote");
+    expect(merged.runtime_binding_id).toBeNull();
+    expect(merged.provider_type).toBe("unknown");
+    expect(merged.helm_managed).toBe(false);
+    expect(merged.binding_state).toBe("unknown");
     expect(merged.avatarUrl).toBe("/agent-avatars/book.png");
     expect(merged.capabilities).toEqual({ runtimeLabel: "Hermes · Remote · Active" });
   });

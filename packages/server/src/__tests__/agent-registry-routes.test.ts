@@ -6,6 +6,8 @@ import type {
   AgentModuleGrantRecord,
   AgentRegistryRecord,
   AgentRegistryRepository,
+  AgentRuntimeBindingState,
+  AgentRuntimeProviderType,
   CreateAgentRegistryInput,
   ModuleRegistryRecord,
   ModuleRegistryRepository,
@@ -15,6 +17,28 @@ import type {
 } from '../../../db/src';
 
 const now = '2026-05-01T00:00:00.000Z';
+const PROVIDER_TYPES = new Set<AgentRuntimeProviderType>([
+  'local_process',
+  'remote_http',
+  'openai_compatible',
+  'anthropic_compatible',
+  'helm_runtime',
+  'custom',
+  'unknown',
+]);
+const BINDING_STATES = new Set<AgentRuntimeBindingState>(['bound', 'unbound', 'stale', 'unknown']);
+
+function normalizeProviderType(value: unknown): AgentRuntimeProviderType {
+  return typeof value === 'string' && PROVIDER_TYPES.has(value as AgentRuntimeProviderType)
+    ? value as AgentRuntimeProviderType
+    : 'unknown';
+}
+
+function normalizeBindingState(value: unknown): AgentRuntimeBindingState {
+  return typeof value === 'string' && BINDING_STATES.has(value as AgentRuntimeBindingState)
+    ? value as AgentRuntimeBindingState
+    : 'unknown';
+}
 
 function makeAgent(overrides: Partial<AgentRegistryRecord> = {}): AgentRegistryRecord {
   return {
@@ -26,6 +50,10 @@ function makeAgent(overrides: Partial<AgentRegistryRecord> = {}): AgentRegistryR
     description: 'Continuity operator',
     adapter_type: 'hermes',
     runtime_type: 'remote',
+    runtime_binding_id: null,
+    provider_type: 'unknown',
+    helm_managed: false,
+    binding_state: 'unknown',
     status: 'active',
     instructions_path: null,
     metadata_json: '{"modules":["docs"],"owner":"Entity Docs"}',
@@ -95,6 +123,10 @@ function createRepos() {
         description: input.description ?? null,
         adapter_type: input.adapter_type ?? null,
         runtime_type: input.runtime_type ?? null,
+        runtime_binding_id: input.runtime_binding_id ?? null,
+        provider_type: normalizeProviderType(input.provider_type),
+        helm_managed: input.helm_managed ?? false,
+        binding_state: normalizeBindingState(input.binding_state),
         status: input.status ?? 'active',
         instructions_path: input.instructions_path ?? null,
         metadata_json: input.metadata_json ?? '{}',
@@ -105,7 +137,24 @@ function createRepos() {
     updateAgent: (id: string, updates: UpdateAgentRegistryInput) => {
       const current = agents.get(id);
       if (!current) return undefined;
-      const updated = { ...current, ...updates, updated_at: now };
+      const normalizedUpdates: UpdateAgentRegistryInput = { ...updates };
+      if (updates.provider_type !== undefined) {
+        normalizedUpdates.provider_type = normalizeProviderType(updates.provider_type);
+      }
+      if (updates.binding_state !== undefined) {
+        normalizedUpdates.binding_state = normalizeBindingState(updates.binding_state);
+      }
+      const updated: AgentRegistryRecord = {
+        ...current,
+        ...normalizedUpdates,
+        provider_type: normalizeProviderType(normalizedUpdates.provider_type ?? current.provider_type),
+        binding_state: normalizeBindingState(normalizedUpdates.binding_state ?? current.binding_state),
+        helm_managed: normalizedUpdates.helm_managed ?? current.helm_managed,
+        runtime_binding_id: normalizedUpdates.runtime_binding_id === undefined
+          ? current.runtime_binding_id
+          : normalizedUpdates.runtime_binding_id,
+        updated_at: now,
+      };
       agents.set(id, updated);
       return updated;
     },
@@ -163,9 +212,25 @@ describe('agent registry mutation routes', () => {
   it('lists registry agents with serialized capability cards', async () => {
     const res = await fetch(`${baseUrl}/api/agents/registry`);
     expect(res.status).toBe(200);
-    const json = await res.json() as { list: Array<{ id: string; avatarUrl?: string; capabilities?: { runtimeLabel?: string; capabilityLabels: string[] } }> };
+    const json = await res.json() as {
+      list: Array<{
+        id: string;
+        avatarUrl?: string;
+        runtime_binding_id: string | null;
+        provider_type: string;
+        helm_managed: boolean;
+        binding_state: string;
+        capabilities?: { runtimeLabel?: string; capabilityLabels: string[] };
+      }>;
+    };
     expect(json.list[0].id).toBe('book');
     expect(json.list[0].avatarUrl).toBe('/agent-avatars/book.png');
+    expect(json.list[0]).toMatchObject({
+      runtime_binding_id: null,
+      provider_type: 'unknown',
+      helm_managed: false,
+      binding_state: 'unknown',
+    });
     expect(json.list[0].capabilities?.runtimeLabel).toBe('Hermes · Remote · Active');
     expect(json.list[0].capabilities?.capabilityLabels).toEqual(['Docs']);
   });
@@ -174,12 +239,38 @@ describe('agent registry mutation routes', () => {
     const createRes = await fetch(`${baseUrl}/api/agents`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ slug: 'moltbook', name: 'Moltbook', emoji: '🧪', adapterType: 'openclaw', runtimeType: 'remote' }),
+      body: JSON.stringify({
+        slug: 'moltbook',
+        name: 'Moltbook',
+        emoji: '🧪',
+        adapterType: 'legacy-adapter-label',
+        runtimeType: 'remote',
+        runtimeBindingId: 'helm-runtime-moltbook',
+        providerType: 'custom',
+        helmManaged: true,
+        bindingState: 'bound',
+      }),
     });
     expect(createRes.status).toBe(201);
-    const created = await createRes.json() as { agent: { id: string; slug: string; status: string } };
+    const created = await createRes.json() as {
+      agent: {
+        id: string;
+        slug: string;
+        status: string;
+        runtime_binding_id: string;
+        provider_type: string;
+        helm_managed: boolean;
+        binding_state: string;
+      };
+    };
     expect(created.agent.slug).toBe('moltbook');
     expect(created.agent.status).toBe('active');
+    expect(created.agent).toMatchObject({
+      runtime_binding_id: 'helm-runtime-moltbook',
+      provider_type: 'custom',
+      helm_managed: true,
+      binding_state: 'bound',
+    });
 
     const grantRes = await fetch(`${baseUrl}/api/agents/moltbook/grants`, {
       method: 'POST',
@@ -194,11 +285,13 @@ describe('agent registry mutation routes', () => {
     const disableRes = await fetch(`${baseUrl}/api/agents/moltbook`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'disabled' }),
+      body: JSON.stringify({ status: 'disabled', bindingState: 'stale', providerType: 'bogus-provider' }),
     });
     expect(disableRes.status).toBe(200);
-    const disabled = await disableRes.json() as { agent: { status: string } };
+    const disabled = await disableRes.json() as { agent: { status: string; binding_state: string; provider_type: string } };
     expect(disabled.agent.status).toBe('disabled');
+    expect(disabled.agent.binding_state).toBe('stale');
+    expect(disabled.agent.provider_type).toBe('unknown');
 
     const deleteGrantRes = await fetch(`${baseUrl}/api/agents/moltbook/grants/tasks`, { method: 'DELETE' });
     expect(deleteGrantRes.status).toBe(200);

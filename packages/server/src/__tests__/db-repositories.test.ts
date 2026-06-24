@@ -2766,3 +2766,72 @@ describe('Strategic Repository (Roadmaps, Projects, History)', () => {
     expect(workspaceRepo.getTaskProjects(scopeB, taskA.id)).toEqual([]);
   });
 });
+
+describe('AgentRegistryRepository', () => {
+  beforeEach(() => freshDb());
+  afterEach(() => cleanupDb());
+
+  it('separates agent principal identity from provider-agnostic runtime binding state', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createAgentRegistryRepository();
+
+    const agent = repo.createAgent({
+      id: 'research-agent',
+      slug: 'research-agent',
+      name: 'Research Agent',
+      emoji: 'R',
+      adapter_type: 'legacy-adapter-label',
+      runtime_type: 'remote',
+      runtime_binding_id: 'helm-binding-research',
+      provider_type: 'custom',
+      helm_managed: true,
+      binding_state: 'bound',
+      metadata_json: JSON.stringify({ fixture: 'THE-71' }),
+    });
+
+    expect(agent).toMatchObject({
+      id: 'research-agent',
+      slug: 'research-agent',
+      runtime_binding_id: 'helm-binding-research',
+      provider_type: 'custom',
+      helm_managed: true,
+      binding_state: 'bound',
+    });
+    expect(agent.id).not.toBe(agent.runtime_binding_id);
+
+    const updated = repo.updateAgent(agent.id, {
+      runtime_binding_id: null,
+      provider_type: 'not-a-provider',
+      helm_managed: false,
+      binding_state: 'not-a-state',
+    });
+
+    expect(updated).toMatchObject({
+      runtime_binding_id: null,
+      provider_type: 'unknown',
+      helm_managed: false,
+      binding_state: 'unknown',
+    });
+  });
+
+  it('defaults legacy agents to unknown binding state without hardcoding a provider runtime', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createAgentRegistryRepository();
+
+    const agent = repo.createAgent({
+      id: 'legacy-agent',
+      slug: 'legacy-agent',
+      name: 'Legacy Agent',
+      emoji: 'L',
+      adapter_type: 'legacy',
+      runtime_type: 'cli',
+    });
+
+    expect(agent).toMatchObject({
+      runtime_binding_id: null,
+      provider_type: 'unknown',
+      helm_managed: false,
+      binding_state: 'unknown',
+    });
+  });
+});

@@ -440,6 +440,22 @@ export interface CreateTaskInput {
 }
 
 
+export const AGENT_RUNTIME_PROVIDER_TYPES = [
+  'local_process',
+  'remote_http',
+  'openai_compatible',
+  'anthropic_compatible',
+  'helm_runtime',
+  'custom',
+  'unknown',
+] as const;
+
+export type AgentRuntimeProviderType = (typeof AGENT_RUNTIME_PROVIDER_TYPES)[number];
+
+export const AGENT_RUNTIME_BINDING_STATES = ['bound', 'unbound', 'stale', 'unknown'] as const;
+
+export type AgentRuntimeBindingState = (typeof AGENT_RUNTIME_BINDING_STATES)[number];
+
 export interface AgentRegistryRecord {
   id: string;
   slug: string;
@@ -449,6 +465,10 @@ export interface AgentRegistryRecord {
   description: string | null;
   adapter_type: string | null;
   runtime_type: string | null;
+  runtime_binding_id: string | null;
+  provider_type: AgentRuntimeProviderType;
+  helm_managed: boolean;
+  binding_state: AgentRuntimeBindingState;
   status: string;
   instructions_path: string | null;
   metadata_json: string;
@@ -465,6 +485,10 @@ export interface CreateAgentRegistryInput {
   description?: string | null;
   adapter_type?: string | null;
   runtime_type?: string | null;
+  runtime_binding_id?: string | null;
+  provider_type?: AgentRuntimeProviderType | string | null;
+  helm_managed?: boolean;
+  binding_state?: AgentRuntimeBindingState | string | null;
   status?: string;
   instructions_path?: string | null;
   metadata_json?: string;
@@ -478,6 +502,10 @@ export interface UpdateAgentRegistryInput {
   description?: string | null;
   adapter_type?: string | null;
   runtime_type?: string | null;
+  runtime_binding_id?: string | null;
+  provider_type?: AgentRuntimeProviderType | string | null;
+  helm_managed?: boolean;
+  binding_state?: AgentRuntimeBindingState | string | null;
   status?: string;
   instructions_path?: string | null;
   metadata_json?: string;
@@ -3949,6 +3977,10 @@ function bootstrap(db: Database.Database): void {
       description TEXT,
       adapter_type TEXT,
       runtime_type TEXT,
+      runtime_binding_id TEXT,
+      provider_type TEXT NOT NULL DEFAULT 'unknown',
+      helm_managed INTEGER NOT NULL DEFAULT 0,
+      binding_state TEXT NOT NULL DEFAULT 'unknown',
       status TEXT NOT NULL DEFAULT 'active',
       instructions_path TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}',
@@ -4002,6 +4034,22 @@ function bootstrap(db: Database.Database): void {
 
   if (!hasColumn(db, 'tasks', 'brief')) {
     db.exec('ALTER TABLE tasks ADD COLUMN brief TEXT');
+  }
+
+  if (!hasColumn(db, 'entity_agents', 'runtime_binding_id')) {
+    db.exec('ALTER TABLE entity_agents ADD COLUMN runtime_binding_id TEXT');
+  }
+
+  if (!hasColumn(db, 'entity_agents', 'provider_type')) {
+    db.exec("ALTER TABLE entity_agents ADD COLUMN provider_type TEXT NOT NULL DEFAULT 'unknown'");
+  }
+
+  if (!hasColumn(db, 'entity_agents', 'helm_managed')) {
+    db.exec('ALTER TABLE entity_agents ADD COLUMN helm_managed INTEGER NOT NULL DEFAULT 0');
+  }
+
+  if (!hasColumn(db, 'entity_agents', 'binding_state')) {
+    db.exec("ALTER TABLE entity_agents ADD COLUMN binding_state TEXT NOT NULL DEFAULT 'unknown'");
   }
 
   if (!hasColumn(db, 'tasks', 'origin_channel')) {
@@ -6203,6 +6251,22 @@ function mapTaskHistoryRow(row: Record<string, unknown>): TaskHistoryRecord {
 }
 
 
+function normalizeAgentRuntimeProviderType(value: unknown): AgentRuntimeProviderType {
+  if (typeof value !== 'string') return 'unknown';
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return (AGENT_RUNTIME_PROVIDER_TYPES as readonly string[]).includes(normalized)
+    ? normalized as AgentRuntimeProviderType
+    : 'unknown';
+}
+
+function normalizeAgentRuntimeBindingState(value: unknown): AgentRuntimeBindingState {
+  if (typeof value !== 'string') return 'unknown';
+  const normalized = value.trim().toLowerCase();
+  return (AGENT_RUNTIME_BINDING_STATES as readonly string[]).includes(normalized)
+    ? normalized as AgentRuntimeBindingState
+    : 'unknown';
+}
+
 function mapAgentRegistryRow(row: Record<string, unknown>): AgentRegistryRecord {
   return {
     id: String(row.id ?? ''),
@@ -6213,6 +6277,12 @@ function mapAgentRegistryRow(row: Record<string, unknown>): AgentRegistryRecord 
     description: typeof row.description === 'string' ? row.description : null,
     adapter_type: typeof row.adapter_type === 'string' ? row.adapter_type : null,
     runtime_type: typeof row.runtime_type === 'string' ? row.runtime_type : null,
+    runtime_binding_id: typeof row.runtime_binding_id === 'string' && row.runtime_binding_id.trim()
+      ? row.runtime_binding_id.trim()
+      : null,
+    provider_type: normalizeAgentRuntimeProviderType(row.provider_type),
+    helm_managed: Number(row.helm_managed ?? 0) === 1,
+    binding_state: normalizeAgentRuntimeBindingState(row.binding_state),
     status: String(row.status ?? 'active'),
     instructions_path: typeof row.instructions_path === 'string' ? row.instructions_path : null,
     metadata_json: typeof row.metadata_json === 'string' ? row.metadata_json : '{}',
@@ -6271,8 +6341,8 @@ export function createAgentRegistryRepository(): AgentRegistryRepository {
   const deleteAgentGrantsStmt = db.prepare('DELETE FROM entity_agent_module_grants WHERE agent_id = ?');
   const createStmt = db.prepare(`
     INSERT INTO entity_agents (
-      id, slug, name, emoji, avatar_url, description, adapter_type, runtime_type, status, instructions_path, metadata_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      id, slug, name, emoji, avatar_url, description, adapter_type, runtime_type, runtime_binding_id, provider_type, helm_managed, binding_state, status, instructions_path, metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   return {
     listAgents: () => (listStmt.all() as Array<Record<string, unknown>>).map(mapAgentRegistryRow),
@@ -6295,6 +6365,10 @@ export function createAgentRegistryRepository(): AgentRegistryRepository {
         input.description?.trim() || null,
         input.adapter_type?.trim() || null,
         input.runtime_type?.trim() || null,
+        input.runtime_binding_id?.trim() || null,
+        normalizeAgentRuntimeProviderType(input.provider_type),
+        input.helm_managed ? 1 : 0,
+        normalizeAgentRuntimeBindingState(input.binding_state),
         input.status?.trim() || 'active',
         input.instructions_path?.trim() || null,
         input.metadata_json?.trim() || '{}'
@@ -6313,6 +6387,10 @@ export function createAgentRegistryRepository(): AgentRegistryRepository {
       if (updates.description !== undefined) { fields.push('description = ?'); values.push(typeof updates.description === 'string' ? updates.description.trim() || null : null); }
       if (updates.adapter_type !== undefined) { fields.push('adapter_type = ?'); values.push(typeof updates.adapter_type === 'string' ? updates.adapter_type.trim() || null : null); }
       if (updates.runtime_type !== undefined) { fields.push('runtime_type = ?'); values.push(typeof updates.runtime_type === 'string' ? updates.runtime_type.trim() || null : null); }
+      if (updates.runtime_binding_id !== undefined) { fields.push('runtime_binding_id = ?'); values.push(typeof updates.runtime_binding_id === 'string' ? updates.runtime_binding_id.trim() || null : null); }
+      if (updates.provider_type !== undefined) { fields.push('provider_type = ?'); values.push(normalizeAgentRuntimeProviderType(updates.provider_type)); }
+      if (updates.helm_managed !== undefined) { fields.push('helm_managed = ?'); values.push(updates.helm_managed ? 1 : 0); }
+      if (updates.binding_state !== undefined) { fields.push('binding_state = ?'); values.push(normalizeAgentRuntimeBindingState(updates.binding_state)); }
       if (typeof updates.status === 'string') { fields.push('status = ?'); values.push(updates.status.trim() || 'active'); }
       if (typeof updates.instructions_path === 'string') { fields.push('instructions_path = ?'); values.push(updates.instructions_path.trim() || null); }
       if (typeof updates.metadata_json === 'string') { fields.push('metadata_json = ?'); values.push(updates.metadata_json.trim() || '{}'); }
