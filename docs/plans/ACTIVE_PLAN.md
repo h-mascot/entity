@@ -2,7 +2,7 @@
 
 Issue: THE-75
 Branch: THE-75-document-runtime-admin-boundary-and-provider-agnostic-behavior
-Status: IN PROGRESS
+Status: DONE
 
 ## Scope
 
@@ -33,7 +33,7 @@ Add boundary docs and focused tests proving Entity remains the work plane, Helm 
   - Files: `output/entity-phase-2/test-gate/THE-75.*`, `output/entity-phase-2/book-review/THE-75*`
   - Verify: `bash scripts/proof/entity-phase-2-smoke.sh && npm run build && cd packages/server && npm run build && npx vitest run`
   - Verify: `project-test-gate request/run/book-review/verify THE-75`
-- [ ] Step 6: Comment Linear, mark THE-75 Done if proof supports it, update run-state to THE-76, and commit scoped work.
+- [x] Step 6: Comment Linear, mark THE-75 Done if proof supports it, update run-state to THE-76, and commit scoped work.
   - Files: `.cursor/run-state/entity-phase-2.json`
   - Verify: `git status --short --branch`
 
@@ -45,6 +45,7 @@ Add boundary docs and focused tests proving Entity remains the work plane, Helm 
 | 2026-06-24T05:58Z | Step 2 | In progress | Existing context docs and search/registry tests located; no broad search rewrite planned. |
 | 2026-06-24T05:59Z | Steps 2-4 | Done | Boundary ADR added; provider-agnostic registry and Helm-status search boundary tests pass. |
 | 2026-06-24T06:03Z | Step 5 | Done | Full proof passed with Node 22 after one transient server-suite rerun; CLI Tester run PASS, packet-mode Book review locally approved, verify PASS with `nextChildBlocked=false`; GitNexus risk low. |
+| 2026-06-24T06:04Z | Step 6 | Done | Linear proof comment posted, THE-75 marked Done, implementation commit `d9f211e`, run-state advanced to THE-76. |
 
 ## Files Touched
 
@@ -53,6 +54,7 @@ Add boundary docs and focused tests proving Entity remains the work plane, Helm 
 - `docs/adr/2026-06-24-runtime-admin-boundary-and-provider-agnostic-agents.md` - created - runtime/admin boundary ADR
 - `packages/server/src/__tests__/agent-registry-routes.test.ts` - modified - provider-agnostic runtime-backed agent test
 - `packages/server/src/fs/routes-search.test.ts` - modified - Helm status reference search boundary test
+- `.cursor/run-state/entity-phase-2.json` - modified - advanced local pointer to THE-76 (not committed)
 
 ## Resume Instructions
 
@@ -63,8 +65,8 @@ Add boundary docs and focused tests proving Entity remains the work plane, Helm 
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Focused tests pass
-- [ ] Full proof commands pass
-- [ ] CLI Tester request/run/book-review/verify completed
-- [ ] Linear proof comment posted and THE-75 marked Done if supported
+- [x] All steps complete
+- [x] Focused tests pass
+- [x] Full proof commands pass
+- [x] CLI Tester request/run/book-review/verify completed
+- [x] Linear proof comment posted and THE-75 marked Done if supported
