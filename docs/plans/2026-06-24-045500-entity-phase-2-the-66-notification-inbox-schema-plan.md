@@ -4,7 +4,7 @@ Entity Phase 2 THE-66: implement canonical notification and inbox schema.
 **MC Task:** THE-66
 **Created:** 2026-06-24
 **Agent:** Cursor
-**Status:** IN PROGRESS
+**Status:** DONE
 
 ## Context
 Live Linear issue THE-66 is child issue THE-15.1 under THE-15 inbox and notifications. Scope is canonical Entity notification/inbox records for review requests, human gates, nudges, escalations, reassignment, receipt failures, connector degradation, and policy warnings, with links to Entity events/objects/refs and inbox state separated from external delivery status.
@@ -26,10 +26,10 @@ Live Linear issue THE-66 is child issue THE-15.1 under THE-15 inbox and notifica
 - [x] Step 3: Add fixture samples for all PRD notification types.
   - **Files:** colocated server/db tests or fixtures
   - **Verify:** tests cover review request, human gate, nudge, escalation, reassignment, receipt failure, connector degradation, and policy warning samples
-- [ ] Step 4: Run required proof commands, GitNexus detect-changes, and CLI Tester request/run/book-review/verify.
+- [x] Step 4: Run required proof commands, GitNexus detect-changes, and CLI Tester request/run/book-review/verify.
   - **Files:** `output/entity-phase-2/test-gate/THE-66.*`, `output/entity-phase-2/book-review/THE-66*`
   - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`; `npm run build`; `cd packages/server && npm run build && npx vitest run`; CLI Tester verify PASS
-- [ ] Step 5: Comment Linear, mark THE-66 Done, update run-state to THE-67, and commit scoped changes.
+- [x] Step 5: Comment Linear, mark THE-66 Done, update run-state to THE-67, and commit scoped changes.
   - **Files:** `.cursor/run-state/entity-phase-2.json` local state only, source/test/plan for commit as appropriate
   - **Verify:** `git status --short`
 
@@ -38,6 +38,7 @@ Live Linear issue THE-66 is child issue THE-15.1 under THE-15 inbox and notifica
 |------|------|--------|-------|
 | 03:55Z | Setup | done | Read live child issue; branch created after THE-65 completion. |
 | 03:57Z | Implementation | done | Added canonical notification repository schema, delivery attempts, fixture samples, and repository tests for all THE-66 notification types. |
+| 04:02Z | Proof/close | done | Full proof, CLI Tester request/run/book-review/verify passed; Book packet locally approved under hard rule 22; Linear proof comment posted and status moved to Done; run-state advanced to THE-67. |
 
 ## Files Touched
 - `docs/plans/2026-06-24-045500-entity-phase-2-the-66-notification-inbox-schema-plan.md` - created - THE-66 execution plan.
@@ -53,8 +54,8 @@ Live Linear issue THE-66 is child issue THE-15.1 under THE-15 inbox and notifica
 5. Keep THE-66 scoped to canonical notification/inbox schema, repository helpers, fixtures, and tests.
 
 ## Done
-- [ ] All steps complete
-- [ ] Tests/build pass
-- [ ] CLI Tester request/run/book-review/verify complete
-- [ ] Linear THE-66 proof comment added and status moved to Done
-- [ ] Run-state advanced to THE-67
+- [x] All steps complete
+- [x] Tests/build pass
+- [x] CLI Tester request/run/book-review/verify complete
+- [x] Linear THE-66 proof comment added and status moved to Done
+- [x] Run-state advanced to THE-67
