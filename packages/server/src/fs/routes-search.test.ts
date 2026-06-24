@@ -231,6 +231,146 @@ describe('file-source search routes', () => {
     });
   });
 
+  it('suppresses stale indexed previews when source policy disables search preview', async () => {
+    const restrictedSource = source({
+      capabilities: JSON.stringify({
+        entity_visibility_policy: {
+          restricted: true,
+          allow_preview: false,
+        },
+      }),
+    });
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [restrictedSource]),
+        getSource: vi.fn((id: string) => (id === restrictedSource.id ? restrictedSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => [
+          indexRecord({
+            title: 'Customer risk compensation notes',
+            preview: 'Do not leak stale indexed compensation snippet',
+          }),
+        ]),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=compensation&indexState=indexed`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0]).toMatchObject({
+        title: 'Restricted file',
+        preview: null,
+        snippet: null,
+        permissionState: 'restricted',
+        permission_state: 'restricted',
+        entity_permission_state: 'restricted',
+        restricted: true,
+        placeholder: true,
+        permission_reasons: ['source permission policy restricts search preview'],
+      });
+      expect(JSON.stringify(body)).not.toContain('Do not leak stale indexed compensation snippet');
+      expect(JSON.stringify(body)).not.toContain('Customer risk compensation notes');
+    });
+  });
+
+  it('suppresses restricted indexed previews before returning file search results', async () => {
+    const workspaceSource = source();
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [workspaceSource]),
+        getSource: vi.fn((id: string) => (id === workspaceSource.id ? workspaceSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => [indexRecord({
+          title: 'Restricted indexed account memo',
+          preview: 'Do not leak indexed customer preview',
+          sensitivity: 'customer',
+        })]),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=account&indexState=indexed`, {
+        headers: { 'x-entity-org-id': 'default-org' },
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.results[0]).toMatchObject({
+        id: 'workspace:plans/renewal.md',
+        title: 'Restricted file',
+        preview: null,
+        snippet: null,
+        permission_state: 'restricted',
+        entity_permission_state: 'restricted',
+        restricted: true,
+        placeholder: true,
+      });
+      expect(JSON.stringify(body)).not.toContain('Restricted indexed account memo');
+      expect(JSON.stringify(body)).not.toContain('Do not leak indexed customer preview');
+    });
+  });
+
+  it('suppresses restricted fallback previews before returning source search results', async () => {
+    const workspaceSource = source();
+    const adapter: FileSourceAdapter = {
+      key: 'fake',
+      validate: vi.fn(async () => undefined),
+      capabilities: vi.fn(() => ({ read: true, write: false, rename: false, delete: false, list: true, search: false })),
+      list: vi.fn(async () => [
+        {
+          sourceId: workspaceSource.id,
+          path: 'restricted/customer-note.md',
+          name: 'Restricted customer note',
+          isDirectory: false,
+          kind: 'file' as const,
+          updatedAt: '2026-06-24T02:00:00.000Z',
+          sensitivity: 'customer',
+        },
+      ]),
+      read: vi.fn(async () => ({ content: '', contentType: 'text/markdown' })),
+      write: vi.fn(async () => ({})),
+      mkdir: vi.fn(async () => undefined),
+    };
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [workspaceSource]),
+        getSource: vi.fn((id: string) => (id === workspaceSource.id ? workspaceSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => []),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+      createAdapter: vi.fn(() => adapter),
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=customer&indexState=fallback`, {
+        headers: { 'x-entity-org-id': 'default-org' },
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.results[0]).toMatchObject({
+        id: 'workspace:restricted/customer-note.md',
+        title: 'Restricted file',
+        preview: null,
+        snippet: null,
+        permission_state: 'restricted',
+        entity_permission_state: 'restricted',
+        restricted: true,
+        placeholder: true,
+      });
+      expect(JSON.stringify(body)).not.toContain('Restricted customer note');
+    });
+  });
+
   it('rejects invalid connector/index filters before searching', async () => {
     const deps: SearchRouteDeps = {
       sourceRepo: { listSources: vi.fn(() => []), getSource: vi.fn(() => undefined) },

@@ -6,19 +6,26 @@ interface FileItem {
   path: string;
   sourceId?: string;
   sourceName?: string;
+  restricted?: boolean;
 }
 
 interface LegacySearchPayload {
   results?: Array<{ name: string; path: string }>;
 }
 
+interface UnifiedSearchResultPayload {
+  title: string | null;
+  path: string;
+  sourceId: string;
+  sourceName: string;
+  restricted?: boolean;
+  placeholder?: boolean;
+  permission_state?: string;
+  entity_permission_state?: string;
+}
+
 interface UnifiedSearchPayload {
-  results?: Array<{
-    title: string;
-    path: string;
-    sourceId: string;
-    sourceName: string;
-  }>;
+  results?: UnifiedSearchResultPayload[];
 }
 
 interface QuickSwitcherProps {
@@ -62,10 +69,11 @@ export default function QuickSwitcher({
             fallbackError: 'Failed to search files.',
           });
           const mapped = (payload.results || []).map((entry) => ({
-            name: entry.title,
+            name: isRestrictedSearchEntry(entry) ? 'Restricted file' : entry.title ?? entry.path,
             path: entry.path,
             sourceId: entry.sourceId,
             sourceName: entry.sourceName,
+            restricted: isRestrictedSearchEntry(entry),
           }));
           setResults(mapped.slice(0, 10));
           setSelectedIndex(0);
@@ -98,8 +106,10 @@ export default function QuickSwitcher({
       setSelectedIndex(i => Math.max(i - 1, 0));
     } else if (e.key === 'Enter' && results[selectedIndex]) {
       e.preventDefault();
-      onSelect(results[selectedIndex].path, results[selectedIndex].sourceId);
-      onClose();
+      if (!results[selectedIndex].restricted) {
+        onSelect(results[selectedIndex].path, results[selectedIndex].sourceId);
+        onClose();
+      }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
@@ -127,16 +137,25 @@ export default function QuickSwitcher({
             results.map((file, i) => (
               <button
                 key={`${file.sourceId ?? 'local'}:${file.path}`}
-                onClick={() => { onSelect(file.path, file.sourceId); onClose(); }}
+                onClick={() => {
+                  if (!file.restricted) {
+                    onSelect(file.path, file.sourceId);
+                    onClose();
+                  }
+                }}
+                disabled={file.restricted}
+                data-testid={file.restricted ? 'quick-switcher-restricted-result' : undefined}
                 className={`flex w-full items-center gap-3 border-b border-[var(--border-primary)] px-4 py-3 text-left transition-colors last:border-b-0 ${
                   i === selectedIndex ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
-                }`}
+                } ${file.restricted ? 'cursor-not-allowed opacity-80' : ''}`}
               >
-                <span>📄</span>
+                <span>{file.restricted ? '!' : '📄'}</span>
                 <div className="flex-1 min-w-0">
                   <div className="font-medium truncate">{file.name}</div>
                   <div className="text-xs text-[var(--text-muted)] truncate">
-                    {file.sourceName ? `${file.sourceName} • ` : ''}{file.path}
+                    {file.restricted
+                      ? `${file.sourceName ? `${file.sourceName} • ` : ''}Restricted by Entity permissions. Snippets and previews are hidden.`
+                      : `${file.sourceName ? `${file.sourceName} • ` : ''}${file.path}`}
                   </div>
                 </div>
               </button>
@@ -155,4 +174,11 @@ export default function QuickSwitcher({
       </div>
     </div>
   );
+}
+
+function isRestrictedSearchEntry(entry: UnifiedSearchResultPayload): boolean {
+  return entry.restricted === true ||
+    entry.placeholder === true ||
+    entry.permission_state === 'restricted' ||
+    entry.entity_permission_state === 'restricted';
 }

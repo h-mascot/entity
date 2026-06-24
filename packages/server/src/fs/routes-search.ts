@@ -15,6 +15,7 @@ import { createFileSourceAdapter } from './adapters/registry';
 import type { FileSourceAdapter } from './adapters/types';
 import { assertSourceEnabled, emitFsAudit } from './security';
 import { recordFsOperation } from './metrics';
+import { permissionSafeRecord, readRequestOrg, readRequestPrincipal, type RequestOrgBinding } from '../request-permissions';
 
 const MAX_FALLBACK_DEPTH = 5;
 const MAX_FALLBACK_DIRECTORIES_PER_SOURCE = 50;
@@ -86,6 +87,40 @@ function parseTags(value: string): string[] {
   }
 }
 
+function parseRecord(value: string | null | undefined): Record<string, unknown> {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function sourcePreviewRestricted(source: FileSourceRecord): { restricted: boolean; reasons: string[] } {
+  const capabilities = parseRecord(source.capabilities);
+  const policy = capabilities.entity_visibility_policy && typeof capabilities.entity_visibility_policy === 'object' && !Array.isArray(capabilities.entity_visibility_policy)
+    ? capabilities.entity_visibility_policy as Record<string, unknown>
+    : capabilities;
+  const restricted =
+    policy.restricted === true ||
+    policy.allow_preview === false ||
+    policy.permission_state === 'restricted' ||
+    capabilities.permission_state === 'restricted';
+
+  if (!restricted) {
+    return { restricted: false, reasons: [] };
+  }
+
+  return {
+    restricted: true,
+    reasons: ['source permission policy restricts search preview'],
+  };
+}
+
 function syncRunEnvelope(run: FileSyncRunRecord | undefined) {
   return run
     ? {
@@ -109,6 +144,11 @@ function connectorState(source: FileSourceRecord, latestRun: FileSyncRunRecord |
   };
 }
 
+function requestSearchBinding(req: Request): RequestOrgBinding {
+  const orgId = readRequestOrg(req) ?? 'default-org';
+  return { orgId, principal: readRequestPrincipal(req, orgId) };
+}
+
 function baseEnvelope(input: {
   source: FileSourceRecord;
   latestRun: FileSyncRunRecord | undefined;
@@ -126,10 +166,16 @@ function baseEnvelope(input: {
 }) {
   const connector = connectorState(input.source, input.latestRun);
   const degraded = input.source.health !== 'ok' || input.latestRun?.status === 'error';
+  const previewPolicy = sourcePreviewRestricted(input.source);
+  const permissionState = previewPolicy.restricted ? 'restricted' : 'visible';
+  const safeTitle = previewPolicy.restricted ? 'Restricted file' : input.title;
+  const safePreview = previewPolicy.restricted ? null : input.preview;
+
   return {
     objectType: 'file',
     object_type: 'file',
-    snippet: input.preview,
+    title: safeTitle,
+    snippet: safePreview,
     source: {
       id: input.source.id,
       name: input.source.display_name,
@@ -161,9 +207,12 @@ function baseEnvelope(input: {
       contentHash: input.contentHash,
       tags: input.tags ?? [],
     },
-    permissionState: 'visible',
-    permission_state: 'visible',
-    entity_permission_state: 'visible',
+    permissionState,
+    permission_state: permissionState,
+    entity_permission_state: permissionState,
+    restricted: previewPolicy.restricted,
+    placeholder: previewPolicy.restricted,
+    permission_reasons: previewPolicy.reasons,
     connectorState: connector,
     indexState: {
       indexed: input.indexed,
@@ -180,13 +229,12 @@ function indexedResultEnvelope(entry: FileIndexRecord, source: FileSourceRecord,
     sourceId: entry.source_id,
     sourceName: source.display_name,
     path: entry.path,
-    title: entry.title,
     type: entry.type,
     agent: entry.agent,
     origin: entry.origin ?? 'unknown',
     isRecurring: entry.is_recurring,
     recurringPattern: entry.recurring_pattern,
-    preview: entry.preview,
+    preview: sourcePreviewRestricted(source).restricted ? null : entry.preview,
     updatedAt: entry.updated_at,
     indexedAt: entry.indexed_at,
     ...baseEnvelope({
@@ -207,6 +255,78 @@ function indexedResultEnvelope(entry: FileIndexRecord, source: FileSourceRecord,
   };
 }
 
+function permissionSafeSearchResult<T extends Record<string, unknown>>(binding: RequestOrgBinding, object: {
+  object_id: string;
+  org_id?: string | null;
+  title?: string | null;
+  snippet?: string | null;
+  sensitivity?: string | null;
+  acl_json?: string | null;
+  entity_visibility_policy_json?: string | null;
+}, record: T): T & { permission?: unknown; restricted?: boolean; placeholder?: boolean } {
+  if (
+    record.restricted === true ||
+    record.placeholder === true ||
+    record.permissionState === 'restricted' ||
+    record.permission_state === 'restricted' ||
+    record.entity_permission_state === 'restricted'
+  ) {
+    return {
+      ...record,
+      title: 'Restricted file',
+      preview: null,
+      snippet: null,
+      permissionState: 'restricted',
+      permission_state: 'restricted',
+      entity_permission_state: 'restricted',
+      restricted: true,
+      placeholder: true,
+      permission_reasons: Array.isArray(record.permission_reasons)
+        ? record.permission_reasons
+        : ['source permission policy restricts search preview'],
+      permission: {
+        allowed: false,
+        action: 'search',
+        object_type: 'search_result',
+        object_id: object.object_id,
+        principal_id: binding.principal.principal_id,
+        reasons: Array.isArray(record.permission_reasons)
+          ? record.permission_reasons
+          : ['source permission policy restricts search preview'],
+      },
+    };
+  }
+
+  const envelope = permissionSafeRecord(binding, {
+    object_type: 'search_result',
+    object_id: object.object_id,
+    org_id: object.org_id ?? binding.orgId,
+    title: object.title ?? null,
+    snippet: object.snippet ?? null,
+    content: object.snippet ?? null,
+    sensitivity: object.sensitivity ?? null,
+    acl_json: object.acl_json ?? null,
+    entity_visibility_policy_json: object.entity_visibility_policy_json ?? null,
+  }, record, 'search');
+
+  if (envelope.permission.allowed) {
+    return { ...envelope.object, permission: envelope.permission };
+  }
+
+  return {
+    ...record,
+    title: 'Restricted file',
+    preview: null,
+    snippet: null,
+    permission_state: envelope.object.permission_state,
+    entity_permission_state: envelope.object.entity_permission_state,
+    restricted: true,
+    placeholder: true,
+    permission_reasons: envelope.object.permission_reasons,
+    permission: envelope.permission,
+  };
+}
+
 function fallbackResultEnvelope(input: {
   source: FileSourceRecord;
   latestRun: FileSyncRunRecord | undefined;
@@ -219,7 +339,6 @@ function fallbackResultEnvelope(input: {
     sourceId: input.source.id,
     sourceName: input.source.display_name,
     path: input.path,
-    title: input.title,
     type: 'one-off',
     agent: 'other',
     origin: 'unknown',
@@ -262,6 +381,7 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
     const limit = toLimit(req.query.limit, 50);
     const connectorHealth = normalizeConnectorHealth(req.query.connectorHealth ?? req.query.health);
     const indexedFilter = normalizeIndexedFilter(req.query.indexState ?? req.query.indexed);
+    const binding = requestSearchBinding(req);
 
     if (connectorHealth === null) {
       return res.status(400).json({ error: 'connectorHealth must be ok, degraded, or error' });
@@ -312,7 +432,16 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
             if (!source) {
               return null;
             }
-            return indexedResultEnvelope(entry, source, latestRunFor(entry.source_id));
+            const record = indexedResultEnvelope(entry, source, latestRunFor(entry.source_id));
+            return permissionSafeSearchResult(binding, {
+              object_id: entry.id,
+              org_id: entry.org_id ?? binding.orgId,
+              title: entry.title,
+              snippet: entry.preview,
+              sensitivity: entry.sensitivity,
+              acl_json: entry.acl_json,
+              entity_visibility_policy_json: entry.entity_visibility_policy_json,
+            }, record);
           }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
         });
       }
@@ -460,13 +589,28 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
                 continue;
               }
 
-              results.push(fallbackResultEnvelope({
+              const nodeWithPolicy = node as typeof node & {
+                orgId?: string | null;
+                sensitivity?: string | null;
+                aclJson?: string | null;
+                entityVisibilityPolicyJson?: string | null;
+              };
+              const record = fallbackResultEnvelope({
                 source,
                 latestRun,
                 path: node.path,
                 title: node.name,
                 updatedAt: node.updatedAt ?? null,
-              }));
+              });
+              results.push(permissionSafeSearchResult(binding, {
+                object_id: `${source.id}:${node.path}`,
+                org_id: nodeWithPolicy.orgId ?? binding.orgId,
+                title: node.name,
+                snippet: null,
+                sensitivity: nodeWithPolicy.sensitivity ?? null,
+                acl_json: nodeWithPolicy.aclJson ?? null,
+                entity_visibility_policy_json: nodeWithPolicy.entityVisibilityPolicyJson ?? null,
+              }, record));
             }
           }
         } catch (err) {

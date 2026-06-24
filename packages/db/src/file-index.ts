@@ -18,6 +18,10 @@ export interface FileIndexRecord {
   indexed_at: string;
   preview: string | null;
   content_hash: string | null;
+  org_id?: string | null;
+  sensitivity?: string | null;
+  acl_json?: string | null;
+  entity_visibility_policy_json?: string | null;
 }
 
 export interface UpsertFileIndexInput {
@@ -35,6 +39,10 @@ export interface UpsertFileIndexInput {
   indexed_at?: string;
   preview?: string | null;
   content_hash?: string | null;
+  org_id?: string | null;
+  sensitivity?: string | null;
+  acl_json?: string | null;
+  entity_visibility_policy_json?: string | null;
 }
 
 export interface FileIndexSearchFilters {
@@ -92,7 +100,11 @@ function ensureSchema(db: Database.Database): void {
       updated_at TEXT,
       indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       preview TEXT,
-      content_hash TEXT
+      content_hash TEXT,
+      org_id TEXT,
+      sensitivity TEXT,
+      acl_json TEXT,
+      entity_visibility_policy_json TEXT
     );
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_file_index_source_path ON file_index(source_id, path);
@@ -124,6 +136,19 @@ function ensureSchema(db: Database.Database): void {
   }
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_file_index_origin ON file_index(origin)`);
+
+  for (const column of [
+    'org_id TEXT',
+    'sensitivity TEXT',
+    'acl_json TEXT',
+    'entity_visibility_policy_json TEXT',
+  ]) {
+    try {
+      db.exec(`ALTER TABLE file_index ADD COLUMN ${column}`);
+    } catch {
+      // SQLite does not support IF NOT EXISTS for columns.
+    }
+  }
 }
 
 function toIso(value: string | null | undefined): string {
@@ -172,6 +197,10 @@ function mapIndexRow(row: Record<string, unknown>): FileIndexRecord {
     indexed_at: toIso(String(row.indexed_at ?? '')),
     preview: row.preview === null ? null : String(row.preview ?? ''),
     content_hash: row.content_hash === null ? null : String(row.content_hash ?? ''),
+    org_id: row.org_id === null || typeof row.org_id === 'undefined' ? null : String(row.org_id),
+    sensitivity: row.sensitivity === null || typeof row.sensitivity === 'undefined' ? null : String(row.sensitivity),
+    acl_json: row.acl_json === null || typeof row.acl_json === 'undefined' ? null : String(row.acl_json),
+    entity_visibility_policy_json: row.entity_visibility_policy_json === null || typeof row.entity_visibility_policy_json === 'undefined' ? null : String(row.entity_visibility_policy_json),
   };
 }
 
@@ -205,8 +234,8 @@ export function createFileIndexRepository(): FileIndexRepository {
 
   const upsertStmt = db.prepare(`
     INSERT INTO file_index (
-      id, source_id, path, title, type, agent, origin, is_recurring, recurring_pattern, tags, updated_at, indexed_at, preview, content_hash
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, source_id, path, title, type, agent, origin, is_recurring, recurring_pattern, tags, updated_at, indexed_at, preview, content_hash, org_id, sensitivity, acl_json, entity_visibility_policy_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(source_id, path) DO UPDATE SET
       title = excluded.title,
       type = excluded.type,
@@ -218,7 +247,11 @@ export function createFileIndexRepository(): FileIndexRepository {
       updated_at = excluded.updated_at,
       indexed_at = excluded.indexed_at,
       preview = excluded.preview,
-      content_hash = excluded.content_hash
+      content_hash = excluded.content_hash,
+      org_id = excluded.org_id,
+      sensitivity = excluded.sensitivity,
+      acl_json = excluded.acl_json,
+      entity_visibility_policy_json = excluded.entity_visibility_policy_json
   `);
 
   const startSyncRunStmt = db.prepare(
@@ -247,7 +280,11 @@ export function createFileIndexRepository(): FileIndexRepository {
         input.updated_at ?? null,
         input.indexed_at ?? new Date().toISOString(),
         input.preview ?? null,
-        input.content_hash ?? null
+        input.content_hash ?? null,
+        input.org_id ?? null,
+        input.sensitivity ?? null,
+        input.acl_json ?? null,
+        input.entity_visibility_policy_json ?? null
       );
 
       const row = getRecordStmt.get(input.source_id, input.path) as Record<string, unknown> | undefined;

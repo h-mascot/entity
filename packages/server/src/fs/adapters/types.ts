@@ -19,6 +19,10 @@ export interface SourceNode {
   kind?: SourcePathKind;
   size?: number;
   updatedAt?: string;
+  orgId?: string | null;
+  sensitivity?: string | null;
+  aclJson?: string | null;
+  entityVisibilityPolicyJson?: string | null;
 }
 
 
@@ -29,6 +33,10 @@ export interface SourcePathMetadata {
   kind: SourcePathKind;
   size?: number;
   updatedAt?: string;
+  orgId?: string | null;
+  sensitivity?: string | null;
+  aclJson?: string | null;
+  entityVisibilityPolicyJson?: string | null;
 }
 
 export interface SourceFileReadResult {

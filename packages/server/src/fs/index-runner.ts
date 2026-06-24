@@ -128,6 +128,10 @@ function metadataFromNode(node: SourceNode): SourcePathMetadata {
     kind: node.isDirectory ? 'directory' : 'file',
     size: node.size,
     updatedAt: node.updatedAt,
+    orgId: node.orgId,
+    sensitivity: node.sensitivity,
+    aclJson: node.aclJson,
+    entityVisibilityPolicyJson: node.entityVisibilityPolicyJson,
   };
 }
 
@@ -393,6 +397,10 @@ export class FileIndexRunner {
               indexed_at: new Date().toISOString(),
               preview: file.content.slice(0, 280),
               content_hash: classification.contentHash,
+              org_id: metadata.orgId ?? null,
+              sensitivity: metadata.sensitivity ?? null,
+              acl_json: metadata.aclJson ?? null,
+              entity_visibility_policy_json: metadata.entityVisibilityPolicyJson ?? null,
             });
 
             filesIndexed += 1;
