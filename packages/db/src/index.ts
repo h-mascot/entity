@@ -102,9 +102,12 @@ export type PolicyReasonDecision =
   | 'reviewer_routing_problem'
   | 'approver_target'
   | 'taskmaster_drivable'
+  | 'taskmaster_high_risk_exclusion'
   | 'stall_threshold'
   | 'auto_reassignment_threshold'
-  | 'notification_route';
+  | 'notification_route'
+  | 'escalation_eligibility'
+  | 'reassignment_eligibility';
 
 export interface PolicyReasonChainEntry {
   source: PolicyReasonSource;
@@ -130,6 +133,18 @@ export interface ReviewerAssignmentResult {
   skipped_candidates: ReviewerSkippedCandidate[];
 }
 
+export interface TaskMasterRoutingPolicyProjection {
+  taskmaster_drivable: boolean;
+  stall_threshold_hours: number | null;
+  notification_routes: string[];
+  escalation_eligible: boolean;
+  auto_reassign_eligible: boolean;
+  auto_reassign_after_hours: number | null;
+  high_risk_excluded: boolean;
+  high_risk_exclusion_reasons: string[];
+  reason_chain: PolicyReasonChainEntry[];
+}
+
 export interface TaskPolicyResolution {
   review_required: boolean;
   human_gate_required: boolean;
@@ -140,6 +155,7 @@ export interface TaskPolicyResolution {
   stall_threshold_hours: number | null;
   auto_reassign_after_hours: number | null;
   notification_routes: string[];
+  routing_policy_projection: TaskMasterRoutingPolicyProjection;
   reason_chain: PolicyReasonChainEntry[];
 }
 
@@ -1804,6 +1820,7 @@ export function buildTaskPolicyInputEnvelope(
     | 'assignee'
     | 'worktype'
     | 'column'
+    | 'taskmaster_drivable'
     | 'risk_level'
     | 'agent_trust_level'
     | 'policy_inputs_json'
@@ -1823,6 +1840,7 @@ export function buildTaskPolicyInputEnvelope(
     owner_principal_id: task.owner_principal_id ?? null,
     assignee_principal_id: task.assignee ?? null,
     executor_principal_id: task.executor_principal_id ?? null,
+    ...(task.taskmaster_drivable ? { taskmaster_drivable: true } : {}),
     ...(storedLayers.task ?? {}),
   };
   return {
@@ -2077,6 +2095,86 @@ function resolveReviewerAssignment(
   };
 }
 
+function buildTaskMasterRoutingProjection(input: {
+  taskmasterDrivable: boolean;
+  stallThresholdHours: number | null;
+  autoReassignAfterHours: number | null;
+  notificationRoutes: string[];
+  humanGateRequired: boolean;
+  riskLevel: PolicyRiskLevel;
+  externalSideEffects: ExternalSideEffect[];
+  reasonChain: PolicyReasonChainEntry[];
+}): TaskMasterRoutingPolicyProjection {
+  const projectionReasonChain = [...input.reasonChain];
+  const pushProjectionReason = (
+    decision: PolicyReasonDecision,
+    value: PolicyReasonChainEntry['value'],
+    reason: string,
+  ) => {
+    projectionReasonChain.push({
+      source: 'task_projection',
+      decision,
+      value,
+      reason,
+    });
+  };
+  const highRiskExclusionReasons: string[] = [];
+  if (isHighRisk(input.riskLevel)) {
+    highRiskExclusionReasons.push(`${input.riskLevel} risk`);
+  }
+
+  input.externalSideEffects.forEach((sideEffect, index) => {
+    if (isHighRisk(sideEffect.risk_level) || sideEffectNeedsHumanGate(sideEffect)) {
+      highRiskExclusionReasons.push(`external side effect ${index + 1}`);
+    }
+  });
+
+  const highRiskExcluded = highRiskExclusionReasons.length > 0;
+  let projectedTaskmasterDrivable = input.taskmasterDrivable;
+  if (projectedTaskmasterDrivable && highRiskExcluded) {
+    projectedTaskmasterDrivable = false;
+    pushProjectionReason(
+      'taskmaster_high_risk_exclusion',
+      false,
+      `high-risk policy excludes Task Master drivability: ${highRiskExclusionReasons.join(', ')}`,
+    );
+  }
+
+  const escalationEligible = input.stallThresholdHours !== null && input.notificationRoutes.length > 0;
+  pushProjectionReason(
+    'escalation_eligibility',
+    escalationEligible,
+    escalationEligible
+      ? 'stall threshold and notification route make owner escalation eligible'
+      : 'owner escalation requires both a stall threshold and notification route',
+  );
+
+  const autoReassignEligible =
+    projectedTaskmasterDrivable &&
+    input.autoReassignAfterHours !== null &&
+    !input.humanGateRequired &&
+    !highRiskExcluded;
+  pushProjectionReason(
+    'reassignment_eligibility',
+    autoReassignEligible,
+    autoReassignEligible
+      ? 'Task Master drivability and auto-reassignment threshold permit reassignment'
+      : 'auto-reassignment requires Task Master drivability, a threshold, and no high-risk or human-gate exclusion',
+  );
+
+  return {
+    taskmaster_drivable: projectedTaskmasterDrivable,
+    stall_threshold_hours: input.stallThresholdHours,
+    notification_routes: input.notificationRoutes,
+    escalation_eligible: escalationEligible,
+    auto_reassign_eligible: autoReassignEligible,
+    auto_reassign_after_hours: autoReassignEligible ? input.autoReassignAfterHours : null,
+    high_risk_excluded: highRiskExcluded,
+    high_risk_exclusion_reasons: highRiskExclusionReasons,
+    reason_chain: projectionReasonChain,
+  };
+}
+
 export function resolveTaskPolicy(envelope: TaskPolicyInputEnvelope): TaskPolicyResolution {
   const reasonChain: PolicyReasonChainEntry[] = [];
   let reviewRequired = envelope.review.required;
@@ -2198,6 +2296,16 @@ export function resolveTaskPolicy(envelope: TaskPolicyInputEnvelope): TaskPolicy
 
   const reviewerAssignment = resolveReviewerAssignment(envelope, reviewRequired, reviewerPrincipalId, pushReason);
   reviewerPrincipalId = reviewerAssignment.reviewer_principal_id;
+  const routingPolicyProjection = buildTaskMasterRoutingProjection({
+    taskmasterDrivable,
+    stallThresholdHours,
+    autoReassignAfterHours,
+    notificationRoutes,
+    humanGateRequired,
+    riskLevel,
+    externalSideEffects: envelope.external_side_effects,
+    reasonChain,
+  });
 
   return {
     review_required: reviewRequired,
@@ -2205,10 +2313,11 @@ export function resolveTaskPolicy(envelope: TaskPolicyInputEnvelope): TaskPolicy
     reviewer_principal_id: reviewerPrincipalId,
     approver_principal_id: approverPrincipalId,
     reviewer_assignment: reviewerAssignment,
-    taskmaster_drivable: taskmasterDrivable,
+    taskmaster_drivable: routingPolicyProjection.taskmaster_drivable,
     stall_threshold_hours: stallThresholdHours,
     auto_reassign_after_hours: autoReassignAfterHours,
     notification_routes: notificationRoutes,
+    routing_policy_projection: routingPolicyProjection,
     reason_chain: reasonChain,
   };
 }
@@ -2219,6 +2328,38 @@ function readTaskMetadataRecord(metadata: unknown): Record<string, unknown> {
 
 function writeTaskMetadataRecord(metadata: Record<string, unknown>): string {
   return JSON.stringify(metadata);
+}
+
+function buildRoutingPolicyProjectionMetadata(
+  projection: TaskMasterRoutingPolicyProjection,
+): Record<string, unknown> {
+  return {
+    taskmaster_drivable: projection.taskmaster_drivable,
+    stall_threshold_hours: projection.stall_threshold_hours,
+    notification_routes: projection.notification_routes,
+    escalation_eligible: projection.escalation_eligible,
+    auto_reassign_eligible: projection.auto_reassign_eligible,
+    auto_reassign_after_hours: projection.auto_reassign_after_hours,
+    high_risk_excluded: projection.high_risk_excluded,
+    high_risk_exclusion_reasons: projection.high_risk_exclusion_reasons,
+    reason_chain: projection.reason_chain,
+  };
+}
+
+function writeTaskMetadataWithRoutingPolicyProjection(
+  metadata: unknown,
+  resolution: TaskPolicyResolution,
+): string {
+  const metadataRecord = readTaskMetadataRecord(metadata);
+  return writeTaskMetadataRecord({
+    ...metadataRecord,
+    taskmaster_drivable: resolution.routing_policy_projection.taskmaster_drivable,
+    stall_threshold_hours: resolution.routing_policy_projection.stall_threshold_hours,
+    auto_reassign_after_hours: resolution.routing_policy_projection.auto_reassign_after_hours,
+    notification_routes: resolution.routing_policy_projection.notification_routes,
+    policy_reason_chain: resolution.reason_chain,
+    routing_policy_projection: buildRoutingPolicyProjectionMetadata(resolution.routing_policy_projection),
+  });
 }
 
 function normalizeActorPrincipal(value: unknown): string | null {
@@ -5479,7 +5620,54 @@ export function createTaskRepository(): TaskRepository {
         input.assignee.trim() &&
         input.assignee.trim().toLowerCase() !== 'unassigned';
       const hasExecutor = Boolean(input.executor_principal_id?.trim());
-      const taskmasterDrivable = normalizeBlocked(input.taskmaster_drivable);
+      const reviewRequired = normalizeBlocked(input.review_required);
+      const humanGateRequired = normalizeBlocked(input.human_gate_required);
+      const policyTaskDraft: Pick<
+        TaskRecord,
+        | 'id'
+        | 'org_id'
+        | 'team_id'
+        | 'project_id'
+        | 'created_by_principal_id'
+        | 'initiator_principal_id'
+        | 'owner_principal_id'
+        | 'executor_principal_id'
+        | 'assignee'
+        | 'worktype'
+        | 'column'
+        | 'taskmaster_drivable'
+        | 'risk_level'
+        | 'agent_trust_level'
+        | 'policy_inputs_json'
+        | 'external_side_effects_json'
+        | 'review_required'
+        | 'review_state'
+        | 'human_gate_required'
+        | 'human_gate_state'
+      > = {
+        id: 0,
+        org_id: normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
+        team_id: normalizeWorkspaceId(input.team_id, DEFAULT_WORKSPACE_TEAM_ID),
+        project_id: normalizePositiveInteger(input.project_id),
+        created_by_principal_id: input.created_by_principal_id?.trim() || 'legacy-system',
+        initiator_principal_id: input.initiator_principal_id?.trim() || 'legacy-unknown',
+        owner_principal_id: input.owner_principal_id?.trim() || 'legacy-owner',
+        executor_principal_id: input.executor_principal_id?.trim() || null,
+        assignee: input.assignee?.trim() || 'Unassigned',
+        worktype: input.worktype?.trim() || 'general',
+        column: normalizeTaskColumn(input.column),
+        taskmaster_drivable: normalizeBlocked(input.taskmaster_drivable),
+        risk_level: normalizePolicyRiskLevel(input.risk_level),
+        agent_trust_level: normalizeAgentTrustLevel(input.agent_trust_level),
+        policy_inputs_json: normalizeJsonObjectString(input.policy_inputs_json),
+        external_side_effects_json: normalizeExternalSideEffectsJson(input.external_side_effects_json),
+        review_required: reviewRequired,
+        review_state: normalizeReviewPolicyState(input.review_state, reviewRequired),
+        human_gate_required: humanGateRequired,
+        human_gate_state: normalizeHumanGatePolicyState(input.human_gate_state, humanGateRequired),
+      };
+      const policyResolution = resolveTaskPolicy(buildTaskPolicyInputEnvelope(policyTaskDraft));
+      const taskmasterDrivable = policyResolution.routing_policy_projection.taskmaster_drivable;
       const assignmentState =
         input.assignment_state?.trim() ||
         (hasIndividualAssignee || hasExecutor
@@ -5487,37 +5675,35 @@ export function createTaskRepository(): TaskRepository {
           : taskmasterDrivable
             ? 'unassigned'
             : 'routing_problem');
-      const reviewRequired = normalizeBlocked(input.review_required);
-      const humanGateRequired = normalizeBlocked(input.human_gate_required);
       const result = createStmt.run(
-        normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
-        normalizeWorkspaceId(input.team_id, DEFAULT_WORKSPACE_TEAM_ID),
-        normalizePositiveInteger(input.project_id),
-        input.created_by_principal_id?.trim() || 'legacy-system',
-        input.initiator_principal_id?.trim() || 'legacy-unknown',
+        policyTaskDraft.org_id,
+        policyTaskDraft.team_id,
+        policyTaskDraft.project_id,
+        policyTaskDraft.created_by_principal_id,
+        policyTaskDraft.initiator_principal_id,
         input.initiator_type?.trim() || 'unknown',
-        input.owner_principal_id?.trim() || 'legacy-owner',
+        policyTaskDraft.owner_principal_id,
         input.owner_principal_type?.trim() || 'unknown',
-        input.executor_principal_id?.trim() || null,
+        policyTaskDraft.executor_principal_id,
         assignmentState,
         taskmasterDrivable ? 1 : 0,
-        input.worktype?.trim() || 'general',
-        normalizePolicyRiskLevel(input.risk_level),
-        normalizeAgentTrustLevel(input.agent_trust_level),
-        normalizeJsonObjectString(input.policy_inputs_json),
-        normalizeExternalSideEffectsJson(input.external_side_effects_json),
+        policyTaskDraft.worktype,
+        policyTaskDraft.risk_level,
+        policyTaskDraft.agent_trust_level,
+        policyTaskDraft.policy_inputs_json,
+        policyTaskDraft.external_side_effects_json,
         reviewRequired ? 1 : 0,
-        normalizeReviewPolicyState(input.review_state, reviewRequired),
+        policyTaskDraft.review_state,
         humanGateRequired ? 1 : 0,
-        normalizeHumanGatePolicyState(input.human_gate_state, humanGateRequired),
+        policyTaskDraft.human_gate_state,
         taskName,
         input.description?.trim() || null,
         input.brief?.trim() || null,
         input.origin_channel?.trim() || null,
-        normalizeTaskColumn(input.column),
+        policyTaskDraft.column,
         typeof input.model === 'string' ? input.model.trim() || null : null,
         normalizeBlocked(input.archived) ? 1 : 0,
-        input.assignee?.trim() || 'Unassigned',
+        policyTaskDraft.assignee,
         normalizeBlocked(input.blocked) ? 1 : 0,
         normalizeBlockerReason(input.blocker_reason),
         normalizeBlockerReason(input.project) ?? 'General',
@@ -5529,7 +5715,7 @@ export function createTaskRepository(): TaskRepository {
         progressStatus,
         normalizeBlocked(input.recurring) ? 1 : 0,
         typeof input.recurring_config === 'string' ? input.recurring_config.trim() || null : null,
-        input.metadata?.trim() || '{}'
+        writeTaskMetadataWithRoutingPolicyProjection(input.metadata, policyResolution)
       );
 
       const task = getStmt.get(result.lastInsertRowid as number) as Record<string, unknown> | undefined;

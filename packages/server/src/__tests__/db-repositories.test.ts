@@ -459,6 +459,139 @@ describe('TaskRepository', () => {
     `);
   });
 
+  it('caches Task Master routing policy projections with threshold and route provenance', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Task Master drivable projection fixture',
+      taskmaster_drivable: true,
+      risk_level: 'low',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          workspace: {
+            notification_routes: ['inbox', 'email'],
+            stall_threshold_hours: 6,
+          },
+          worktype: {
+            auto_reassign_after_hours: 24,
+          },
+          risk: { risk_level: 'low' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const resolution = dbMod.resolveTaskPolicy(dbMod.buildTaskPolicyInputEnvelope(task));
+    expect(task).toMatchObject({
+      taskmaster_drivable: true,
+      assignment_state: 'unassigned',
+    });
+    expect(resolution.routing_policy_projection).toMatchObject({
+      taskmaster_drivable: true,
+      stall_threshold_hours: 6,
+      notification_routes: ['inbox', 'email'],
+      escalation_eligible: true,
+      auto_reassign_eligible: true,
+      auto_reassign_after_hours: 24,
+      high_risk_excluded: false,
+    });
+    expect(
+      resolution.routing_policy_projection.reason_chain.map(({ source, decision, value }) => ({
+        source,
+        decision,
+        value,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        { source: 'task', decision: 'taskmaster_drivable', value: true },
+        { source: 'workspace', decision: 'stall_threshold', value: 6 },
+        { source: 'workspace', decision: 'notification_route', value: ['inbox', 'email'] },
+        { source: 'worktype', decision: 'auto_reassignment_threshold', value: 24 },
+        { source: 'task_projection', decision: 'escalation_eligibility', value: true },
+        { source: 'task_projection', decision: 'reassignment_eligibility', value: true },
+      ]),
+    );
+
+    const metadata = JSON.parse(task.metadata ?? '{}') as {
+      routing_policy_projection?: Record<string, unknown>;
+    };
+    expect(metadata.routing_policy_projection).toMatchObject({
+      taskmaster_drivable: true,
+      escalation_eligible: true,
+      auto_reassign_eligible: true,
+      auto_reassign_after_hours: 24,
+    });
+  });
+
+  it('represents high-risk exclusions in Task Master routing policy projections', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'High-risk Task Master exclusion fixture',
+      taskmaster_drivable: true,
+      risk_level: 'high',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          workspace: {
+            notification_routes: ['inbox'],
+            stall_threshold_hours: 4,
+          },
+          worktype: {
+            auto_reassign_after_hours: 8,
+          },
+          task: {
+            taskmaster_drivable: true,
+          },
+          risk: { risk_level: 'high' },
+          agent_trust: { trust_level: 'high' },
+        },
+      }),
+    });
+
+    const resolution = dbMod.resolveTaskPolicy(dbMod.buildTaskPolicyInputEnvelope(task));
+    expect(task).toMatchObject({
+      taskmaster_drivable: false,
+      assignment_state: 'routing_problem',
+    });
+    expect(resolution.review_required).toBe(true);
+    expect(resolution.routing_policy_projection).toMatchObject({
+      taskmaster_drivable: false,
+      escalation_eligible: true,
+      auto_reassign_eligible: false,
+      high_risk_excluded: true,
+      high_risk_exclusion_reasons: ['high risk'],
+    });
+    expect(
+      resolution.routing_policy_projection.reason_chain.map(({ source, decision, value }) => ({
+        source,
+        decision,
+        value,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        { source: 'task_projection', decision: 'taskmaster_high_risk_exclusion', value: false },
+        { source: 'task_projection', decision: 'reassignment_eligibility', value: false },
+      ]),
+    );
+
+    const metadata = JSON.parse(task.metadata ?? '{}') as {
+      routing_policy_projection?: {
+        high_risk_excluded?: boolean;
+        high_risk_exclusion_reasons?: string[];
+        auto_reassign_eligible?: boolean;
+      };
+    };
+    expect(metadata.routing_policy_projection).toMatchObject({
+      high_risk_excluded: true,
+      high_risk_exclusion_reasons: ['high risk'],
+      auto_reassign_eligible: false,
+    });
+  });
+
   it('escalates review and human gate requirements from risk, trust, and external side effects', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();
