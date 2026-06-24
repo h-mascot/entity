@@ -6,7 +6,7 @@ Entity Phase 2 THE-71: define agent principal and runtime binding schema.
 **MC Task:** THE-71
 **Created:** 2026-06-24
 **Agent:** Cursor
-**Status:** IN PROGRESS
+**Status:** DONE
 
 ## Context
 Live Linear issue THE-71 is child issue THE-16.1 under THE-16 Agent Management and Helm runtime binding. Scope is schema/types/tests for agent principal identity separated from runtime/provider identity, with `runtime_binding_id`, generic `provider_type`, `helm_managed`, and `binding_state` fields.
@@ -32,10 +32,10 @@ Live Linear issue THE-71 is child issue THE-16.1 under THE-16 Agent Management a
 - [x] Step 4: Run proof commands and impact/diff checks.
   - **Files:** proof artifacts under `output/entity-phase-2/`
   - **Verify:** focused tests; `bash scripts/proof/entity-phase-2-smoke.sh`; `npm run build`; `cd packages/server && npm run build && npx vitest run`; GitNexus detect-changes.
-- [ ] Step 5: Run CLI Tester request/run/book-review/verify.
+- [x] Step 5: Run CLI Tester request/run/book-review/verify.
   - **Files:** `output/entity-phase-2/test-gate/THE-71.*`, `output/entity-phase-2/book-review/THE-71*`
   - **Verify:** machine gate PASS, Book review approved by packet-mode local approval only if scans are clean and diff is scoped.
-- [ ] Step 6: Comment Linear, mark THE-71 Done, update run-state to THE-72, and commit scoped changes.
+- [x] Step 6: Comment Linear, mark THE-71 Done, update run-state to THE-72, and commit scoped changes.
   - **Files:** `.cursor/run-state/entity-phase-2.json` local state only, source/test/plan for commit as appropriate
   - **Verify:** `git status --short`
 
@@ -45,6 +45,8 @@ Live Linear issue THE-71 is child issue THE-16.1 under THE-16 Agent Management a
 | 04:57Z | Setup | done | Read live child/parent issue; branch created after THE-70 completion. |
 | 05:00Z | Steps 1-3 | done | Added agent binding schema/types, route parsing, display merge support, and provider-agnostic tests. |
 | 05:03Z | Proof | done | Focused tests, full proof commands, and GitNexus detect-changes passed; risk low. |
+| 05:06Z | Gate | done | CLI Tester request/run/book-review/verify passed with hard rule 22 local Book approval. |
+| 05:07Z | Close | done | Linear proof comment posted; issue marked Done; run-state advanced to THE-72. |
 
 ## Files Touched
 - `docs/plans/2026-06-24-045700-entity-phase-2-the-71-agent-principal-runtime-binding-schema-plan.md` - created - THE-71 execution plan.
@@ -64,8 +66,8 @@ Live Linear issue THE-71 is child issue THE-16.1 under THE-16 Agent Management a
 5. Keep THE-71 scoped to agent principal/runtime binding schema, route parsing, and tests.
 
 ## Done
-- [ ] All steps complete
-- [ ] Tests/build pass
-- [ ] CLI Tester request/run/book-review/verify complete
-- [ ] Linear THE-71 proof comment added and status moved to Done
-- [ ] Run-state advanced to THE-72
+- [x] All steps complete
+- [x] Tests/build pass
+- [x] CLI Tester request/run/book-review/verify complete
+- [x] Linear THE-71 proof comment added and status moved to Done
+- [x] Run-state advanced to THE-72
