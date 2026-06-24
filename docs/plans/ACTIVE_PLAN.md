@@ -6,7 +6,7 @@ Entity Phase 2 THE-70: document notification contracts and degraded behavior.
 **MC Task:** THE-70
 **Created:** 2026-06-24
 **Agent:** Cursor
-**Status:** IN PROGRESS
+**Status:** DONE
 
 ## Context
 Live Linear issue THE-70 is child issue THE-15.5 under THE-15 inbox and notifications. Scope is docs plus tests for notification contracts: Entity inbox/activity is canonical, external channels are delivery routes only, failed/degraded routes remain visible, and no notification claim depends solely on external channel success.
@@ -30,10 +30,10 @@ Live Linear issue THE-70 is child issue THE-15.5 under THE-15 inbox and notifica
 - [x] Step 3: Run proof commands and GitNexus/diff checks.
   - **Files:** proof artifacts under `output/entity-phase-2/`
   - **Verify:** `cd packages/server && npx vitest run src/notification-routing.test.ts`; `bash scripts/proof/entity-phase-2-smoke.sh`; `npm run build`; `cd packages/server && npm run build && npx vitest run`
-- [ ] Step 4: Run CLI Tester request/run/book-review/verify.
+- [x] Step 4: Run CLI Tester request/run/book-review/verify.
   - **Files:** `output/entity-phase-2/test-gate/THE-70.*`, `output/entity-phase-2/book-review/THE-70*`
   - **Verify:** machine gate PASS, Book review approved by packet-mode local approval only if scans are clean and diff is scoped.
-- [ ] Step 5: Comment Linear, mark THE-70 Done, update run-state to THE-71, and commit scoped changes.
+- [x] Step 5: Comment Linear, mark THE-70 Done, update run-state to THE-71, and commit scoped changes.
   - **Files:** `.cursor/run-state/entity-phase-2.json` local state only, source/docs/tests/plan for commit as appropriate
   - **Verify:** `git status --short`
 
@@ -43,6 +43,8 @@ Live Linear issue THE-70 is child issue THE-15.5 under THE-15 inbox and notifica
 | 04:47Z | Setup | done | Read live child/parent issue; branch created after THE-69 completion. |
 | 04:50Z | Steps 1-2 | done | Added notification contract doc and degraded external-route retention test. |
 | 04:52Z | Proof | done | Focused test, full proof commands, and GitNexus detect-changes passed; risk low. |
+| 04:53Z | Gate | done | CLI Tester request/run/book-review/verify passed with hard rule 22 local Book approval. |
+| 04:54Z | Close | done | Linear proof comment posted; issue marked Done; run-state advanced to THE-71. |
 
 ## Files Touched
 - `docs/plans/2026-06-24-044700-entity-phase-2-the-70-notification-contracts-degraded-behavior-plan.md` - created - THE-70 execution plan.
@@ -58,8 +60,8 @@ Live Linear issue THE-70 is child issue THE-15.5 under THE-15 inbox and notifica
 5. Keep THE-70 scoped to notification contract docs and degraded external route tests.
 
 ## Done
-- [ ] All steps complete
-- [ ] Tests/build pass
-- [ ] CLI Tester request/run/book-review/verify complete
-- [ ] Linear THE-70 proof comment added and status moved to Done
-- [ ] Run-state advanced to THE-71
+- [x] All steps complete
+- [x] Tests/build pass
+- [x] CLI Tester request/run/book-review/verify complete
+- [x] Linear THE-70 proof comment added and status moved to Done
+- [x] Run-state advanced to THE-71
