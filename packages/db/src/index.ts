@@ -830,8 +830,11 @@ export interface UpdateNativeDocumentVersionInput {
 }
 
 export type ExternalDocumentConnectorType = 'google_drive' | 'google_docs' | 'other';
-export type ExternalDocumentAuthState = 'authorized' | 'expired' | 'insufficient_scope' | 'revoked' | 'unknown';
-export type ExternalDocumentReadinessState = 'ready' | 'degraded' | 'unavailable' | 'unknown';
+export const GOOGLE_CONNECTOR_V1_SCOPES = ['read', 'index', 'link', 'preview'] as const;
+export type GoogleConnectorV1Scope = typeof GOOGLE_CONNECTOR_V1_SCOPES[number];
+export type ExternalDocumentAuthState = 'authorized' | 'unauthorized' | 'expired' | 'insufficient_scope' | 'revoked' | 'unknown';
+export type ExternalDocumentReadinessState = 'ready' | 'degraded' | 'unavailable' | 'not_configured' | 'unknown';
+export type ExternalDocumentRefState = 'available' | 'permission_revoked' | 'deleted' | 'unknown';
 export type ExternalDocumentCanonicality = 'external_canonical' | 'entity_reference_only' | 'unknown';
 
 export interface ExternalDocumentRefRecord {
@@ -845,6 +848,10 @@ export interface ExternalDocumentRefRecord {
   external_canonical_url: string | null;
   auth_state: ExternalDocumentAuthState;
   readiness_state: ExternalDocumentReadinessState;
+  granted_scopes: GoogleConnectorV1Scope[];
+  missing_scopes: GoogleConnectorV1Scope[];
+  auth_expires_at: string | null;
+  external_ref_state: ExternalDocumentRefState;
   capabilities_json: string;
   canonicality: ExternalDocumentCanonicality;
   last_indexed_at: string | null;
@@ -868,6 +875,10 @@ export interface CreateExternalDocumentRefInput {
   external_canonical_url?: string | null;
   auth_state?: ExternalDocumentAuthState;
   readiness_state?: ExternalDocumentReadinessState;
+  granted_scopes?: string[];
+  missing_scopes?: string[];
+  auth_expires_at?: string | null;
+  external_ref_state?: ExternalDocumentRefState;
   capabilities_json?: string;
   canonicality?: ExternalDocumentCanonicality;
   last_indexed_at?: string | null;
@@ -3653,7 +3664,11 @@ function bootstrap(db: Database.Database): void {
       external_canonical_url TEXT,
       auth_state TEXT NOT NULL DEFAULT 'unknown',
       readiness_state TEXT NOT NULL DEFAULT 'unknown',
-      capabilities_json TEXT NOT NULL DEFAULT '{"read":true,"index":true,"link":true,"preview":true,"write":false}',
+      granted_scopes_json TEXT NOT NULL DEFAULT '[]',
+      missing_scopes_json TEXT NOT NULL DEFAULT '[]',
+      auth_expires_at TEXT,
+      external_ref_state TEXT NOT NULL DEFAULT 'unknown',
+      capabilities_json TEXT NOT NULL DEFAULT '{"read":true,"index":true,"link":true,"preview":true,"write":false,"export":false,"sync":false,"create":false,"update":false}',
       canonicality TEXT NOT NULL DEFAULT 'unknown',
       last_indexed_at TEXT,
       last_checked_at TEXT,
@@ -4034,6 +4049,22 @@ function bootstrap(db: Database.Database): void {
 
   if (!hasColumn(db, 'tasks', 'brief')) {
     db.exec('ALTER TABLE tasks ADD COLUMN brief TEXT');
+  }
+
+  if (!hasColumn(db, 'external_document_refs', 'granted_scopes_json')) {
+    db.exec("ALTER TABLE external_document_refs ADD COLUMN granted_scopes_json TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  if (!hasColumn(db, 'external_document_refs', 'missing_scopes_json')) {
+    db.exec("ALTER TABLE external_document_refs ADD COLUMN missing_scopes_json TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  if (!hasColumn(db, 'external_document_refs', 'auth_expires_at')) {
+    db.exec('ALTER TABLE external_document_refs ADD COLUMN auth_expires_at TEXT');
+  }
+
+  if (!hasColumn(db, 'external_document_refs', 'external_ref_state')) {
+    db.exec("ALTER TABLE external_document_refs ADD COLUMN external_ref_state TEXT NOT NULL DEFAULT 'unknown'");
   }
 
   if (!hasColumn(db, 'entity_agents', 'runtime_binding_id')) {
@@ -5873,6 +5904,7 @@ function normalizeExternalConnectorType(value: unknown): ExternalDocumentConnect
 
 function normalizeExternalAuthState(value: unknown): ExternalDocumentAuthState {
   return value === 'authorized' ||
+    value === 'unauthorized' ||
     value === 'expired' ||
     value === 'insufficient_scope' ||
     value === 'revoked'
@@ -5881,7 +5913,11 @@ function normalizeExternalAuthState(value: unknown): ExternalDocumentAuthState {
 }
 
 function normalizeExternalReadinessState(value: unknown): ExternalDocumentReadinessState {
-  return value === 'ready' || value === 'degraded' || value === 'unavailable' ? value : 'unknown';
+  return value === 'ready' || value === 'degraded' || value === 'unavailable' || value === 'not_configured' ? value : 'unknown';
+}
+
+function normalizeExternalRefState(value: unknown): ExternalDocumentRefState {
+  return value === 'available' || value === 'permission_revoked' || value === 'deleted' ? value : 'unknown';
 }
 
 function normalizeExternalCanonicality(value: unknown): ExternalDocumentCanonicality {
@@ -5893,12 +5929,51 @@ function normalizeNullableTimestamp(value: unknown): string | null {
   return normalized ? normalizeTimestamp(normalized) : null;
 }
 
-function defaultExternalCapabilitiesJson(value: unknown): string {
-  const normalized = normalizeJsonObjectString(value);
-  if (normalized !== '{}') {
-    return normalized;
+function normalizeGoogleConnectorScopes(value: unknown): GoogleConnectorV1Scope[] {
+  let raw: unknown = value;
+  if (typeof value === 'string') {
+    try {
+      raw = JSON.parse(value);
+    } catch {
+      raw = [];
+    }
   }
-  return JSON.stringify({ read: true, index: true, link: true, preview: true, write: false });
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const allowed = new Set<string>(GOOGLE_CONNECTOR_V1_SCOPES);
+  const scopes: GoogleConnectorV1Scope[] = [];
+  for (const scope of raw) {
+    if (typeof scope !== 'string' || !allowed.has(scope) || scopes.includes(scope as GoogleConnectorV1Scope)) {
+      continue;
+    }
+    scopes.push(scope as GoogleConnectorV1Scope);
+  }
+  return scopes;
+}
+
+function stringifyGoogleConnectorScopes(value: unknown): string {
+  return JSON.stringify(normalizeGoogleConnectorScopes(value));
+}
+
+function defaultExternalCapabilitiesJson(connectorType: ExternalDocumentConnectorType, value: unknown): string {
+  const normalized = normalizeJsonObjectString(value);
+  const base = normalized === '{}' ? {} : JSON.parse(normalized) as Record<string, unknown>;
+  const readOnlyCapabilities = {
+    read: base.read === false ? false : true,
+    index: base.index === false ? false : true,
+    link: base.link === false ? false : true,
+    preview: base.preview === false ? false : true,
+    write: false,
+    export: false,
+    sync: false,
+    create: false,
+    update: false,
+  };
+  if (connectorType === 'google_drive' || connectorType === 'google_docs') {
+    return JSON.stringify(readOnlyCapabilities);
+  }
+  return JSON.stringify({ ...base, ...readOnlyCapabilities });
 }
 
 function mapNativeDocumentRow(row: Record<string, unknown>): NativeDocumentRecord {
@@ -5950,7 +6025,11 @@ function mapExternalDocumentRefRow(row: Record<string, unknown>): ExternalDocume
     external_canonical_url: normalizeBlockerReason(row.external_canonical_url),
     auth_state: normalizeExternalAuthState(row.auth_state),
     readiness_state: normalizeExternalReadinessState(row.readiness_state),
-    capabilities_json: defaultExternalCapabilitiesJson(row.capabilities_json),
+    granted_scopes: normalizeGoogleConnectorScopes(row.granted_scopes_json),
+    missing_scopes: normalizeGoogleConnectorScopes(row.missing_scopes_json),
+    auth_expires_at: normalizeNullableTimestamp(row.auth_expires_at),
+    external_ref_state: normalizeExternalRefState(row.external_ref_state),
+    capabilities_json: defaultExternalCapabilitiesJson(normalizeExternalConnectorType(row.connector_type), row.capabilities_json),
     canonicality: normalizeExternalCanonicality(row.canonicality),
     last_indexed_at: normalizeNullableTimestamp(row.last_indexed_at),
     last_checked_at: normalizeNullableTimestamp(row.last_checked_at),
@@ -7093,6 +7172,10 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
       external_canonical_url,
       auth_state,
       readiness_state,
+      granted_scopes_json,
+      missing_scopes_json,
+      auth_expires_at,
+      external_ref_state,
       capabilities_json,
       canonicality,
       last_indexed_at,
@@ -7103,7 +7186,7 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
       metadata_json,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
 
   return {
@@ -7211,6 +7294,7 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
       const title = input.title.trim();
       const externalId = normalizeBlockerReason(input.external_id);
       const externalUrl = normalizeBlockerReason(input.external_url);
+      const connectorType = normalizeExternalConnectorType(input.connector_type);
       if (!title) {
         throw new Error('external document title is required');
       }
@@ -7221,7 +7305,7 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
       createExternalStmt.run(
         id,
         normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
-        normalizeExternalConnectorType(input.connector_type),
+        connectorType,
         externalId,
         externalUrl,
         title,
@@ -7229,7 +7313,11 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
         normalizeBlockerReason(input.external_canonical_url),
         normalizeExternalAuthState(input.auth_state),
         normalizeExternalReadinessState(input.readiness_state),
-        defaultExternalCapabilitiesJson(input.capabilities_json),
+        stringifyGoogleConnectorScopes(input.granted_scopes ?? []),
+        stringifyGoogleConnectorScopes(input.missing_scopes ?? []),
+        normalizeNullableTimestamp(input.auth_expires_at),
+        normalizeExternalRefState(input.external_ref_state),
+        defaultExternalCapabilitiesJson(connectorType, input.capabilities_json),
         normalizeExternalCanonicality(input.canonicality),
         normalizeNullableTimestamp(input.last_indexed_at),
         normalizeNullableTimestamp(input.last_checked_at),

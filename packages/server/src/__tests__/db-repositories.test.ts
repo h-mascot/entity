@@ -2117,6 +2117,53 @@ describe('DocumentObjectRepository', () => {
     ]);
   });
 
+  it('persists Google connector auth scopes, expiry, ref state, and read-only V1 capabilities', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createDocumentObjectRepository();
+
+    expect(dbMod.GOOGLE_CONNECTOR_V1_SCOPES).toEqual(['read', 'index', 'link', 'preview']);
+
+    const externalRef = repo.createExternalDocumentRef({
+      id: 'google-connector-auth-model',
+      connector_type: 'google_drive',
+      external_id: 'drive-file-auth-model',
+      title: 'Google connector auth fixture',
+      auth_state: 'expired',
+      readiness_state: 'unavailable',
+      granted_scopes: ['read', 'index', 'write', 'preview'],
+      missing_scopes: ['link', 'export'],
+      auth_expires_at: '2026-06-24T08:20:00Z',
+      external_ref_state: 'permission_revoked',
+      external_permission_summary: 'Drive permission revoked for connector account',
+      entity_visibility_policy_json: JSON.stringify({ visibility: 'restricted', allowed_principal_ids: ['owner-1'] }),
+      capabilities_json: JSON.stringify({ read: true, index: true, link: true, preview: true, write: true, export: true, sync: true }),
+    });
+
+    expect(externalRef).toMatchObject({
+      id: 'google-connector-auth-model',
+      connector_type: 'google_drive',
+      auth_state: 'expired',
+      readiness_state: 'unavailable',
+      granted_scopes: ['read', 'index', 'preview'],
+      missing_scopes: ['link'],
+      auth_expires_at: '2026-06-24T08:20:00.000Z',
+      external_ref_state: 'permission_revoked',
+      external_permission_summary: 'Drive permission revoked for connector account',
+      entity_visibility_policy_json: JSON.stringify({ visibility: 'restricted', allowed_principal_ids: ['owner-1'] }),
+    });
+    expect(JSON.parse(externalRef.capabilities_json)).toEqual({
+      read: true,
+      index: true,
+      link: true,
+      preview: true,
+      write: false,
+      export: false,
+      sync: false,
+      create: false,
+      update: false,
+    });
+  });
+
   it('rejects malformed ObjectRef links before persisting document objects', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createDocumentObjectRepository();

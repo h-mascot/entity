@@ -19,6 +19,33 @@ import type {
 } from '../../db/src';
 
 const now = '2026-06-23T17:20:00.000Z';
+const googleConnectorV1Scopes = ['read', 'index', 'link', 'preview'] as const;
+
+function normalizeGoogleScopes(value: string[] | undefined): Array<typeof googleConnectorV1Scopes[number]> {
+  const allowed = new Set<string>(googleConnectorV1Scopes);
+  return (value ?? []).filter((scope, index, scopes): scope is typeof googleConnectorV1Scopes[number] =>
+    allowed.has(scope) && scopes.indexOf(scope) === index
+  );
+}
+
+function normalizeOptionalTimestamp(value: string | null | undefined): string | null {
+  return value ? new Date(value).toISOString() : null;
+}
+
+function normalizeExternalCapabilities(value: string | undefined): string {
+  const parsed = value ? JSON.parse(value) as Record<string, unknown> : {};
+  return JSON.stringify({
+    read: parsed.read === false ? false : true,
+    index: parsed.index === false ? false : true,
+    link: parsed.link === false ? false : true,
+    preview: parsed.preview === false ? false : true,
+    write: false,
+    export: false,
+    sync: false,
+    create: false,
+    update: false,
+  });
+}
 
 function appendObjectRef(current: ObjectRef[], objectRef: ObjectRef): ObjectRef[] {
   const exists = current.some((entry) =>
@@ -130,7 +157,11 @@ function createFakeRepos(): {
         external_canonical_url: input.external_canonical_url ?? null,
         auth_state: input.auth_state ?? 'unknown',
         readiness_state: input.readiness_state ?? 'unknown',
-        capabilities_json: input.capabilities_json ?? JSON.stringify({ read: true, index: true, link: true, preview: true, write: false }),
+        granted_scopes: normalizeGoogleScopes(input.granted_scopes),
+        missing_scopes: normalizeGoogleScopes(input.missing_scopes),
+        auth_expires_at: normalizeOptionalTimestamp(input.auth_expires_at),
+        external_ref_state: input.external_ref_state ?? 'unknown',
+        capabilities_json: normalizeExternalCapabilities(input.capabilities_json),
         canonicality: input.canonicality ?? 'entity_reference_only',
         last_indexed_at: input.last_indexed_at ?? null,
         last_checked_at: input.last_checked_at ?? null,
@@ -412,6 +443,56 @@ describe('document object routes', () => {
     expect(JSON.parse((payload.externalDocumentRef as { capabilities_json: string }).capabilities_json)).toMatchObject({
       link: true,
       write: false,
+    });
+  });
+
+  it('models Google auth expiry, read-only scopes, deleted refs, and Entity visibility separately', async () => {
+    const createRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'google-auth-scope-fixture',
+        org_id: 'org-a',
+        connector_type: 'google_drive',
+        external_id: 'drive-file-123',
+        title: 'Revoked drive planning sheet',
+        auth_state: 'insufficient_scope',
+        readiness_state: 'degraded',
+        granted_scopes: ['read', 'link'],
+        missing_scopes: ['index', 'preview'],
+        auth_expires_at: '2026-06-24T08:20:00Z',
+        external_ref_state: 'deleted',
+        external_permission_summary: 'connector lost access to this Drive item',
+        entity_visibility_policy: { visibility: 'restricted', allowed_principal_ids: ['owner-1'] },
+        capabilities: { read: true, index: true, link: true, preview: true, write: true, export: true },
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
+    const payload = await readJson(createRes);
+    expect(payload).toMatchObject({
+      externalDocumentRef: {
+        id: 'google-auth-scope-fixture',
+        auth_state: 'insufficient_scope',
+        readiness_state: 'degraded',
+        granted_scopes: ['read', 'link'],
+        missing_scopes: ['index', 'preview'],
+        auth_expires_at: '2026-06-24T08:20:00.000Z',
+        external_ref_state: 'deleted',
+        external_permission_summary: 'connector lost access to this Drive item',
+        entity_visibility_policy_json: JSON.stringify({ visibility: 'restricted', allowed_principal_ids: ['owner-1'] }),
+      },
+    });
+    expect(JSON.parse((payload.externalDocumentRef as { capabilities_json: string }).capabilities_json)).toEqual({
+      read: true,
+      index: true,
+      link: true,
+      preview: true,
+      write: false,
+      export: false,
+      sync: false,
+      create: false,
+      update: false,
     });
   });
 
