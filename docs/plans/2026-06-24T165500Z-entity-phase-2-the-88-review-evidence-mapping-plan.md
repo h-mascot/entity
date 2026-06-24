@@ -12,8 +12,6 @@ Implement THE-19.3 from the migration/backfill parent. THE-88 maps existing lega
 Branch: `THE-88-map-review-packets-evidence-structured`
 Linear: `THE-88` / parent `THE-19`
 
-Detailed plan: `docs/plans/2026-06-24T165500Z-entity-phase-2-the-88-review-evidence-mapping-plan.md`
-
 Supervisor context says THE-87 is approved to continue under a narrow fast-path waiver and must not be re-blocked for THE-88 launch. THE-88 remains scoped to conservative migration mapping only: no fake raw receipts, no broad db-layer policy changes, no THE-89 cleanup queue implementation.
 
 ## Dependencies
@@ -27,18 +25,25 @@ Supervisor context says THE-87 is approved to continue under a narrow fast-path 
 ## Plan
 
 - [x] Step 1: Inspect current migration inventory/backfill code, review packet metadata shape, receipt metadata, and activity-event migration seams.
+  - **Files:** `packages/db/src/index.ts`, `packages/server/src/__tests__/db-repositories.test.ts`, `scripts/entity-phase-2-migration-inventory.mjs`, `scripts/entity-phase-2-task-backfill.mjs`
   - **Verify:** `rg "review_packet|review_brief|missing_receipt|phase2_backfill|structured" packages scripts`
 - [x] Step 2: Implement a conservative THE-88 migration mapper/report surface.
+  - **Files:** likely `packages/db/src/index.ts`, `scripts/entity-phase-2-review-evidence-mapping.mjs`
   - **Verify:** `npm --prefix packages/db run build`
 - [x] Step 3: Add focused migration fixture tests for mapped evidence, missing receipts, weak activity structure, and no fake raw receipt creation.
+  - **Files:** likely `packages/server/src/__tests__/db-repositories.test.ts`
   - **Verify:** `cd packages/server && npx vitest run src/__tests__/db-repositories.test.ts`
 - [x] Step 4: Generate THE-88 proof samples, including a missing_receipt sample and mapping report.
+  - **Files:** `output/entity-phase-2/review-evidence-mapping/THE-88*.{md,json}` (ignored)
   - **Verify:** `node scripts/entity-phase-2-review-evidence-mapping.mjs --out output/entity-phase-2/review-evidence-mapping/THE-88.md && node scripts/entity-phase-2-review-evidence-mapping.mjs --json --out output/entity-phase-2/review-evidence-mapping/THE-88.json`
 - [x] Step 5: Run required proof commands.
+  - **Files:** build/test output, smoke output
   - **Verify:** `cd packages/server && npm run build && npx vitest run`, `npm run build`, `bash scripts/proof/entity-phase-2-smoke.sh`
 - [ ] Step 6: Run CLI Tester request/run/book-review/verify if available and configured; stop on real fail-stop blockers.
+  - **Files:** `output/entity-phase-2/test-gate/THE-88.*`, `output/entity-phase-2/book-review/THE-88*`
   - **Verify:** `/Users/enterprise/Code/cli-tester/bin/project-test-gate --root /Users/enterprise/Code/entity --config /Users/enterprise/Code/entity/.project-gate.json verify THE-88`
 - [ ] Step 7: Update Linear proof comment/status if tooling is available; otherwise record blocker and local proof paths.
+  - **Files:** Linear comment or local proof receipt notes
   - **Verify:** `git status --short --branch`
 
 ## Checkpoints

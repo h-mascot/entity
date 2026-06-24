@@ -2495,6 +2495,130 @@ describe('DocumentObjectRepository', () => {
     }
   });
 
+  it('maps review packets and evidence into THE-88 structured metadata without fake raw receipts', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const taskRepo = dbMod.createTaskRepository();
+    const task = taskRepo.createTask({
+      name: 'Legacy review packet task',
+      column: 'done',
+      output: '/documents/native/output-summary.md',
+      metadata: JSON.stringify({
+        review_packet: {
+          output_artifact: '/artifacts/evidence/output-proof.md',
+          evidence: [
+            'evidence_artifact:review-proof',
+            'external:https://docs.example.test/review-evidence',
+            'loose-proof.txt',
+          ],
+          done_criteria: [
+            'Customer plan reviewed',
+            { text: 'Evidence attached', completed: true },
+          ],
+        },
+      }),
+    });
+
+    const rawDb = new Database(tmpDbPath);
+    try {
+      rawDb.prepare(`
+        INSERT INTO activities (
+          source,
+          type,
+          task_id,
+          activity_event_type,
+          activity_event_payload_json,
+          activity_event_schema_status,
+          action,
+          description,
+          metadata
+        ) VALUES ('agent', 'vendor_ping', ?, NULL, '{bad-json', 'legacy_mapped', 'Vendor ping', 'Weak vendor activity', NULL)
+      `).run(task.id);
+
+      const beforeTask = taskRepo.getTask(task.id);
+      const dryRun = dbMod.mapReviewPacketsAndEvidenceForPhase2({ dryRun: true, db: rawDb });
+      const dryRunTask = dryRun.taskResults.find((result) => result.task_id === task.id);
+      const afterDryRunTask = taskRepo.getTask(task.id);
+
+      expect(afterDryRunTask?.metadata).toBe(beforeTask?.metadata);
+      expect(dryRunTask).toMatchObject({
+        has_review_packet: true,
+        receipt_status: 'missing_receipt',
+        evidence_fields: [
+          expect.objectContaining({
+            object_ref: { object_type: 'evidence_artifact', object_id: 'review-proof', link_role: 'evidence' },
+          }),
+          expect.objectContaining({
+            object_ref: { object_type: 'external_document_ref', object_id: 'https://docs.example.test/review-evidence', link_role: 'evidence' },
+          }),
+          expect.objectContaining({
+            object_ref: null,
+            warnings: ['ambiguous_document_reference'],
+          }),
+        ],
+      });
+      expect(dryRunTask?.output_artifacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            object_ref: { object_type: 'evidence_artifact', object_id: 'output-proof', link_role: 'output_artifact' },
+          }),
+          expect.objectContaining({
+            object_ref: { object_type: 'native_document', object_id: 'output-summary', link_role: 'output' },
+          }),
+        ]),
+      );
+      expect(dryRunTask?.done_criteria).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ text: 'Customer plan reviewed', completed: null }),
+          expect.objectContaining({ text: 'Evidence attached', completed: true }),
+        ]),
+      );
+      expect(dryRunTask?.warnings.map((warning) => warning.code)).toEqual(
+        expect.arrayContaining(['ambiguous_evidence_reference', 'missing_receipt', 'weak_activity_structure']),
+      );
+      expect(dryRun).toMatchObject({
+        dryRun: true,
+        reviewPacketsMapped: 1,
+        missingReceipts: 1,
+        weakActivityFlags: 1,
+      });
+      expect(dryRun.markdown).toContain('missing_receipt');
+
+      const applied = dbMod.mapReviewPacketsAndEvidenceForPhase2({ dryRun: false, db: rawDb });
+      const appliedTask = applied.taskResults.find((result) => result.task_id === task.id);
+      expect(appliedTask?.applied).toBe(true);
+
+      const stored = rawDb.prepare('SELECT metadata FROM tasks WHERE id = ?').get(task.id) as { metadata: string };
+      const audit = JSON.parse(stored.metadata).phase2_review_evidence_mapping;
+      expect(audit).toMatchObject({
+        version: 'THE-88',
+        receipt_status: 'missing_receipt',
+        review_packet_source: 'metadata.review_packet',
+        evidence_fields: expect.arrayContaining([
+          expect.objectContaining({
+            object_ref: { object_type: 'evidence_artifact', object_id: 'review-proof', link_role: 'evidence' },
+          }),
+        ]),
+      });
+      expect(audit.warnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'missing_receipt' }),
+          expect.objectContaining({ code: 'weak_activity_structure' }),
+        ]),
+      );
+      expect(rawDb.prepare(`
+        SELECT COUNT(*) AS count
+        FROM evidence_artifacts
+        WHERE origin_task_id = ? AND artifact_kind = 'raw_task_receipt'
+      `).get(task.id)).toMatchObject({ count: 0 });
+
+      const secondApply = dbMod.mapReviewPacketsAndEvidenceForPhase2({ dryRun: false, db: rawDb });
+      const secondTask = secondApply.taskResults.find((result) => result.task_id === task.id);
+      expect(secondTask?.would_update).toBe(false);
+    } finally {
+      rawDb.close();
+    }
+  });
+
   it('suppresses restricted and degraded document-object previews before snippets can leak', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
 

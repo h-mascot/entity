@@ -1554,6 +1554,418 @@ export function dryRunPhase2MigrationInventory(
   };
 }
 
+const REVIEW_EVIDENCE_MAPPING_VERSION = 'THE-88';
+
+function pushReviewEvidenceWarning(
+  target: ReviewEvidenceMappingWarning[],
+  code: ReviewEvidenceMappingWarningCode,
+  message: string,
+  severity: ReviewEvidenceMappingWarning['severity'],
+  source: string
+): void {
+  target.push({ code, message, severity, source });
+}
+
+function getReviewPacketFromMetadata(metadata: Record<string, unknown>): {
+  source: ReviewEvidenceTaskMappingResult['review_packet_source'];
+  packet: Record<string, unknown> | null;
+} {
+  if (isPlainObject(metadata.review_packet)) {
+    return { source: 'metadata.review_packet', packet: metadata.review_packet };
+  }
+  if (isPlainObject(metadata.review_brief)) {
+    return { source: 'metadata.review_brief', packet: metadata.review_brief };
+  }
+  return { source: null, packet: null };
+}
+
+function mapReviewEvidenceReference(input: {
+  source_field: string;
+  legacy_value: string | null | undefined;
+  task_id: number;
+  link_role: string;
+}): ReviewEvidenceStructuredReference {
+  const planned = planLegacyFileArtifactReferenceMigration({
+    source_table: 'tasks',
+    source_field: input.source_field,
+    legacy_value: input.legacy_value,
+    task_id: input.task_id,
+    link_role: input.link_role,
+  });
+  return {
+    source_field: input.source_field,
+    legacy_value: planned.legacy_value,
+    object_ref: planned.object_ref,
+    confidence: planned.confidence,
+    warnings: planned.warnings,
+  };
+}
+
+function collectReviewEvidenceReferences(
+  taskId: number,
+  packetSource: NonNullable<ReviewEvidenceTaskMappingResult['review_packet_source']>,
+  packet: Record<string, unknown>,
+  warnings: ReviewEvidenceMappingWarning[]
+): {
+  evidence: ReviewEvidenceStructuredReference[];
+  outputs: ReviewEvidenceStructuredReference[];
+  doneCriteria: ReviewEvidenceDoneCriterion[];
+} {
+  const outputs: ReviewEvidenceStructuredReference[] = [];
+  const outputValue = firstStringValue(packet, ['output_artifact', 'outputArtifact', 'artifact_path', 'artifactPath']);
+  if (outputValue) {
+    outputs.push(mapReviewEvidenceReference({
+      source_field: `${packetSource}.output_artifact`,
+      legacy_value: outputValue,
+      task_id: taskId,
+      link_role: 'output_artifact',
+    }));
+  }
+
+  const evidence: ReviewEvidenceStructuredReference[] = [];
+  const rawEvidence = packet.evidence;
+  if (Array.isArray(rawEvidence) && rawEvidence.length > 0) {
+    rawEvidence.forEach((entry, index) => {
+      const legacyValue = typeof entry === 'string'
+        ? entry
+        : isPlainObject(entry)
+          ? firstStringValue(entry, ['artifact', 'path', 'url', 'href', 'file_path'])
+          : null;
+      const mapped = mapReviewEvidenceReference({
+        source_field: `${packetSource}.evidence[${index}]`,
+        legacy_value: legacyValue,
+        task_id: taskId,
+        link_role: 'evidence',
+      });
+      evidence.push(mapped);
+      if (mapped.warnings.includes('ambiguous_document_reference')) {
+        pushReviewEvidenceWarning(
+          warnings,
+          'ambiguous_evidence_reference',
+          'Legacy evidence value could not be confidently mapped to an EvidenceArtifact, NativeDocument, or ExternalDocumentRef.',
+          'warning',
+          mapped.source_field
+        );
+      }
+    });
+  } else {
+    pushReviewEvidenceWarning(
+      warnings,
+      'missing_evidence',
+      'Review packet has no evidence array to map.',
+      'warning',
+      `${packetSource}.evidence`
+    );
+  }
+
+  const doneCriteria: ReviewEvidenceDoneCriterion[] = [];
+  const rawCriteria = packet.done_criteria ?? packet.doneCriteria ?? packet.criteria;
+  const criteriaEntries = Array.isArray(rawCriteria) ? rawCriteria : rawCriteria ? [rawCriteria] : [];
+  criteriaEntries.forEach((entry, index) => {
+    const sourceField = `${packetSource}.done_criteria[${index}]`;
+    if (typeof entry === 'string') {
+      const text = normalizeBlockerReason(entry);
+      if (text) {
+        doneCriteria.push({ source_field: sourceField, text, completed: null });
+      }
+      return;
+    }
+    if (!isPlainObject(entry)) {
+      return;
+    }
+    const text = firstStringValue(entry, ['text', 'criterion', 'description', 'label']);
+    if (!text) {
+      return;
+    }
+    const completedValue = entry.completed ?? entry.done ?? entry.checked;
+    const completed = typeof completedValue === 'boolean' ? completedValue : null;
+    doneCriteria.push({ source_field: sourceField, text, completed });
+  });
+
+  return { evidence, outputs, doneCriteria };
+}
+
+function isWeakActivityMapping(row: Record<string, unknown>): boolean {
+  const eventType = normalizeActivityEventType(row.activity_event_type);
+  const schemaStatus = normalizeActivityEventSchemaStatus(row.activity_event_schema_status);
+  const parsedPayload = parseActivityPayloadForBackfill(row.activity_event_payload_json);
+  return !eventType || schemaStatus === 'legacy_unknown' || !normalizePositiveInteger(row.task_id) || parsedPayload.malformed;
+}
+
+function mapActivityForReviewEvidence(row: Record<string, unknown>): ReviewEvidenceActivityMapping {
+  const activityId = Number(row.id);
+  const projection = buildActivityBackfillProjection(row);
+  const warnings: ReviewEvidenceMappingWarning[] = [];
+  if (isWeakActivityMapping(row)) {
+    pushReviewEvidenceWarning(
+      warnings,
+      'weak_activity_structure',
+      'Activity row lacks a confident structured ActivityEvent mapping or task link.',
+      'warning',
+      `activities:${activityId}`
+    );
+  }
+
+  return {
+    activity_id: activityId,
+    task_id: projection.taskId,
+    event_type: normalizeActivityEventType(row.activity_event_type) ?? projection.eventType ?? 'unmapped',
+    schema_status: projection.schemaStatus,
+    confidence: warnings.length > 0 ? 'unknown' : projection.confidence,
+    warnings,
+  };
+}
+
+function calculateReviewEvidenceConfidence(input: {
+  hasReviewPacket: boolean;
+  evidence: ReviewEvidenceStructuredReference[];
+  outputs: ReviewEvidenceStructuredReference[];
+  warnings: ReviewEvidenceMappingWarning[];
+}): ReviewEvidenceMappingConfidence {
+  if (!input.hasReviewPacket) {
+    return 'unknown';
+  }
+  if (input.warnings.some((warning) => warning.code === 'missing_receipt' || warning.code === 'missing_evidence')) {
+    return 'low';
+  }
+  const references = [...input.evidence, ...input.outputs];
+  if (references.length === 0) {
+    return 'low';
+  }
+  return references.every((reference) => reference.object_ref) ? 'medium' : 'low';
+}
+
+function buildReviewEvidenceAudit(result: ReviewEvidenceTaskMappingResult): Record<string, unknown> {
+  return {
+    version: REVIEW_EVIDENCE_MAPPING_VERSION,
+    confidence: result.confidence,
+    review_packet_source: result.review_packet_source,
+    receipt_status: result.receipt_status,
+    evidence_fields: result.evidence_fields,
+    output_artifacts: result.output_artifacts,
+    done_criteria: result.done_criteria,
+    activity_events: result.activity_events,
+    warnings: result.warnings,
+    provenance: {
+      source: 'legacy_task_metadata_and_activity_rows',
+      note: 'THE-88 mapping records structured references only; it does not create raw historical receipts.',
+    },
+  };
+}
+
+function renderReviewEvidenceMappingMarkdown(report: Omit<ReviewEvidenceMappingReport, 'markdown'>): string {
+  const lines = [
+    '# THE-88 Review Packet / Evidence Mapping Report',
+    '',
+    `- Mode: ${report.dryRun ? 'dry-run' : 'apply'}`,
+    `- Total tasks scanned: ${report.totalTasks}`,
+    `- Tasks needing update: ${report.tasksNeedingUpdate}`,
+    `- Review packets mapped: ${report.reviewPacketsMapped}`,
+    `- Evidence fields mapped: ${report.evidenceFieldsMapped}`,
+    `- Output artifacts mapped: ${report.outputArtifactsMapped}`,
+    `- Done criteria mapped: ${report.doneCriteriaMapped}`,
+    `- Missing receipts: ${report.missingReceipts}`,
+    `- Weak activity flags: ${report.weakActivityFlags}`,
+    '',
+    '## Sample Results',
+  ];
+
+  const sample = report.taskResults.filter((result) => result.would_update || result.warnings.length > 0).slice(0, 5);
+  if (sample.length === 0) {
+    lines.push('- No review/evidence mappings or cleanup warnings detected.');
+  } else {
+    for (const result of sample) {
+      lines.push(
+        `- Task ${result.task_id} (${result.title}): receipt=${result.receipt_status}, evidence=${result.evidence_fields.length}, outputs=${result.output_artifacts.length}, weak_activity=${result.activity_events.filter((event) => event.warnings.length > 0).length}, warnings=${result.warnings.length}, applied=${result.applied}`
+      );
+      for (const warning of result.warnings.slice(0, 5)) {
+        lines.push(`  - ${warning.code}: ${warning.message}`);
+      }
+    }
+  }
+
+  lines.push('', '## Rollback / Non-Destructive Notes', ...report.rollbackNotes.map((note) => `- ${note}`));
+  return `${lines.join('\n')}\n`;
+}
+
+export function mapReviewPacketsAndEvidenceForPhase2(
+  options: ReviewEvidenceMappingOptions = {}
+): ReviewEvidenceMappingReport {
+  const dryRun = options.dryRun !== false;
+  const db = options.db ?? getEntityDatabase();
+  const limit = typeof options.limit === 'number' && Number.isInteger(options.limit) && options.limit > 0 ? options.limit : null;
+  const rows = db.prepare(`
+    SELECT id, name, "column", output, metadata
+    FROM tasks
+    ORDER BY id ASC
+    ${limit ? 'LIMIT ?' : ''}
+  `).all(...(limit ? [limit] : [])) as Array<Record<string, unknown>>;
+
+  const activityRows = tableExists(db, 'activities')
+    ? db.prepare(`
+        SELECT *
+        FROM activities
+        ORDER BY id ASC
+      `).all() as Array<Record<string, unknown>>
+    : [];
+  const activitiesByTask = new Map<number, Record<string, unknown>[]>();
+  for (const activity of activityRows) {
+    const taskId = normalizePositiveInteger(activity.task_id);
+    if (!taskId) {
+      continue;
+    }
+    const existing = activitiesByTask.get(taskId) ?? [];
+    existing.push(activity);
+    activitiesByTask.set(taskId, existing);
+  }
+
+  const updateStmt = db.prepare('UPDATE tasks SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+  const taskResults: ReviewEvidenceTaskMappingResult[] = [];
+
+  const applyOne = (row: Record<string, unknown>): void => {
+    const taskId = Number(row.id);
+    const metadata = parseJsonObject(row.metadata);
+    const { source: packetSource, packet } = getReviewPacketFromMetadata(metadata);
+    const warnings: ReviewEvidenceMappingWarning[] = [];
+    const hasReviewPacket = Boolean(packet && packetSource);
+    let evidence: ReviewEvidenceStructuredReference[] = [];
+    let outputs: ReviewEvidenceStructuredReference[] = [];
+    let doneCriteria: ReviewEvidenceDoneCriterion[] = [];
+
+    if (packet && packetSource) {
+      const collected = collectReviewEvidenceReferences(taskId, packetSource, packet, warnings);
+      evidence = collected.evidence;
+      outputs = collected.outputs;
+      doneCriteria = collected.doneCriteria;
+    }
+
+    const outputReference = normalizeBlockerReason(row.output);
+    if (outputReference) {
+      outputs.push(mapReviewEvidenceReference({
+        source_field: 'tasks.output',
+        legacy_value: outputReference,
+        task_id: taskId,
+        link_role: 'output',
+      }));
+    }
+
+    const receiptStatus: ReviewEvidenceReceiptStatus = isCompletedTaskColumn(row.column)
+      ? hasRawReceiptForTask(db, taskId)
+        ? 'raw_receipt_present'
+        : 'missing_receipt'
+      : 'not_applicable';
+    if (receiptStatus === 'missing_receipt') {
+      pushReviewEvidenceWarning(
+        warnings,
+        'missing_receipt',
+        'Historical completed task has no canonical raw receipt artifact; no fake receipt was created.',
+        'blocking_for_done',
+        'evidence_artifacts.raw_task_receipt'
+      );
+    }
+
+    const activityEvents = (activitiesByTask.get(taskId) ?? []).map(mapActivityForReviewEvidence);
+    for (const activityEvent of activityEvents) {
+      warnings.push(...activityEvent.warnings);
+    }
+
+    if (!hasReviewPacket && (receiptStatus === 'missing_receipt' || activityEvents.some((event) => event.warnings.length > 0))) {
+      pushReviewEvidenceWarning(
+        warnings,
+        'missing_review_packet',
+        'Task has receipt/activity migration warnings but no legacy review packet to structure.',
+        'info',
+        'tasks.metadata.review_packet'
+      );
+    }
+
+    const confidence = calculateReviewEvidenceConfidence({ hasReviewPacket, evidence, outputs, warnings });
+    const resultBase: Omit<ReviewEvidenceTaskMappingResult, 'would_update' | 'applied'> = {
+      task_id: taskId,
+      title: String(row.name ?? ''),
+      has_review_packet: hasReviewPacket,
+      review_packet_source: packetSource,
+      evidence_fields: evidence,
+      output_artifacts: outputs,
+      done_criteria: doneCriteria,
+      activity_events: activityEvents,
+      receipt_status: receiptStatus,
+      confidence,
+      warnings,
+    };
+    const hasMappingSignal =
+      hasReviewPacket ||
+      evidence.length > 0 ||
+      outputs.length > 0 ||
+      doneCriteria.length > 0 ||
+      receiptStatus === 'missing_receipt' ||
+      activityEvents.some((event) => event.warnings.length > 0);
+    const existingAudit = metadata.phase2_review_evidence_mapping;
+    const resultForAudit: ReviewEvidenceTaskMappingResult = {
+      ...resultBase,
+      would_update: false,
+      applied: false,
+    };
+    const nextAudit = hasMappingSignal ? buildReviewEvidenceAudit(resultForAudit) : null;
+    const wouldUpdate =
+      nextAudit !== null &&
+      JSON.stringify(existingAudit ?? null) !== JSON.stringify(nextAudit);
+    const result: ReviewEvidenceTaskMappingResult = {
+      ...resultBase,
+      would_update: wouldUpdate,
+      applied: !dryRun && wouldUpdate,
+    };
+
+    if (!dryRun && wouldUpdate && nextAudit) {
+      updateStmt.run(JSON.stringify({
+        ...metadata,
+        phase2_review_evidence_mapping: nextAudit,
+      }), taskId);
+    }
+
+    taskResults.push(result);
+  };
+
+  const transaction = db.transaction(() => {
+    for (const row of rows) {
+      applyOne(row);
+    }
+  });
+
+  if (dryRun) {
+    for (const row of rows) {
+      applyOne(row);
+    }
+  } else {
+    transaction();
+  }
+
+  const reportBase: Omit<ReviewEvidenceMappingReport, 'markdown'> = {
+    dryRun,
+    totalTasks: rows.length,
+    tasksNeedingUpdate: taskResults.filter((result) => result.would_update).length,
+    reviewPacketsMapped: taskResults.filter((result) => result.has_review_packet).length,
+    evidenceFieldsMapped: taskResults.reduce((sum, result) => sum + result.evidence_fields.filter((field) => field.object_ref).length, 0),
+    outputArtifactsMapped: taskResults.reduce((sum, result) => sum + result.output_artifacts.filter((field) => field.object_ref).length, 0),
+    doneCriteriaMapped: taskResults.reduce((sum, result) => sum + result.done_criteria.length, 0),
+    missingReceipts: taskResults.filter((result) => result.receipt_status === 'missing_receipt').length,
+    weakActivityFlags: taskResults.reduce((sum, result) => sum + result.activity_events.filter((event) => event.warnings.length > 0).length, 0),
+    taskResults,
+    rollbackNotes: [
+      'Dry-run mode performs no writes.',
+      'Apply mode only writes tasks.metadata.phase2_review_evidence_mapping with structured references, warnings, provenance, and confidence.',
+      'Historical completed tasks without raw_task_receipt artifacts are marked missing_receipt; this mapper never creates raw historical receipts.',
+      'Weak activity rows are flagged as weak_activity_structure instead of being rewritten as certain structured events.',
+      'Rollback is narrow: remove or supersede tasks.metadata.phase2_review_evidence_mapping for affected task IDs.',
+    ],
+  };
+
+  return {
+    ...reportBase,
+    markdown: renderReviewEvidenceMappingMarkdown(reportBase),
+  };
+}
+
 function previewPolicyObject(value: string | null | undefined): Record<string, unknown> {
   return parseJsonObject(value);
 }
@@ -2178,6 +2590,84 @@ export interface Phase2MigrationInventoryOptions {
   db?: Database.Database;
   limit?: number;
   now?: Date;
+}
+
+export type ReviewEvidenceMappingConfidence = LegacyDocumentReferenceConfidence;
+
+export type ReviewEvidenceMappingWarningCode =
+  | 'missing_review_packet'
+  | 'missing_evidence'
+  | 'ambiguous_evidence_reference'
+  | 'missing_receipt'
+  | 'weak_activity_structure';
+
+export interface ReviewEvidenceMappingWarning {
+  code: ReviewEvidenceMappingWarningCode;
+  message: string;
+  severity: 'info' | 'warning' | 'blocking_for_done';
+  source: string;
+}
+
+export interface ReviewEvidenceStructuredReference {
+  source_field: string;
+  legacy_value: string | null;
+  object_ref: ObjectRef | null;
+  confidence: ReviewEvidenceMappingConfidence;
+  warnings: string[];
+}
+
+export interface ReviewEvidenceDoneCriterion {
+  source_field: string;
+  text: string;
+  completed: boolean | null;
+}
+
+export interface ReviewEvidenceActivityMapping {
+  activity_id: number;
+  task_id: number | null;
+  event_type: ActivityEventType | 'unmapped';
+  schema_status: ActivityEventSchemaStatus;
+  confidence: ActivityBackfillConfidence;
+  warnings: ReviewEvidenceMappingWarning[];
+}
+
+export type ReviewEvidenceReceiptStatus = 'not_applicable' | 'raw_receipt_present' | 'missing_receipt';
+
+export interface ReviewEvidenceTaskMappingResult {
+  task_id: number;
+  title: string;
+  has_review_packet: boolean;
+  review_packet_source: 'metadata.review_packet' | 'metadata.review_brief' | null;
+  evidence_fields: ReviewEvidenceStructuredReference[];
+  output_artifacts: ReviewEvidenceStructuredReference[];
+  done_criteria: ReviewEvidenceDoneCriterion[];
+  activity_events: ReviewEvidenceActivityMapping[];
+  receipt_status: ReviewEvidenceReceiptStatus;
+  confidence: ReviewEvidenceMappingConfidence;
+  warnings: ReviewEvidenceMappingWarning[];
+  would_update: boolean;
+  applied: boolean;
+}
+
+export interface ReviewEvidenceMappingReport {
+  dryRun: boolean;
+  totalTasks: number;
+  tasksNeedingUpdate: number;
+  reviewPacketsMapped: number;
+  evidenceFieldsMapped: number;
+  outputArtifactsMapped: number;
+  doneCriteriaMapped: number;
+  missingReceipts: number;
+  weakActivityFlags: number;
+  taskResults: ReviewEvidenceTaskMappingResult[];
+  rollbackNotes: string[];
+  markdown: string;
+}
+
+export interface ReviewEvidenceMappingOptions {
+  dryRun?: boolean;
+  limit?: number;
+  db?: Database.Database;
 }
 
 export interface SubscriptionRecord {
