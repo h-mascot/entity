@@ -2619,6 +2619,118 @@ describe('DocumentObjectRepository', () => {
     }
   });
 
+  it('builds THE-89 migration cleanup queues and protects human corrections from reruns', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const taskRepo = dbMod.createTaskRepository();
+    const task = taskRepo.createTask({
+      name: 'Legacy cleanup queue task',
+      column: 'done',
+      assignee: 'Ada',
+      worktype: 'legacy_ops',
+      metadata: JSON.stringify({
+        phase2_review_evidence_mapping: {
+          version: 'THE-88',
+          warnings: [
+            {
+              code: 'missing_evidence',
+              message: 'Review packet has no evidence array to map.',
+              severity: 'warning',
+              source: 'metadata.review_packet.evidence',
+            },
+          ],
+        },
+      }),
+    });
+
+    const rawDb = new Database(tmpDbPath);
+    try {
+      rawDb.prepare(`
+        INSERT INTO activities (
+          source,
+          type,
+          task_id,
+          activity_event_type,
+          activity_event_payload_json,
+          activity_event_schema_status,
+          action,
+          description,
+          metadata
+        ) VALUES ('agent', 'vendor_ping', ?, NULL, '{bad-json', 'legacy_mapped', 'Vendor ping', 'Weak cleanup activity', NULL)
+      `).run(task.id);
+
+      const report = dbMod.buildMigrationCleanupQueuesForPhase2({
+        db: rawDb,
+        now: new Date('2026-06-24T16:13:30.000Z'),
+      });
+      const taskQueueCodes = report.items
+        .filter((item) => item.task_id === task.id)
+        .map((item) => item.code);
+
+      expect(taskRepo.getTask(task.id)?.name).toBe('Legacy cleanup queue task');
+      expect(taskQueueCodes).toEqual(expect.arrayContaining([
+        'missing_owner',
+        'unknown_initiator',
+        'missing_project',
+        'missing_receipt',
+        'unknown_worktype',
+        'weak_activity_structure',
+        'missing_evidence',
+      ]));
+      expect(report.items.find((item) => item.code === 'missing_owner' && item.task_id === task.id)).toMatchObject({
+        status: 'open',
+        field_name: 'owner_principal_id',
+        old_task_visible: true,
+      });
+      expect(report.markdown).toContain('THE-89 Migration Warning / Cleanup Queue Report');
+
+      const correction = dbMod.applyMigrationCleanupCorrectionForPhase2({
+        db: rawDb,
+        task_id: task.id,
+        code: 'missing_owner',
+        field_name: 'owner_principal_id',
+        corrected_value: 'human-owner',
+        corrected_by_principal_id: 'reviewer-1',
+        corrected_at: '2026-06-24T16:20:00.000Z',
+        note: 'Owner confirmed during cleanup.',
+      });
+
+      expect(correction.task.owner_principal_id).toBe('human-owner');
+      expect(correction.correction).toMatchObject({
+        version: 'THE-89',
+        code: 'missing_owner',
+        field_name: 'owner_principal_id',
+        previous_value: 'legacy-owner',
+        corrected_value: 'human-owner',
+        corrected_by_principal_id: 'reviewer-1',
+        authoritative: true,
+      });
+
+      const openAfterCorrection = dbMod.buildMigrationCleanupQueuesForPhase2({ db: rawDb });
+      expect(openAfterCorrection.items.find((item) => item.code === 'missing_owner' && item.task_id === task.id)).toBeUndefined();
+
+      const withCorrected = dbMod.buildMigrationCleanupQueuesForPhase2({ db: rawDb, includeCorrected: true });
+      expect(withCorrected.items.find((item) => item.code === 'missing_owner' && item.task_id === task.id)).toMatchObject({
+        status: 'corrected',
+        correction: expect.objectContaining({ corrected_value: 'human-owner' }),
+      });
+
+      const rerun = dbMod.backfillTaskHierarchyAndAccountability({ dryRun: false, db: rawDb });
+      expect(rerun.taskResults.find((entry) => entry.task_id === task.id)?.inferred_fields).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ field_name: 'owner_principal_id' })]),
+      );
+      expect(rawDb.prepare('SELECT owner_principal_id FROM tasks WHERE id = ?').get(task.id)).toMatchObject({
+        owner_principal_id: 'human-owner',
+      });
+      expect(rawDb.prepare(`
+        SELECT COUNT(*) AS count
+        FROM evidence_artifacts
+        WHERE origin_task_id = ? AND artifact_kind = 'raw_task_receipt'
+      `).get(task.id)).toMatchObject({ count: 0 });
+    } finally {
+      rawDb.close();
+    }
+  });
+
   it('suppresses restricted and degraded document-object previews before snippets can leak', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
 

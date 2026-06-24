@@ -127,6 +127,7 @@ import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
+import { createMigrationCleanupQueueRouter } from "./routes/migration-cleanup-queues";
 import {
   buildTaskMutationActivityEvent,
   createActivityEventRouter,
@@ -323,6 +324,7 @@ app.use("/api/document-objects", createDocumentObjectRouter({
   documentRepo: documentObjectRepository,
   artifactRepo: evidenceArtifactRepository,
 }));
+app.use("/api/migration-cleanup-queues", createMigrationCleanupQueueRouter());
 wss.on("connection", (ws) => {
   wsClients.add(ws);
   terminalBridge.handleSocketConnection(ws);

@@ -1966,6 +1966,551 @@ export function mapReviewPacketsAndEvidenceForPhase2(
   };
 }
 
+const MIGRATION_CLEANUP_VERSION = 'THE-89' as const;
+
+const MIGRATION_CLEANUP_QUEUE_CODES = [
+  'missing_owner',
+  'unknown_initiator',
+  'missing_project',
+  'missing_assignee',
+  'missing_receipt',
+  'unknown_worktype',
+  'weak_activity_structure',
+  'permission_mapping_uncertain',
+  'missing_review_packet',
+  'missing_evidence',
+  'ambiguous_evidence_reference',
+  'ambiguous_team',
+] as const satisfies readonly MigrationCleanupQueueCode[];
+
+function isMigrationCleanupQueueCode(value: unknown): value is MigrationCleanupQueueCode {
+  return typeof value === 'string' && (MIGRATION_CLEANUP_QUEUE_CODES as readonly string[]).includes(value);
+}
+
+function migrationCleanupSeverity(code: MigrationCleanupQueueCode): MigrationCleanupQueueItem['severity'] {
+  if (code === 'missing_owner' || code === 'missing_assignee') {
+    return 'blocking_for_execution';
+  }
+  if (code === 'missing_receipt') {
+    return 'blocking_for_done';
+  }
+  if (code === 'missing_review_packet') {
+    return 'info';
+  }
+  return 'warning';
+}
+
+function migrationCleanupMessage(code: MigrationCleanupQueueCode): string {
+  const inventoryDefinition = PHASE2_MIGRATION_INVENTORY_GAP_DEFINITIONS[code as Phase2MigrationInventoryGapCode];
+  if (inventoryDefinition) {
+    return inventoryDefinition.description;
+  }
+  const extraMessages: Partial<Record<MigrationCleanupQueueCode, string>> = {
+    missing_review_packet: 'Task has receipt/activity migration warnings but no legacy review packet to structure.',
+    missing_evidence: 'Review packet has no evidence array to map.',
+    ambiguous_evidence_reference: 'Legacy evidence value could not be confidently mapped to an artifact or document object.',
+    ambiguous_team: 'Task team could not be inferred from a direct task field or linked project.',
+  };
+  return extraMessages[code] ?? 'Migration cleanup warning requires human review.';
+}
+
+function readMigrationCleanupCorrections(metadata: Record<string, unknown>): MigrationCleanupCorrectionRecord[] {
+  const rawCorrections = metadata.phase2_cleanup_corrections;
+  if (!Array.isArray(rawCorrections)) {
+    return [];
+  }
+  return rawCorrections.filter((entry): entry is MigrationCleanupCorrectionRecord => {
+    if (!isPlainObject(entry)) {
+      return false;
+    }
+    return (
+      entry.version === MIGRATION_CLEANUP_VERSION &&
+      isMigrationCleanupQueueCode(entry.code) &&
+      typeof entry.field_name === 'string' &&
+      typeof entry.corrected_by_principal_id === 'string' &&
+      entry.authoritative === true
+    );
+  });
+}
+
+function findMigrationCleanupCorrection(
+  corrections: MigrationCleanupCorrectionRecord[],
+  code: MigrationCleanupQueueCode,
+  fieldName: MigrationCleanupCorrectionField | null
+): MigrationCleanupCorrectionRecord | null {
+  return corrections.find((correction) => (
+    correction.code === code &&
+    (fieldName === null || correction.field_name === fieldName || correction.field_name === 'acknowledgement')
+  )) ?? null;
+}
+
+function migrationCleanupCorrectedFields(metadata: Record<string, unknown>): Set<MigrationCleanupCorrectionField> {
+  return new Set(readMigrationCleanupCorrections(metadata).map((correction) => correction.field_name));
+}
+
+function readTaskCleanupValue(row: Record<string, unknown>, fieldName: MigrationCleanupCorrectionField | null): string | number | boolean | null {
+  if (!fieldName || fieldName === 'acknowledgement') {
+    return null;
+  }
+  if (fieldName === 'project_id') {
+    return normalizePositiveInteger(row.project_id);
+  }
+  const value = row[fieldName];
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  return normalizeBlockerReason(value);
+}
+
+function pushMigrationCleanupItem(
+  target: MigrationCleanupQueueItem[],
+  seen: Set<string>,
+  input: {
+    code: MigrationCleanupQueueCode;
+    object_type: MigrationCleanupQueueObjectType;
+    object_id: string;
+    task_id?: number | null;
+    activity_id?: number | null;
+    title: string;
+    message?: string | null;
+    source: string;
+    field_name?: MigrationCleanupCorrectionField | null;
+    current_value?: string | number | boolean | null;
+    corrections?: MigrationCleanupCorrectionRecord[];
+    includeCorrected: boolean;
+  }
+): void {
+  const fieldName = input.field_name ?? null;
+  const correction = findMigrationCleanupCorrection(input.corrections ?? [], input.code, fieldName);
+  const status: MigrationCleanupQueueItem['status'] = correction ? 'corrected' : 'open';
+  if (status === 'corrected' && !input.includeCorrected) {
+    return;
+  }
+  const id = `${input.object_type}:${input.object_id}:${input.code}:${fieldName ?? 'object'}`;
+  if (seen.has(id)) {
+    return;
+  }
+  seen.add(id);
+  target.push({
+    id,
+    code: input.code,
+    severity: migrationCleanupSeverity(input.code),
+    object_type: input.object_type,
+    object_id: input.object_id,
+    task_id: input.task_id ?? null,
+    activity_id: input.activity_id ?? null,
+    title: input.title,
+    message: input.message ?? migrationCleanupMessage(input.code),
+    source: input.source,
+    field_name: fieldName,
+    current_value: input.current_value ?? null,
+    status,
+    correction,
+    old_task_visible: true,
+  });
+}
+
+function renderMigrationCleanupQueueMarkdown(report: Omit<MigrationCleanupQueueReport, 'markdown'>): string {
+  const lines = [
+    '# THE-89 Migration Warning / Cleanup Queue Report',
+    '',
+    `- Generated at: ${report.generatedAt}`,
+    `- Total queue items: ${report.totalItems}`,
+    `- Open queue items: ${report.openItems}`,
+    `- Corrected queue items: ${report.correctedItems}`,
+    '',
+    '## Queues',
+  ];
+
+  for (const queue of report.queues) {
+    lines.push(`- ${queue.code}: ${queue.open} open, ${queue.corrected} corrected (${queue.severity})`);
+  }
+
+  lines.push('', '## Sample Items');
+  const sample = report.items.slice(0, 8);
+  if (sample.length === 0) {
+    lines.push('- No migration cleanup warnings detected.');
+  } else {
+    for (const item of sample) {
+      lines.push(
+        `- ${item.id}: status=${item.status}, source=${item.source}, field=${item.field_name ?? 'object'}, visible=${item.old_task_visible}`
+      );
+      lines.push(`  - ${item.message}`);
+    }
+  }
+
+  lines.push('', '## Rollback / Non-Destructive Notes', ...report.rollbackNotes.map((note) => `- ${note}`));
+  return `${lines.join('\n')}\n`;
+}
+
+function summarizeMigrationCleanupQueues(items: MigrationCleanupQueueItem[]): MigrationCleanupQueueSummary[] {
+  return MIGRATION_CLEANUP_QUEUE_CODES.map((code) => {
+    const matching = items.filter((item) => item.code === code);
+    return {
+      code,
+      count: matching.length,
+      severity: migrationCleanupSeverity(code),
+      open: matching.filter((item) => item.status === 'open').length,
+      corrected: matching.filter((item) => item.status === 'corrected').length,
+    };
+  }).filter((summary) => summary.count > 0);
+}
+
+export function buildMigrationCleanupQueuesForPhase2(
+  options: MigrationCleanupQueueOptions = {}
+): MigrationCleanupQueueReport {
+  const db = options.db ?? getEntityDatabase();
+  const limit = typeof options.limit === 'number' && Number.isInteger(options.limit) && options.limit > 0 ? options.limit : null;
+  const includeCorrected = options.includeCorrected === true;
+  const generatedAt = (options.now ?? new Date()).toISOString();
+  const items: MigrationCleanupQueueItem[] = [];
+  const seen = new Set<string>();
+  const taskCorrections = new Map<number, MigrationCleanupCorrectionRecord[]>();
+
+  const taskRows = db.prepare(`
+    SELECT
+      t.*,
+      (
+        SELECT p.id
+        FROM task_projects tp
+        INNER JOIN projects p ON p.id = tp.project_id AND p.org_id = tp.org_id
+        WHERE tp.task_id = t.id
+        ORDER BY p.id ASC
+        LIMIT 1
+      ) AS linked_project_id,
+      (
+        SELECT p.team_id
+        FROM task_projects tp
+        INNER JOIN projects p ON p.id = tp.project_id AND p.org_id = tp.org_id
+        WHERE tp.task_id = t.id
+        ORDER BY p.id ASC
+        LIMIT 1
+      ) AS linked_project_team_id
+    FROM tasks t
+    ORDER BY t.id ASC
+    ${limit ? 'LIMIT ?' : ''}
+  `).all(...(limit ? [limit] : [])) as TaskBackfillRow[];
+
+  for (const row of taskRows) {
+    const taskId = Number(row.id);
+    const metadata = parseJsonObject(row.metadata);
+    const corrections = readMigrationCleanupCorrections(metadata);
+    taskCorrections.set(taskId, corrections);
+    const title = String(row.name ?? `Task ${taskId}`);
+    const taskObjectId = String(taskId);
+    const pushTaskWarning = (
+      code: MigrationCleanupQueueCode,
+      fieldName: MigrationCleanupCorrectionField | null,
+      source: string,
+      message?: string | null
+    ) => pushMigrationCleanupItem(items, seen, {
+      code,
+      object_type: 'task',
+      object_id: taskObjectId,
+      task_id: taskId,
+      title,
+      message,
+      source,
+      field_name: fieldName,
+      current_value: readTaskCleanupValue(row, fieldName),
+      corrections,
+      includeCorrected,
+    });
+
+    if (isLegacyPrincipalMarker(row.owner_principal_id, ['legacy-owner', 'unknown'])) {
+      pushTaskWarning('missing_owner', 'owner_principal_id', 'tasks.owner_principal_id');
+    }
+    if (isLegacyPrincipalMarker(row.initiator_principal_id, ['legacy-unknown', 'unknown'])) {
+      pushTaskWarning('unknown_initiator', 'initiator_principal_id', 'tasks.initiator_principal_id');
+    }
+    if (!normalizePositiveInteger(row.project_id) && !normalizePositiveInteger(row.linked_project_id)) {
+      pushTaskWarning('missing_project', 'project_id', 'tasks.project_id');
+    }
+    if (!normalizeBlockerReason(row.team_id) && !normalizeBlockerReason(row.linked_project_team_id)) {
+      pushTaskWarning('ambiguous_team', 'team_id', 'tasks.team_id');
+    }
+    if (
+      isBackfillExecutableColumn(row.column) &&
+      !isAssignablePrincipal(row.assignee) &&
+      !isAssignablePrincipal(row.executor_principal_id) &&
+      !normalizeBlocked(row.taskmaster_drivable)
+    ) {
+      pushTaskWarning('missing_assignee', 'assignee', 'tasks.assignee');
+    }
+    if (isCompletedTaskColumn(row.column) && !hasRawReceiptForTask(db, taskId)) {
+      pushTaskWarning('missing_receipt', 'acknowledgement', 'evidence_artifacts.raw_task_receipt');
+    }
+    if (!getWorktypeRegistryEntry(row.worktype)) {
+      pushTaskWarning('unknown_worktype', 'worktype', 'tasks.worktype');
+    }
+
+    const backfill = isPlainObject(metadata.phase2_backfill) ? metadata.phase2_backfill : null;
+    const backfillWarnings = Array.isArray(backfill?.warnings) ? backfill.warnings : [];
+    for (const warning of backfillWarnings) {
+      if (!isPlainObject(warning) || !isMigrationCleanupQueueCode(warning.code)) {
+        continue;
+      }
+      pushTaskWarning(
+        warning.code,
+        warning.code === 'missing_owner' ? 'owner_principal_id'
+          : warning.code === 'unknown_initiator' ? 'initiator_principal_id'
+            : warning.code === 'missing_project' ? 'project_id'
+              : warning.code === 'missing_assignee' ? 'assignee'
+                : null,
+        'tasks.metadata.phase2_backfill',
+        normalizeBlockerReason(warning.message)
+      );
+    }
+
+    const reviewMapping = isPlainObject(metadata.phase2_review_evidence_mapping)
+      ? metadata.phase2_review_evidence_mapping
+      : null;
+    const reviewWarnings = Array.isArray(reviewMapping?.warnings) ? reviewMapping.warnings : [];
+    for (const warning of reviewWarnings) {
+      if (!isPlainObject(warning) || !isMigrationCleanupQueueCode(warning.code)) {
+        continue;
+      }
+      pushTaskWarning(
+        warning.code,
+        warning.code === 'missing_receipt' ? 'acknowledgement' : null,
+        normalizeBlockerReason(warning.source) ?? 'tasks.metadata.phase2_review_evidence_mapping',
+        normalizeBlockerReason(warning.message)
+      );
+    }
+
+    if (includeCorrected) {
+      for (const correction of corrections) {
+        pushTaskWarning(
+          correction.code,
+          correction.field_name,
+          'tasks.metadata.phase2_cleanup_corrections',
+          `Human correction recorded by ${correction.corrected_by_principal_id}.`
+        );
+      }
+    }
+  }
+
+  if (tableExists(db, 'activities')) {
+    const activityRows = db.prepare(`
+      SELECT id, task_id, activity_event_type, activity_event_schema_status, activity_event_payload_json, action, description
+      FROM activities
+      ORDER BY id ASC
+      ${limit ? 'LIMIT ?' : ''}
+    `).all(...(limit ? [limit] : [])) as Array<Record<string, unknown>>;
+    for (const row of activityRows) {
+      if (!isWeakActivityMapping(row)) {
+        continue;
+      }
+      const activityId = Number(row.id);
+      const taskId = normalizePositiveInteger(row.task_id);
+      pushMigrationCleanupItem(items, seen, {
+        code: 'weak_activity_structure',
+        object_type: 'activity',
+        object_id: String(activityId),
+        task_id: taskId,
+        activity_id: activityId,
+        title: normalizeBlockerReason(row.action) ?? normalizeBlockerReason(row.description) ?? `Activity ${activityId}`,
+        source: `activities:${activityId}`,
+        field_name: null,
+        corrections: taskId ? taskCorrections.get(taskId) : undefined,
+        includeCorrected,
+      });
+    }
+  }
+
+  if (tableExists(db, 'native_documents')) {
+    const rows = db.prepare(`
+      SELECT id, title, sensitivity, acl_json
+      FROM native_documents
+      WHERE (sensitivity IS NULL OR trim(sensitivity) = '')
+        AND (acl_json IS NULL OR trim(acl_json) = '' OR trim(acl_json) = '{}')
+      ORDER BY id ASC
+      ${limit ? 'LIMIT ?' : ''}
+    `).all(...(limit ? [limit] : [])) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      const id = String(row.id);
+      pushMigrationCleanupItem(items, seen, {
+        code: 'permission_mapping_uncertain',
+        object_type: 'native_document',
+        object_id: id,
+        title: normalizeBlockerReason(row.title) ?? id,
+        source: 'native_documents.sensitivity_acl',
+        includeCorrected,
+      });
+    }
+  }
+
+  if (tableExists(db, 'external_document_refs')) {
+    const rows = db.prepare(`
+      SELECT id, title, entity_visibility_policy_json, external_permission_summary
+      FROM external_document_refs
+      WHERE (entity_visibility_policy_json IS NULL OR trim(entity_visibility_policy_json) = '' OR trim(entity_visibility_policy_json) = '{}')
+        AND (external_permission_summary IS NULL OR trim(external_permission_summary) = '')
+      ORDER BY id ASC
+      ${limit ? 'LIMIT ?' : ''}
+    `).all(...(limit ? [limit] : [])) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      const id = String(row.id);
+      pushMigrationCleanupItem(items, seen, {
+        code: 'permission_mapping_uncertain',
+        object_type: 'external_document_ref',
+        object_id: id,
+        title: normalizeBlockerReason(row.title) ?? id,
+        source: 'external_document_refs.entity_visibility_policy',
+        includeCorrected,
+      });
+    }
+  }
+
+  if (tableExists(db, 'evidence_artifacts')) {
+    const rows = db.prepare(`
+      SELECT id, title, metadata_json
+      FROM evidence_artifacts
+      WHERE metadata_json IS NULL
+        OR trim(metadata_json) = ''
+        OR trim(metadata_json) = '{}'
+      ORDER BY id ASC
+      ${limit ? 'LIMIT ?' : ''}
+    `).all(...(limit ? [limit] : [])) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      const id = String(row.id);
+      pushMigrationCleanupItem(items, seen, {
+        code: 'permission_mapping_uncertain',
+        object_type: 'evidence_artifact',
+        object_id: id,
+        title: normalizeBlockerReason(row.title) ?? id,
+        source: 'evidence_artifacts.metadata_json',
+        includeCorrected,
+      });
+    }
+  }
+
+  const reportBase: Omit<MigrationCleanupQueueReport, 'markdown'> = {
+    generatedAt,
+    totalItems: items.length,
+    openItems: items.filter((item) => item.status === 'open').length,
+    correctedItems: items.filter((item) => item.status === 'corrected').length,
+    queues: summarizeMigrationCleanupQueues(items),
+    items,
+    rollbackNotes: [
+      'THE-89 cleanup queues are derived from current rows plus migration metadata; no queue table is required for visibility.',
+      'Human corrections are stored in tasks.metadata.phase2_cleanup_corrections and, for supported task fields, applied to the task field itself.',
+      'Backfill reruns treat human-corrected fields as authoritative and do not overwrite them.',
+      'Missing historical receipts can be acknowledged for cleanup tracking, but this flow never creates fake raw task receipts.',
+    ],
+  };
+
+  return {
+    ...reportBase,
+    markdown: renderMigrationCleanupQueueMarkdown(reportBase),
+  };
+}
+
+function normalizeCleanupCorrectionValue(
+  fieldName: MigrationCleanupCorrectionField,
+  value: string | number | boolean | null
+): string | number | boolean | null {
+  if (fieldName === 'acknowledgement') {
+    return normalizeBlockerReason(value) ?? 'acknowledged';
+  }
+  if (fieldName === 'project_id') {
+    const normalized = normalizePositiveInteger(value);
+    if (!normalized) {
+      throw new Error('project_id correction must be a positive integer');
+    }
+    return normalized;
+  }
+  if (fieldName === 'team_id' || fieldName === 'owner_principal_id' || fieldName === 'initiator_principal_id' || fieldName === 'assignee' || fieldName === 'executor_principal_id') {
+    const normalized = normalizeBlockerReason(value);
+    if (!normalized) {
+      throw new Error(`${fieldName} correction must be a non-empty string`);
+    }
+    return normalized;
+  }
+  if (fieldName === 'worktype') {
+    return normalizeWorktype(value);
+  }
+  return value;
+}
+
+export function applyMigrationCleanupCorrectionForPhase2(
+  input: ApplyMigrationCleanupCorrectionInput
+): ApplyMigrationCleanupCorrectionResult {
+  const db = input.db ?? getEntityDatabase();
+  const taskId = normalizePositiveInteger(input.task_id);
+  if (!taskId) {
+    throw new Error('task_id must be a positive integer');
+  }
+  if (!isMigrationCleanupQueueCode(input.code)) {
+    throw new Error('cleanup code is not supported');
+  }
+  const correctedBy = normalizeBlockerReason(input.corrected_by_principal_id);
+  if (!correctedBy) {
+    throw new Error('corrected_by_principal_id is required');
+  }
+  const fieldName = input.field_name;
+  const correctedValue = normalizeCleanupCorrectionValue(fieldName, input.corrected_value);
+  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown> | undefined;
+  if (!row) {
+    throw new Error('task not found');
+  }
+  const metadata = parseJsonObject(row.metadata);
+  const previousValue = readTaskCleanupValue(row, fieldName);
+  const correction: MigrationCleanupCorrectionRecord = {
+    version: MIGRATION_CLEANUP_VERSION,
+    code: input.code,
+    field_name: fieldName,
+    previous_value: previousValue,
+    corrected_value: correctedValue,
+    corrected_by_principal_id: correctedBy,
+    corrected_at: normalizeBlockerReason(input.corrected_at) ?? new Date().toISOString(),
+    note: normalizeBlockerReason(input.note),
+    authoritative: true,
+  };
+  const priorCorrections = readMigrationCleanupCorrections(metadata)
+    .filter((entry) => !(entry.code === correction.code && entry.field_name === correction.field_name));
+  const nextMetadata = JSON.stringify({
+    ...metadata,
+    phase2_cleanup_corrections: [...priorCorrections, correction],
+    migration_warning: true,
+  });
+  const fields = ['metadata = ?'];
+  const values: unknown[] = [nextMetadata];
+
+  if (fieldName === 'owner_principal_id') {
+    fields.push('owner_principal_id = ?', 'owner_principal_type = ?');
+    values.push(correctedValue, 'human');
+  } else if (fieldName === 'initiator_principal_id') {
+    fields.push('initiator_principal_id = ?', 'initiator_type = ?');
+    values.push(correctedValue, 'human');
+  } else if (fieldName === 'project_id') {
+    fields.push('project_id = ?');
+    values.push(correctedValue);
+  } else if (fieldName === 'team_id') {
+    fields.push('team_id = ?');
+    values.push(correctedValue);
+  } else if (fieldName === 'assignee') {
+    fields.push('assignee = ?', 'assignment_state = ?');
+    values.push(correctedValue, 'assigned');
+  } else if (fieldName === 'executor_principal_id') {
+    fields.push('executor_principal_id = ?', 'assignment_state = ?');
+    values.push(correctedValue, 'assigned');
+  } else if (fieldName === 'worktype') {
+    fields.push('worktype = ?');
+    values.push(correctedValue);
+  }
+
+  fields.push('updated_at = CURRENT_TIMESTAMP');
+  values.push(taskId);
+  db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  const refreshed = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
+  return {
+    task_id: taskId,
+    correction,
+    task: mapTaskRow(refreshed),
+  };
+}
+
 function previewPolicyObject(value: string | null | undefined): Record<string, unknown> {
   return parseJsonObject(value);
 }
@@ -2668,6 +3213,102 @@ export interface ReviewEvidenceMappingOptions {
   dryRun?: boolean;
   limit?: number;
   db?: Database.Database;
+}
+
+export type MigrationCleanupQueueCode =
+  | Phase2MigrationInventoryGapCode
+  | TaskBackfillWarningCode
+  | ReviewEvidenceMappingWarningCode
+  | 'ambiguous_team';
+
+export type MigrationCleanupQueueObjectType =
+  | 'task'
+  | 'activity'
+  | 'native_document'
+  | 'external_document_ref'
+  | 'evidence_artifact';
+
+export type MigrationCleanupCorrectionField =
+  | 'owner_principal_id'
+  | 'initiator_principal_id'
+  | 'project_id'
+  | 'team_id'
+  | 'assignee'
+  | 'executor_principal_id'
+  | 'worktype'
+  | 'acknowledgement';
+
+export interface MigrationCleanupCorrectionRecord {
+  version: 'THE-89';
+  code: MigrationCleanupQueueCode;
+  field_name: MigrationCleanupCorrectionField;
+  previous_value: string | number | boolean | null;
+  corrected_value: string | number | boolean | null;
+  corrected_by_principal_id: string;
+  corrected_at: string;
+  note: string | null;
+  authoritative: true;
+}
+
+export interface MigrationCleanupQueueItem {
+  id: string;
+  code: MigrationCleanupQueueCode;
+  severity: Phase2MigrationInventoryGapCategory['severity'];
+  object_type: MigrationCleanupQueueObjectType;
+  object_id: string;
+  task_id: number | null;
+  activity_id: number | null;
+  title: string;
+  message: string;
+  source: string;
+  field_name: MigrationCleanupCorrectionField | null;
+  current_value: string | number | boolean | null;
+  status: 'open' | 'corrected';
+  correction: MigrationCleanupCorrectionRecord | null;
+  old_task_visible: boolean;
+}
+
+export interface MigrationCleanupQueueSummary {
+  code: MigrationCleanupQueueCode;
+  count: number;
+  severity: Phase2MigrationInventoryGapCategory['severity'];
+  open: number;
+  corrected: number;
+}
+
+export interface MigrationCleanupQueueReport {
+  generatedAt: string;
+  totalItems: number;
+  openItems: number;
+  correctedItems: number;
+  queues: MigrationCleanupQueueSummary[];
+  items: MigrationCleanupQueueItem[];
+  rollbackNotes: string[];
+  markdown: string;
+}
+
+export interface MigrationCleanupQueueOptions {
+  db?: Database.Database;
+  limit?: number;
+  includeCorrected?: boolean;
+  now?: Date;
+}
+
+export interface ApplyMigrationCleanupCorrectionInput {
+  db?: Database.Database;
+  task_id: number;
+  code: MigrationCleanupQueueCode;
+  field_name: MigrationCleanupCorrectionField;
+  corrected_value: string | number | boolean | null;
+  corrected_by_principal_id: string;
+  note?: string | null;
+  corrected_at?: string;
+}
+
+export interface ApplyMigrationCleanupCorrectionResult {
+  task_id: number;
+  correction: MigrationCleanupCorrectionRecord;
+  task: TaskRecord;
 }
 
 export interface SubscriptionRecord {
@@ -5578,6 +6219,8 @@ export function backfillTaskHierarchyAndAccountability(
     const inferredFields: TaskBackfillInferredField[] = [];
     const warnings: TaskBackfillWarning[] = [];
     const updates: Partial<Record<TaskBackfillInferredField['field_name'], string | number | null>> = {};
+    const metadata = parseTaskMetadataForBackfill(row.metadata);
+    const correctedFields = migrationCleanupCorrectedFields(metadata);
     const linkedProjectId = normalizePositiveInteger(row.linked_project_id);
     const linkedProjectOrgId = normalizeBlockerReason(row.linked_project_org_id);
     const linkedProjectTeamId = normalizeBlockerReason(row.linked_project_team_id);
@@ -5588,15 +6231,15 @@ export function backfillTaskHierarchyAndAccountability(
       pushBackfillField(inferredFields, taskId, 'org_id', linkedProjectOrgId, row.org_id ?? null, 'project_link', 'high');
     }
 
-    if (!normalizeBlockerReason(row.team_id) && linkedProjectTeamId) {
+    if (!correctedFields.has('team_id') && !normalizeBlockerReason(row.team_id) && linkedProjectTeamId) {
       updates.team_id = linkedProjectTeamId;
       pushBackfillField(inferredFields, taskId, 'team_id', linkedProjectTeamId, row.team_id ?? null, 'project_link', 'high');
     }
 
-    if (!currentProjectId && linkedProjectId) {
+    if (!correctedFields.has('project_id') && !currentProjectId && linkedProjectId) {
       updates.project_id = linkedProjectId;
       pushBackfillField(inferredFields, taskId, 'project_id', linkedProjectId, row.project_id ?? null, 'project_link', 'high');
-    } else if (!currentProjectId) {
+    } else if (!currentProjectId && !correctedFields.has('project_id')) {
       pushBackfillWarning(
         warnings,
         taskId,
@@ -5606,7 +6249,7 @@ export function backfillTaskHierarchyAndAccountability(
       );
     }
 
-    if (isLegacyPrincipalMarker(row.initiator_principal_id, ['legacy-unknown', 'unknown'])) {
+    if (!correctedFields.has('initiator_principal_id') && isLegacyPrincipalMarker(row.initiator_principal_id, ['legacy-unknown', 'unknown'])) {
       const createdBy = isAssignablePrincipal(row.created_by_principal_id);
       if (createdBy && !isLegacyPrincipalMarker(createdBy, ['legacy-system', 'system', 'unknown'])) {
         updates.initiator_principal_id = createdBy;
@@ -5632,7 +6275,7 @@ export function backfillTaskHierarchyAndAccountability(
       }
     }
 
-    if (isLegacyPrincipalMarker(row.owner_principal_id, ['legacy-owner', 'unknown'])) {
+    if (!correctedFields.has('owner_principal_id') && isLegacyPrincipalMarker(row.owner_principal_id, ['legacy-owner', 'unknown'])) {
       const assignee = isAssignablePrincipal(row.assignee);
       if (assignee) {
         updates.owner_principal_id = assignee;
@@ -5679,6 +6322,8 @@ export function backfillTaskHierarchyAndAccountability(
     }
 
     if (
+      !correctedFields.has('assignee') &&
+      !correctedFields.has('executor_principal_id') &&
       isBackfillExecutableColumn(row.column) &&
       !isAssignablePrincipal(row.assignee) &&
       !isAssignablePrincipal(row.executor_principal_id) &&
@@ -5693,7 +6338,6 @@ export function backfillTaskHierarchyAndAccountability(
       );
     }
 
-    const metadata = parseTaskMetadataForBackfill(row.metadata);
     const existingBackfill = metadata.phase2_backfill as { version?: unknown } | undefined;
     const nextBackfill = {
       version: TASK_BACKFILL_VERSION,
