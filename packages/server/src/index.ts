@@ -19,6 +19,7 @@ import {
   createCrew,
   createDocumentObjectRepository,
   createEvidenceArtifactRepository,
+  createNotificationRepository,
   createProject,
   createRoadmap,
   createRoadmapItem,
@@ -110,6 +111,7 @@ import { registerChatRoutes } from "./routes/chat";
 import { createClickClackBridge } from "./clickclack/bridge";
 import { registerClickClackProxyRoutes } from "./clickclack/proxy";
 import { registerConfigRoutes } from "./config/routes";
+import { createNotificationRouter } from "./routes/notifications";
 import { buildEffectiveConfig } from "./config/effective";
 import {
   applyBootstrapRuntimeEnv,
@@ -168,6 +170,7 @@ app.use(compression());
 app.use("/api/clickclack", express.raw({ type: "*/*", limit: "50mb" }));
 app.use(express.json());
 app.use("/api", setApiNoStoreHeaders);
+const notificationRepository = createNotificationRepository();
 
 // API authentication — requires ENTITY_API_TOKEN env var; skips when unset (dev mode)
 app.use(createApiAuthMiddleware());
@@ -184,6 +187,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 registerConfigRoutes(app);
+app.use("/notifications", createNotificationRouter({ notificationRepository }));
+app.use("/api/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/search", createSearchRouter());
 registerDocsApiRoutes(app);
 

@@ -51,6 +51,7 @@ import { useFollowMode } from './hooks/useFollowMode';
 import { useWatchModeAutoFollow } from './hooks/useWatchModeAutoFollow';
 import { useTaskBoard, type TaskBoardTask } from './hooks/useTaskBoard';
 import { useIsMobile } from './hooks/useIsMobile';
+import { useEntityNotifications } from './hooks/useEntityNotifications';
 import { useNotificationCenter } from './hooks/useNotificationCenter';
 import { useSyncStatus } from './hooks/useSyncStatus';
 import { runtime } from './config/runtime';
@@ -1493,6 +1494,12 @@ export default function App() {
   const [loginGateArmedOnLoad] = useState<boolean>(() => readLoginRequired());
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => readAuthSession());
   const [userProfile, saveUserProfile] = useUserProfile();
+  const entityNotifications = useEntityNotifications({
+    apiBase: runtime.apiBase,
+    recipientPrincipalId: userProfile.handle,
+    enabled: notificationsPanelOpen,
+  });
+  const totalNotificationsUnreadCount = notificationsUnreadCount + entityNotifications.unreadCount;
   const [profileNameDraft, setProfileNameDraft] = useState<string>(() => readUserProfile().displayName);
   const [profileHandleDraft, setProfileHandleDraft] = useState<string>(() => readUserProfile().handle);
   const [profileAvatarDraft, setProfileAvatarDraft] = useState<string>(() => readUserProfile().avatarUrl);
@@ -5116,12 +5123,12 @@ export default function App() {
               title="Notifications"
             >
               <span aria-hidden="true">🔔</span>
-              {notificationsUnreadCount > 0 ? (
+              {totalNotificationsUnreadCount > 0 ? (
                 <span
                   className="mc-unread-badge-pulse absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold text-white"
-                  aria-label={`${notificationsUnreadCount} unread notifications`}
+                  aria-label={`${totalNotificationsUnreadCount} unread notifications`}
                 >
-                  {notificationsUnreadCount > 99 ? '99+' : notificationsUnreadCount}
+                  {totalNotificationsUnreadCount > 99 ? '99+' : totalNotificationsUnreadCount}
                 </span>
               ) : null}
             </button>
@@ -6060,6 +6067,10 @@ export default function App() {
         onSelect={selectNotificationInPanel}
         onMarkAllRead={markAllNotificationsRead}
         onClearAll={clearAllNotifications}
+        entityNotifications={entityNotifications.notifications}
+        entityNotificationsLoading={entityNotifications.loading}
+        entityNotificationsError={entityNotifications.error}
+        onEntityNotificationRead={(id) => void entityNotifications.markState(id, 'read')}
       />
 
       <FileHistoryPanel
