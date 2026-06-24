@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { execFile } from 'child_process';
 import type express from 'express';
 import { createClickClackBridge, type ClickClackChatBridge } from '../clickclack/bridge';
+import { createEnvClickClackReadinessProbe, type ClickClackReadinessProbe } from '../clickclack/readiness';
 import {
   createChatRepository,
   type ChatCategoryRecord,
@@ -15,6 +16,7 @@ interface ChatRouteDependencies {
   app: express.Express;
   openClawBaseUrl?: string;
   clickClackBridge?: ClickClackChatBridge;
+  clickClackReadiness?: ClickClackReadinessProbe;
 }
 
 interface OpenClawReply {
@@ -719,7 +721,7 @@ async function getCachedOllamaModels(): Promise<ChatModelOption[]> {
   return localModelsRefresh;
 }
 
-export function registerChatRoutes({ app, openClawBaseUrl, clickClackBridge }: ChatRouteDependencies): void {
+export function registerChatRoutes({ app, openClawBaseUrl, clickClackBridge, clickClackReadiness }: ChatRouteDependencies): void {
   const repo = createChatRepository();
   const modelRegistry = new ChatModelRegistry({
     openClawBaseUrl,
@@ -728,6 +730,8 @@ export function registerChatRoutes({ app, openClawBaseUrl, clickClackBridge }: C
   });
   const sidecarBridge = clickClackBridge
     ?? (process.env.ENTITY_CHAT_CLICKCLACK_BRIDGE === '1' ? createClickClackBridge() : undefined);
+  const readinessProbe = clickClackReadiness
+    ?? createEnvClickClackReadinessProbe({ bridgeEnabled: Boolean(sidecarBridge) });
 
   app.get('/api/chat/me', (_req, res) => {
     res.json({
@@ -737,6 +741,24 @@ export function registerChatRoutes({ app, openClawBaseUrl, clickClackBridge }: C
         displayName: 'Entity Human',
       },
     });
+  });
+
+  app.get('/api/chat/clickclack/readiness', async (_req, res) => {
+    try {
+      return res.json({ readiness: await readinessProbe() });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'ClickClack readiness unavailable';
+      return res.status(503).json({
+        readiness: {
+          state: 'unavailable',
+          configured: true,
+          bridgeEnabled: Boolean(sidecarBridge),
+          baseUrl: process.env.ENTITY_CLICKCLACK_BASE_URL ?? null,
+          reason: message,
+          checkedAt: new Date().toISOString(),
+        },
+      });
+    }
   });
 
   app.get('/api/chat/task/:taskId', (req, res) => {

@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type http from 'http';
+import { classifyClickClackReadiness, type ClickClackReadinessSnapshot } from '../clickclack/readiness';
 
 const tmpDbPath = path.join(os.tmpdir(), `entity-chat-clickclack-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
@@ -11,6 +12,17 @@ const originalChatAgentRuntime = process.env.ENTITY_CHAT_AGENT_RUNTIME;
 
 process.env.ENTITY_TASK_DB_PATH = tmpDbPath;
 process.env.ENTITY_CHAT_AGENT_RUNTIME = '0';
+
+function readiness(state: ClickClackReadinessSnapshot['state']): ClickClackReadinessSnapshot {
+  return {
+    state,
+    configured: state !== 'not_configured',
+    bridgeEnabled: state === 'live' || state === 'degraded' || state === 'unavailable',
+    baseUrl: state === 'not_configured' ? null : 'http://127.0.0.1:3091',
+    reason: `clickclack_${state}`,
+    checkedAt: '2026-05-16T00:00:00.000Z',
+  };
+}
 
 describe('chat ClickClack compatibility bridge', () => {
   let server: http.Server;
@@ -22,6 +34,7 @@ describe('chat ClickClack compatibility bridge', () => {
     app.use(express.json());
     registerChatRoutes({
       app,
+      clickClackReadiness: () => readiness('live'),
       clickClackBridge: {
         sendCompatibilityMessage: async (input) => ({
           message: {
@@ -63,9 +76,11 @@ describe('chat ClickClack compatibility bridge', () => {
   });
 
   afterAll(async () => {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    });
+    if (server) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
 
     if (originalDbPath !== undefined) process.env.ENTITY_TASK_DB_PATH = originalDbPath;
     else delete process.env.ENTITY_TASK_DB_PATH;
@@ -80,12 +95,85 @@ describe('chat ClickClack compatibility bridge', () => {
     }
   });
 
+  it('classifies all ClickClack readiness contract states', () => {
+    expect(classifyClickClackReadiness({
+      bridgeEnabled: true,
+      bridgeConfigured: true,
+      baseUrl: 'http://127.0.0.1:3091',
+      reachable: true,
+      now: new Date('2026-05-16T00:00:00.000Z'),
+    })).toMatchObject({ state: 'live', reason: 'clickclack_live' });
+    expect(classifyClickClackReadiness({
+      bridgeEnabled: false,
+      bridgeConfigured: true,
+      baseUrl: 'http://127.0.0.1:3091',
+      now: new Date('2026-05-16T00:00:00.000Z'),
+    })).toMatchObject({ state: 'staged', reason: 'clickclack_configured_bridge_disabled' });
+    expect(classifyClickClackReadiness({
+      bridgeEnabled: true,
+      bridgeConfigured: true,
+      baseUrl: 'http://127.0.0.1:3091',
+      degraded: true,
+      reason: 'sidecar slow',
+      now: new Date('2026-05-16T00:00:00.000Z'),
+    })).toMatchObject({ state: 'degraded', reason: 'sidecar slow' });
+    expect(classifyClickClackReadiness({
+      bridgeEnabled: true,
+      bridgeConfigured: true,
+      baseUrl: 'http://127.0.0.1:3091',
+      reachable: false,
+      now: new Date('2026-05-16T00:00:00.000Z'),
+    })).toMatchObject({ state: 'unavailable', reason: 'clickclack_unreachable' });
+    expect(classifyClickClackReadiness({
+      bridgeEnabled: false,
+      bridgeConfigured: false,
+      now: new Date('2026-05-16T00:00:00.000Z'),
+    })).toMatchObject({ state: 'not_configured', reason: 'clickclack_not_configured' });
+  });
+
+  it('reports not configured readiness while preserving local setup state', async () => {
+    const { registerChatRoutes } = await import('./chat');
+    const app = express();
+    app.use(express.json());
+    registerChatRoutes({
+      app,
+      clickClackReadiness: () => readiness('not_configured'),
+    });
+
+    let localServer: http.Server | null = null;
+    const localBaseUrl = await new Promise<string>((resolve) => {
+      localServer = app.listen(0, '127.0.0.1', () => {
+        const address = localServer?.address();
+        if (!address || typeof address === 'string') {
+          throw new Error('failed to bind local readiness test server');
+        }
+        resolve(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    try {
+      const readinessResponse = await fetch(`${localBaseUrl}/api/chat/clickclack/readiness`);
+      expect(readinessResponse.status).toBe(200);
+      expect(await readinessResponse.json()).toEqual({ readiness: readiness('not_configured') });
+
+      const setupResponse = await fetch(`${localBaseUrl}/api/chat/setup`, { method: 'POST' });
+      expect(setupResponse.status).toBe(200);
+      const channelsResponse = await fetch(`${localBaseUrl}/api/chat/channels`);
+      expect(channelsResponse.status).toBe(200);
+    } finally {
+      if (localServer) {
+        await new Promise<void>((resolve, reject) => localServer?.close((error) => (error ? reject(error) : resolve())));
+      }
+    }
+  }, 15000);
+
   it('persists the user message when ClickClack delivery fails', async () => {
     const { registerChatRoutes } = await import('./chat');
     const app = express();
     app.use(express.json());
     registerChatRoutes({
       app,
+      clickClackReadiness: () => readiness('degraded'),
       clickClackBridge: {
         sendCompatibilityMessage: async () => {
           throw new Error('sidecar down');
@@ -107,6 +195,10 @@ describe('chat ClickClack compatibility bridge', () => {
     try {
       const setupResponse = await fetch(`${degradedBaseUrl}/api/chat/setup`, { method: 'POST' });
       expect(setupResponse.status).toBe(200);
+
+      const readinessResponse = await fetch(`${degradedBaseUrl}/api/chat/clickclack/readiness`);
+      expect(readinessResponse.status).toBe(200);
+      expect(await readinessResponse.json()).toEqual({ readiness: readiness('degraded') });
 
       const response = await fetch(`${degradedBaseUrl}/api/chat/send`, {
         method: 'POST',
@@ -157,6 +249,10 @@ describe('chat ClickClack compatibility bridge', () => {
   }, 15000);
 
   it('delegates /api/chat/send to ClickClack when a bridge is configured', async () => {
+    const readinessResponse = await fetch(`${baseUrl}/api/chat/clickclack/readiness`);
+    expect(readinessResponse.status).toBe(200);
+    expect(await readinessResponse.json()).toEqual({ readiness: readiness('live') });
+
     const setupResponse = await fetch(`${baseUrl}/api/chat/setup`, { method: 'POST' });
     expect(setupResponse.status).toBe(200);
 
