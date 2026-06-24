@@ -1024,6 +1024,10 @@ function countRowsIfTableExists(db: Database.Database, table: string): number {
   return Number(row.count) || 0;
 }
 
+function tableExists(db: Database.Database, table: string): boolean {
+  return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
@@ -1234,6 +1238,319 @@ export function dryRunDocumentArtifactObjectMigration(
   return {
     ...reportBase,
     markdown: buildDocumentArtifactMigrationMarkdown(reportBase),
+  };
+}
+
+const PHASE2_MIGRATION_INVENTORY_TABLES = [
+  'tasks',
+  'projects',
+  'task_projects',
+  'activities',
+  'native_documents',
+  'external_document_refs',
+  'file_index',
+  'evidence_artifacts',
+] as const;
+
+const PHASE2_MIGRATION_INVENTORY_GAP_DEFINITIONS: Record<Phase2MigrationInventoryGapCode, Omit<Phase2MigrationInventoryGapCategory, 'count' | 'sampleIds'>> = {
+  missing_owner: {
+    code: 'missing_owner',
+    severity: 'blocking_for_execution',
+    description: 'Task owner is missing, unknown, or still marked as a legacy placeholder.',
+  },
+  unknown_initiator: {
+    code: 'unknown_initiator',
+    severity: 'warning',
+    description: 'Task initiator is missing, unknown, or still marked as a legacy placeholder.',
+  },
+  missing_project: {
+    code: 'missing_project',
+    severity: 'warning',
+    description: 'Task has no direct project and no linked project that can be used for migration.',
+  },
+  missing_assignee: {
+    code: 'missing_assignee',
+    severity: 'blocking_for_execution',
+    description: 'Executable task has no individual assignee/executor and is not Task-Master-drivable.',
+  },
+  missing_receipt: {
+    code: 'missing_receipt',
+    severity: 'blocking_for_done',
+    description: 'Completed task has no raw task receipt artifact linked by origin task id.',
+  },
+  unknown_worktype: {
+    code: 'unknown_worktype',
+    severity: 'warning',
+    description: 'Task worktype is missing from the Phase 2 worktype registry.',
+  },
+  weak_activity_structure: {
+    code: 'weak_activity_structure',
+    severity: 'warning',
+    description: 'Activity row lacks a confident structured ActivityEvent mapping or task link.',
+  },
+  permission_mapping_uncertain: {
+    code: 'permission_mapping_uncertain',
+    severity: 'warning',
+    description: 'Document, external ref, or artifact lacks explicit Entity-side sensitivity/visibility mapping.',
+  },
+};
+
+function migrationInventoryTableCounts(db: Database.Database): Record<string, number> {
+  return Object.fromEntries(
+    PHASE2_MIGRATION_INVENTORY_TABLES.map((table) => [table, countRowsIfTableExists(db, table)])
+  );
+}
+
+function createMigrationInventoryGapBuckets(): Record<Phase2MigrationInventoryGapCode, Phase2MigrationInventoryGapCategory> {
+  const buckets = {} as Record<Phase2MigrationInventoryGapCode, Phase2MigrationInventoryGapCategory>;
+  for (const code of PHASE2_MIGRATION_INVENTORY_GAP_CODES) {
+    buckets[code] = {
+      ...PHASE2_MIGRATION_INVENTORY_GAP_DEFINITIONS[code],
+      count: 0,
+      sampleIds: [],
+    };
+  }
+  return buckets;
+}
+
+function addMigrationInventoryGap(
+  gaps: Record<Phase2MigrationInventoryGapCode, Phase2MigrationInventoryGapCategory>,
+  code: Phase2MigrationInventoryGapCode,
+  sampleId: string
+): void {
+  const gap = gaps[code];
+  gap.count += 1;
+  if (gap.sampleIds.length < 5) {
+    gap.sampleIds.push(sampleId);
+  }
+}
+
+function isCompletedTaskColumn(value: unknown): boolean {
+  const column = normalizeBlockerReason(value)?.toLowerCase();
+  return column === 'done' || column === 'complete' || column === 'completed';
+}
+
+function hasRawReceiptForTask(db: Database.Database, taskId: number): boolean {
+  if (!tableExists(db, 'evidence_artifacts')) {
+    return false;
+  }
+  const row = db.prepare(`
+    SELECT id
+    FROM evidence_artifacts
+    WHERE origin_task_id = ? AND artifact_kind = 'raw_task_receipt'
+    LIMIT 1
+  `).get(taskId);
+  return Boolean(row);
+}
+
+function countPermissionUncertainRows(
+  db: Database.Database,
+  gaps: Record<Phase2MigrationInventoryGapCode, Phase2MigrationInventoryGapCategory>,
+  limit: number | null
+): void {
+  if (tableExists(db, 'native_documents')) {
+    const rows = db.prepare(`
+      SELECT id
+      FROM native_documents
+      WHERE (sensitivity IS NULL OR trim(sensitivity) = '')
+        AND (acl_json IS NULL OR trim(acl_json) = '' OR trim(acl_json) = '{}')
+      ORDER BY id ASC
+      ${limit ? 'LIMIT ?' : ''}
+    `).all(...(limit ? [limit] : [])) as Array<{ id: string }>;
+    for (const row of rows) {
+      addMigrationInventoryGap(gaps, 'permission_mapping_uncertain', `native_document:${row.id}`);
+    }
+  }
+
+  if (tableExists(db, 'external_document_refs')) {
+    const rows = db.prepare(`
+      SELECT id
+      FROM external_document_refs
+      WHERE (entity_visibility_policy_json IS NULL OR trim(entity_visibility_policy_json) = '' OR trim(entity_visibility_policy_json) = '{}')
+        AND (external_permission_summary IS NULL OR trim(external_permission_summary) = '')
+      ORDER BY id ASC
+      ${limit ? 'LIMIT ?' : ''}
+    `).all(...(limit ? [limit] : [])) as Array<{ id: string }>;
+    for (const row of rows) {
+      addMigrationInventoryGap(gaps, 'permission_mapping_uncertain', `external_document_ref:${row.id}`);
+    }
+  }
+
+  if (tableExists(db, 'evidence_artifacts')) {
+    const rows = db.prepare(`
+      SELECT id
+      FROM evidence_artifacts
+      WHERE metadata_json IS NULL
+        OR trim(metadata_json) = ''
+        OR trim(metadata_json) = '{}'
+      ORDER BY id ASC
+      ${limit ? 'LIMIT ?' : ''}
+    `).all(...(limit ? [limit] : [])) as Array<{ id: string }>;
+    for (const row of rows) {
+      addMigrationInventoryGap(gaps, 'permission_mapping_uncertain', `evidence_artifact:${row.id}`);
+    }
+  }
+}
+
+function buildPhase2MigrationInventoryMarkdown(
+  report: Omit<Phase2MigrationInventoryReport, 'markdown'>
+): string {
+  const lines = [
+    '# THE-86 Migration Dry-Run Inventory Report',
+    '',
+    '- Mode: dry-run',
+    `- Generated at: ${report.generatedAt}`,
+    `- No mutation proof: ${report.noMutationProof.unchanged ? 'PASS' : 'FAIL'}`,
+    '',
+    '## Counts',
+    `- Tasks: ${report.counts.tasks}`,
+    `- Projects: ${report.counts.projects}`,
+    `- Docs: ${report.counts.docs}`,
+    `- NativeDocuments: ${report.counts.native_documents}`,
+    `- ExternalDocumentRefs: ${report.counts.external_document_refs}`,
+    `- Indexed files: ${report.counts.indexed_files}`,
+    `- Review packets: ${report.counts.review_packets}`,
+    `- Activity logs: ${report.counts.activity_logs}`,
+    `- EvidenceArtifacts: ${report.counts.evidence_artifacts}`,
+    `- Task/project links: ${report.counts.task_project_links}`,
+    '',
+    '## Gap Categories',
+  ];
+
+  for (const gap of report.gapCategories) {
+    lines.push(
+      `- ${gap.code}: ${gap.count} (${gap.severity})${gap.sampleIds.length ? ` samples=${gap.sampleIds.join(', ')}` : ''}`
+    );
+  }
+
+  lines.push(
+    '',
+    '## No-Mutation Proof',
+    `- Checked tables: ${report.noMutationProof.checkedTables.join(', ')}`,
+    `- Write statements executed: ${report.noMutationProof.writeStatementsExecuted}`,
+    `- Counts unchanged: ${report.noMutationProof.unchanged}`,
+    '',
+    '## Rollback / Non-Destructive Notes',
+    ...report.rollbackNotes.map((note) => `- ${note}`)
+  );
+  return `${lines.join('\n')}\n`;
+}
+
+export function dryRunPhase2MigrationInventory(
+  options: Phase2MigrationInventoryOptions = {}
+): Phase2MigrationInventoryReport {
+  const db = options.db ?? getEntityDatabase();
+  const limit = typeof options.limit === 'number' && Number.isInteger(options.limit) && options.limit > 0 ? options.limit : null;
+  const beforeCounts = migrationInventoryTableCounts(db);
+  const gaps = createMigrationInventoryGapBuckets();
+  let reviewPacketCount = 0;
+
+  const rows = db.prepare(`
+    SELECT
+      t.*,
+      (
+        SELECT p.id
+        FROM task_projects tp
+        INNER JOIN projects p ON p.id = tp.project_id AND p.org_id = tp.org_id
+        WHERE tp.task_id = t.id
+        ORDER BY p.id ASC
+        LIMIT 1
+      ) AS linked_project_id
+    FROM tasks t
+    ORDER BY t.id ASC
+    ${limit ? 'LIMIT ?' : ''}
+  `).all(...(limit ? [limit] : [])) as TaskBackfillRow[];
+
+  for (const row of rows) {
+    const taskId = Number(row.id);
+    const taskSampleId = `task:${taskId}`;
+    const metadata = parseJsonObject(row.metadata);
+    if (isPlainObject(metadata.review_packet)) {
+      reviewPacketCount += 1;
+    }
+
+    if (isLegacyPrincipalMarker(row.owner_principal_id, ['legacy-owner', 'unknown'])) {
+      addMigrationInventoryGap(gaps, 'missing_owner', taskSampleId);
+    }
+    if (isLegacyPrincipalMarker(row.initiator_principal_id, ['legacy-unknown', 'unknown'])) {
+      addMigrationInventoryGap(gaps, 'unknown_initiator', taskSampleId);
+    }
+    if (!normalizePositiveInteger(row.project_id) && !normalizePositiveInteger(row.linked_project_id)) {
+      addMigrationInventoryGap(gaps, 'missing_project', taskSampleId);
+    }
+    if (
+      isBackfillExecutableColumn(row.column) &&
+      !isAssignablePrincipal(row.assignee) &&
+      !isAssignablePrincipal(row.executor_principal_id) &&
+      !normalizeBlocked(row.taskmaster_drivable)
+    ) {
+      addMigrationInventoryGap(gaps, 'missing_assignee', taskSampleId);
+    }
+    if (isCompletedTaskColumn(row.column) && !hasRawReceiptForTask(db, taskId)) {
+      addMigrationInventoryGap(gaps, 'missing_receipt', taskSampleId);
+    }
+    if (!getWorktypeRegistryEntry(row.worktype)) {
+      addMigrationInventoryGap(gaps, 'unknown_worktype', taskSampleId);
+    }
+  }
+
+  if (tableExists(db, 'activities')) {
+    const activityRows = db.prepare(`
+      SELECT id, task_id, activity_event_type, activity_event_schema_status, activity_event_payload_json
+      FROM activities
+      ORDER BY id ASC
+      ${limit ? 'LIMIT ?' : ''}
+    `).all(...(limit ? [limit] : [])) as Array<Record<string, unknown>>;
+    for (const row of activityRows) {
+      const activityId = Number(row.id);
+      const schemaStatus = normalizeActivityEventSchemaStatus(row.activity_event_schema_status);
+      const eventType = normalizeActivityEventType(row.activity_event_type);
+      const parsedPayload = parseActivityPayloadForBackfill(row.activity_event_payload_json);
+      if (!eventType || schemaStatus === 'legacy_unknown' || !normalizePositiveInteger(row.task_id) || parsedPayload.malformed) {
+        addMigrationInventoryGap(gaps, 'weak_activity_structure', `activity:${activityId}`);
+      }
+    }
+  }
+
+  countPermissionUncertainRows(db, gaps, limit);
+
+  const afterCounts = migrationInventoryTableCounts(db);
+  const noMutationProof: Phase2MigrationInventoryNoMutationProof = {
+    checkedTables: [...PHASE2_MIGRATION_INVENTORY_TABLES],
+    before: beforeCounts,
+    after: afterCounts,
+    unchanged: PHASE2_MIGRATION_INVENTORY_TABLES.every((table) => beforeCounts[table] === afterCounts[table]),
+    writeStatementsExecuted: 0,
+  };
+  const counts: Phase2MigrationInventoryCounts = {
+    tasks: beforeCounts.tasks,
+    projects: beforeCounts.projects,
+    docs: beforeCounts.native_documents + beforeCounts.external_document_refs + beforeCounts.file_index,
+    native_documents: beforeCounts.native_documents,
+    external_document_refs: beforeCounts.external_document_refs,
+    indexed_files: beforeCounts.file_index,
+    review_packets: reviewPacketCount,
+    activity_logs: beforeCounts.activities,
+    evidence_artifacts: beforeCounts.evidence_artifacts,
+    task_project_links: beforeCounts.task_projects,
+  };
+  const reportBase: Omit<Phase2MigrationInventoryReport, 'markdown'> = {
+    dryRun: true,
+    generatedAt: (options.now ?? new Date()).toISOString(),
+    counts,
+    gapCategories: PHASE2_MIGRATION_INVENTORY_GAP_CODES.map((code) => gaps[code]),
+    noMutationProof,
+    rollbackNotes: [
+      'THE-86 inventory mode only reads existing task, project, document, activity, and artifact tables.',
+      'No task metadata, activity payloads, document refs, evidence artifacts, or project links are updated by this report.',
+      'Unknown owners, initiators, worktypes, weak activity, missing receipts, and permission uncertainty remain explicit cleanup categories.',
+      'Backfill mutation belongs to later THE-87 through THE-89 slices and must preserve confidence/provenance.',
+    ],
+  };
+
+  return {
+    ...reportBase,
+    markdown: buildPhase2MigrationInventoryMarkdown(reportBase),
   };
 }
 
@@ -1802,6 +2119,64 @@ export interface ActivityEventBackfillOptions {
   dryRun?: boolean;
   limit?: number;
   db?: Database.Database;
+}
+
+export const PHASE2_MIGRATION_INVENTORY_GAP_CODES = [
+  'missing_owner',
+  'unknown_initiator',
+  'missing_project',
+  'missing_assignee',
+  'missing_receipt',
+  'unknown_worktype',
+  'weak_activity_structure',
+  'permission_mapping_uncertain',
+] as const;
+
+export type Phase2MigrationInventoryGapCode = (typeof PHASE2_MIGRATION_INVENTORY_GAP_CODES)[number];
+
+export interface Phase2MigrationInventoryGapCategory {
+  code: Phase2MigrationInventoryGapCode;
+  count: number;
+  severity: 'info' | 'warning' | 'blocking_for_execution' | 'blocking_for_done';
+  description: string;
+  sampleIds: string[];
+}
+
+export interface Phase2MigrationInventoryCounts {
+  tasks: number;
+  projects: number;
+  docs: number;
+  native_documents: number;
+  external_document_refs: number;
+  indexed_files: number;
+  review_packets: number;
+  activity_logs: number;
+  evidence_artifacts: number;
+  task_project_links: number;
+}
+
+export interface Phase2MigrationInventoryNoMutationProof {
+  checkedTables: string[];
+  before: Record<string, number>;
+  after: Record<string, number>;
+  unchanged: boolean;
+  writeStatementsExecuted: 0;
+}
+
+export interface Phase2MigrationInventoryReport {
+  dryRun: true;
+  generatedAt: string;
+  counts: Phase2MigrationInventoryCounts;
+  gapCategories: Phase2MigrationInventoryGapCategory[];
+  noMutationProof: Phase2MigrationInventoryNoMutationProof;
+  rollbackNotes: string[];
+  markdown: string;
+}
+
+export interface Phase2MigrationInventoryOptions {
+  db?: Database.Database;
+  limit?: number;
+  now?: Date;
 }
 
 export interface SubscriptionRecord {

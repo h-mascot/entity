@@ -2387,6 +2387,97 @@ describe('DocumentObjectRepository', () => {
     expect(dryRun.markdown).toContain('THE-45 Document/Artifact Migration Dry-Run Report');
   });
 
+  it('builds the THE-86 migration inventory without mutating data', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const taskRepo = dbMod.createTaskRepository();
+    const documentRepo = dbMod.createDocumentObjectRepository();
+    const artifactRepo = dbMod.createEvidenceArtifactRepository();
+
+    const completedWithoutReceipt = taskRepo.createTask({
+      name: 'Completed legacy task without receipt',
+      column: 'done',
+      worktype: 'legacy_ops',
+      metadata: JSON.stringify({
+        review_packet: {
+          evidence: ['loose-proof.txt'],
+        },
+      }),
+    });
+    taskRepo.createTask({ name: 'Executable cleanup task', column: 'doing' });
+    documentRepo.createNativeDocument({
+      id: 'inventory-native-doc',
+      title: 'Inventory native doc',
+      content_hash: 'sha256:inventory-native',
+    });
+    documentRepo.createExternalDocumentRef({
+      id: 'inventory-external-doc',
+      connector_type: 'google_docs',
+      external_url: 'https://docs.example.test/inventory',
+      title: 'Inventory external doc',
+    });
+    artifactRepo.createArtifact({
+      id: 'inventory-artifact',
+      title: 'Inventory artifact',
+      content_hash: 'sha256:inventory-artifact',
+    });
+
+    const rawDb = new Database(tmpDbPath);
+    try {
+      rawDb.prepare(`
+        INSERT INTO activities (
+          source,
+          type,
+          activity_event_type,
+          activity_event_payload_json,
+          activity_event_schema_status,
+          action,
+          description,
+          metadata
+        ) VALUES ('agent', 'vendor_ping', NULL, '{bad-json', 'legacy_mapped', 'Vendor ping', 'Weak vendor activity', NULL)
+      `).run();
+
+      const beforeTask = taskRepo.getTask(completedWithoutReceipt.id);
+      const report = dbMod.dryRunPhase2MigrationInventory({
+        db: rawDb,
+        now: new Date('2026-06-24T11:23:00.000Z'),
+      });
+      const secondReport = dbMod.dryRunPhase2MigrationInventory({
+        db: rawDb,
+        now: new Date('2026-06-24T11:23:00.000Z'),
+      });
+      const afterTask = taskRepo.getTask(completedWithoutReceipt.id);
+      const gaps = Object.fromEntries(report.gapCategories.map((gap) => [gap.code, gap]));
+
+      expect(report).toMatchObject({
+        dryRun: true,
+        counts: {
+          tasks: 2,
+          review_packets: 1,
+          activity_logs: 1,
+          native_documents: 1,
+          external_document_refs: 1,
+          evidence_artifacts: 1,
+        },
+        noMutationProof: {
+          unchanged: true,
+          writeStatementsExecuted: 0,
+        },
+      });
+      expect(afterTask?.metadata).toBe(beforeTask?.metadata);
+      expect(gaps.missing_receipt.count).toBeGreaterThanOrEqual(1);
+      expect(gaps.unknown_worktype.sampleIds).toContain(`task:${completedWithoutReceipt.id}`);
+      expect(gaps.weak_activity_structure.count).toBeGreaterThanOrEqual(1);
+      expect(gaps.permission_mapping_uncertain.count).toBeGreaterThanOrEqual(3);
+      expect(gaps.missing_assignee.count).toBeGreaterThanOrEqual(1);
+      expect(secondReport.noMutationProof).toEqual(report.noMutationProof);
+      expect(secondReport.gapCategories).toEqual(report.gapCategories);
+      expect(report.markdown).toContain('THE-86 Migration Dry-Run Inventory Report');
+      expect(report.markdown).toContain('No mutation proof: PASS');
+    } finally {
+      rawDb.close();
+    }
+  });
+
   it('suppresses restricted and degraded document-object previews before snippets can leak', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
 
