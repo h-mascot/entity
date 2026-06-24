@@ -9,6 +9,17 @@ import { fetchProjectOptions, type ProjectOption } from './projectOptions';
 import { buildBookmarkMetadata, formatTaskProjectSummary, isTaskBookmarked } from './utils/taskHelpers';
 import { toErrorMessage } from '../../lib/http';
 import { readUserProfile } from '../../lib/userProfile';
+import {
+  fetchWorktypeRegistry,
+  formatOverlayValue,
+  getIndexableWorktypeFields,
+  getWorktypeLabel,
+  parseJsonRecord,
+  readWorktype,
+  readWorktypeLayer,
+  type WorktypeFieldDefinition,
+  type WorktypeRegistryEntry,
+} from './utils/worktypeRegistry';
 
 interface MCOpsViewProps {
   apiBase?: string;
@@ -29,6 +40,7 @@ interface MCOpsViewProps {
 
 type BoardColumn = TaskColumn | 'archive';
 type BoardStatusFilter = 'all' | 'active' | 'review' | 'blocked' | 'starred';
+type OverlayFilter = { worktype: string; field: WorktypeFieldDefinition };
 
 function matchesStatusFilter(task: TaskBoardTask, filter: BoardStatusFilter): boolean {
   switch (filter) {
@@ -62,6 +74,11 @@ function matchesGlobalSearch(task: TaskBoardTask, query: string): boolean {
     return true;
   }
 
+  const metadata = buildTaskWorktypeMetadata(task);
+  const overlayText = Object.values(readWorktypeLayer(metadata))
+    .map(formatOverlayValue)
+    .filter((entry): entry is string => Boolean(entry))
+    .join(' ');
   const haystack = [
     task.name,
     task.description ?? '',
@@ -69,11 +86,35 @@ function matchesGlobalSearch(task: TaskBoardTask, query: string): boolean {
     task.priority,
     formatTaskProjectSummary(task),
     task.blocker_reason ?? '',
+    task.worktype ?? '',
+    overlayText,
   ]
     .join(' ')
     .toLowerCase();
 
   return haystack.includes(query);
+}
+
+function buildTaskWorktypeMetadata(task: TaskBoardTask): Record<string, unknown> {
+  const metadata = parseJsonRecord(task.metadata) ?? {};
+  return {
+    ...metadata,
+    worktype: task.worktype ?? metadata.worktype,
+    policy_inputs_json: task.policy_inputs_json ?? metadata.policy_inputs_json,
+  };
+}
+
+function matchesOverlayFilter(task: TaskBoardTask, filter: OverlayFilter | null, query: string): boolean {
+  if (!filter) {
+    return true;
+  }
+  const metadata = buildTaskWorktypeMetadata(task);
+  if (readWorktype(metadata, task.worktype) !== filter.worktype) {
+    return false;
+  }
+  const value = formatOverlayValue(readWorktypeLayer(metadata)[filter.field.name]) ?? '';
+  const normalizedQuery = query.trim().toLowerCase();
+  return normalizedQuery ? value.toLowerCase().includes(normalizedQuery) : Boolean(value);
 }
 
 export default function MCOpsView({
@@ -106,9 +147,16 @@ export default function MCOpsView({
   const [reviewModalTask, setReviewModalTask] = useState<TaskBoardTask | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [worktypeRegistry, setWorktypeRegistry] = useState<WorktypeRegistryEntry[]>([]);
+  const [overlayFilterKey, setOverlayFilterKey] = useState('');
+  const [overlayFilterQuery, setOverlayFilterQuery] = useState('');
   const activeTaskDetailId = selectedTaskId ?? highlightTaskId;
   const query = globalSearch.trim().toLowerCase();
-  const searchMatchedTasks = tasks.filter((task) => matchesGlobalSearch(task, query));
+  const indexableOverlayFields = getIndexableWorktypeFields(worktypeRegistry).filter((entry) => entry.worktype !== 'general');
+  const selectedOverlayFilter = indexableOverlayFields.find((entry) => `${entry.worktype}.${entry.field.name}` === overlayFilterKey) ?? null;
+  const searchMatchedTasks = tasks
+    .filter((task) => matchesGlobalSearch(task, query))
+    .filter((task) => matchesOverlayFilter(task, selectedOverlayFilter, overlayFilterQuery));
   const filteredTasks = searchMatchedTasks.filter((task) => !task.archived);
   const archivedTasks = searchMatchedTasks.filter((task) => task.archived);
   const boardColumns: BoardColumn[] = showArchiveColumn
@@ -226,6 +274,27 @@ export default function MCOpsView({
         console.error('Failed to load Mission Control project tags:', error);
         if (!cancelled) {
           setProjectOptions([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetchWorktypeRegistry(apiBase)
+      .then((registry) => {
+        if (!cancelled) {
+          setWorktypeRegistry(registry);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load worktype registry:', error);
+        if (!cancelled) {
+          setWorktypeRegistry([]);
         }
       });
 
@@ -424,6 +493,37 @@ export default function MCOpsView({
               <span className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-1.5 text-xs text-[var(--text-muted)]">
                 Search: {globalSearch.trim()}
               </span>
+            ) : null}
+            <label className="flex items-center gap-1 rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1 text-xs text-[var(--text-secondary)]">
+              <span>Overlay</span>
+              <select
+                value={overlayFilterKey}
+                onChange={(event) => {
+                  setOverlayFilterKey(event.target.value);
+                  setOverlayFilterQuery('');
+                }}
+                className="mc-shell-input h-7 min-w-[190px] px-2 py-1 text-xs"
+                data-testid="worktype-overlay-filter-field"
+              >
+                <option value="">Any indexable field</option>
+                {indexableOverlayFields.map((entry) => {
+                  const worktypeEntry = worktypeRegistry.find((candidate) => candidate.worktype === entry.worktype);
+                  return (
+                    <option key={`${entry.worktype}.${entry.field.name}`} value={`${entry.worktype}.${entry.field.name}`}>
+                      {worktypeEntry ? getWorktypeLabel(worktypeEntry) : entry.worktype}: {entry.field.plan_label}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            {selectedOverlayFilter ? (
+              <input
+                value={overlayFilterQuery}
+                onChange={(event) => setOverlayFilterQuery(event.target.value)}
+                placeholder={`Filter ${selectedOverlayFilter.field.plan_label}`}
+                className="mc-shell-input h-8 min-w-[180px] px-2 py-1 text-xs"
+                data-testid="worktype-overlay-filter-query"
+              />
             ) : null}
           </div>
           {selectedCount > 0 ? (

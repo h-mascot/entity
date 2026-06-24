@@ -67,6 +67,8 @@ export interface TaskBoardTask {
   created_at: string;
   updated_at: string;
   metadata: string | null;
+  worktype: string | null;
+  policy_inputs_json: string | null;
   output: string | null;
   output_links_count: number;
   parent_task_id: number | null;
@@ -101,6 +103,8 @@ export interface CreateTaskPayload {
   due_at?: string | null;
   recurring?: boolean;
   metadata?: string;
+  worktype?: string;
+  policy_inputs_json?: string;
 }
 
 interface TaskBoardState {
@@ -511,6 +515,8 @@ function normalizeTask(raw: unknown): TaskBoardTask | null {
     created_at: toTimestamp(row.created_at),
     updated_at: toTimestamp(row.updated_at ?? row.created_at),
     metadata,
+    worktype: normalizeOptionalString(row.worktype ?? metadataRecord?.worktype),
+    policy_inputs_json: typeof row.policy_inputs_json === 'string' ? row.policy_inputs_json : null,
     output: outputValue,
     output_links_count: outputLinksCount,
     parent_task_id: parentTaskId,
@@ -641,7 +647,10 @@ function buildOfflineQueuedTask(payload: CreateTaskPayload, queueId: number): Ta
         due_date: dueDate,
         due_at: dueDate,
         recurring: payload.recurring,
+        worktype: payload.worktype,
       }),
+    worktype: normalizeOptionalString(payload.worktype),
+    policy_inputs_json: payload.policy_inputs_json ?? null,
     output: null,
     output_links_count: 0,
     parent_task_id: null,
@@ -737,6 +746,17 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
           // Keep top-level fields plus metadata for API compatibility across MC versions.
           body: JSON.stringify({
             name,
+            org_id: payload.org_id,
+            team_id: payload.team_id,
+            project_id: payload.project_id,
+            created_by_principal_id: payload.created_by_principal_id,
+            initiator_principal_id: payload.initiator_principal_id,
+            initiator_type: payload.initiator_type,
+            owner_principal_id: payload.owner_principal_id,
+            owner_principal_type: payload.owner_principal_type,
+            executor_principal_id: payload.executor_principal_id,
+            assignment_state: payload.assignment_state,
+            taskmaster_drivable: payload.taskmaster_drivable,
             description: payload.description,
             assignee: payload.assignee,
             column: payload.column,
@@ -748,6 +768,8 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
             due_date: dueDate,
             due_at: dueDate,
             recurring: payload.recurring,
+            worktype: payload.worktype,
+            policy_inputs_json: payload.policy_inputs_json,
             metadata:
               payload.metadata ??
               JSON.stringify({
@@ -757,6 +779,7 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
                 due_date: dueDate,
                 due_at: dueDate,
                 recurring: payload.recurring,
+                worktype: payload.worktype,
               }),
           }),
         },
@@ -884,6 +907,8 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
             typeof payload.metadata === 'string'
               ? payload.metadata
               : existing?.metadata ?? null,
+          worktype: normalizeOptionalString(payload.worktype) ?? existing?.worktype ?? null,
+          policy_inputs_json: payload.policy_inputs_json ?? existing?.policy_inputs_json ?? null,
           output: existing?.output ?? null,
           output_links_count: existing?.output_links_count ?? 0,
           parent_task_id: existing?.parent_task_id ?? null,
@@ -960,6 +985,8 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
             created_at: now,
             updated_at: now,
             metadata: null,
+            worktype: null,
+            policy_inputs_json: null,
             output: null,
             output_links_count: 0,
             parent_task_id: null,

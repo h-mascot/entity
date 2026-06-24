@@ -118,6 +118,7 @@ import {
   buildConfiguredAgentWorkspaces,
 } from "./config/runtime";
 import { registerDocsApiRoutes } from "./routes/docs";
+import { createWorktypeRegistryRouter } from "./routes/worktype-registry";
 import { createDocumentObjectRouter } from "./document-objects";
 import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
@@ -2323,6 +2324,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
       recurring,
       recurring_config,
       model,
+      worktype,
+      policy_inputs_json,
       create_anyway,
       dedupe_override,
       createAnyway,
@@ -2348,6 +2351,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
       recurring?: unknown;
       recurring_config?: string;
       model?: string;
+      worktype?: string;
+      policy_inputs_json?: string;
       create_anyway?: unknown;
       dedupe_override?: unknown;
       createAnyway?: unknown;
@@ -2501,6 +2506,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
         recurring: normalizeBlockedInput(recurring),
         recurring_config,
         model,
+        worktype,
+        policy_inputs_json,
       });
 
       let responseTask = task;
@@ -2583,6 +2590,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
       recurring,
       recurring_config,
       model,
+      worktype,
+      policy_inputs_json,
       create_anyway,
       dedupe_override,
       createAnyway,
@@ -2608,6 +2617,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
       recurring?: unknown;
       recurring_config?: string;
       model?: string;
+      worktype?: string;
+      policy_inputs_json?: string;
       create_anyway?: unknown;
       dedupe_override?: unknown;
       createAnyway?: unknown;
@@ -2864,6 +2875,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
         recurring: normalizeBlockedInput(recurring),
         recurring_config,
         model,
+        worktype,
+        policy_inputs_json,
       };
 
       let receiptArtifactId: string | null = null;
@@ -5837,6 +5850,8 @@ app.use(createTaskMasterClaimRouter(taskMasterClaimService));
 app.use("/api", createTaskMasterClaimRouter(taskMasterClaimService));
 registerActivityRoutes("");
 registerActivityRoutes("/api");
+app.use("/worktype-registry", createWorktypeRegistryRouter());
+app.use("/api/worktype-registry", createWorktypeRegistryRouter());
 registerTaskRoutes("");
 registerTaskRoutes("/api");
 app.use("/tasks", createTaskReviewGateRouter({

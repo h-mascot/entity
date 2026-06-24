@@ -16,6 +16,14 @@ import {
 } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
 import { buildRoutingStateView, routingToneClass } from './utils/routingState';
+import {
+  FALLBACK_WORKTYPE_REGISTRY,
+  formatOverlayValue,
+  getEditableWorktypeFields,
+  getWorktypeLabel,
+  readWorktype,
+  readWorktypeLayer,
+} from './utils/worktypeRegistry';
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
@@ -138,6 +146,8 @@ interface TaskDetailData {
   humanGateState: string;
   policyReasonChain: Array<Record<string, unknown>>;
   overrideAudit: Array<Record<string, unknown>>;
+  worktype: string;
+  policyInputsJson: string | null;
   model: string | null;
   estimateHours: number | null;
   timeSpent: number | null;
@@ -787,6 +797,8 @@ function normalizeTaskDetail(raw: unknown): TaskDetailData | null {
       : 'not_required',
     policyReasonChain,
     overrideAudit,
+    worktype: readWorktype(metadataRecord, record.worktype),
+    policyInputsJson: readFirstString(record.policy_inputs_json, record.policyInputsJson, metadataRecord.policy_inputs_json),
     model: readFirstString(record.model, metadataRecord.model),
     estimateHours: normalizeNullableNumber(record.estimate_hours ?? metadataRecord.estimate_hours),
     timeSpent: normalizeNullableNumber(record.time_spent ?? metadataRecord.time_spent),
@@ -1099,6 +1111,42 @@ function formatReviewGateToken(value: unknown, fallback = 'Not required'): strin
   return raw
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function buildWorktypeOverlayView(task: TaskDetailData): {
+  label: string;
+  schema: string;
+  sensitivity: string;
+  rows: Array<{ label: string; value: string; indexable: boolean }>;
+} | null {
+  const metadata = {
+    ...task.metadataRecord,
+    worktype: task.worktype,
+    policy_inputs_json: task.policyInputsJson ?? task.metadataRecord.policy_inputs_json,
+  };
+  const worktype = readWorktype(metadata, task.worktype);
+  if (worktype === 'general') {
+    return null;
+  }
+  const entry = FALLBACK_WORKTYPE_REGISTRY.find((candidate) => candidate.worktype === worktype);
+  if (!entry) {
+    return null;
+  }
+  const layer = readWorktypeLayer(metadata);
+  const rows = getEditableWorktypeFields(entry)
+    .map((field) => ({
+      label: field.plan_label,
+      value: formatOverlayValue(layer[field.name]),
+      indexable: field.indexable,
+    }))
+    .filter((row): row is { label: string; value: string; indexable: boolean } => Boolean(row.value));
+
+  return {
+    label: getWorktypeLabel(entry),
+    schema: `${entry.schema_name}@v${entry.schema_version}`,
+    sensitivity: entry.sensitivity.replace(/_/g, ' '),
+    rows,
+  };
 }
 
 function reviewGateToneClass(state: string, required: boolean): string {
@@ -2001,6 +2049,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const outputLinks = useMemo(() => extractTaskOutputLinks(task?.output ?? ''), [task?.output]);
   const receiptProof = useMemo(() => (task ? buildReceiptProofView(task, outputLinks) : null), [outputLinks, task]);
   const documentObjectViews = useMemo(() => (task ? buildTaskDocumentObjectViews(task, receiptProof) : []), [receiptProof, task]);
+  const worktypeOverlay = useMemo(() => (task ? buildWorktypeOverlayView(task) : null), [task]);
   const reviewActorEligible = task
     ? principalMatches(actorAliases, task.reviewerPrincipalId ?? task.reviewer)
     : false;
@@ -3414,6 +3463,47 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                  </div>
 	                ) : null}
 	              </section>
+
+                  {worktypeOverlay ? (
+                    <section
+                      style={{ order: 2 }}
+                      className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+                      data-testid="task-worktype-overlay-panel"
+                    >
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                            Worktype Overlay
+                          </div>
+                          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                            Domain fields shown with registry labels, not engineering schema terms.
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-[var(--accent)]/25 bg-[var(--surface-accent)] px-2 py-0.5 text-xs text-[var(--accent)]">
+                          {worktypeOverlay.label}
+                        </span>
+                      </div>
+                      <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-[var(--text-muted)]">
+                        <span>{worktypeOverlay.schema}</span>
+                        <span>sensitivity: {worktypeOverlay.sensitivity}</span>
+                      </div>
+                      {worktypeOverlay.rows.length > 0 ? (
+                        <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+                          {worktypeOverlay.rows.map((row) => (
+                            <div key={row.label} className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">{row.label}</span>
+                                {row.indexable ? <span className="text-[10px] text-sky-300">filterable</span> : null}
+                              </div>
+                              <div className="mt-0.5 capitalize">{row.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-[var(--text-muted)]">No overlay values recorded yet.</p>
+                      )}
+                    </section>
+                  ) : null}
 
 	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
 	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
