@@ -1,5 +1,5 @@
 import express from 'express';
-import { WORKTYPE_REGISTRY } from '../../../../packages/db/src/index';
+import { WORKTYPE_REGISTRY } from '../../../db/src';
 
 export function serializeWorktypeRegistry() {
   return Object.values(WORKTYPE_REGISTRY).map((entry) => ({
