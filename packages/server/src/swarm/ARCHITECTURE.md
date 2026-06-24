@@ -19,7 +19,7 @@ and report results back.
 
 ## Providers
 
-Swarm now uses an extensible provider registry so Entity can route jobs to multiple WorkOS layers without hardcoding them into the tracker. Current engines: ACP, Symphony, eforge, with registry slots prepared for CCP, Paperclip, and Flywheel.
+Swarm now uses an extensible provider registry so Entity can route jobs to multiple WorkOS layers without hardcoding them into the tracker. Current engines: ACP, Symphony, eforge, with registry slots prepared for CCP and Flywheel.
 
 ### ACP Provider (`acp`)
 - Dispatches to Geordi ACP adapter on Mac (Codex/Claude Code)
@@ -41,7 +41,6 @@ Swarm now uses an extensible provider registry so Entity can route jobs to multi
 
 ### Future Registry Slots
 - `ccp` — delivery control plane / ticket-to-merge automation
-- `paperclip` — business control plane / governance layer
 - `flywheel` — workstation/environment layer
 
 ### Adding a Provider

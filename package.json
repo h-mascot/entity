@@ -18,6 +18,7 @@
     "ctrl:gate": "bash scripts/ctrl-gate-runner.sh",
     "ctrl:full": "npm run ctrl:gate && npm run test:live && npm run test:deploy",
     "proof:phase2:first-session": "node scripts/proof/entity-phase-2-first-session-spine.mjs",
+    "proof:phase2:boundary": "node scripts/proof/entity-phase-2-boundary-release-gate.mjs",
     "clickclack:verify": "node scripts/clickclack-sidecar.mjs verify",
     "clickclack:serve": "node scripts/clickclack-sidecar.mjs serve",
     "clickclack:status": "node scripts/clickclack-sidecar.mjs status",

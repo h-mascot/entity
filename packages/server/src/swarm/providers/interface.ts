@@ -51,7 +51,7 @@ export interface ProofBundle {
 }
 
 export interface SwarmProviderMetadata {
-  category?: 'orchestration' | 'build-system' | 'delivery-control-plane' | 'business-control-plane' | 'environment';
+  category?: 'orchestration' | 'build-system' | 'delivery-control-plane' | 'environment';
   executionMode?: 'pull' | 'push' | 'hybrid';
   description?: string;
   acceptsDispatch?: boolean;
