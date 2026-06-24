@@ -394,4 +394,85 @@ describe('agent registry Helm runtime status serialization', () => {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
   });
+
+  it('exposes management-surface fields for degraded runtime bindings', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'opsbook',
+      name: 'Ops Book',
+      emoji: 'O',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-opsbook',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'stale',
+      status: 'active',
+      metadata_json: '{"loops":["daily review sweep"]}',
+    });
+    moduleRepo.upsertAgentModuleGrant({
+      agent_id: 'opsbook',
+      module_id: 'tasks',
+      enabled: true,
+      permissions_json: '["read","review"]',
+      scope_json: '{"projects":["entity"]}',
+    });
+    const helmStatusAdapter: HelmStatusAdapter = {
+      getStatus: async (agent) => ({
+        source: 'helm',
+        binding_id: agent.runtime_binding_id,
+        state: 'degraded',
+        health: 'degraded',
+        readiness: 'degraded',
+        current_work: 'Review stale runtime binding',
+        heartbeat_at: null,
+        checked_at: '2026-05-01T00:00:10.000Z',
+        stale: true,
+        reason: 'stale_runtime_binding',
+        helm_link: null,
+      }),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo, helmStatusAdapter }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/registry`);
+      expect(res.status).toBe(200);
+      const json = await res.json() as {
+        list: Array<{
+          slug: string;
+          runtime_binding_id: string | null;
+          provider_type: string;
+          helm_managed: boolean;
+          binding_state: string;
+          metadata_json: string;
+          runtime_status: { state: string; readiness: string; current_work: string; reason: string };
+          capabilities: { capabilityLabels: string[]; permissionLabels: string[]; scopeLabels: string[] };
+        }>;
+      };
+      const managedAgent = json.list.find((entry) => entry.slug === 'opsbook');
+      expect(managedAgent).toMatchObject({
+        runtime_binding_id: 'runtime-opsbook',
+        provider_type: 'helm_runtime',
+        helm_managed: true,
+        binding_state: 'stale',
+        runtime_status: {
+          state: 'degraded',
+          readiness: 'degraded',
+          current_work: 'Review stale runtime binding',
+          reason: 'stale_runtime_binding',
+        },
+      });
+      expect(JSON.parse(managedAgent?.metadata_json ?? '{}')).toEqual({ loops: ['daily review sweep'] });
+      expect(managedAgent?.capabilities.capabilityLabels).toEqual(['Mission Control']);
+      expect(managedAgent?.capabilities.permissionLabels).toEqual(['Read', 'Review']);
+      expect(managedAgent?.capabilities.scopeLabels).toEqual(['Projects: Entity']);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
 });

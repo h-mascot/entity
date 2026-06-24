@@ -1,12 +1,13 @@
 import { useEffect, useId, useMemo, useState, type CSSProperties } from 'react';
 import type { ActivityEntry } from '../hooks/useActivityStream';
 import type { TaskBoardTask } from '../hooks/useTaskBoard';
+import AgentManagementSurface from './AgentManagementSurface';
 import { getAgentRegistryRecord, resolveAgentAvatarUrl } from '../lib/agentRegistry';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
 
 type SidebarAgentStatus = 'online' | 'offline';
 type AgentRuntimeStatus = 'active' | 'idle' | 'blocked' | 'degraded' | 'offline' | 'unknown';
-type AgentTab = 'activity' | 'output' | 'health' | 'queue';
+type AgentTab = 'management' | 'activity' | 'output' | 'health' | 'queue';
 type FeedCategory = 'tool' | 'file' | 'message' | 'error';
 type TaskColumn = 'backlog' | 'todo' | 'doing' | 'review' | 'done';
 
@@ -190,6 +191,7 @@ const FEED_META: Record<FeedCategory, { dot: string; text: string }> = {
 };
 
 const TAB_ITEMS: Array<{ id: AgentTab; label: string }> = [
+  { id: 'management', label: 'Management' },
   { id: 'activity', label: 'Activity Feed' },
   { id: 'output', label: 'Work Output' },
   { id: 'health', label: 'Health' },
@@ -930,6 +932,7 @@ export default function AgentDashboardV2({
   agents,
   selectedAgentId,
   onSelectAgent,
+  tasks,
   wsConnected,
 }: AgentDashboardV2Props) {
   const [liveAgents, setLiveAgents] = useState<SidebarAgent[]>([]);
@@ -1116,9 +1119,9 @@ export default function AgentDashboardV2({
     return crewAgents.find((agent) => agent.identityKeys.includes(selectedIdentity)) ?? null;
   }, [crewAgents, selectedAgentId]);
 
-  const [detailTab, setDetailTab] = useState<AgentTab>('activity');
+  const [detailTab, setDetailTab] = useState<AgentTab>('management');
   useEffect(() => {
-    setDetailTab('activity');
+    setDetailTab('management');
   }, [selectedAgent?.sidebarId]);
 
   const crewStats = useMemo(() => {
@@ -1542,7 +1545,7 @@ export default function AgentDashboardV2({
             <div>
               <div className="entity-ops-section-title">Agent Detail</div>
               <div className="mt-0.5 text-sm text-[var(--text-secondary)]">
-                Health, output, activity, and queue for {selectedAgent.name}
+                Management, activity, output, health, and queue for {selectedAgent.name}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1561,16 +1564,32 @@ export default function AgentDashboardV2({
                 <span className="ml-2 font-mono text-[10px] opacity-75">
                   {tab.id === 'activity'
                     ? selectedFeed.length
-                    : tab.id === 'output'
-                      ? outputFiles.length
-                      : tab.id === 'queue'
-                        ? selectedQueue.length
-                        : selectedAgent.status}
+                    : tab.id === 'management'
+                      ? selectedAgent.status
+                      : tab.id === 'output'
+                        ? outputFiles.length
+                        : tab.id === 'queue'
+                          ? selectedQueue.length
+                          : selectedAgent.status}
                 </span>
               </button>
             ))}
             </div>
           </div>
+
+          {detailTab === 'management' && (
+            <div className="p-3">
+              <AgentManagementSurface
+                agentId={selectedAgent.sidebarId}
+                agentName={selectedAgent.name}
+                runtime={selectedAgent.runtime}
+                model={selectedAgent.model}
+                currentTaskTitle={selectedAgent.currentTask?.title ?? null}
+                runtimeStatus={selectedAgent.runtimeStatus}
+                tasks={tasks}
+              />
+            </div>
+          )}
 
           {detailTab === 'activity' && (
             <div className="grid min-h-[360px] lg:grid-cols-[170px_minmax(0,1fr)_300px]">
