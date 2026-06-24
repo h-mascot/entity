@@ -1378,6 +1378,13 @@ export default function App() {
   const [authorshipRanges, setAuthorshipRanges] = useState<DocumentAuthorshipRangeRecord[]>([]);
   const [manualAuthorshipAuthor, setManualAuthorshipAuthor] = useState<DocumentAuthorshipActor>('human');
   const [sidebarTab, setSidebarTab] = useState<WorkspaceTab>(() => {
+    if (typeof window !== 'undefined') {
+      const requestedTab = new URLSearchParams(window.location.search).get('tab') as WorkspaceTab | null;
+      const validTabs: readonly string[] = ['files', 'agents', 'tasks', 'services', 'chat', 'admin'];
+      if (requestedTab && validTabs.includes(requestedTab)) {
+        return requestedTab;
+      }
+    }
     if (typeof window === 'undefined' || !window.localStorage) {
       return 'files';
     }
