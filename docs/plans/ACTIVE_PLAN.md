@@ -2,7 +2,7 @@
 
 Issue: THE-80
 Branch: THE-80-document-clickclack-reuse-proxy-and-bridge-tests
-Status: IN PROGRESS
+Status: DONE
 
 ## Scope
 
@@ -30,7 +30,7 @@ Document ClickClack sidecar reuse, proxy/bridge behavior, local/cloud difference
   - Files: `output/entity-phase-2/test-gate/THE-80.*`, `output/entity-phase-2/book-review/THE-80*`
   - Verify: `bash scripts/proof/entity-phase-2-smoke.sh && npm run build && cd packages/server && npm run build && npx vitest run`
   - Verify: `project-test-gate request/run/book-review/verify THE-80`
-- [ ] Step 5: Comment Linear, mark THE-80 Done if proof supports it, update run-state to THE-81, and commit scoped work.
+- [x] Step 5: Comment Linear, mark THE-80 Done if proof supports it, update run-state to THE-81, and commit scoped work.
   - Files: `.cursor/run-state/entity-phase-2.json`
   - Verify: `git status --short --branch`
 
@@ -42,6 +42,7 @@ Document ClickClack sidecar reuse, proxy/bridge behavior, local/cloud difference
 | 2026-06-24T06:46Z | Steps 2-3 | In progress | Existing ClickClack ADR/docs and bridge/proxy tests located. |
 | 2026-06-24T06:50Z | Steps 2-3 | Done | ClickClack operations doc added; proxy degraded-route smoke added; focused bridge/proxy tests pass. |
 | 2026-06-24T06:51Z | Step 4 | Done | Full proof passed; CLI Tester run PASS, packet-mode Book review locally approved, verify PASS with no blockers; GitNexus low risk. |
+| 2026-06-24T06:52Z | Step 5 | Done | Linear proof comment posted, THE-80 marked Done, implementation commit `afe53d3`, run-state advanced to THE-81. |
 
 ## Files Touched
 
@@ -49,6 +50,7 @@ Document ClickClack sidecar reuse, proxy/bridge behavior, local/cloud difference
 - `docs/plans/ACTIVE_PLAN.md` - modified - mirrored active plan
 - `docs/context/entity-phase-2-clickclack-operations.md` - created - sidecar/proxy/bridge/degraded operations docs
 - `packages/server/src/clickclack/proxy.test.ts` - modified - degraded proxy API failure smoke
+- `.cursor/run-state/entity-phase-2.json` - modified - advanced local pointer to THE-81 (not committed)
 
 ## Resume Instructions
 
@@ -59,9 +61,9 @@ Document ClickClack sidecar reuse, proxy/bridge behavior, local/cloud difference
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Docs committed
-- [ ] ClickClack smoke tests pass
-- [ ] Full proof commands pass
-- [ ] CLI Tester request/run/book-review/verify completed
-- [ ] Linear proof comment posted and THE-80 marked Done if supported
+- [x] All steps complete
+- [x] Docs committed
+- [x] ClickClack smoke tests pass
+- [x] Full proof commands pass
+- [x] CLI Tester request/run/book-review/verify completed
+- [x] Linear proof comment posted and THE-80 marked Done if supported
