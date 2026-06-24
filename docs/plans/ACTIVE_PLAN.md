@@ -4,7 +4,7 @@ Entity Phase 2 THE-69: build inbox and notification UI.
 **MC Task:** THE-69
 **Created:** 2026-06-24
 **Agent:** Cursor
-**Status:** IN PROGRESS
+**Status:** DONE
 
 ## Context
 Live Linear issue THE-69 is child issue THE-15.4 under THE-15 inbox and notifications. Scope is UI for canonical notification records and delivery routes: distinguish Entity inbox state from external delivery state, show failed/degraded deliveries, policy reasons, object refs, and deep links.
@@ -30,7 +30,7 @@ Live Linear issue THE-69 is child issue THE-15.4 under THE-15 inbox and notifica
 - [x] Step 4: Run focused proof, DOM/browser proof artifact, GitNexus, and CLI Tester request/run/book-review/verify.
   - **Files:** `output/entity-phase-2/test-gate/THE-69.*`, `output/entity-phase-2/book-review/THE-69*`, browser proof under `output/entity-phase-2/browser-proof/`
   - **Verify:** `bash scripts/proof/entity-phase-2-smoke.sh`; `npm run build`; `cd packages/server && npm run build && npx vitest run`; CLI Tester verify PASS
-- [ ] Step 5: Comment Linear, mark THE-69 Done, update run-state to THE-70, and commit scoped changes.
+- [x] Step 5: Comment Linear, mark THE-69 Done, update run-state to THE-70, and commit scoped changes.
   - **Files:** `.cursor/run-state/entity-phase-2.json` local state only, source/test/plan for commit as appropriate
   - **Verify:** `git status --short`
 
@@ -40,6 +40,7 @@ Live Linear issue THE-69 is child issue THE-15.4 under THE-15 inbox and notifica
 | 04:27Z | Setup | done | Read live child issue; branch created after THE-68 completion. |
 | 04:31Z | Steps 1-3 | done | Added notification routes/tests, app hook, panel rendering for canonical state/delivery state/policy/object refs, and DOM proof artifact. |
 | 04:36Z | Proof | done | Full proof commands passed; CLI Tester request/run/book-review/verify passed with hard rule 22 local Book approval. |
+| 04:41Z | Close | done | Linear proof comment posted; issue marked Done; run-state advanced to THE-70. |
 
 ## Files Touched
 - `docs/plans/2026-06-24-052700-entity-phase-2-the-69-notification-inbox-ui-plan.md` - created - THE-69 execution plan.
@@ -60,8 +61,8 @@ Live Linear issue THE-69 is child issue THE-15.4 under THE-15 inbox and notifica
 5. Keep THE-69 scoped to canonical notification inbox API/UI, delivery states, policy reasons, object refs, and proof.
 
 ## Done
-- [ ] All steps complete
-- [ ] Tests/build pass
-- [ ] CLI Tester request/run/book-review/verify complete
-- [ ] Linear THE-69 proof comment added and status moved to Done
-- [ ] Run-state advanced to THE-70
+- [x] All steps complete
+- [x] Tests/build pass
+- [x] CLI Tester request/run/book-review/verify complete
+- [x] Linear THE-69 proof comment added and status moved to Done
+- [x] Run-state advanced to THE-70
