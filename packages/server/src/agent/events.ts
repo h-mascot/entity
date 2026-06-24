@@ -30,6 +30,7 @@ export interface TaskAgentAction {
   action: string;
   result: string;
   tokensUsed: number;
+  details?: Record<string, unknown>;
 }
 
 export interface ModelInvocationResult {
@@ -53,7 +54,8 @@ function buildAction(
   taskId: number | undefined,
   action: string,
   result: string,
-  tokensUsed = 0
+  tokensUsed = 0,
+  details?: Record<string, unknown>
 ): TaskAgentAction {
   return {
     timestamp: nowIso(),
@@ -62,6 +64,7 @@ function buildAction(
     action,
     result,
     tokensUsed: Number.isFinite(tokensUsed) && tokensUsed > 0 ? Math.floor(tokensUsed) : 0,
+    details,
   };
 }
 
@@ -72,6 +75,62 @@ function toHoursSince(timestamp: string): number {
   }
 
   return Math.max(0, (Date.now() - parsed) / (60 * 60 * 1000));
+}
+
+function parseTaskMetadata(metadata: string | null | undefined): Record<string, unknown> {
+  if (!metadata?.trim()) return {};
+  try {
+    const parsed = JSON.parse(metadata) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function readRoutingProjection(task: TaskRecord): Record<string, unknown> {
+  const metadata = parseTaskMetadata(task.metadata);
+  const projection = metadata.routing_policy_projection;
+  return projection && typeof projection === 'object' && !Array.isArray(projection)
+    ? projection as Record<string, unknown>
+    : {};
+}
+
+function isAutoReassignEligible(task: TaskRecord, hoursInColumn: number): boolean {
+  const projection = readRoutingProjection(task);
+  const threshold = projection.auto_reassign_after_hours;
+  return projection.auto_reassign_eligible === true &&
+    typeof threshold === 'number' &&
+    Number.isFinite(threshold) &&
+    threshold > 0 &&
+    hoursInColumn >= threshold;
+}
+
+function isIndividualOwner(task: TaskRecord): boolean {
+  const owner = task.owner_principal_id?.trim();
+  return Boolean(owner && (task.owner_principal_type === 'human' || task.owner_principal_type === 'agent'));
+}
+
+function buildReassignmentMetadata(task: TaskRecord, audit: Record<string, unknown>): string {
+  const metadata = parseTaskMetadata(task.metadata);
+  const previousChain = Array.isArray(metadata.taskmaster_reassignment_chain)
+    ? metadata.taskmaster_reassignment_chain.filter((entry) => entry && typeof entry === 'object')
+    : [];
+  const summary = [
+    `prior assignee=${audit.prior_assignee ?? 'not recorded'}`,
+    `new assignee=${audit.new_assignee_principal_id ?? 'not recorded'}`,
+    `prior executor=${audit.prior_executor_principal_id ?? 'not recorded'}`,
+    `final executor=${audit.final_executor_principal_id ?? 'not recorded'}`,
+    `reason=${audit.policy_reason ?? 'not recorded'}`,
+    `actor=${audit.actor_principal_id ?? 'not recorded'}`,
+  ].join('; ');
+
+  return JSON.stringify({
+    ...metadata,
+    reassignments: summary,
+    taskmaster_reassignment_chain: [...previousChain, audit],
+  });
 }
 
 async function generateNudgeMessage(
@@ -312,6 +371,7 @@ export async function onTaskStale(
   const activities = context.tools.listTaskActivities(task.id, 40);
   const wasAlreadyNudged = activities.some((activity) => activity.activity_event_type === 'nudge_sent');
   const wasAlreadyEscalated = activities.some((activity) => activity.activity_event_type === 'owner_escalated');
+  const wasAlreadyReassigned = activities.some((activity) => activity.activity_event_type === 'auto_reassigned');
   const hasRecentActivity = activities.some(
     (activity) => toHoursSince(activity.created_at) <= RECENT_ACTIVITY_WINDOW_HOURS
   );
@@ -335,6 +395,54 @@ export async function onTaskStale(
     } else {
       await context.tools.addNoteOnce(task.id, `🚧 Task remains blocked (${blocker}). Escalating for help.`);
       actions.push(buildAction(event, task.id, 'escalate_blocker', blocker));
+    }
+  }
+
+  if (
+    hasAssignedOwner(task.assignee) &&
+    wasAlreadyNudged &&
+    wasAlreadyEscalated &&
+    !wasAlreadyReassigned &&
+    isAutoReassignEligible(task, hoursInColumn) &&
+    isIndividualOwner(task)
+  ) {
+    const nextAssignee = task.owner_principal_id!.trim();
+    const projection = readRoutingProjection(task);
+    const policyReason = 'auto-reassignment threshold exhausted after assignee nudge and owner escalation';
+    const audit = {
+      actor_principal_id: 'task-master',
+      prior_assignee: task.assignee ?? null,
+      new_assignee_principal_id: nextAssignee,
+      prior_executor_principal_id: task.executor_principal_id ?? null,
+      final_executor_principal_id: nextAssignee,
+      prior_assignment_state: task.assignment_state ?? null,
+      new_assignment_state: 'assigned',
+      owner_escalation_event_count: activities.filter((activity) => activity.activity_event_type === 'owner_escalated').length,
+      policy_reason: policyReason,
+      policy_reason_chain: Array.isArray(projection.reason_chain) ? projection.reason_chain : undefined,
+      reassigned_at: nowIso(),
+    };
+    const updated = await context.tools.updateTask(task.id, {
+      assignee: nextAssignee,
+      executor_principal_id: nextAssignee,
+      assignment_state: 'assigned',
+      metadata: buildReassignmentMetadata(task, audit),
+    });
+
+    if (updated) {
+      await context.tools.addNoteOnce(
+        task.id,
+        `Auto-reassigned to ${nextAssignee} after nudge and owner escalation thresholds were exhausted.`,
+      );
+      actions.push(buildAction(
+        event,
+        task.id,
+        'auto_reassign_task',
+        `auto-reassigned stalled task to ${nextAssignee}`,
+        0,
+        audit,
+      ));
+      return actions;
     }
   }
 

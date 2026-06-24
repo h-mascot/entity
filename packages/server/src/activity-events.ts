@@ -268,6 +268,7 @@ export function buildTaskAgentActionActivityEventInput(action: {
   action: string;
   result: string;
   tokensUsed?: number;
+  details?: Record<string, unknown>;
 }): ActivityEventAppendInput | null {
   if (!Number.isInteger(action.taskId)) {
     return null;
@@ -299,6 +300,9 @@ export function buildTaskAgentActionActivityEventInput(action: {
   } else if (action.action === 'escalate_blocker' || action.action === 'escalate_owner') {
     consumer = 'routing';
     eventType = 'owner_escalated';
+  } else if (action.action === 'auto_reassign_task') {
+    consumer = 'routing';
+    eventType = 'auto_reassigned';
   } else if (action.action === 'nudge_assignee') {
     consumer = 'routing';
     eventType = 'nudge_sent';
@@ -321,6 +325,7 @@ export function buildTaskAgentActionActivityEventInput(action: {
     data: {
       task_agent_event: action.event,
       task_agent_action: action.action,
+      ...(action.details ?? {}),
       delivery_status: notificationFailed ? 'failed' : undefined,
       tokens_used: Number.isFinite(action.tokensUsed) ? action.tokensUsed : 0,
     },

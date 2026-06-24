@@ -268,6 +268,38 @@ describe('receipt writer', () => {
     expect(pendingGateReceipt).not.toContain('- Decision: pending');
   });
 
+  it('renders the auto-reassignment audit chain in routing history', () => {
+    const previousTask = makeTask({
+      column: 'doing',
+      assignee: 'agent-1',
+      executor_principal_id: 'agent-1',
+    });
+    const completedTask = makeTask({
+      column: 'done',
+      assignee: 'owner-1',
+      executor_principal_id: 'owner-1',
+      metadata: JSON.stringify({
+        reassignments: 'prior assignee=agent-1; new assignee=owner-1; prior executor=agent-1; final executor=owner-1; reason=auto-reassignment threshold exhausted after assignee nudge and owner escalation; actor=task-master',
+      }),
+    });
+
+    const receipt = buildCanonicalReceiptMarkdown({
+      task: completedTask,
+      previousTask,
+      artifactId: 'receipt-fixed',
+      stablePath: '/artifacts/evidence/receipt-fixed.md',
+      contentHash: 'sha256:fixed',
+      completedAt: '2026-06-23T11:00:00.000Z',
+      actorPrincipalId: 'reviewer-1',
+    });
+
+    expect(receipt).toContain('- Original Assignment: agent-1');
+    expect(receipt).toContain('- Reassignments: prior assignee=agent-1; new assignee=owner-1');
+    expect(receipt).toContain('reason=auto-reassignment threshold exhausted after assignee nudge and owner escalation');
+    expect(receipt).toContain('actor=task-master');
+    expect(receipt).toContain('- Final Executor: owner-1');
+  });
+
   it('writes receipt body and metadata before completing the task', async () => {
     const storageRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'entity-receipt-'));
     tempDirs.push(storageRoot);

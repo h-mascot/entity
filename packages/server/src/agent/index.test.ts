@@ -6,6 +6,7 @@ import type {
   CreateActivityInput,
   TaskCommentRepository,
   TaskRecord,
+  UpdateTaskInput,
 } from '../../../db/src';
 import type { TaskSyncLayer } from '../../../db/src/task-sync';
 
@@ -266,6 +267,140 @@ describe('TaskAgent ActivityEvent consumers', () => {
     expect(activityRepository.created.map((input) => input.activity_event_type)).toEqual(
       expect.arrayContaining(['owner_escalated', 'notification_routed'])
     );
+  });
+
+  it('auto-reassigns stalled tasks only after nudge, owner escalation, and policy threshold exhaustion', async () => {
+    const task = makeTask({
+      column: 'doing',
+      output: null,
+      updated_at: '2000-01-01T00:00:00.000Z',
+      metadata: JSON.stringify({
+        routing_policy_projection: {
+          auto_reassign_eligible: true,
+          auto_reassign_after_hours: 1,
+          reason_chain: [
+            { source: 'task_projection', decision: 'reassignment_eligibility', value: true },
+          ],
+        },
+      }),
+    });
+    const updateTask = vi.fn(async (_taskId: number, updates: UpdateTaskInput): Promise<TaskRecord> => ({
+      ...task,
+      ...updates,
+    }) as TaskRecord);
+    const activityRepository = makeActivityRepository([
+      makeActivity({ id: 10, activity_event_type: 'nudge_sent', task_id: task.id }),
+      makeActivity({ id: 11, activity_event_type: 'owner_escalated', task_id: task.id }),
+    ]);
+    const agent = new TaskAgent({
+      taskSyncLayer: {
+        ...makeTaskSyncLayer(task),
+        updateTask,
+      },
+      activityRepository,
+      taskCommentRepository: makeCommentRepository(),
+      workspaceRoot: '/tmp/entity',
+      docsRoots: { output: '/tmp/entity/output' },
+      logActivity: vi.fn(),
+      broadcast: vi.fn(),
+    });
+
+    const actions = await agent.runStaleScan('manual');
+
+    expect(actions.map((action) => action.action)).toContain('auto_reassign_task');
+    expect(updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      assignee: 'owner-1',
+      executor_principal_id: 'owner-1',
+      assignment_state: 'assigned',
+    }));
+    const metadata = JSON.parse(String(updateTask.mock.calls[0]?.[1]?.metadata)) as {
+      reassignments?: string;
+      taskmaster_reassignment_chain?: Array<Record<string, unknown>>;
+    };
+    expect(metadata.reassignments).toContain('prior assignee=Geordi');
+    expect(metadata.reassignments).toContain('new assignee=owner-1');
+    expect(metadata.taskmaster_reassignment_chain?.[0]).toMatchObject({
+      actor_principal_id: 'task-master',
+      prior_assignee: 'Geordi',
+      new_assignee_principal_id: 'owner-1',
+      final_executor_principal_id: 'owner-1',
+    });
+    const reassignmentEvent = activityRepository.created.find(
+      (input) => input.activity_event_type === 'auto_reassigned'
+    );
+    expect(reassignmentEvent?.activity_event_payload).toMatchObject({
+      data: {
+        task_agent_action: 'auto_reassign_task',
+        prior_assignee: 'Geordi',
+        new_assignee_principal_id: 'owner-1',
+        final_executor_principal_id: 'owner-1',
+      },
+    });
+  });
+
+  it('does not auto-reassign before the policy threshold is exhausted or to a non-individual owner', async () => {
+    const baseTask = makeTask({
+      column: 'doing',
+      output: null,
+      updated_at: '2000-01-01T00:00:00.000Z',
+      metadata: JSON.stringify({
+        routing_policy_projection: {
+          auto_reassign_eligible: true,
+          auto_reassign_after_hours: 9999999,
+        },
+      }),
+    });
+    const updateTask = vi.fn();
+    const activityRepository = makeActivityRepository([
+      makeActivity({ id: 10, activity_event_type: 'nudge_sent', task_id: baseTask.id }),
+      makeActivity({ id: 11, activity_event_type: 'owner_escalated', task_id: baseTask.id }),
+    ]);
+    const agent = new TaskAgent({
+      taskSyncLayer: {
+        ...makeTaskSyncLayer(baseTask),
+        updateTask,
+      },
+      activityRepository,
+      taskCommentRepository: makeCommentRepository(),
+      workspaceRoot: '/tmp/entity',
+      docsRoots: { output: '/tmp/entity/output' },
+      logActivity: vi.fn(),
+      broadcast: vi.fn(),
+    });
+
+    const actions = await agent.runStaleScan('manual');
+
+    expect(actions.map((action) => action.action)).not.toContain('auto_reassign_task');
+    expect(updateTask).not.toHaveBeenCalled();
+
+    const nonIndividualOwnerTask = {
+      ...baseTask,
+      metadata: JSON.stringify({
+        routing_policy_projection: {
+          auto_reassign_eligible: true,
+          auto_reassign_after_hours: 1,
+        },
+      }),
+      owner_principal_type: 'team',
+    };
+    const nonIndividualUpdate = vi.fn();
+    const nonIndividualAgent = new TaskAgent({
+      taskSyncLayer: {
+        ...makeTaskSyncLayer(nonIndividualOwnerTask),
+        updateTask: nonIndividualUpdate,
+      },
+      activityRepository,
+      taskCommentRepository: makeCommentRepository(),
+      workspaceRoot: '/tmp/entity',
+      docsRoots: { output: '/tmp/entity/output' },
+      logActivity: vi.fn(),
+      broadcast: vi.fn(),
+    });
+
+    const nonIndividualActions = await nonIndividualAgent.runStaleScan('manual');
+
+    expect(nonIndividualActions.map((action) => action.action)).not.toContain('auto_reassign_task');
+    expect(nonIndividualUpdate).not.toHaveBeenCalled();
   });
 
   it('records degraded notification delivery when assignee nudge routing fails', async () => {

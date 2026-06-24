@@ -351,6 +351,16 @@ describe('ActivityEvent service', () => {
 
     expect(
       buildTaskAgentActionActivityEventInput({
+        event: 'stale_scan',
+        taskId: 42,
+        action: 'auto_reassign_task',
+        result: 'auto-reassigned stalled task',
+        tokensUsed: 0,
+      })?.eventType,
+    ).toBe('auto_reassigned');
+
+    expect(
+      buildTaskAgentActionActivityEventInput({
         event: 'output_missing',
         taskId: 42,
         action: 'request_output',
