@@ -176,6 +176,34 @@ function createFakeRepos(): {
       return record;
     },
     getExternalDocumentRef: (id: string) => externalRefs.get(id),
+    listExternalDocumentRefs: (input) => {
+      const query = input.query?.toLowerCase() ?? null;
+      return Array.from(externalRefs.values())
+        .filter((entry) => entry.org_id === input.org_id)
+        .filter((entry) => !input.connector_type || entry.connector_type === input.connector_type)
+        .filter((entry) => {
+          if (!query) return true;
+          return [
+            entry.title,
+            entry.external_id,
+            entry.external_url,
+            entry.external_canonical_url,
+            entry.external_mime_type,
+            entry.external_permission_summary,
+            entry.metadata_json,
+          ].filter(Boolean).join(' ').toLowerCase().includes(query);
+        })
+        .filter((entry) => {
+          const objectRef = input.linked_object_ref;
+          if (!objectRef) return true;
+          return entry.linked_object_refs.some((ref) =>
+            ref.object_type === objectRef.object_type &&
+            ref.object_id === objectRef.object_id &&
+            ref.link_role === objectRef.link_role
+          );
+        })
+        .slice(0, input.limit ?? 50);
+    },
     linkExternalDocumentObject: (id: string, objectRef: ObjectRef) => {
       const current = externalRefs.get(id);
       if (!current) return undefined;
@@ -494,6 +522,179 @@ describe('document object routes', () => {
       create: false,
       update: false,
     });
+  });
+
+  it('serves read-only Google Docs metadata list, search, read, and open-link responses', async () => {
+    const createRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'google-readonly-doc',
+        org_id: 'org-a',
+        connector_type: 'google_docs',
+        external_id: 'docs-file-82',
+        external_url: 'https://docs.google.com/document/d/docs-file-82/edit',
+        external_canonical_url: 'https://docs.google.com/document/d/docs-file-82',
+        title: 'Board Account Plan',
+        external_mime_type: 'application/vnd.google-apps.document',
+        auth_state: 'authorized',
+        readiness_state: 'ready',
+        granted_scopes: ['read', 'index', 'link', 'preview'],
+        external_ref_state: 'available',
+        linked_object_refs: [{ object_type: 'task', object_id: '82', link_role: 'source_context' }],
+        metadata: { snippet: 'Q3 expansion plan', owner: 'sales' },
+        capabilities: { create: true, update: true, write: true, export: true, sync: true },
+      }),
+    });
+    expect(createRes.status).toBe(201);
+
+    const listRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs?connector_type=google_docs&q=board&object_type=task&object_id=82&link_role=source_context`);
+    expect(listRes.status).toBe(200);
+    const listPayload = await readJson(listRes);
+    expect(listPayload).toMatchObject({
+      externalDocumentRefs: [{
+        externalDocumentRef: { id: 'google-readonly-doc', title: 'Board Account Plan' },
+        metadata: {
+          id: 'google-readonly-doc',
+          effective_readiness_state: 'ready',
+          degraded: false,
+          open_url: 'https://docs.google.com/document/d/docs-file-82',
+          allowed_scopes: ['read', 'index', 'link', 'preview'],
+          mutation_capabilities: {
+            create: false,
+            update: false,
+            write: false,
+            export: false,
+            sync: false,
+          },
+        },
+      }],
+    });
+    expect(((listPayload.externalDocumentRefs as Array<{ metadata: { capabilities: Record<string, boolean> } }>)[0].metadata.capabilities)).toMatchObject({
+      read: true,
+      index: true,
+      link: true,
+      preview: true,
+      create: false,
+      update: false,
+      write: false,
+      export: false,
+      sync: false,
+    });
+
+    const metadataRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs/google-readonly-doc/metadata`);
+    expect(metadataRes.status).toBe(200);
+    expect(await readJson(metadataRes)).toMatchObject({
+      metadata: {
+        title: 'Board Account Plan',
+        effective_auth_state: 'authorized',
+        effective_readiness_state: 'ready',
+        granted_scopes: ['read', 'index', 'link', 'preview'],
+      },
+    });
+
+    const openRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs/google-readonly-doc/open`);
+    expect(openRes.status).toBe(200);
+    expect(await readJson(openRes)).toMatchObject({
+      open: {
+        target: 'external_google_doc',
+        can_open: true,
+        url: 'https://docs.google.com/document/d/docs-file-82',
+        degraded: false,
+      },
+    });
+  });
+
+  it('returns degraded metadata for expired and insufficient Google auth', async () => {
+    const expiredRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'google-expired-doc',
+        connector_type: 'google_drive',
+        external_id: 'drive-expired-82',
+        title: 'Expired drive sheet',
+        auth_state: 'authorized',
+        readiness_state: 'ready',
+        granted_scopes: ['read', 'index', 'link', 'preview'],
+        auth_expires_at: '2000-01-01T00:00:00Z',
+        external_ref_state: 'available',
+      }),
+    });
+    expect(expiredRes.status).toBe(201);
+
+    const expiredMetadataRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs/google-expired-doc/metadata`);
+    expect(expiredMetadataRes.status).toBe(200);
+    expect(await readJson(expiredMetadataRes)).toMatchObject({
+      metadata: {
+        effective_auth_state: 'expired',
+        effective_readiness_state: 'degraded',
+        degraded: true,
+        degraded_reasons: ['auth_expired'],
+      },
+    });
+
+    const insufficientRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'google-insufficient-doc',
+        connector_type: 'google_docs',
+        external_id: 'docs-insufficient-82',
+        title: 'Insufficient scope doc',
+        auth_state: 'insufficient_scope',
+        readiness_state: 'ready',
+        granted_scopes: ['read', 'link'],
+        missing_scopes: ['index', 'preview'],
+        external_ref_state: 'available',
+      }),
+    });
+    expect(insufficientRes.status).toBe(201);
+
+    const insufficientListRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs?connector_type=google_docs&q=insufficient`);
+    expect(insufficientListRes.status).toBe(200);
+    expect(await readJson(insufficientListRes)).toMatchObject({
+      externalDocumentRefs: [{
+        metadata: {
+          effective_auth_state: 'insufficient_scope',
+          effective_readiness_state: 'degraded',
+          degraded: true,
+          degraded_reasons: ['insufficient_scope'],
+          missing_scopes: ['index', 'preview'],
+        },
+      }],
+    });
+  });
+
+  it('does not expose Google Docs create, update, write, export, or sync mutation endpoints', async () => {
+    const createRes = await fetch(`${baseUrl}/api/document-objects/external-document-refs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'google-no-mutation-doc',
+        connector_type: 'google_docs',
+        external_id: 'docs-no-mutation-82',
+        title: 'No mutation fixture',
+        auth_state: 'authorized',
+        readiness_state: 'ready',
+        external_ref_state: 'available',
+      }),
+    });
+    expect(createRes.status).toBe(201);
+
+    for (const route of ['create', 'update', 'write', 'export', 'sync']) {
+      const response = await fetch(`${baseUrl}/api/document-objects/external-document-refs/google-no-mutation-doc/${route}`, {
+        method: route === 'update' ? 'PATCH' : 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'attempted external mutation' }),
+      });
+      expect(response.status, route).toBe(404);
+    }
+
+    for (const method of ['PATCH', 'PUT', 'DELETE']) {
+      const response = await fetch(`${baseUrl}/api/document-objects/external-document-refs/google-no-mutation-doc`, { method });
+      expect(response.status, method).toBe(404);
+    }
   });
 
   it('allows curated artifact links and rejects immutable raw evidence relinks', async () => {

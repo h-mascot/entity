@@ -6,12 +6,17 @@ import {
   type CreateEvidenceArtifactInput,
   type CreateExternalDocumentRefInput,
   type CreateNativeDocumentInput,
+  type ListExternalDocumentRefsInput,
   type DocumentObjectRepository,
   type EvidenceArtifactRepository,
   type ObjectRef,
   type UpdateEvidenceArtifactVersionInput,
   type UpdateNativeDocumentVersionInput,
 } from '../../db/src';
+import {
+  buildGoogleExternalDocumentMetadata,
+  buildGoogleExternalDocumentOpen,
+} from './google-docs-metadata';
 import {
   ensureObjectPermission,
   ensureRequestOrgMatches,
@@ -128,6 +133,51 @@ function parseObjectRefBody(body: Record<string, unknown>): ObjectRef {
   } catch (error) {
     throw new DocumentObjectApiError(400, error instanceof Error ? error.message : 'invalid object ref');
   }
+}
+
+function readQueryString(req: Request, key: string): string | undefined {
+  const value = req.query[key];
+  if (Array.isArray(value)) {
+    const first = value[0];
+    return typeof first === 'string' && first.trim() ? first.trim() : undefined;
+  }
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function readQueryLimit(req: Request): number | undefined {
+  const value = readQueryString(req, 'limit');
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new DocumentObjectApiError(400, 'limit must be a positive integer');
+  }
+  return parsed;
+}
+
+function parseOptionalObjectRefQuery(req: Request): ObjectRef | null {
+  const objectType = readQueryString(req, 'object_type');
+  const objectId = readQueryString(req, 'object_id');
+  const linkRole = readQueryString(req, 'link_role') ?? 'source_context';
+  if (!objectType && !objectId) return null;
+  if (!objectType || !objectId) {
+    throw new DocumentObjectApiError(400, 'object_type and object_id must be provided together');
+  }
+  try {
+    return normalizeObjectRefs([{ object_type: objectType, object_id: objectId, link_role: linkRole }])[0];
+  } catch (error) {
+    throw new DocumentObjectApiError(400, error instanceof Error ? error.message : 'invalid object ref');
+  }
+}
+
+function parseExternalDocumentListQuery(req: Request, binding: RequestOrgBinding): ListExternalDocumentRefsInput {
+  const connectorType = readQueryString(req, 'connector_type') as CreateExternalDocumentRefInput['connector_type'] | undefined;
+  return {
+    org_id: binding.orgId,
+    connector_type: connectorType,
+    query: readQueryString(req, 'q') ?? readQueryString(req, 'query'),
+    linked_object_ref: parseOptionalObjectRefQuery(req),
+    limit: readQueryLimit(req),
+  };
 }
 
 function sendRouteError(res: Response, error: unknown): Response {
@@ -360,6 +410,30 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     }
   });
 
+  router.get('/external-document-refs', (req, res) => {
+    try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      const externalDocumentRefs = documentRepo.listExternalDocumentRefs(parseExternalDocumentListQuery(req, binding))
+        .map((externalDocumentRef) => {
+          const envelope = permissionSafeRecord(
+            binding,
+            externalDocumentObject(externalDocumentRef),
+            externalDocumentRef as unknown as Record<string, unknown>,
+            'read'
+          );
+          return {
+            externalDocumentRef: envelope.object,
+            metadata: envelope.permission.allowed ? buildGoogleExternalDocumentMetadata(externalDocumentRef) : null,
+            permission: envelope.permission,
+          };
+        });
+      return res.json({ externalDocumentRefs });
+    } catch (error) {
+      return sendRouteError(res, error);
+    }
+  });
+
   router.get('/external-document-refs/:id', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
@@ -369,6 +443,46 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
     if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
     const envelope = permissionSafeRecord(binding, object, externalDocumentRef as unknown as Record<string, unknown>, 'read');
     return res.json({ externalDocumentRef: envelope.object, permission: envelope.permission });
+  });
+
+  router.get('/external-document-refs/:id/metadata', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const externalDocumentRef = documentRepo.getExternalDocumentRef(req.params.id);
+    if (!externalDocumentRef) return res.status(404).json({ error: 'external document ref not found' });
+    const object = externalDocumentObject(externalDocumentRef);
+    if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
+    const envelope = permissionSafeRecord(binding, object, externalDocumentRef as unknown as Record<string, unknown>, 'read');
+    return res.json({
+      externalDocumentRef: envelope.object,
+      metadata: envelope.permission.allowed ? buildGoogleExternalDocumentMetadata(externalDocumentRef) : null,
+      permission: envelope.permission,
+    });
+  });
+
+  router.get('/external-document-refs/:id/open', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const externalDocumentRef = documentRepo.getExternalDocumentRef(req.params.id);
+    if (!externalDocumentRef) return res.status(404).json({ error: 'external document ref not found' });
+    const object = externalDocumentObject(externalDocumentRef);
+    if (!ensureRequestOrgMatches(res, binding, object.org_id)) return undefined;
+    const envelope = permissionSafeRecord(binding, object, externalDocumentRef as unknown as Record<string, unknown>, 'read');
+    return res.json({
+      externalDocumentRef: envelope.object,
+      open: envelope.permission.allowed
+        ? buildGoogleExternalDocumentOpen(externalDocumentRef)
+        : {
+          target: 'external_google_doc',
+          can_open: false,
+          url: null,
+          degraded: true,
+          degraded_reasons: ['entity_permission_denied'],
+          effective_auth_state: externalDocumentRef.auth_state,
+          effective_readiness_state: 'degraded',
+        },
+      permission: envelope.permission,
+    });
   });
 
   router.post('/external-document-refs/:id/links', (req, res) => {

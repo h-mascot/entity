@@ -889,6 +889,14 @@ export interface CreateExternalDocumentRefInput {
   metadata_json?: string;
 }
 
+export interface ListExternalDocumentRefsInput {
+  org_id: string;
+  connector_type?: ExternalDocumentConnectorType;
+  query?: string | null;
+  linked_object_ref?: ObjectRef | null;
+  limit?: number | null;
+}
+
 export interface DocumentObjectRepository {
   createNativeDocument: (input: CreateNativeDocumentInput) => NativeDocumentRecord;
   getNativeDocument: (id: string) => NativeDocumentRecord | undefined;
@@ -897,6 +905,7 @@ export interface DocumentObjectRepository {
   linkNativeDocumentObject: (id: string, objectRef: ObjectRef) => NativeDocumentRecord | undefined;
   createExternalDocumentRef: (input: CreateExternalDocumentRefInput) => ExternalDocumentRefRecord;
   getExternalDocumentRef: (id: string) => ExternalDocumentRefRecord | undefined;
+  listExternalDocumentRefs: (input: ListExternalDocumentRefsInput) => ExternalDocumentRefRecord[];
   linkExternalDocumentObject: (id: string, objectRef: ObjectRef) => ExternalDocumentRefRecord | undefined;
 }
 
@@ -7100,6 +7109,12 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
   const db = openEntityDatabase();
   const getNativeStmt = db.prepare('SELECT * FROM native_documents WHERE id = ?');
   const getExternalStmt = db.prepare('SELECT * FROM external_document_refs WHERE id = ?');
+  const listExternalByOrgStmt = db.prepare(`
+    SELECT *
+    FROM external_document_refs
+    WHERE org_id = ?
+    ORDER BY updated_at DESC, title ASC, id ASC
+  `);
   const listNativeVersionsStmt = db.prepare(`
     SELECT *
     FROM native_document_versions
@@ -7336,6 +7351,40 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
     getExternalDocumentRef: (id: string) => {
       const row = getExternalStmt.get(id.trim()) as Record<string, unknown> | undefined;
       return row ? mapExternalDocumentRefRow(row) : undefined;
+    },
+
+    listExternalDocumentRefs: (input: ListExternalDocumentRefsInput) => {
+      const orgId = normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID);
+      const connectorType = input.connector_type ? normalizeExternalConnectorType(input.connector_type) : undefined;
+      const query = normalizeBlockerReason(input.query)?.toLowerCase() ?? null;
+      const limit = Math.min(normalizePositiveInteger(input.limit) ?? 50, 100);
+      const objectRef = input.linked_object_ref ?? null;
+      const rows = listExternalByOrgStmt.all(orgId) as Array<Record<string, unknown>>;
+      const matches = rows
+        .map(mapExternalDocumentRefRow)
+        .filter((record) => !connectorType || record.connector_type === connectorType)
+        .filter((record) => {
+          if (!query) return true;
+          const searchable = [
+            record.title,
+            record.external_id,
+            record.external_url,
+            record.external_canonical_url,
+            record.external_mime_type,
+            record.external_permission_summary,
+            record.metadata_json,
+          ].filter(Boolean).join(' ').toLowerCase();
+          return searchable.includes(query);
+        })
+        .filter((record) => {
+          if (!objectRef) return true;
+          return record.linked_object_refs.some((entry) =>
+            entry.object_type === objectRef.object_type &&
+            entry.object_id === objectRef.object_id &&
+            (!objectRef.link_role || entry.link_role === objectRef.link_role)
+          );
+        });
+      return matches.slice(0, limit);
     },
 
     linkExternalDocumentObject: (id: string, objectRef: ObjectRef) => {

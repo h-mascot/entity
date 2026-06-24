@@ -2164,6 +2164,51 @@ describe('DocumentObjectRepository', () => {
     });
   });
 
+  it('lists and searches Google external document metadata by org, connector, query, and object ref', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createDocumentObjectRepository();
+    const linkedTaskRef = { object_type: 'task', object_id: '82', link_role: 'source_context' };
+
+    repo.createExternalDocumentRef({
+      id: 'google-docs-metadata-list',
+      org_id: 'org-a',
+      connector_type: 'google_docs',
+      external_id: 'docs-list-82',
+      title: 'Board Account Plan',
+      external_permission_summary: 'authorized metadata read',
+      linked_object_refs: [linkedTaskRef],
+      metadata_json: JSON.stringify({ snippet: 'renewal board packet' }),
+    });
+    repo.createExternalDocumentRef({
+      id: 'google-drive-metadata-list',
+      org_id: 'org-a',
+      connector_type: 'google_drive',
+      external_id: 'drive-list-82',
+      title: 'Drive Renewal Folder',
+      linked_object_refs: [linkedTaskRef],
+    });
+    repo.createExternalDocumentRef({
+      id: 'other-org-google-doc',
+      org_id: 'org-b',
+      connector_type: 'google_docs',
+      external_id: 'docs-other-org',
+      title: 'Other org board plan',
+      linked_object_refs: [linkedTaskRef],
+    });
+
+    expect(repo.listExternalDocumentRefs({
+      org_id: 'org-a',
+      connector_type: 'google_docs',
+      query: 'board',
+      linked_object_ref: linkedTaskRef,
+    }).map((entry) => entry.id)).toEqual(['google-docs-metadata-list']);
+    expect(repo.listExternalDocumentRefs({
+      org_id: 'org-a',
+      query: 'renewal',
+      limit: 1,
+    })).toHaveLength(1);
+  });
+
   it('rejects malformed ObjectRef links before persisting document objects', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createDocumentObjectRepository();
