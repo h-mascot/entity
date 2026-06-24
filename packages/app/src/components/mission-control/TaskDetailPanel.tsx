@@ -15,6 +15,7 @@ import {
   type ProjectOption,
 } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
+import { buildRoutingStateView, routingToneClass } from './utils/routingState';
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
@@ -2953,6 +2954,18 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
         },
       ]
     : [];
+  const routingState = task
+    ? buildRoutingStateView({
+        assignee: task.assignee,
+        assignmentState: task.assignmentState,
+        taskmasterDrivable: task.taskmasterDrivable,
+        executorPrincipalId: task.executorPrincipalId,
+        ownerPrincipalId: task.ownerPrincipalId,
+        ownerPrincipalType: task.ownerPrincipalType,
+        metadataRecord: task.metadataRecord,
+        activityEventTypes: task.activity.map((entry) => entry.activityEventType),
+      })
+    : null;
 
   return (
     <div className="fixed inset-0 z-[85] pointer-events-none">
@@ -3348,6 +3361,58 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                    </div>
 	                  ))}
 	                </div>
+	              </section>
+
+	              <section
+	                style={{ order: 2 }}
+	                className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+	                data-testid="task-routing-state-panel"
+	              >
+	                <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+	                  <div>
+	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                      Task Master Routing
+	                    </div>
+	                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+	                      Task Master helps recover policy-drivable work; it is not the universal executor for every task.
+	                    </p>
+	                  </div>
+	                  {routingState ? (
+	                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${routingToneClass(routingState.tone)}`}>
+	                      {routingState.label}
+	                    </span>
+	                  ) : null}
+	                </div>
+	                {routingState ? (
+	                  <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Policy reason</div>
+	                      <div>{routingState.reason}</div>
+	                    </div>
+	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Assignment state</div>
+	                      <div>{task.assignmentState ?? 'Unknown'}</div>
+	                      <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">Assignee: {task.assignee || 'Unassigned'}</div>
+	                    </div>
+	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Executor</div>
+	                      <div>{task.executorPrincipalId ?? (task.taskmasterDrivable ? 'Task Master drivable' : 'Individual executor expected')}</div>
+	                      <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+	                        Owner: {task.ownerPrincipalId ?? 'Unknown'}{task.ownerPrincipalType ? ` (${task.ownerPrincipalType})` : ''}
+	                      </div>
+	                    </div>
+	                    {routingState.reasonChain.length > 0 ? (
+	                      <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
+	                        <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Routing reason chain</div>
+	                        <ol className="mt-1 list-decimal space-y-1 pl-4">
+	                          {routingState.reasonChain.map((entry, index) => (
+	                            <li key={`${index}-${entry}`}>{entry}</li>
+	                          ))}
+	                        </ol>
+	                      </div>
+	                    ) : null}
+	                  </div>
+	                ) : null}
 	              </section>
 
 	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
