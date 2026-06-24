@@ -491,6 +491,119 @@ describe('TaskRepository', () => {
     );
   });
 
+  it('declares and validates customer-success overlay fields and search fields', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+    const registryEntry = dbMod.getWorktypeRegistryEntry('customer_success');
+
+    expect(registryEntry?.fields.filter((field) => field.indexable).map((field) => field.name)).toEqual(
+      expect.arrayContaining(['customer', 'health_state', 'renewal_marker', 'escalation_marker', 'support_context']),
+    );
+
+    const task = repo.createTask({
+      name: 'Customer success overlay validation fixture',
+      worktype: 'customer_success',
+      agent_trust_level: 'high',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            customer: 'Globex',
+            health_state: 'at_risk',
+            renewal_marker: 'upcoming',
+            escalation_marker: 'support',
+            support_context: 'P1 ticket follow-up',
+            sla_risk: 'medium',
+            customer_impact_risk: 'high',
+            external_response_risk: 'low',
+          },
+        },
+      }),
+    });
+
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+    expect(envelope.layers.worktype).toMatchObject({
+      worktype: 'customer_success',
+      customer: 'Globex',
+      health_state: 'at_risk',
+      renewal_marker: 'upcoming',
+      escalation_marker: 'support',
+      support_context: 'P1 ticket follow-up',
+    });
+
+    expect(() => repo.updateTask(task.id, {
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            customer: 'Globex',
+            health_state: 'blocked',
+          },
+        },
+      }),
+    })).toThrow('health_state must be one of healthy, watch, at_risk, critical');
+  });
+
+  it('contributes customer-success customer-impacting risk to review and human gate policy', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const task = repo.createTask({
+      name: 'Customer success policy risk fixture',
+      worktype: 'customer_success',
+      risk_level: 'low',
+      agent_trust_level: 'high',
+      owner_principal_id: 'owner-cs',
+      policy_inputs_json: JSON.stringify({
+        layers: {
+          worktype: {
+            customer: 'Globex',
+            health_state: 'critical',
+            renewal_marker: 'blocked',
+            escalation_marker: 'executive',
+            support_context: 'SLA breach response',
+            sla_risk: 'critical',
+            customer_impact_risk: 'high',
+            external_response_risk: 'high',
+          },
+          agent_trust: { trust_level: 'high' },
+          risk: { risk_level: 'low' },
+        },
+      }),
+    });
+
+    const envelope = dbMod.buildTaskPolicyInputEnvelope(task);
+    expect(envelope.external_side_effects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'customer_commitment',
+          target_system: 'customer_success',
+          risk_level: 'critical',
+          required_gate: true,
+          requested_actor_principal_id: 'owner-cs',
+        }),
+        expect.objectContaining({
+          type: 'email_send',
+          target_system: 'customer_response',
+          risk_level: 'high',
+          sensitivity: 'customer',
+          requested_actor_principal_id: 'owner-cs',
+        }),
+      ]),
+    );
+
+    const resolution = dbMod.resolveTaskPolicy(envelope);
+    expect(resolution.review_required).toBe(true);
+    expect(resolution.human_gate_required).toBe(true);
+    expect(resolution.reason_chain).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'external_side_effect',
+          decision: 'human_gate_required',
+          reason: 'external side effect 1 requires human gate',
+        }),
+      ]),
+    );
+  });
+
   it('keeps human gate state independent from review state and rejects malformed side effects', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();

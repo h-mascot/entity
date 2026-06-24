@@ -122,6 +122,14 @@ export const WORKTYPE_REGISTRY: Record<string, WorktypeRegistryEntry> = {
       { name: 'customer_tier', type: 'enum', allowed_values: ['enterprise', 'mid_market', 'smb'], risk_default: 'medium', indexable: true, sensitivity: 'customer', plan_label: 'Customer tier' },
       { name: 'customer_impact', type: 'enum', allowed_values: ['low', 'medium', 'high'], risk_default: 'medium', indexable: true, sensitivity: 'customer', plan_label: 'Customer impact' },
       { name: 'renewal_risk', type: 'boolean', risk_default: 'high', indexable: true, sensitivity: 'customer', plan_label: 'Renewal risk' },
+      { name: 'customer', type: 'string', indexable: true, sensitivity: 'customer', plan_label: 'Customer' },
+      { name: 'health_state', type: 'enum', allowed_values: ['healthy', 'watch', 'at_risk', 'critical'], risk_default: 'medium', indexable: true, sensitivity: 'customer', plan_label: 'Health state' },
+      { name: 'renewal_marker', type: 'enum', allowed_values: ['none', 'upcoming', 'at_risk', 'blocked'], risk_default: 'medium', indexable: true, sensitivity: 'customer', plan_label: 'Renewal marker' },
+      { name: 'escalation_marker', type: 'enum', allowed_values: ['none', 'support', 'account', 'executive'], risk_default: 'high', indexable: true, sensitivity: 'customer', plan_label: 'Escalation marker' },
+      { name: 'support_context', type: 'string', indexable: true, sensitivity: 'customer', plan_label: 'Support context' },
+      { name: 'sla_risk', type: 'enum', allowed_values: ['none', 'low', 'medium', 'high', 'critical'], risk_default: 'high', indexable: false, sensitivity: 'customer', plan_label: 'SLA risk' },
+      { name: 'customer_impact_risk', type: 'enum', allowed_values: ['none', 'low', 'medium', 'high', 'critical'], risk_default: 'high', indexable: false, sensitivity: 'customer', plan_label: 'Customer impact risk' },
+      { name: 'external_response_risk', type: 'enum', allowed_values: ['none', 'low', 'medium', 'high', 'critical'], risk_default: 'medium', indexable: false, sensitivity: 'customer', plan_label: 'External response risk' },
       { name: 'reviewer_principal_id', type: 'string', indexable: false, sensitivity: 'none', plan_label: 'Reviewer' },
       { name: 'taskmaster_drivable', type: 'boolean', indexable: false, sensitivity: 'none', plan_label: 'Task Master drivable' },
       { name: 'auto_reassign_after_hours', type: 'number', indexable: false, sensitivity: 'none', plan_label: 'Auto-reassign threshold' },
@@ -2123,7 +2131,10 @@ export function buildTaskPolicyInputEnvelope(
     ...(storedLayers.worktype ?? {}),
   };
   const explicitExternalSideEffects = parseExternalSideEffects(task.external_side_effects_json);
-  const derivedExternalSideEffects = deriveSalesOverlayExternalSideEffects(worktypeLayer, task);
+  const derivedExternalSideEffects = [
+    ...deriveSalesOverlayExternalSideEffects(worktypeLayer, task),
+    ...deriveCustomerSuccessOverlayExternalSideEffects(worktypeLayer, task),
+  ];
   const externalSideEffects = [...explicitExternalSideEffects, ...derivedExternalSideEffects];
   return {
     layers: {
@@ -2289,6 +2300,83 @@ function deriveSalesOverlayExternalSideEffects(
         source: 'sales_overlay',
         account,
         deal_stage: normalizeBlockerReason(worktypeLayer.deal_stage),
+      },
+    });
+  }
+
+  return sideEffects;
+}
+
+function readOverlayRisk(value: unknown): PolicyRiskLevel | null {
+  const normalized = normalizeBlockerReason(value);
+  if (!normalized || normalized === 'none') {
+    return null;
+  }
+  return normalizePolicyRiskLevel(normalized);
+}
+
+function higherPolicyRisk(left: PolicyRiskLevel | null, right: PolicyRiskLevel | null): PolicyRiskLevel | null {
+  const rank: Record<PolicyRiskLevel, number> = { low: 1, medium: 2, high: 3, critical: 4 };
+  if (!left) return right;
+  if (!right) return left;
+  return rank[right] > rank[left] ? right : left;
+}
+
+function deriveCustomerSuccessOverlayExternalSideEffects(
+  worktypeLayer: Record<string, unknown>,
+  task: Pick<
+    TaskRecord,
+    | 'created_by_principal_id'
+    | 'initiator_principal_id'
+    | 'owner_principal_id'
+    | 'executor_principal_id'
+    | 'assignee'
+  >,
+): ExternalSideEffect[] {
+  if (normalizeWorktype(worktypeLayer.worktype) !== 'customer_success') {
+    return [];
+  }
+
+  const requestedActor = readPolicyActor(task);
+  const customer = normalizeBlockerReason(worktypeLayer.customer) ?? normalizeBlockerReason(worktypeLayer.account);
+  const slaRisk = readOverlayRisk(worktypeLayer.sla_risk);
+  const customerImpactRisk = readOverlayRisk(worktypeLayer.customer_impact_risk);
+  const externalResponseRisk = readOverlayRisk(worktypeLayer.external_response_risk);
+  const customerCommitmentRisk = higherPolicyRisk(slaRisk, customerImpactRisk);
+  const sideEffects: ExternalSideEffect[] = [];
+
+  if (customerCommitmentRisk) {
+    sideEffects.push({
+      type: 'customer_commitment',
+      target_system: 'customer_success',
+      risk_level: customerCommitmentRisk,
+      sensitivity: 'customer',
+      required_gate: customerCommitmentRisk === 'critical',
+      requested_actor_principal_id: requestedActor,
+      resolution_state: 'requested',
+      metadata: {
+        source: 'customer_success_overlay',
+        customer,
+        health_state: normalizeBlockerReason(worktypeLayer.health_state),
+        renewal_marker: normalizeBlockerReason(worktypeLayer.renewal_marker),
+        escalation_marker: normalizeBlockerReason(worktypeLayer.escalation_marker),
+      },
+    });
+  }
+
+  if (externalResponseRisk) {
+    sideEffects.push({
+      type: 'email_send',
+      target_system: 'customer_response',
+      risk_level: externalResponseRisk,
+      sensitivity: 'customer',
+      required_gate: externalResponseRisk === 'critical',
+      requested_actor_principal_id: requestedActor,
+      resolution_state: 'requested',
+      metadata: {
+        source: 'customer_success_overlay',
+        customer,
+        support_context: normalizeBlockerReason(worktypeLayer.support_context),
       },
     });
   }
