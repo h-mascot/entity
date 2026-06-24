@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { Router } from 'express';
 import { execFile } from 'child_process';
+import { requireRequestOrg } from '../request-permissions';
 
 type SearchMode = 'keyword' | 'semantic' | 'hybrid';
 type SearchCollection = 'all' | 'obsidian' | 'superada' | 'sessions' | 'scotty' | 'spock' | 'memory';
@@ -561,6 +562,8 @@ export function createSearchRouter(): Router {
       return res.status(400).json({ error: 'lines must be a range like 40-50' });
     }
 
+    if (!requireRequestOrg(req, res)) return undefined;
+
     const { sshTarget, qmdBin, timeoutMs, maxBufferBytes } = getQmdExecConfig();
     const qmdCommand = buildQmdGetCommand({ qmdBin, id, lines: lineRange });
     const command = sshTarget ? buildSshCommand(sshTarget, qmdCommand) : qmdCommand;
@@ -607,6 +610,8 @@ export function createSearchRouter(): Router {
     if (typeof fullRaw !== 'undefined' && normalizeBoolean(fullRaw) === null) {
       return res.status(400).json({ error: 'full must be a boolean' });
     }
+
+    if (!requireRequestOrg(req, res)) return undefined;
 
     const { sshTarget, qmdBin, timeoutMs, maxBufferBytes } = getQmdExecConfig();
 

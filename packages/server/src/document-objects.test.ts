@@ -267,6 +267,12 @@ describe('document object routes', () => {
   beforeAll(async () => {
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      if (!req.headers['x-entity-org-id']) {
+        req.headers['x-entity-org-id'] = 'org-a';
+      }
+      next();
+    });
     app.use('/api/document-objects', createDocumentObjectRouter(createFakeRepos()));
     server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -519,5 +525,71 @@ describe('document object routes', () => {
     });
     expect(response.status).toBe(400);
     expect(await readJson(response)).toEqual({ error: 'ObjectRef requires object_type, object_id, and link_role' });
+  });
+
+  it('requires request org binding before returning document objects', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/api/document-objects', createDocumentObjectRouter(createFakeRepos()));
+    const isolated = http.createServer(app);
+    await new Promise<void>((resolve) => isolated.listen(0, resolve));
+    const address = isolated.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+    const isolatedBaseUrl = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const response = await fetch(`${isolatedBaseUrl}/api/document-objects/native-documents/native-api-doc`);
+      expect(response.status).toBe(400);
+      expect(await readJson(response)).toEqual({ error: 'request org required', code: 'request_org_required' });
+    } finally {
+      await new Promise<void>((resolve, reject) => isolated.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('denies cross-org document access without leaking the object body', async () => {
+    const createRes = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-b' },
+      body: JSON.stringify({
+        id: 'cross-org-native-doc',
+        org_id: 'org-b',
+        title: 'Other org strategy',
+        content_hash: 'sha256:cross-org',
+      }),
+    });
+    expect(createRes.status).toBe(201);
+
+    const denied = await fetch(`${baseUrl}/api/document-objects/native-documents/cross-org-native-doc`, {
+      headers: { 'x-entity-org-id': 'org-a' },
+    });
+    expect(denied.status).toBe(403);
+    expect(await readJson(denied)).toEqual({
+      error: 'permission denied',
+      code: 'permission_denied',
+      reason: 'object is outside the request org',
+    });
+  });
+
+  it('denies restricted document policy safely', async () => {
+    const createRes = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'restricted-native-doc',
+        org_id: 'org-a',
+        title: 'Restricted people note',
+        content_hash: 'sha256:restricted',
+        sensitivity: 'people',
+      }),
+    });
+    expect(createRes.status).toBe(201);
+
+    const denied = await fetch(`${baseUrl}/api/document-objects/native-documents/restricted-native-doc`, {
+      headers: { 'x-entity-org-id': 'org-a' },
+    });
+    expect(denied.status).toBe(403);
+    const body = await readJson(denied);
+    expect(body).toMatchObject({ error: 'permission denied', code: 'permission_denied' });
+    expect(JSON.stringify(body)).not.toContain('Restricted people note');
   });
 });

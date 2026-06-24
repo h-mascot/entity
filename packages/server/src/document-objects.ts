@@ -12,6 +12,8 @@ import {
   type UpdateEvidenceArtifactVersionInput,
   type UpdateNativeDocumentVersionInput,
 } from '../../db/src';
+import { ensureObjectPermission, requireRequestOrg, type RequestOrgBinding } from './request-permissions';
+import type { ProtectedObject } from './permissions';
 
 interface DocumentObjectRouterDeps {
   documentRepo?: DocumentObjectRepository;
@@ -36,6 +38,18 @@ function parseBody(req: Request): Record<string, unknown> {
     throw new DocumentObjectApiError(400, 'body must be an object');
   }
   return req.body;
+}
+
+function parseBoundBody(req: Request, res: Response): { binding: RequestOrgBinding; body: Record<string, unknown> } | null {
+  const binding = requireRequestOrg(req, res);
+  if (!binding) return null;
+  const body = parseBody(req);
+  const bodyOrg = typeof body.org_id === 'string' ? body.org_id.trim() : '';
+  if (bodyOrg && bodyOrg !== binding.orgId) {
+    res.status(403).json({ error: 'permission denied', code: 'permission_denied', reason: 'body org does not match request org' });
+    return null;
+  }
+  return { binding, body: { ...body, org_id: bodyOrg || binding.orgId } };
 }
 
 function readString(value: unknown): string | undefined {
@@ -117,6 +131,54 @@ function sendRouteError(res: Response, error: unknown): Response {
   const message = error instanceof Error ? error.message : 'Unknown error';
   const status = message.includes('immutable evidence artifacts') || message.includes('immutable native documents') ? 409 : 500;
   return res.status(status).json({ error: message });
+}
+
+function nativeDocumentObject(record: { id: string; org_id: string; team_id: string | null; project_id: number | null; title: string; sensitivity: string | null; acl_json: string }): ProtectedObject {
+  return {
+    object_type: 'native_document',
+    object_id: record.id,
+    org_id: record.org_id,
+    team_id: record.team_id,
+    project_id: record.project_id,
+    title: record.title,
+    sensitivity: record.sensitivity,
+    acl_json: record.acl_json,
+  };
+}
+
+function externalDocumentObject(record: { id: string; org_id: string; title: string; entity_visibility_policy_json: string }): ProtectedObject {
+  return {
+    object_type: 'external_document_ref',
+    object_id: record.id,
+    org_id: record.org_id,
+    title: record.title,
+    entity_visibility_policy_json: record.entity_visibility_policy_json,
+  };
+}
+
+function evidenceArtifactObject(record: { id: string; org_id: string; team_id: string | null; project_id: number | null; title: string; metadata_json: string }): ProtectedObject {
+  return {
+    object_type: 'evidence_artifact',
+    object_id: record.id,
+    org_id: record.org_id,
+    team_id: record.team_id,
+    project_id: record.project_id,
+    title: record.title,
+    sensitivity: readMetadataSensitivity(record.metadata_json),
+  };
+}
+
+function readMetadataSensitivity(metadataJson: string): string | null {
+  try {
+    const parsed = JSON.parse(metadataJson) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const value = (parsed as Record<string, unknown>).sensitivity;
+      return typeof value === 'string' && value.trim() ? value.trim() : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function parseCreateNativeDocument(body: Record<string, unknown>): CreateNativeDocumentInput {
@@ -215,7 +277,9 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
 
   router.post('/native-documents', (req, res) => {
     try {
-      const nativeDocument = documentRepo.createNativeDocument(parseCreateNativeDocument(parseBody(req)));
+      const bound = parseBoundBody(req, res);
+      if (!bound) return undefined;
+      const nativeDocument = documentRepo.createNativeDocument(parseCreateNativeDocument(bound.body));
       return res.status(201).json({ nativeDocument });
     } catch (error) {
       return sendRouteError(res, error);
@@ -223,13 +287,21 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
   });
 
   router.get('/native-documents/:id', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
     const nativeDocument = documentRepo.getNativeDocument(req.params.id);
     if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
+    if (!ensureObjectPermission(res, binding, nativeDocumentObject(nativeDocument), 'read')) return undefined;
     return res.json({ nativeDocument });
   });
 
   router.patch('/native-documents/:id', (req, res) => {
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      const current = documentRepo.getNativeDocument(req.params.id);
+      if (!current) return res.status(404).json({ error: 'native document not found' });
+      if (!ensureObjectPermission(res, binding, nativeDocumentObject(current), 'write')) return undefined;
       const nativeDocument = documentRepo.updateNativeDocumentVersion(req.params.id, parseUpdateNativeDocument(parseBody(req)));
       if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
       return res.json({ nativeDocument });
@@ -239,13 +311,21 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
   });
 
   router.get('/native-documents/:id/versions', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
     const nativeDocument = documentRepo.getNativeDocument(req.params.id);
     if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
+    if (!ensureObjectPermission(res, binding, nativeDocumentObject(nativeDocument), 'read')) return undefined;
     return res.json({ versions: documentRepo.listNativeDocumentVersions(req.params.id) });
   });
 
   router.post('/native-documents/:id/links', (req, res) => {
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      const current = documentRepo.getNativeDocument(req.params.id);
+      if (!current) return res.status(404).json({ error: 'native document not found' });
+      if (!ensureObjectPermission(res, binding, nativeDocumentObject(current), 'write')) return undefined;
       const nativeDocument = documentRepo.linkNativeDocumentObject(req.params.id, parseObjectRefBody(parseBody(req)));
       if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
       return res.json({ nativeDocument });
@@ -256,7 +336,9 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
 
   router.post('/external-document-refs', (req, res) => {
     try {
-      const externalDocumentRef = documentRepo.createExternalDocumentRef(parseCreateExternalDocumentRef(parseBody(req)));
+      const bound = parseBoundBody(req, res);
+      if (!bound) return undefined;
+      const externalDocumentRef = documentRepo.createExternalDocumentRef(parseCreateExternalDocumentRef(bound.body));
       return res.status(201).json({ externalDocumentRef });
     } catch (error) {
       return sendRouteError(res, error);
@@ -264,13 +346,21 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
   });
 
   router.get('/external-document-refs/:id', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
     const externalDocumentRef = documentRepo.getExternalDocumentRef(req.params.id);
     if (!externalDocumentRef) return res.status(404).json({ error: 'external document ref not found' });
+    if (!ensureObjectPermission(res, binding, externalDocumentObject(externalDocumentRef), 'read')) return undefined;
     return res.json({ externalDocumentRef });
   });
 
   router.post('/external-document-refs/:id/links', (req, res) => {
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      const current = documentRepo.getExternalDocumentRef(req.params.id);
+      if (!current) return res.status(404).json({ error: 'external document ref not found' });
+      if (!ensureObjectPermission(res, binding, externalDocumentObject(current), 'write')) return undefined;
       const externalDocumentRef = documentRepo.linkExternalDocumentObject(req.params.id, parseObjectRefBody(parseBody(req)));
       if (!externalDocumentRef) return res.status(404).json({ error: 'external document ref not found' });
       return res.json({ externalDocumentRef });
@@ -281,7 +371,9 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
 
   router.post('/evidence-artifacts', (req, res) => {
     try {
-      const evidenceArtifact = artifactRepo.createArtifact(parseCreateEvidenceArtifact(parseBody(req)));
+      const bound = parseBoundBody(req, res);
+      if (!bound) return undefined;
+      const evidenceArtifact = artifactRepo.createArtifact(parseCreateEvidenceArtifact(bound.body));
       return res.status(201).json({ evidenceArtifact });
     } catch (error) {
       return sendRouteError(res, error);
@@ -289,13 +381,21 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
   });
 
   router.get('/evidence-artifacts/:id', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
     const evidenceArtifact = artifactRepo.getArtifact(req.params.id);
     if (!evidenceArtifact) return res.status(404).json({ error: 'evidence artifact not found' });
+    if (!ensureObjectPermission(res, binding, evidenceArtifactObject(evidenceArtifact), 'read')) return undefined;
     return res.json({ evidenceArtifact });
   });
 
   router.patch('/evidence-artifacts/:id', (req, res) => {
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      const current = artifactRepo.getArtifact(req.params.id);
+      if (!current) return res.status(404).json({ error: 'evidence artifact not found' });
+      if (!ensureObjectPermission(res, binding, evidenceArtifactObject(current), 'write')) return undefined;
       const evidenceArtifact = artifactRepo.updateArtifactVersion(req.params.id, parseUpdateEvidenceArtifact(parseBody(req)));
       if (!evidenceArtifact) return res.status(404).json({ error: 'evidence artifact not found' });
       return res.json({ evidenceArtifact });
@@ -305,13 +405,21 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
   });
 
   router.get('/evidence-artifacts/:id/versions', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
     const evidenceArtifact = artifactRepo.getArtifact(req.params.id);
     if (!evidenceArtifact) return res.status(404).json({ error: 'evidence artifact not found' });
+    if (!ensureObjectPermission(res, binding, evidenceArtifactObject(evidenceArtifact), 'read')) return undefined;
     return res.json({ versions: artifactRepo.listArtifactVersions(req.params.id) });
   });
 
   router.post('/evidence-artifacts/:id/links', (req, res) => {
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      const current = artifactRepo.getArtifact(req.params.id);
+      if (!current) return res.status(404).json({ error: 'evidence artifact not found' });
+      if (!ensureObjectPermission(res, binding, evidenceArtifactObject(current), 'write')) return undefined;
       const evidenceArtifact = artifactRepo.linkArtifactObject(req.params.id, parseObjectRefBody(parseBody(req)));
       if (!evidenceArtifact) return res.status(404).json({ error: 'evidence artifact not found' });
       return res.json({ evidenceArtifact });

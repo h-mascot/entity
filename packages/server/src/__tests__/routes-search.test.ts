@@ -8,7 +8,7 @@ vi.mock('child_process', () => ({
 }));
 
 function mockReq(query: Record<string, any> = {}): Partial<Request> {
-  return { query } as any;
+  return { query, header: vi.fn().mockReturnValue(undefined) } as any;
 }
 
 function mockRes(): any {
@@ -99,6 +99,15 @@ describe('Search Router', () => {
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({ error: 'full must be a boolean' });
     });
+
+    it('should require request org before executing search', async () => {
+      const handler = handlers['/']?.find(h => h.method === 'get')?.handler;
+      const req = mockReq({ q: 'test' });
+      const res = mockRes();
+      await handler!(req, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'request org required', code: 'request_org_required' });
+    });
   });
 
   describe('GET /document', () => {
@@ -120,6 +129,15 @@ describe('Search Router', () => {
       await handler!(req, res);
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({ error: 'lines must be a range like 40-50' });
+    });
+
+    it('should require request org before returning document content', async () => {
+      const handler = handlers['/document']?.find(h => h.method === 'get')?.handler;
+      const req = mockReq({ id: 'test-doc' });
+      const res = mockRes();
+      await handler!(req, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'request org required', code: 'request_org_required' });
     });
   });
 
