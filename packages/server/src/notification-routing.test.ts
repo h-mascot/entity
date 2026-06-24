@@ -158,6 +158,46 @@ describe('notification routing service', () => {
     expect(repo.getNotification(result.notification.id)?.deliveries).toHaveLength(4);
   });
 
+  it('does not depend on external channel success to retain the canonical notification claim', async () => {
+    const repo = createMemoryNotificationRepository();
+    const failingEmail: NotificationDeliveryAdapter = {
+      channel: 'email',
+      deliver: vi.fn(() => {
+        throw new Error('mail relay unavailable');
+      }),
+    };
+    const service = createNotificationRoutingService({
+      notificationRepository: repo,
+      adapters: [failingEmail],
+    });
+
+    const result = await service.routeNotification({
+      ...baseInput(),
+      notificationType: 'connector_degraded',
+      title: 'Connector degraded',
+      preferredChannels: ['email', 'slack', 'webhook'],
+      channelAvailability: {
+        slack: 'unavailable',
+        webhook: 'degraded',
+      },
+    });
+
+    const stored = repo.getNotification(result.notification.id);
+    expect(stored).toMatchObject({
+      inbox_state: 'unread',
+      notification_type: 'connector_degraded',
+      recipient_principal_id: 'owner-1',
+    });
+    expect(stored?.deliveries.map((delivery) => ({ channel: delivery.channel, status: delivery.status }))).toEqual([
+      { channel: 'entity_inbox', status: 'sent' },
+      { channel: 'email', status: 'failed' },
+      { channel: 'slack', status: 'skipped' },
+      { channel: 'webhook', status: 'degraded' },
+    ]);
+    expect(stored?.deliveries.some((delivery) => delivery.channel !== 'entity_inbox' && delivery.status === 'sent')).toBe(false);
+    expect(stored?.deliveries[0].policy_reason_json).toContain('canonical Entity inbox record created first');
+  });
+
   it('defaults high-risk notifications to ClickClack and email routes', () => {
     expect(resolveNotificationChannels({
       ...baseInput(),
