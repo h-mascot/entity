@@ -42,6 +42,15 @@ function makeActivity(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
     id: 1,
     source: 'task',
     type: 'task_updated',
+    activity_event_type: 'task_updated',
+    activity_event_payload_version: 1,
+    activity_event_payload_json: JSON.stringify({
+      version: 1,
+      actor_type: 'agent',
+      task_id: 7,
+    }),
+    activity_event_schema_status: 'legacy_mapped',
+    activity_event_legacy_type: null,
     action: 'Updated task',
     description: 'Saved artifact to workspace/reviews/evidence.txt.',
     agent_name: 'Geordi',
@@ -89,6 +98,11 @@ function makeDependencies(): {
     getTask: vi.fn().mockResolvedValue(undefined),
     createTask: vi.fn(),
     updateTask: vi.fn().mockResolvedValue(undefined),
+    claimTaskForTaskMaster: vi.fn().mockResolvedValue({
+      status: 'not_found',
+      claimed: false,
+      reason: 'task not found',
+    }),
     moveTask: vi.fn().mockResolvedValue(undefined),
     deleteTask: vi.fn().mockResolvedValue(true),
   };

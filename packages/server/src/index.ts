@@ -17,9 +17,13 @@ import {
   addTaskProject,
   createActivityRepository,
   createCrew,
+  createDocumentObjectRepository,
+  createEvidenceArtifactRepository,
+  createNotificationRepository,
   createProject,
   createRoadmap,
   createRoadmapItem,
+  createWorkspaceScopeRepository,
   createTaskCommentRepository,
   deleteProject,
   deleteRoadmap,
@@ -36,6 +40,9 @@ import {
   removeTaskProject,
   TASK_COLUMNS,
   updateRoadmapItem,
+  validateTaskDoneReviewGateState,
+  type ActivityEventPayload,
+  type ActivityEventType,
   type ActivityType,
   type TaskRecord,
   type UpdateRoadmapItemInput,
@@ -81,6 +88,12 @@ import {
   syncTaskProjectAssignments,
   taskHasProjectName,
 } from "./task-projects";
+import {
+  buildOwnerAccountabilityInbox,
+  parseTaskAccountabilityForCreate,
+  parseTaskAccountabilityUpdates,
+  validateTaskAccountability,
+} from "./task-accountability";
 import { PluginHookEmitter } from "./plugins/hooks";
 import {
   ensurePluginMigrationTable,
@@ -98,6 +111,7 @@ import { registerChatRoutes } from "./routes/chat";
 import { createClickClackBridge } from "./clickclack/bridge";
 import { registerClickClackProxyRoutes } from "./clickclack/proxy";
 import { registerConfigRoutes } from "./config/routes";
+import { createNotificationRouter } from "./routes/notifications";
 import { buildEffectiveConfig } from "./config/effective";
 import {
   applyBootstrapRuntimeEnv,
@@ -107,8 +121,29 @@ import {
   buildConfiguredAgentWorkspaces,
 } from "./config/runtime";
 import { registerDocsApiRoutes } from "./routes/docs";
+import { createWorktypeRegistryRouter } from "./routes/worktype-registry";
+import { createDocumentObjectRouter } from "./document-objects";
 import { registerTtsRoutes } from "./routes/tts";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
+import { createWorkspaceRouter } from "./routes/workspace";
+import { createTaskReviewGateRouter } from "./routes/task-review-gates";
+import { createMigrationCleanupQueueRouter } from "./routes/migration-cleanup-queues";
+import {
+  phase2FlagEnabled,
+  resolvePhase2Flags,
+  serializePhase2FlagDiagnostics,
+} from "./phase2-flags";
+import { buildPhase2ObservabilityDiagnostics } from "./phase2-observability";
+import {
+  buildTaskMutationActivityEvent,
+  createActivityEventRouter,
+  createActivityEventService,
+} from "./activity-events";
+import {
+  createTaskMasterClaimRouter,
+  createTaskMasterClaimService,
+} from "./task-master-claims";
+import { completeTaskWithReceipt } from "./receipt-writer";
 import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
@@ -135,6 +170,7 @@ import {
 const app = express();
 const DEFAULT_PORT = 3000;
 const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
+const phase2Flags = resolvePhase2Flags();
 
 applySecurityHardening(app);
 app.use(cors());
@@ -142,6 +178,7 @@ app.use(compression());
 app.use("/api/clickclack", express.raw({ type: "*/*", limit: "50mb" }));
 app.use(express.json());
 app.use("/api", setApiNoStoreHeaders);
+const notificationRepository = createNotificationRepository();
 
 // API authentication — requires ENTITY_API_TOKEN env var; skips when unset (dev mode)
 app.use(createApiAuthMiddleware());
@@ -157,8 +194,23 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+function registerPhase2DiagnosticsRoutes(prefix: "" | "/api") {
+  app.get(`${prefix}/phase2/diagnostics`, (_req, res) => {
+    res.json({
+      phase2: {
+        ...serializePhase2FlagDiagnostics(phase2Flags),
+        observability: buildPhase2ObservabilityDiagnostics(),
+      },
+    });
+  });
+}
+
+registerPhase2DiagnosticsRoutes("");
+registerPhase2DiagnosticsRoutes("/api");
 registerConfigRoutes(app);
-app.use("/api/search", createSearchRouter());
+app.use("/notifications", createNotificationRouter({ notificationRepository }));
+app.use("/api/notifications", createNotificationRouter({ notificationRepository }));
+app.use("/api/search", createSearchRouter({ flags: phase2Flags }));
 registerDocsApiRoutes(app);
 
 const WORKSPACE = process.env.WORKSPACE || path.resolve(__dirname, "../../..");
@@ -283,7 +335,16 @@ const wss = new WebSocketServer({
 });
 const agentRegistryRepo = createAgentRegistryRepository();
 const moduleRegistryRepo = createModuleRegistryRepository();
+const workspaceRepo = createWorkspaceScopeRepository();
+const documentObjectRepository = createDocumentObjectRepository();
+const evidenceArtifactRepository = createEvidenceArtifactRepository();
+app.use("/api", createWorkspaceRouter({ workspaceRepo }));
 app.use("/api", createAgentRegistryRouter({ agentRegistryRepo, moduleRegistryRepo }));
+app.use("/api/document-objects", createDocumentObjectRouter({
+  documentRepo: documentObjectRepository,
+  artifactRepo: evidenceArtifactRepository,
+}));
+app.use("/api/migration-cleanup-queues", createMigrationCleanupQueueRouter({ flags: phase2Flags }));
 wss.on("connection", (ws) => {
   wsClients.add(ws);
   terminalBridge.handleSocketConnection(ws);
@@ -323,6 +384,14 @@ const taskSyncLayer = createTaskSyncLayer();
 const activityRepository = createActivityRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
+const activityEventService = createActivityEventService({
+  activityRepository,
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+});
+const taskMasterClaimService = createTaskMasterClaimService({
+  taskSyncLayer,
+  activityRepository,
+});
 
 // Responds to @agent mentions in task comments (reads the card, replies, optional pickup).
 const commentMentionResponder = createCommentMentionResponder({
@@ -1000,6 +1069,8 @@ function mergeTaskMetadataWithParentLink(
 function logActivity(input: {
   source: "agent" | "task";
   type: ActivityType;
+  activityEventType?: ActivityEventType | string;
+  activityEventPayload?: Partial<ActivityEventPayload> | Record<string, unknown>;
   action: string;
   description: string;
   agentName?: string;
@@ -1013,6 +1084,8 @@ function logActivity(input: {
     const activity = activityRepository.createActivity({
       source: input.source,
       type: input.type,
+      activity_event_type: input.activityEventType,
+      activity_event_payload: input.activityEventPayload,
       action: input.action,
       description: input.description,
       agent_name: input.agentName || "Entity",
@@ -1030,6 +1103,33 @@ function logActivity(input: {
     console.error("[Activity] Failed to log activity:", message);
     return null;
   }
+}
+
+function withReceiptArtifactRef(
+  payload: ActivityEventPayload,
+  artifactId: string | null | undefined,
+  contentHash?: string,
+): ActivityEventPayload {
+  if (!artifactId) return payload;
+  const objectRefs = Array.isArray(payload.object_refs)
+    ? [...payload.object_refs]
+    : [];
+  objectRefs.push({
+    object_type: "evidence_artifact",
+    object_id: artifactId,
+    link_role: "receipt",
+  });
+  return {
+    ...payload,
+    object_refs: objectRefs,
+    data: {
+      ...(payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+        ? payload.data
+        : {}),
+      receipt_artifact_id: artifactId,
+      receipt_content_hash: contentHash,
+    },
+  };
 }
 
 const taskAgent = new TaskAgent({
@@ -2194,6 +2294,33 @@ function registerTaskRoutes(prefix: "" | "/api") {
     }
   });
 
+  app.get(`${tasksBase}/owner-inbox`, async (req, res) => {
+    const ownerPrincipalId =
+      typeof req.query.ownerPrincipalId === "string"
+        ? req.query.ownerPrincipalId.trim()
+        : typeof req.query.owner_principal_id === "string"
+          ? req.query.owner_principal_id.trim()
+          : "";
+    if (!ownerPrincipalId) {
+      return res.status(400).json({ error: "ownerPrincipalId query parameter is required" });
+    }
+
+    const stalledHoursRaw = Number(req.query.stalledHours);
+    const stalledHours = Number.isFinite(stalledHoursRaw) && stalledHoursRaw > 0 ? stalledHoursRaw : 24;
+
+    try {
+      const tasks = await taskSyncLayer.listTasks();
+      return res.json(buildOwnerAccountabilityInbox({
+        ownerPrincipalId,
+        tasks,
+        stalledHours,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      return res.status(500).json({ error: message });
+    }
+  });
+
   app.get(`${tasksBase}/:id`, async (req, res) => {
     const id = parseTaskId(req.params.id);
     if (!id) {
@@ -2252,6 +2379,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
       recurring,
       recurring_config,
       model,
+      worktype,
+      policy_inputs_json,
       create_anyway,
       dedupe_override,
       createAnyway,
@@ -2277,6 +2406,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
       recurring?: unknown;
       recurring_config?: string;
       model?: string;
+      worktype?: string;
+      policy_inputs_json?: string;
       create_anyway?: unknown;
       dedupe_override?: unknown;
       createAnyway?: unknown;
@@ -2284,6 +2415,14 @@ function registerTaskRoutes(prefix: "" | "/api") {
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "name required" });
+    }
+
+    const accountability = parseTaskAccountabilityForCreate(
+      req.body as Record<string, unknown>,
+      getTaskActorFromRequest(req),
+    );
+    if ("error" in accountability) {
+      return res.status(400).json(accountability);
     }
 
     const requestedColumn =
@@ -2295,13 +2434,17 @@ function registerTaskRoutes(prefix: "" | "/api") {
       normalizeBlockedInput(createAnyway) ??
       false;
 
-    if (
-      isActiveTaskColumn(requestedColumn) &&
-      !hasAssignedOwner(requestedAssignee)
-    ) {
+    const accountabilityCheck = validateTaskAccountability({
+      column: requestedColumn,
+      assignee: requestedAssignee,
+      executor_principal_id: accountability.executor_principal_id,
+      taskmaster_drivable: accountability.taskmaster_drivable,
+      owner_principal_type: accountability.owner_principal_type,
+    });
+    if (!accountabilityCheck.ok) {
       return res.status(400).json({
-        error: "Active task requires assignee",
-        message: "Tasks in Todo, Doing, or Review must have an assignee.",
+        error: accountabilityCheck.error,
+        message: accountabilityCheck.message,
       });
     }
 
@@ -2402,6 +2545,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
         description,
         column,
         assignee,
+        ...accountability,
         blocked: normalizeBlockedInput(blocked),
         blocker_reason: normalizeBlockerReasonInput(blocker_reason),
         project: requestedProjectLabel,
@@ -2417,6 +2561,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
         recurring: normalizeBlockedInput(recurring),
         recurring_config,
         model,
+        worktype,
+        policy_inputs_json,
       });
 
       let responseTask = task;
@@ -2428,10 +2574,17 @@ function registerTaskRoutes(prefix: "" | "/api") {
         responseTask = (await taskSyncLayer.getTask(task.id)) ?? task;
       }
 
+      const activityEvent = buildTaskMutationActivityEvent({
+        action: "create",
+        task: responseTask,
+        actorPrincipalId: getTaskActorFromRequest(req),
+      });
       logActivity({
         source: "task",
         type:
           responseTask.column === "done" ? "task_completed" : "task_created",
+        activityEventType: activityEvent.eventType,
+        activityEventPayload: activityEvent.payload,
         action:
           responseTask.column === "done" ? "Completed task" : "Created task",
         description: `${responseTask.name} in ${capitalizeColumn(responseTask.column)}.`,
@@ -2492,6 +2645,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
       recurring,
       recurring_config,
       model,
+      worktype,
+      policy_inputs_json,
       create_anyway,
       dedupe_override,
       createAnyway,
@@ -2517,6 +2672,8 @@ function registerTaskRoutes(prefix: "" | "/api") {
       recurring?: unknown;
       recurring_config?: string;
       model?: string;
+      worktype?: string;
+      policy_inputs_json?: string;
       create_anyway?: unknown;
       dedupe_override?: unknown;
       createAnyway?: unknown;
@@ -2526,6 +2683,9 @@ function registerTaskRoutes(prefix: "" | "/api") {
       if (!existingTask) {
         return res.status(404).json({ error: "task not found" });
       }
+      const accountabilityUpdates = parseTaskAccountabilityUpdates(
+        req.body as Record<string, unknown>,
+      );
 
       let requestedProjectIds: number[] | undefined;
       let requestedProjectLabel = project;
@@ -2624,19 +2784,40 @@ function registerTaskRoutes(prefix: "" | "/api") {
           : existingTask.column;
       const nextAssignee =
         typeof assignee === "string" ? assignee : existingTask.assignee;
+      const nextExecutor =
+        typeof accountabilityUpdates.executor_principal_id === "string"
+          ? accountabilityUpdates.executor_principal_id
+          : existingTask.executor_principal_id;
+      const nextTaskmasterDrivable =
+        typeof accountabilityUpdates.taskmaster_drivable === "boolean"
+          ? accountabilityUpdates.taskmaster_drivable
+          : Boolean(existingTask.taskmaster_drivable);
+      const nextOwnerPrincipalType =
+        typeof accountabilityUpdates.owner_principal_type === "string"
+          ? accountabilityUpdates.owner_principal_type
+          : existingTask.owner_principal_type;
       const existingTaskIsOwnerlessActive =
         isActiveTaskColumn(existingTask.column) &&
-        !hasAssignedOwner(existingTask.assignee);
+        !hasAssignedOwner(existingTask.assignee) &&
+        !hasAssignedOwner(existingTask.executor_principal_id ?? null) &&
+        !existingTask.taskmaster_drivable;
+      const accountabilityCheck = validateTaskAccountability({
+        column: nextColumn,
+        assignee: nextAssignee,
+        executor_principal_id: nextExecutor,
+        taskmaster_drivable: nextTaskmasterDrivable,
+        owner_principal_type: nextOwnerPrincipalType,
+      });
       if (
-        isActiveTaskColumn(nextColumn) &&
-        !hasAssignedOwner(nextAssignee) &&
+        !accountabilityCheck.ok &&
         (!existingTaskIsOwnerlessActive ||
           assignee !== undefined ||
-          column !== undefined)
+          column !== undefined ||
+          Object.keys(accountabilityUpdates).length > 0)
       ) {
         return res.status(400).json({
-          error: "Active task requires assignee",
-          message: "Tasks in Todo, Doing, or Review must have an assignee.",
+          error: accountabilityCheck.error,
+          message: accountabilityCheck.message,
         });
       }
 
@@ -2645,7 +2826,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
         nextColumn,
       );
       const normalizedOutput = normalizeTaskOutputLinks(output) ?? undefined;
-      if (movingToReview) {
+      if (movingToReview && phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement")) {
         const reviewEntry = validateReviewEntry(
           metadata ?? existingTask.metadata,
         );
@@ -2703,9 +2884,21 @@ function registerTaskRoutes(prefix: "" | "/api") {
       const completionMetadata = metadata ?? existingTask.metadata;
       const movingToDone =
         nextColumn === "done" &&
-        existingTask.column !== "done" &&
-        isReviewGatedTask(completionMetadata);
-      if (movingToDone) {
+        existingTask.column !== "done";
+      if (movingToDone && phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement")) {
+        const reviewGateState = validateTaskDoneReviewGateState(existingTask);
+        if (!reviewGateState.ok) {
+          return res.status(reviewGateState.status).json({
+            error: reviewGateState.code,
+            message: reviewGateState.message,
+          });
+        }
+      }
+      if (
+        movingToDone &&
+        phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement") &&
+        isReviewGatedTask(completionMetadata)
+      ) {
         const completionCheck = validateReviewCompletion(
           { ...existingTask, metadata: completionMetadata },
           getTaskActorFromRequest(req),
@@ -2720,11 +2913,12 @@ function registerTaskRoutes(prefix: "" | "/api") {
         }
       }
 
-      const task = await taskSyncLayer.updateTask(id, {
+      const taskUpdates = {
         name,
         description,
         column,
         assignee,
+        ...accountabilityUpdates,
         blocked: normalizeBlockedInput(blocked),
         blocker_reason: normalizeBlockerReasonInput(blocker_reason),
         project: requestedProjectLabel,
@@ -2740,7 +2934,44 @@ function registerTaskRoutes(prefix: "" | "/api") {
         recurring: normalizeBlockedInput(recurring),
         recurring_config,
         model,
-      });
+        worktype,
+        policy_inputs_json,
+      };
+
+      let receiptArtifactId: string | null = null;
+      let receiptContentHash: string | undefined;
+      const task = movingToDone && phase2FlagEnabled(phase2Flags, "receipt_completion_enforcement")
+        ? (await completeTaskWithReceipt(
+            {
+              previousTask: existingTask,
+              nextTask: {
+                ...existingTask,
+                name: typeof name === "string" ? name.trim() : existingTask.name,
+                description: description ?? existingTask.description,
+                column: "done",
+                assignee: nextAssignee ?? null,
+                executor_principal_id: nextExecutor ?? null,
+                assignment_state:
+                  accountabilityUpdates.assignment_state ?? existingTask.assignment_state,
+                metadata: completionMetadata,
+                output: normalizedOutput ?? existingTask.output,
+                project: requestedProjectLabel ?? existingTask.project,
+              },
+              actorPrincipalId: getTaskActorFromRequest(req),
+              updates: taskUpdates,
+            },
+            {
+              storageRoot: WORKSPACE,
+              artifactRepository: evidenceArtifactRepository,
+              activityRepository,
+              updateTask: (taskId, updates) => taskSyncLayer.updateTask(taskId, updates),
+            },
+          ).then((result) => {
+            receiptArtifactId = result.artifact.id;
+            receiptContentHash = result.artifact.content_hash;
+            return result.task;
+          }))
+        : await taskSyncLayer.updateTask(id, taskUpdates);
 
       if (!task) {
         return res.status(404).json({ error: "task not found" });
@@ -2765,9 +2996,22 @@ function registerTaskRoutes(prefix: "" | "/api") {
 
       const becameDone =
         existingTask.column !== "done" && responseTask.column === "done";
+      const activityEvent = buildTaskMutationActivityEvent({
+        action: "update",
+        previousTask: existingTask,
+        task: responseTask,
+        actorPrincipalId: getTaskActorFromRequest(req),
+      });
+      const activityEventPayload = withReceiptArtifactRef(
+        activityEvent.payload,
+        receiptArtifactId,
+        receiptContentHash,
+      );
       logActivity({
         source: "task",
         type: becameDone ? "task_completed" : "task_updated",
+        activityEventType: activityEvent.eventType,
+        activityEventPayload: activityEventPayload,
         action: becameDone ? "Completed task" : "Updated task",
         description: `${responseTask.name} in ${capitalizeColumn(responseTask.column)}.`,
         agentName: responseTask.assignee || undefined,
@@ -2792,7 +3036,9 @@ function registerTaskRoutes(prefix: "" | "/api") {
           (!responseTask.output || !responseTask.output.trim());
         const activeWithoutOwner =
           isActiveTaskColumn(responseTask.column) &&
-          !hasAssignedOwner(responseTask.assignee);
+          !hasAssignedOwner(responseTask.assignee) &&
+          !hasAssignedOwner(responseTask.executor_principal_id ?? null) &&
+          !responseTask.taskmaster_drivable;
         if (movedToReview) {
           void taskAgent.handleTaskMovedToReview(responseTask).catch((err) => {
             const message =
@@ -2955,18 +3201,24 @@ function registerTaskRoutes(prefix: "" | "/api") {
         return res.status(404).json({ error: "task not found" });
       }
 
-      if (
-        isActiveTaskColumn(column) &&
-        !hasAssignedOwner(existingTask.assignee)
-      ) {
+      const accountabilityCheck = validateTaskAccountability({
+        column,
+        assignee: existingTask.assignee,
+        executor_principal_id: existingTask.executor_principal_id,
+        taskmaster_drivable: existingTask.taskmaster_drivable,
+        owner_principal_type: existingTask.owner_principal_type,
+      });
+      if (!accountabilityCheck.ok) {
         return res.status(400).json({
-          error: "Active task requires assignee",
-          message:
-            "Tasks in Todo, Doing, or Review must have an assignee before they can be moved.",
+          error: accountabilityCheck.error,
+          message: accountabilityCheck.message,
         });
       }
 
-      if (shouldValidateReviewEntryOnTransition(existingTask.column, column)) {
+      if (
+        shouldValidateReviewEntryOnTransition(existingTask.column, column) &&
+        phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement")
+      ) {
         const reviewEntry = validateReviewEntry(existingTask.metadata);
         if (!reviewEntry.ok) {
           return res.status(400).json({
@@ -3000,6 +3252,21 @@ function registerTaskRoutes(prefix: "" | "/api") {
       if (
         column === "done" &&
         existingTask.column !== "done" &&
+        phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement")
+      ) {
+        const reviewGateState = validateTaskDoneReviewGateState(existingTask);
+        if (!reviewGateState.ok) {
+          return res.status(reviewGateState.status).json({
+            error: reviewGateState.code,
+            message: reviewGateState.message,
+          });
+        }
+      }
+
+      if (
+        column === "done" &&
+        existingTask.column !== "done" &&
+        phase2FlagEnabled(phase2Flags, "review_gate_policy_enforcement") &&
         isReviewGatedTask(existingTask.metadata)
       ) {
         const completionCheck = validateReviewCompletion(
@@ -3016,14 +3283,53 @@ function registerTaskRoutes(prefix: "" | "/api") {
         }
       }
 
-      const task = await taskSyncLayer.moveTask(id, column);
+      let receiptArtifactId: string | null = null;
+      let receiptContentHash: string | undefined;
+      const task = column === "done" &&
+        existingTask.column !== "done" &&
+        phase2FlagEnabled(phase2Flags, "receipt_completion_enforcement")
+        ? (await completeTaskWithReceipt(
+            {
+              previousTask: existingTask,
+              nextTask: {
+                ...existingTask,
+                column: "done",
+              },
+              actorPrincipalId: getTaskActorFromRequest(req),
+              updates: { column: "done" },
+            },
+            {
+              storageRoot: WORKSPACE,
+              artifactRepository: evidenceArtifactRepository,
+              activityRepository,
+              updateTask: (taskId, updates) => taskSyncLayer.updateTask(taskId, updates),
+            },
+          ).then((result) => {
+            receiptArtifactId = result.artifact.id;
+            receiptContentHash = result.artifact.content_hash;
+            return result.task;
+          }))
+        : await taskSyncLayer.moveTask(id, column);
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
 
+      const activityEvent = buildTaskMutationActivityEvent({
+        action: "move",
+        previousTask: existingTask,
+        task,
+        actorPrincipalId: getTaskActorFromRequest(req),
+      });
+      const activityEventPayload = withReceiptArtifactRef(
+        activityEvent.payload,
+        receiptArtifactId,
+        receiptContentHash,
+      );
       logActivity({
         source: "task",
         type: task.column === "done" ? "task_completed" : "task_moved",
+        activityEventType: activityEvent.eventType,
+        activityEventPayload: activityEventPayload,
         action: task.column === "done" ? "Completed task" : "Moved task",
         description: `${task.name} moved to ${capitalizeColumn(task.column)}.`,
         agentName: task.assignee || undefined,
@@ -3073,9 +3379,16 @@ function registerTaskRoutes(prefix: "" | "/api") {
       }
 
       if (task) {
+        const activityEvent = buildTaskMutationActivityEvent({
+          action: "delete",
+          task,
+          actorPrincipalId: getTaskActorFromRequest(req),
+        });
         logActivity({
           source: "task",
           type: "task_deleted",
+          activityEventType: activityEvent.eventType,
+          activityEventPayload: activityEvent.payload,
           action: "Deleted task",
           description: `${task.name} removed from ${capitalizeColumn(task.column)}.`,
           agentName: task.assignee || undefined,
@@ -5597,10 +5910,28 @@ registerRuntimeRoutes("");
 registerRuntimeRoutes("/api");
 registerAgentRoutes("");
 registerAgentRoutes("/api");
+app.use(createActivityEventRouter(activityEventService));
+app.use("/api", createActivityEventRouter(activityEventService));
+app.use(createTaskMasterClaimRouter(taskMasterClaimService));
+app.use("/api", createTaskMasterClaimRouter(taskMasterClaimService));
 registerActivityRoutes("");
 registerActivityRoutes("/api");
+app.use("/worktype-registry", createWorktypeRegistryRouter({ flags: phase2Flags }));
+app.use("/api/worktype-registry", createWorktypeRegistryRouter({ flags: phase2Flags }));
 registerTaskRoutes("");
 registerTaskRoutes("/api");
+app.use("/tasks", createTaskReviewGateRouter({
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+  updateTask: (taskId, updates) => taskSyncLayer.updateTask(taskId, updates),
+  activityRepository,
+  defaultActor: getDefaultTaskActor(),
+}));
+app.use("/api/tasks", createTaskReviewGateRouter({
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+  updateTask: (taskId, updates) => taskSyncLayer.updateTask(taskId, updates),
+  activityRepository,
+  defaultActor: getDefaultTaskActor(),
+}));
 registerStrategicRoutes("");
 registerStrategicRoutes("/api");
 if (!AGENT_NATIVE_EDITOR_ENABLED) {

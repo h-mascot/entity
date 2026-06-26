@@ -2,10 +2,14 @@ import express from 'express';
 import http from 'http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAgentRegistryRouter } from '../routes/agent-registry';
+import type { HelmLightControlAdapter } from '../agent/helm-light-controls';
+import type { HelmStatusAdapter } from '../agent/helm-status-adapter';
 import type {
   AgentModuleGrantRecord,
   AgentRegistryRecord,
   AgentRegistryRepository,
+  AgentRuntimeBindingState,
+  AgentRuntimeProviderType,
   CreateAgentRegistryInput,
   ModuleRegistryRecord,
   ModuleRegistryRepository,
@@ -15,6 +19,28 @@ import type {
 } from '../../../db/src';
 
 const now = '2026-05-01T00:00:00.000Z';
+const PROVIDER_TYPES = new Set<AgentRuntimeProviderType>([
+  'local_process',
+  'remote_http',
+  'openai_compatible',
+  'anthropic_compatible',
+  'helm_runtime',
+  'custom',
+  'unknown',
+]);
+const BINDING_STATES = new Set<AgentRuntimeBindingState>(['bound', 'unbound', 'stale', 'unknown']);
+
+function normalizeProviderType(value: unknown): AgentRuntimeProviderType {
+  return typeof value === 'string' && PROVIDER_TYPES.has(value as AgentRuntimeProviderType)
+    ? value as AgentRuntimeProviderType
+    : 'unknown';
+}
+
+function normalizeBindingState(value: unknown): AgentRuntimeBindingState {
+  return typeof value === 'string' && BINDING_STATES.has(value as AgentRuntimeBindingState)
+    ? value as AgentRuntimeBindingState
+    : 'unknown';
+}
 
 function makeAgent(overrides: Partial<AgentRegistryRecord> = {}): AgentRegistryRecord {
   return {
@@ -26,6 +52,10 @@ function makeAgent(overrides: Partial<AgentRegistryRecord> = {}): AgentRegistryR
     description: 'Continuity operator',
     adapter_type: 'hermes',
     runtime_type: 'remote',
+    runtime_binding_id: null,
+    provider_type: 'unknown',
+    helm_managed: false,
+    binding_state: 'unknown',
     status: 'active',
     instructions_path: null,
     metadata_json: '{"modules":["docs"],"owner":"Entity Docs"}',
@@ -95,6 +125,10 @@ function createRepos() {
         description: input.description ?? null,
         adapter_type: input.adapter_type ?? null,
         runtime_type: input.runtime_type ?? null,
+        runtime_binding_id: input.runtime_binding_id ?? null,
+        provider_type: normalizeProviderType(input.provider_type),
+        helm_managed: input.helm_managed ?? false,
+        binding_state: normalizeBindingState(input.binding_state),
         status: input.status ?? 'active',
         instructions_path: input.instructions_path ?? null,
         metadata_json: input.metadata_json ?? '{}',
@@ -105,7 +139,24 @@ function createRepos() {
     updateAgent: (id: string, updates: UpdateAgentRegistryInput) => {
       const current = agents.get(id);
       if (!current) return undefined;
-      const updated = { ...current, ...updates, updated_at: now };
+      const normalizedUpdates: UpdateAgentRegistryInput = { ...updates };
+      if (updates.provider_type !== undefined) {
+        normalizedUpdates.provider_type = normalizeProviderType(updates.provider_type);
+      }
+      if (updates.binding_state !== undefined) {
+        normalizedUpdates.binding_state = normalizeBindingState(updates.binding_state);
+      }
+      const updated: AgentRegistryRecord = {
+        ...current,
+        ...normalizedUpdates,
+        provider_type: normalizeProviderType(normalizedUpdates.provider_type ?? current.provider_type),
+        binding_state: normalizeBindingState(normalizedUpdates.binding_state ?? current.binding_state),
+        helm_managed: normalizedUpdates.helm_managed ?? current.helm_managed,
+        runtime_binding_id: normalizedUpdates.runtime_binding_id === undefined
+          ? current.runtime_binding_id
+          : normalizedUpdates.runtime_binding_id,
+        updated_at: now,
+      };
       agents.set(id, updated);
       return updated;
     },
@@ -163,9 +214,41 @@ describe('agent registry mutation routes', () => {
   it('lists registry agents with serialized capability cards', async () => {
     const res = await fetch(`${baseUrl}/api/agents/registry`);
     expect(res.status).toBe(200);
-    const json = await res.json() as { list: Array<{ id: string; avatarUrl?: string; capabilities?: { runtimeLabel?: string; capabilityLabels: string[] } }> };
+    const json = await res.json() as {
+      list: Array<{
+        id: string;
+        avatarUrl?: string;
+        runtime_binding_id: string | null;
+        provider_type: string;
+        helm_managed: boolean;
+        binding_state: string;
+        runtime_status: {
+          source: string;
+          state: string;
+          readiness: string;
+          reason: string;
+        };
+        runtimeStatus: {
+          state: string;
+        };
+        capabilities?: { runtimeLabel?: string; capabilityLabels: string[] };
+      }>;
+    };
     expect(json.list[0].id).toBe('book');
     expect(json.list[0].avatarUrl).toBe('/agent-avatars/book.png');
+    expect(json.list[0]).toMatchObject({
+      runtime_binding_id: null,
+      provider_type: 'unknown',
+      helm_managed: false,
+      binding_state: 'unknown',
+      runtime_status: {
+        source: 'helm',
+        state: 'unknown',
+        readiness: 'unknown',
+        reason: 'not_helm_managed',
+      },
+    });
+    expect(json.list[0].runtimeStatus.state).toBe('unknown');
     expect(json.list[0].capabilities?.runtimeLabel).toBe('Hermes · Remote · Active');
     expect(json.list[0].capabilities?.capabilityLabels).toEqual(['Docs']);
   });
@@ -174,12 +257,38 @@ describe('agent registry mutation routes', () => {
     const createRes = await fetch(`${baseUrl}/api/agents`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ slug: 'moltbook', name: 'Moltbook', emoji: '🧪', adapterType: 'openclaw', runtimeType: 'remote' }),
+      body: JSON.stringify({
+        slug: 'moltbook',
+        name: 'Moltbook',
+        emoji: '🧪',
+        adapterType: 'legacy-adapter-label',
+        runtimeType: 'remote',
+        runtimeBindingId: 'helm-runtime-moltbook',
+        providerType: 'custom',
+        helmManaged: true,
+        bindingState: 'bound',
+      }),
     });
     expect(createRes.status).toBe(201);
-    const created = await createRes.json() as { agent: { id: string; slug: string; status: string } };
+    const created = await createRes.json() as {
+      agent: {
+        id: string;
+        slug: string;
+        status: string;
+        runtime_binding_id: string;
+        provider_type: string;
+        helm_managed: boolean;
+        binding_state: string;
+      };
+    };
     expect(created.agent.slug).toBe('moltbook');
     expect(created.agent.status).toBe('active');
+    expect(created.agent).toMatchObject({
+      runtime_binding_id: 'helm-runtime-moltbook',
+      provider_type: 'custom',
+      helm_managed: true,
+      binding_state: 'bound',
+    });
 
     const grantRes = await fetch(`${baseUrl}/api/agents/moltbook/grants`, {
       method: 'POST',
@@ -194,11 +303,13 @@ describe('agent registry mutation routes', () => {
     const disableRes = await fetch(`${baseUrl}/api/agents/moltbook`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'disabled' }),
+      body: JSON.stringify({ status: 'disabled', bindingState: 'stale', providerType: 'bogus-provider' }),
     });
     expect(disableRes.status).toBe(200);
-    const disabled = await disableRes.json() as { agent: { status: string } };
+    const disabled = await disableRes.json() as { agent: { status: string; binding_state: string; provider_type: string } };
     expect(disabled.agent.status).toBe('disabled');
+    expect(disabled.agent.binding_state).toBe('stale');
+    expect(disabled.agent.provider_type).toBe('unknown');
 
     const deleteGrantRes = await fetch(`${baseUrl}/api/agents/moltbook/grants/tasks`, { method: 'DELETE' });
     expect(deleteGrantRes.status).toBe(200);
@@ -226,5 +337,448 @@ describe('agent registry mutation routes', () => {
       body: JSON.stringify({ module_id: 'missing' }),
     });
     expect(badGrant.status).toBe(404);
+  });
+});
+
+describe('agent registry Helm runtime status serialization', () => {
+  it('includes sanitized adapter status without changing agent lifecycle state', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'helmbook',
+      name: 'Helm Book',
+      emoji: 'H',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-helmbook',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'bound',
+      status: 'active',
+      metadata_json: '{}',
+    });
+    const helmStatusAdapter: HelmStatusAdapter = {
+      getStatus: async (agent) => ({
+        source: 'helm',
+        binding_id: agent.runtime_binding_id,
+        state: 'degraded',
+        health: 'degraded',
+        readiness: 'degraded',
+        current_work: 'Waiting for review',
+        heartbeat_at: '2026-05-01T00:00:00.000Z',
+        checked_at: '2026-05-01T00:00:10.000Z',
+        stale: true,
+        reason: 'stale_helm_heartbeat',
+        helm_link: null,
+      }),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo, helmStatusAdapter }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/registry`);
+      expect(res.status).toBe(200);
+      const json = await res.json() as { list: Array<{ slug: string; status: string; runtime_status: { state: string; current_work: string; reason: string } }> };
+      const helmAgent = json.list.find((entry) => entry.slug === 'helmbook');
+      expect(helmAgent).toMatchObject({
+        status: 'active',
+        runtime_status: {
+          state: 'degraded',
+          current_work: 'Waiting for review',
+          reason: 'stale_helm_heartbeat',
+        },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('keeps OpenClaw, Hermes, and generic providers as runtime-backed agents', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    for (const input of [
+      {
+        slug: 'openclaw-runner',
+        name: 'OpenClaw Runner',
+        emoji: 'O',
+        adapter_type: 'openclaw',
+        runtime_type: 'remote',
+        runtime_binding_id: 'runtime-openclaw',
+        provider_type: 'custom',
+        helm_managed: true,
+        binding_state: 'bound',
+        status: 'active',
+        metadata_json: '{}',
+      },
+      {
+        slug: 'hermes-runner',
+        name: 'Hermes Runner',
+        emoji: 'H',
+        adapter_type: 'hermes',
+        runtime_type: 'remote',
+        runtime_binding_id: 'runtime-hermes',
+        provider_type: 'remote_http',
+        helm_managed: true,
+        binding_state: 'bound',
+        status: 'active',
+        metadata_json: '{}',
+      },
+      {
+        slug: 'generic-runner',
+        name: 'Generic Runner',
+        emoji: 'G',
+        adapter_type: 'generic-worker',
+        runtime_type: 'remote',
+        runtime_binding_id: 'runtime-generic',
+        provider_type: 'custom',
+        helm_managed: true,
+        binding_state: 'bound',
+        status: 'active',
+        metadata_json: '{}',
+      },
+    ] satisfies CreateAgentRegistryInput[]) {
+      agentRepo.createAgent(input);
+    }
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/registry`);
+      expect(res.status).toBe(200);
+      const json = await res.json() as {
+        list: Array<{
+          slug: string;
+          adapter_type: string;
+          provider_type: string;
+          runtime_binding_id: string | null;
+          helm_managed: boolean;
+          binding_state: string;
+          runtime_status: { state: string; reason: string };
+          capabilities: { runtimeLabel: string };
+          entity_model?: string;
+        }>;
+      };
+      const bySlug = new Map(json.list.map((agent) => [agent.slug, agent]));
+      expect(bySlug.get('openclaw-runner')).toMatchObject({
+        adapter_type: 'openclaw',
+        provider_type: 'custom',
+        runtime_binding_id: 'runtime-openclaw',
+        helm_managed: true,
+        binding_state: 'bound',
+        runtime_status: {
+          state: 'unavailable',
+          reason: 'helm_status_provider_unavailable',
+        },
+      });
+      expect(bySlug.get('hermes-runner')).toMatchObject({
+        adapter_type: 'hermes',
+        provider_type: 'remote_http',
+        runtime_binding_id: 'runtime-hermes',
+        helm_managed: true,
+      });
+      expect(bySlug.get('generic-runner')).toMatchObject({
+        adapter_type: 'generic-worker',
+        provider_type: 'custom',
+        runtime_binding_id: 'runtime-generic',
+        helm_managed: true,
+      });
+      expect(bySlug.get('openclaw-runner')?.capabilities.runtimeLabel).toBe('Openclaw · Remote · Active');
+      expect(bySlug.get('hermes-runner')?.capabilities.runtimeLabel).toBe('Hermes · Remote · Active');
+      expect(bySlug.get('generic-runner')?.capabilities.runtimeLabel).toBe('Generic Worker · Remote · Active');
+      expect(json.list.some((agent) => agent.entity_model === 'openclaw' || agent.entity_model === 'hermes')).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('exposes management-surface fields for degraded runtime bindings', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'opsbook',
+      name: 'Ops Book',
+      emoji: 'O',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-opsbook',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'stale',
+      status: 'active',
+      metadata_json: '{"loops":["daily review sweep"]}',
+    });
+    moduleRepo.upsertAgentModuleGrant({
+      agent_id: 'opsbook',
+      module_id: 'tasks',
+      enabled: true,
+      permissions_json: '["read","review"]',
+      scope_json: '{"projects":["entity"]}',
+    });
+    const helmStatusAdapter: HelmStatusAdapter = {
+      getStatus: async (agent) => ({
+        source: 'helm',
+        binding_id: agent.runtime_binding_id,
+        state: 'degraded',
+        health: 'degraded',
+        readiness: 'degraded',
+        current_work: 'Review stale runtime binding',
+        heartbeat_at: null,
+        checked_at: '2026-05-01T00:00:10.000Z',
+        stale: true,
+        reason: 'stale_runtime_binding',
+        helm_link: null,
+      }),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo, helmStatusAdapter }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/registry`);
+      expect(res.status).toBe(200);
+      const json = await res.json() as {
+        list: Array<{
+          slug: string;
+          runtime_binding_id: string | null;
+          provider_type: string;
+          helm_managed: boolean;
+          binding_state: string;
+          metadata_json: string;
+          runtime_status: { state: string; readiness: string; current_work: string; reason: string };
+          capabilities: { capabilityLabels: string[]; permissionLabels: string[]; scopeLabels: string[] };
+        }>;
+      };
+      const managedAgent = json.list.find((entry) => entry.slug === 'opsbook');
+      expect(managedAgent).toMatchObject({
+        runtime_binding_id: 'runtime-opsbook',
+        provider_type: 'helm_runtime',
+        helm_managed: true,
+        binding_state: 'stale',
+        runtime_status: {
+          state: 'degraded',
+          readiness: 'degraded',
+          current_work: 'Review stale runtime binding',
+          reason: 'stale_runtime_binding',
+        },
+      });
+      expect(JSON.parse(managedAgent?.metadata_json ?? '{}')).toEqual({ loops: ['daily review sweep'] });
+      expect(managedAgent?.capabilities.capabilityLabels).toEqual(['Mission Control']);
+      expect(managedAgent?.capabilities.permissionLabels).toEqual(['Read', 'Review']);
+      expect(managedAgent?.capabilities.scopeLabels).toEqual(['Projects: Entity']);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+});
+
+describe('agent registry Helm light controls', () => {
+  it('forwards only safe reversible controls with an audit fixture', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'controlbook',
+      name: 'Control Book',
+      emoji: 'C',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-controlbook',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'bound',
+      status: 'active',
+      metadata_json: '{}',
+    });
+    const sent: Array<{ bindingId: string; action: string; audit: unknown }> = [];
+    const helmLightControlAdapter: HelmLightControlAdapter = {
+      requestControl: async (agent, action, actorPrincipalId) => {
+        const audit = {
+          event_type: 'helm_light_control_requested' as const,
+          agent_id: agent.id,
+          action,
+          actor_principal_id: actorPrincipalId,
+          runtime_binding_id: agent.runtime_binding_id,
+          policy_allowed: true,
+          policy_reason: 'policy_allowed_reversible_control',
+          forwarded_to_helm: true,
+          created_at: now,
+        };
+        sent.push({ bindingId: agent.runtime_binding_id ?? '', action, audit });
+        return {
+          accepted: true,
+          status: 'accepted',
+          action,
+          reason: 'policy_allowed_reversible_control',
+          audit,
+          helm_link: 'https://helm.example/runtimes/runtime-controlbook',
+        };
+      },
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo, helmLightControlAdapter }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/controlbook/runtime-controls`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'pause', actorPrincipalId: 'human:reviewer' }),
+      });
+      expect(res.status).toBe(202);
+      const json = await res.json() as {
+        accepted: boolean;
+        status: string;
+        action: string;
+        reason: string;
+        helm_link: string;
+        audit: {
+          event_type: string;
+          action: string;
+          actor_principal_id: string;
+          runtime_binding_id: string;
+          policy_allowed: boolean;
+          forwarded_to_helm: boolean;
+        };
+        deep_admin?: unknown;
+        model_config?: unknown;
+        deployment_settings?: unknown;
+      };
+      expect(json).toMatchObject({
+        accepted: true,
+        status: 'accepted',
+        action: 'pause',
+        reason: 'policy_allowed_reversible_control',
+        helm_link: 'https://helm.example/runtimes/runtime-controlbook',
+        audit: {
+          event_type: 'helm_light_control_requested',
+          action: 'pause',
+          actor_principal_id: 'human:reviewer',
+          runtime_binding_id: 'runtime-controlbook',
+          policy_allowed: true,
+          forwarded_to_helm: true,
+        },
+      });
+      expect(json.deep_admin).toBeUndefined();
+      expect(json.model_config).toBeUndefined();
+      expect(json.deployment_settings).toBeUndefined();
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ bindingId: 'runtime-controlbook', action: 'pause' });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('denies controls for stale bindings and rejects deep admin actions', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'stalecontrol',
+      name: 'Stale Control',
+      emoji: 'S',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-stalecontrol',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'stale',
+      status: 'active',
+      metadata_json: '{}',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const denied = await fetch(`http://127.0.0.1:${address.port}/api/agents/stalecontrol/runtime-controls`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'resume', actorPrincipalId: 'human:reviewer' }),
+      });
+      expect(denied.status).toBe(403);
+      const deniedJson = await denied.json() as { accepted: boolean; reason: string; audit: { policy_allowed: boolean; forwarded_to_helm: boolean } };
+      expect(deniedJson).toMatchObject({
+        accepted: false,
+        reason: 'runtime_binding_stale',
+        audit: {
+          policy_allowed: false,
+          forwarded_to_helm: false,
+        },
+      });
+
+      const unsafe = await fetch(`http://127.0.0.1:${address.port}/api/agents/stalecontrol/runtime-controls`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'deploy_runtime', actorPrincipalId: 'human:reviewer' }),
+      });
+      expect(unsafe.status).toBe(400);
+      expect(await unsafe.json()).toEqual({ error: 'action must be one of: pause, resume, request_retry' });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('keeps Entity flows alive when Helm control forwarding is unavailable', async () => {
+    const { agentRepo, moduleRepo } = createRepos();
+    agentRepo.createAgent({
+      slug: 'unavailablecontrol',
+      name: 'Unavailable Control',
+      emoji: 'U',
+      adapter_type: 'helm',
+      runtime_type: 'remote',
+      runtime_binding_id: 'runtime-unavailablecontrol',
+      provider_type: 'helm_runtime',
+      helm_managed: true,
+      binding_state: 'bound',
+      status: 'active',
+      metadata_json: '{}',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createAgentRegistryRouter({ agentRegistryRepo: agentRepo, moduleRegistryRepo: moduleRepo }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+      const res = await fetch(`http://127.0.0.1:${address.port}/api/agents/unavailablecontrol/runtime-controls`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'request_retry', actorPrincipalId: 'human:reviewer' }),
+      });
+      expect(res.status).toBe(503);
+      const json = await res.json() as {
+        accepted: boolean;
+        status: string;
+        reason: string;
+        audit: { policy_allowed: boolean; forwarded_to_helm: boolean; policy_reason: string };
+      };
+      expect(json).toMatchObject({
+        accepted: false,
+        status: 'unavailable',
+        reason: 'helm_control_provider_unavailable',
+        audit: {
+          policy_allowed: true,
+          forwarded_to_helm: false,
+          policy_reason: 'helm_control_provider_unavailable',
+        },
+      });
+
+      const registry = await fetch(`http://127.0.0.1:${address.port}/api/agents/registry`);
+      expect(registry.status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 });

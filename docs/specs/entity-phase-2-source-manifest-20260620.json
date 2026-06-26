@@ -1,0 +1,32 @@
+[
+  {
+    "repo_path": "docs/specs/entity-phase-2-prd-canonical-20260620.md",
+    "source": "/Users/enterprise/Enterprise/Crew Home/Output/Book/crew-project-dossiers-20260619/entity/entity-phase-2-prd-canonical-20260620.md",
+    "bytes": 69297,
+    "sha256": "8597a71a7a3897f4c1c5b2a679f442f25e19f322245a3d1b0abe7f67a4d85f3f"
+  },
+  {
+    "repo_path": "docs/specs/entity-phase-2-spec-oracle55pro-20260620.md",
+    "source": "/Users/enterprise/Enterprise/Crew Home/Output/Book/crew-project-dossiers-20260619/entity/entity-phase-2-spec-oracle55pro-20260620.md",
+    "bytes": 178472,
+    "sha256": "48529a790bd91b25b49bffeec1e18b887f17e7b8221edff5b046f51285219609"
+  },
+  {
+    "repo_path": "docs/specs/entity-phase-2-parent-epic-spine-20260620.md",
+    "source": "/Users/enterprise/Enterprise/Crew Home/Output/Book/crew-project-dossiers-20260619/entity/entity-phase-2-issues-final-linear-20260620.md",
+    "bytes": 18995,
+    "sha256": "6b7f438f49734f530af0a6ab10dcd6bd9a7f47b0390c0df47fc23dafe67f156c"
+  },
+  {
+    "repo_path": "docs/specs/entity-phase-2-opus48-prd-critique-20260620.md",
+    "source": "/Users/enterprise/Enterprise/Crew Home/Output/Book/crew-project-dossiers-20260619/entity/entity-phase-2-opus48-prd-critique-20260620.md",
+    "bytes": 19349,
+    "sha256": "17b36977a076595821425b09bcc0bf9739ed96a6fb839ba964244c30f5b0e0a1"
+  },
+  {
+    "repo_path": "docs/specs/entity-phase-2-opus48-issue-graph-review-20260620.md",
+    "source": "/Users/enterprise/Enterprise/Crew Home/Output/Book/crew-project-dossiers-20260619/entity/entity-phase-2-opus48-issue-graph-review-20260620.md",
+    "bytes": 6839,
+    "sha256": "4a8f8d322f02e6f5bab6204039badc46aa8242e32521efc3a8d545884b068b36"
+  }
+]

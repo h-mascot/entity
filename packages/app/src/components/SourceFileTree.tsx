@@ -658,9 +658,10 @@ export default function SourceFileTree({
         const nodes: SourceNode[] = payload.results.map((result) => ({
           sourceId: result.sourceId,
           path: result.path,
-          name: result.title || result.path.split('/').pop() || result.path,
+          name: result.restricted || result.placeholder ? 'Restricted file' : result.title || result.path.split('/').pop() || result.path,
           isDirectory: false,
           updatedAt: result.updatedAt ?? undefined,
+          restricted: result.restricted || result.placeholder || result.permission_state === 'restricted' || result.entity_permission_state === 'restricted',
         }));
         setSearchBySource((prev) => ({ ...prev, [sourceId]: { loading: false, error: null, nodes } }));
       } catch (err) {
@@ -770,16 +771,26 @@ export default function SourceFileTree({
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => (node.isDirectory ? toggleFolder(sourceId, node.path) : onSelect(sourceId, node.path))}
+              onClick={() => {
+                if (node.restricted) return;
+                node.isDirectory ? toggleFolder(sourceId, node.path) : onSelect(sourceId, node.path);
+              }}
+              disabled={node.restricted}
+              data-testid={node.restricted ? 'source-tree-restricted-result' : undefined}
               className={`flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-xs ${
                 isSelected
                   ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
                   : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
-              }`}
+              } ${node.restricted ? 'cursor-not-allowed opacity-80' : ''}`}
               style={{ paddingLeft: `${depth * 14 + 8}px` }}
             >
               <span>{getFileIcon(node.name, node.isDirectory, expanded)}</span>
               <span className="truncate">{node.name}</span>
+              {node.restricted && (
+                <span className="truncate text-[10px] text-[var(--text-muted)]">
+                  Restricted by Entity permissions. Preview hidden.
+                </span>
+              )}
               {node.isDirectory && isPinned && (
                 <span className="text-[10px] text-[var(--accent)]" title="Pinned for offline">
                   ⬤

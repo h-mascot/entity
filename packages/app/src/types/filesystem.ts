@@ -25,6 +25,7 @@ export interface SourceNode {
   isDirectory: boolean;
   size?: number;
   updatedAt?: string;
+  restricted?: boolean;
 }
 
 export interface SourceTreeResponse {
@@ -60,18 +61,47 @@ export interface UnifiedSearchResult {
   sourceId: string;
   sourceName: string;
   path: string;
-  title: string;
+  title: string | null;
   type: string;
   agent: string;
   origin: string;
   isRecurring: boolean;
   recurringPattern: string | null;
   preview: string | null;
+  snippet?: string | null;
   updatedAt: string | null;
   indexedAt: string | null;
+  permissionState?: 'visible' | 'restricted';
+  permission_state?: 'visible' | 'restricted';
+  entity_permission_state?: 'visible' | 'restricted';
+  restricted?: boolean;
+  placeholder?: boolean;
+  permission_reasons?: string[];
+  connectorState?: {
+    health?: FileSourceHealth;
+    lastSyncedAt?: string | null;
+    indexLagSeconds?: number | null;
+    latestSyncRun?: {
+      status?: string;
+      error?: string | null;
+      filesScanned?: number;
+      filesIndexed?: number;
+    } | null;
+  };
+  indexState?: {
+    indexed?: boolean;
+    degraded?: boolean;
+    lagSeconds?: number | null;
+    latestSyncStatus?: string | null;
+  };
 }
 
 export interface UnifiedSearchResponse {
   indexed: boolean;
+  indexState?: {
+    mode?: 'indexed' | 'fallback';
+    fallbackUsed?: boolean;
+    degraded?: boolean;
+  };
   results: UnifiedSearchResult[];
 }

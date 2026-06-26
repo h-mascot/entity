@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import type { TaskBoardTask } from '../../hooks/useTaskBoard';
 import type { ProjectOption } from './projectOptions';
+import { buildRoutingStateView, routingToneClass } from './utils/routingState';
 import {
   formatBlockerReason,
   formatDate,
@@ -25,6 +26,18 @@ interface MCTaskCardProps {
   onOpenTask?: (taskId: number) => void;
   onUpdateProjects: (taskId: number, projectIds: number[]) => Promise<unknown>;
   projectOptions: ProjectOption[];
+}
+
+function parseCardMetadata(metadata: string | null): Record<string, unknown> | null {
+  if (!metadata) return null;
+  try {
+    const parsed = JSON.parse(metadata);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export default function MCTaskCard({
@@ -59,6 +72,16 @@ export default function MCTaskCard({
 
   const blockedReason = task.blocked && task.blocker_reason ? formatBlockerReason(task.blocker_reason) : null;
   const blockerIcon = blockedReason && isTransientBlocker(task.blocker_reason) ? '⚠️' : '❌';
+  const routingState = useMemo(() => buildRoutingStateView({
+    assignee: task.assignee,
+    assignmentState: task.assignment_state,
+    taskmasterDrivable: task.taskmaster_drivable,
+    executorPrincipalId: task.executor_principal_id,
+    ownerPrincipalId: task.owner_principal_id,
+    ownerPrincipalType: task.owner_principal_type,
+    metadataRecord: parseCardMetadata(task.metadata),
+    activityEventTypes: task.activity?.map((entry) => entry.action ?? '').filter(Boolean),
+  }), [task]);
 
 	  const cardClassName = [
 	    'task',
@@ -238,6 +261,18 @@ export default function MCTaskCard({
           {blockerIcon} {blockedReason.slice(0, 80)}{blockedReason.length > 80 ? '...' : ''}
         </div>
       ) : null}
+
+      <div className="task-status">
+        <span
+          className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${routingToneClass(routingState.tone)}`}
+          title={routingState.reason}
+        >
+          {routingState.label}
+        </span>
+        <span className="text-[11px] text-[var(--text-muted)]">
+          {routingState.reason}
+        </span>
+      </div>
 
       <div className="mt-3 flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-wrap gap-2">

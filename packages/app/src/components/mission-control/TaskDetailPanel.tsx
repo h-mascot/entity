@@ -15,14 +15,20 @@ import {
   type ProjectOption,
 } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
+import { buildRoutingStateView, routingToneClass } from './utils/routingState';
+import TaskChatContextPanel from './TaskChatContextPanel';
 import {
-  REVIEW_DECISION_LABELS,
-  buildReviewDecisionMetadata,
-  normalizeReviewDecision,
-  type ReviewDecision,
-} from './reviewActions';
-import { useEntityWebSocket } from '../../hooks/useEntityWebSocket';
-import { useMentionAutocomplete } from './useMentionAutocomplete';
+  FALLBACK_WORKTYPE_REGISTRY,
+  formatOverlayValue,
+  getEditableWorktypeFields,
+  getWorktypeLabel,
+  readWorktype,
+  readWorktypeLayer,
+} from './utils/worktypeRegistry';
+import {
+  buildExternalDocumentPreviewView,
+  type ExternalDocumentPreviewView,
+} from './utils/externalDocumentPreview';
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
@@ -61,18 +67,42 @@ interface TaskAttachment {
   path: string;
 }
 
+interface ActivityObjectRef {
+  objectType: string;
+  objectId: string;
+  linkRole: string | null;
+}
+
+interface ActivityWarning {
+  code: string;
+  message: string;
+}
+
 interface TaskActivity {
   id: number;
   source: 'agent' | 'task';
   type: string;
+  activityEventType: string;
+  payloadVersion: number | null;
+  schemaStatus: string;
+  legacyType: string | null;
   action: string;
   description: string;
   agentName: string;
   agentEmoji: string | null;
+  actorType: string;
+  actorPrincipalId: string | null;
+  objectRefs: ActivityObjectRef[];
+  reason: string | null;
+  provenance: string | null;
+  permissionState: string;
+  degraded: boolean;
+  warnings: ActivityWarning[];
   taskColumn: string | null;
   filePath: string | null;
   metadataText: string | null;
   metadataRecord: Record<string, unknown> | null;
+  activityEventPayload: Record<string, unknown> | null;
   createdAt: string;
 }
 
@@ -102,6 +132,27 @@ interface TaskDetailData {
   createdAt: string;
   updatedAt: string;
   createdBy: string | null;
+  createdByPrincipalId: string | null;
+  initiatorPrincipalId: string | null;
+  initiatorType: string | null;
+  ownerPrincipalId: string | null;
+  ownerPrincipalType: string | null;
+  executorPrincipalId: string | null;
+  assignmentState: string | null;
+  taskmasterDrivable: boolean;
+  submittedBy: string | null;
+  reviewer: string | null;
+  reviewerPrincipalId: string | null;
+  reviewRequired: boolean;
+  reviewState: string;
+  approver: string | null;
+  approverPrincipalId: string | null;
+  humanGateRequired: boolean;
+  humanGateState: string;
+  policyReasonChain: Array<Record<string, unknown>>;
+  overrideAudit: Array<Record<string, unknown>>;
+  worktype: string;
+  policyInputsJson: string | null;
   model: string | null;
   estimateHours: number | null;
   timeSpent: number | null;
@@ -111,6 +162,56 @@ interface TaskDetailData {
   attachments: TaskAttachment[];
   dependencies: TaskDependency[];
   models: string[];
+}
+
+interface ReceiptDisplayLink {
+  label: string;
+  href: string | null;
+  external: boolean;
+  meta: string | null;
+}
+
+interface ReceiptProofView {
+  status: string;
+  statusTone: 'ok' | 'warning' | 'error' | 'muted';
+  artifactId: string | null;
+  artifactKind: string;
+  artifactMode: 'raw' | 'curated' | 'unknown';
+  mutability: string;
+  stablePath: string | null;
+  receiptHref: string | null;
+  contentHash: string | null;
+  integrityState: string;
+  availabilityState: string;
+  createdAt: string | null;
+  evidenceSummary: string;
+  missingEvidence: boolean;
+  missingEvidenceReason: string | null;
+  evidenceLinks: ReceiptDisplayLink[];
+  outputLinks: ReceiptDisplayLink[];
+  reviewDecision: string;
+  approvalDecision: string;
+  provenance: string;
+  degradedMessages: string[];
+}
+
+interface DocumentObjectView {
+  id: string;
+  objectType: 'native_document' | 'external_document_ref' | 'evidence_artifact';
+  displayKind: 'native' | 'external' | 'raw_proof' | 'curated' | 'unknown';
+  label: string;
+  title: string;
+  href: string | null;
+  externalHref: boolean;
+  sourceLabel: string;
+  canonicality: string;
+  mutability: string;
+  status: string;
+  statusTone: ReceiptProofView['statusTone'];
+  objectRefs: ActivityObjectRef[];
+  restricted: boolean;
+  degradedMessages: string[];
+  externalPreview: ExternalDocumentPreviewView | null;
 }
 
 interface TaskFormState {
@@ -304,6 +405,69 @@ function uniqueStrings(values: unknown[]): string[] {
   return result;
 }
 
+function normalizeActivityObjectRefs(value: unknown): ActivityObjectRef[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const refs: ActivityObjectRef[] = [];
+  for (const item of value) {
+    const record = toRecord(item);
+    if (!record) {
+      continue;
+    }
+
+    const objectType = readFirstString(record.object_type, record.objectType);
+    const objectId = readFirstString(record.object_id, record.objectId);
+    if (!objectType || !objectId) {
+      continue;
+    }
+
+    refs.push({
+      objectType,
+      objectId,
+      linkRole: readFirstString(record.link_role, record.linkRole),
+    });
+  }
+
+  return refs;
+}
+
+function normalizeActivityWarnings(value: unknown): ActivityWarning[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const warnings: ActivityWarning[] = [];
+  for (const item of value) {
+    const record = toRecord(item);
+    if (!record) {
+      continue;
+    }
+
+    const code = readFirstString(record.code, record.warning_code, record.type);
+    const message = readFirstString(record.message, record.description, record.reason);
+    if (!code && !message) {
+      continue;
+    }
+
+    warnings.push({
+      code: code ?? 'warning',
+      message: message ?? 'Activity payload needs review.',
+    });
+  }
+
+  return warnings;
+}
+
+function formatActivityToken(value: string): string {
+  return value.replace(/[_-]+/g, ' ');
+}
+
+function formatObjectRef(ref: ActivityObjectRef): string {
+  return `${ref.objectType}:${ref.objectId}${ref.linkRole ? ` (${ref.linkRole})` : ''}`;
+}
+
 function normalizeAttachment(raw: unknown): TaskAttachment | null {
   if (typeof raw === 'string') {
     const path = raw.trim();
@@ -437,19 +601,106 @@ function normalizeActivity(raw: unknown): TaskActivity | null {
 
   const metadataText = readNonEmptyString(record.metadata);
   const metadataRecord = parseJsonRecord(metadataText);
+  const activityEventPayload = parseJsonRecord(
+    record.activity_event_payload_json ??
+      record.activity_event_payload ??
+      metadataRecord?.activity_event_payload
+  ) ?? {};
+  const payloadData = toRecord(activityEventPayload.data);
+  const permissionState = readFirstString(
+    record.permission_state,
+    record.permissionState,
+    metadataRecord?.permission_state,
+    metadataRecord?.permissionState
+  ) ?? 'visible';
+  const restricted = permissionState !== 'visible';
+  const schemaStatus = readFirstString(
+    record.activity_event_schema_status,
+    record.activityEventSchemaStatus,
+    metadataRecord?.activity_event_schema_status,
+    metadataRecord?.activityEventSchemaStatus
+  ) ?? 'legacy_mapped';
+  const activityEventType = readFirstString(
+    record.activity_event_type,
+    record.activityEventType,
+    activityEventPayload.event_type,
+    metadataRecord?.activity_event_type,
+    metadataRecord?.activityEventType,
+    record.type
+  ) ?? 'legacy_event_observed';
+  const warnings = restricted
+    ? []
+    : normalizeActivityWarnings(activityEventPayload.warnings ?? metadataRecord?.warnings);
+  if (!restricted && schemaStatus === 'legacy_unknown') {
+    warnings.push({
+      code: 'legacy_unknown',
+      message: 'Legacy activity was preserved without enough structure to infer full provenance.',
+    });
+  }
+  const payloadVersion = normalizePositiveInteger(
+    record.activity_event_payload_version ??
+      record.activityEventPayloadVersion ??
+      activityEventPayload.version
+  );
+  const actorType = readFirstString(
+    activityEventPayload.actor_type,
+    record.actor_type,
+    record.actorType,
+    metadataRecord?.actor_type,
+    metadataRecord?.actorType
+  ) ?? 'unknown';
+  const actorPrincipalId = restricted
+    ? null
+    : readFirstString(
+        activityEventPayload.actor_principal_id,
+        record.actor_principal_id,
+        record.actorPrincipalId,
+        metadataRecord?.actor_principal_id,
+        metadataRecord?.actorPrincipalId
+      );
+  const eventPayloadForDisplay = restricted ? null : activityEventPayload;
+  const displayMetadataText = restricted
+    ? null
+    : eventPayloadForDisplay
+      ? JSON.stringify({
+          activity_event_payload: eventPayloadForDisplay,
+          legacy_metadata: metadataRecord ?? undefined,
+        }, null, 2)
+      : metadataRecord
+        ? JSON.stringify(metadataRecord, null, 2)
+        : metadataText;
 
   return {
     id,
     source: record.source === 'task' ? 'task' : 'agent',
     type: readNonEmptyString(record.type) ?? 'task_updated',
-    action: readNonEmptyString(record.action) ?? 'Updated task',
-    description: readNonEmptyString(record.description) ?? 'No details recorded.',
-    agentName: readFirstString(record.agent_name, metadataRecord?.user) ?? 'Entity',
-    agentEmoji: readNonEmptyString(record.agent_emoji),
+    activityEventType,
+    payloadVersion,
+    schemaStatus,
+    legacyType: readFirstString(record.activity_event_legacy_type, record.activityEventLegacyType, metadataRecord?.activity_event_legacy_type),
+    action: restricted ? 'Hidden by permissions' : readNonEmptyString(record.action) ?? 'Updated task',
+    description: restricted
+      ? 'Restricted activity hidden by Entity permissions.'
+      : readNonEmptyString(record.description) ?? 'No details recorded.',
+    agentName: restricted ? 'Restricted activity' : readFirstString(record.agent_name, metadataRecord?.user) ?? 'Entity',
+    agentEmoji: restricted ? null : readNonEmptyString(record.agent_emoji),
+    actorType,
+    actorPrincipalId,
+    objectRefs: restricted ? [] : normalizeActivityObjectRefs(activityEventPayload.object_refs ?? metadataRecord?.object_refs),
+    reason: restricted
+      ? null
+      : readFirstString(activityEventPayload.reason, payloadData?.reason, metadataRecord?.reason),
+    provenance: restricted
+      ? null
+      : readFirstString(activityEventPayload.provenance, payloadData?.provenance, metadataRecord?.provenance, metadataRecord?.source),
+    permissionState,
+    degraded: restricted || schemaStatus !== 'structured' || warnings.length > 0,
+    warnings,
     taskColumn: readNonEmptyString(record.task_column),
     filePath: readNonEmptyString(record.file_path),
-    metadataText: metadataRecord ? JSON.stringify(metadataRecord, null, 2) : metadataText,
+    metadataText: displayMetadataText,
     metadataRecord,
+    activityEventPayload: eventPayloadForDisplay,
     createdAt: normalizeTimestamp(record.created_at),
   };
 }
@@ -490,6 +741,28 @@ function normalizeTaskDetail(raw: unknown): TaskDetailData | null {
   const metadataRecord = parseJsonRecord(record.metadata) ?? {};
   const rawAttachments = record.attachments ?? metadataRecord.attachments;
   const rawDependencies = record.dependencies ?? metadataRecord.dependencies;
+  const metadataReviewRequired = normalizeBoolean(metadataRecord.review_required ?? metadataRecord.reviewRequired);
+  const metadataHumanGateRequired = normalizeBoolean(metadataRecord.human_gate_required ?? metadataRecord.humanGateRequired);
+  const reviewRequired = normalizeBoolean(record.review_required ?? record.reviewRequired) || metadataReviewRequired;
+  const humanGateRequired = normalizeBoolean(record.human_gate_required ?? record.humanGateRequired) || metadataHumanGateRequired;
+  const rawReviewState = readFirstString(record.review_state, record.reviewState);
+  const metadataReviewState = readFirstString(metadataRecord.review_state, metadataRecord.reviewState, metadataRecord.review_decision);
+  const rawHumanGateState = readFirstString(record.human_gate_state, record.humanGateState);
+  const metadataHumanGateState = readFirstString(metadataRecord.human_gate_state, metadataRecord.humanGateState, metadataRecord.human_gate_decision);
+  const policyReasonChain = recordArrayFrom(
+    record.policy_reason_chain ??
+      record.policyReasonChain ??
+      metadataRecord.policy_reason_chain ??
+      metadataRecord.reason_chain ??
+      metadataRecord.policy_reasons
+  );
+  const overrideAudit = recordArrayFrom(
+    record.override_audit ??
+      record.overrideAudit ??
+      metadataRecord.override_audit ??
+      metadataRecord.review_override_audit ??
+      metadataRecord.human_gate_override_audit
+  );
   const activity = Array.isArray(record.activity)
     ? record.activity.map(normalizeActivity).filter((entry): entry is TaskActivity => entry !== null)
     : [];
@@ -507,6 +780,31 @@ function normalizeTaskDetail(raw: unknown): TaskDetailData | null {
     createdAt: normalizeTimestamp(record.created_at),
     updatedAt: normalizeTimestamp(record.updated_at ?? record.created_at),
     createdBy: readFirstString(record.created_by, metadataRecord.created_by, metadataRecord.createdBy),
+    createdByPrincipalId: readFirstString(record.created_by_principal_id, record.createdByPrincipalId, metadataRecord.created_by_principal_id, metadataRecord.createdByPrincipalId),
+    initiatorPrincipalId: readFirstString(record.initiator_principal_id, record.initiatorPrincipalId, metadataRecord.initiator_principal_id, metadataRecord.initiatorPrincipalId),
+    initiatorType: readFirstString(record.initiator_type, record.initiatorType, metadataRecord.initiator_type, metadataRecord.initiatorType),
+    ownerPrincipalId: readFirstString(record.owner_principal_id, record.ownerPrincipalId, metadataRecord.owner_principal_id, metadataRecord.ownerPrincipalId),
+    ownerPrincipalType: readFirstString(record.owner_principal_type, record.ownerPrincipalType, metadataRecord.owner_principal_type, metadataRecord.ownerPrincipalType),
+    executorPrincipalId: readFirstString(record.executor_principal_id, record.executorPrincipalId, metadataRecord.executor_principal_id, metadataRecord.executorPrincipalId),
+    assignmentState: readFirstString(record.assignment_state, record.assignmentState, metadataRecord.assignment_state, metadataRecord.assignmentState),
+    taskmasterDrivable: normalizeBoolean(record.taskmaster_drivable ?? record.taskmasterDrivable ?? metadataRecord.taskmaster_drivable ?? metadataRecord.taskmasterDrivable),
+    submittedBy: readFirstString(record.submitted_by, record.submittedBy, metadataRecord.submitted_by, metadataRecord.submittedBy, metadataRecord.producer),
+    reviewer: readFirstString(record.reviewer, metadataRecord.reviewer, metadataRecord.review_owner),
+    reviewerPrincipalId: readFirstString(record.reviewer_principal_id, record.reviewerPrincipalId, metadataRecord.reviewer_principal_id, metadataRecord.reviewerPrincipalId, metadataRecord.reviewer, metadataRecord.review_owner),
+    reviewRequired,
+    reviewState: reviewRequired
+      ? (rawReviewState && rawReviewState !== 'not_required' ? rawReviewState : metadataReviewState ?? 'pending')
+      : 'not_required',
+    approver: readFirstString(record.approver, record.approver_principal_id, metadataRecord.approver, metadataRecord.approver_principal_id, metadataRecord.human_gate_approver, metadataRecord.gate_approver),
+    approverPrincipalId: readFirstString(record.approver_principal_id, record.approverPrincipalId, metadataRecord.approver_principal_id, metadataRecord.approverPrincipalId, metadataRecord.human_gate_approver, metadataRecord.gate_approver),
+    humanGateRequired,
+    humanGateState: humanGateRequired
+      ? (rawHumanGateState && rawHumanGateState !== 'not_required' ? rawHumanGateState : metadataHumanGateState ?? 'pending')
+      : 'not_required',
+    policyReasonChain,
+    overrideAudit,
+    worktype: readWorktype(metadataRecord, record.worktype),
+    policyInputsJson: readFirstString(record.policy_inputs_json, record.policyInputsJson, metadataRecord.policy_inputs_json),
     model: readFirstString(record.model, metadataRecord.model),
     estimateHours: normalizeNullableNumber(record.estimate_hours ?? metadataRecord.estimate_hours),
     timeSpent: normalizeNullableNumber(record.time_spent ?? metadataRecord.time_spent),
@@ -811,6 +1109,105 @@ function reviewField(value: unknown, fallback = 'Not set'): string {
   return readNonEmptyString(value) ?? fallback;
 }
 
+function formatReviewGateToken(value: unknown, fallback = 'Not required'): string {
+  const raw = readNonEmptyString(value);
+  if (!raw) {
+    return fallback;
+  }
+  return raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function buildWorktypeOverlayView(task: TaskDetailData): {
+  label: string;
+  schema: string;
+  sensitivity: string;
+  rows: Array<{ label: string; value: string; indexable: boolean }>;
+} | null {
+  const metadata = {
+    ...task.metadataRecord,
+    worktype: task.worktype,
+    policy_inputs_json: task.policyInputsJson ?? task.metadataRecord.policy_inputs_json,
+  };
+  const worktype = readWorktype(metadata, task.worktype);
+  if (worktype === 'general') {
+    return null;
+  }
+  const entry = FALLBACK_WORKTYPE_REGISTRY.find((candidate) => candidate.worktype === worktype);
+  if (!entry) {
+    return null;
+  }
+  const layer = readWorktypeLayer(metadata);
+  const rows = getEditableWorktypeFields(entry)
+    .map((field) => ({
+      label: field.plan_label,
+      value: formatOverlayValue(layer[field.name]),
+      indexable: field.indexable,
+    }))
+    .filter((row): row is { label: string; value: string; indexable: boolean } => Boolean(row.value));
+
+  return {
+    label: getWorktypeLabel(entry),
+    schema: `${entry.schema_name}@v${entry.schema_version}`,
+    sensitivity: entry.sensitivity.replace(/_/g, ' '),
+    rows,
+  };
+}
+
+function reviewGateToneClass(state: string, required: boolean): string {
+  const normalized = state.toLowerCase();
+  if (!required || normalized === 'not_required') {
+    return 'border-[var(--border-secondary)] bg-[var(--bg-primary)] text-[var(--text-muted)]';
+  }
+  if (normalized === 'accepted' || normalized === 'approved') {
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
+  }
+  if (normalized === 'request_fix' || normalized === 'rejected') {
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-100';
+  }
+  return 'border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]';
+}
+
+function normalizePrincipalAlias(value: unknown): string | null {
+  const normalized = readNonEmptyString(value)?.toLowerCase();
+  return normalized ?? null;
+}
+
+function principalMatches(actorAliases: string[], principal: string | null): boolean {
+  const normalizedPrincipal = normalizePrincipalAlias(principal);
+  return Boolean(normalizedPrincipal && actorAliases.includes(normalizedPrincipal));
+}
+
+function formatReasonChainEntry(entry: Record<string, unknown>, index: number): string {
+  const decision = formatReviewGateToken(entry.decision ?? entry.type ?? entry.reason, `Reason ${index + 1}`);
+  const value = readFirstString(entry.value, entry.target, entry.result);
+  const source = readFirstString(entry.source, entry.layer, entry.policy_source);
+  const reason = readFirstString(entry.reason, entry.message, entry.description);
+  return [source ? `${source}: ${decision}` : decision, value ? `=${value}` : null, reason ? `— ${reason}` : null]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function formatAccountabilityField(value: string | null, fallback = 'Unknown'): { label: string; degraded: boolean } {
+  const normalized = readNonEmptyString(value);
+  if (!normalized || normalized.toLowerCase() === 'unknown') {
+    return { label: `${fallback} (degraded)`, degraded: true };
+  }
+
+  if (normalized.toLowerCase().startsWith('legacy-')) {
+    return { label: `${normalized} (legacy)`, degraded: true };
+  }
+
+  return { label: normalized, degraded: false };
+}
+
+function accountabilityCardClass(degraded: boolean): string {
+  return degraded
+    ? 'rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-amber-100'
+    : 'rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5';
+}
+
 function reviewPacketSummary(metadata: Record<string, unknown>): string {
   const packet = parseJsonRecord(metadata.review_packet) ?? parseJsonRecord(metadata.review_brief);
   if (!packet) {
@@ -823,7 +1220,524 @@ function reviewPacketSummary(metadata: Record<string, unknown>): string {
     : readNonEmptyString(packet.done_criteria)
       ? 1
       : 0;
-  return `${outcome}${criteria > 0 ? ` / ${criteria} criterion${criteria === 1 ? '' : 'a'}` : ''}`;
+  return `${outcome}${criteria > 0 ? ` / ${criteria} ${criteria === 1 ? 'criterion' : 'criteria'}` : ''}`;
+}
+
+function firstRecord(...values: unknown[]): Record<string, unknown> | null {
+  for (const value of values) {
+    const record = parseJsonRecord(value);
+    if (record) {
+      return record;
+    }
+  }
+
+  return null;
+}
+
+function recordArrayFrom(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => parseJsonRecord(entry)).filter((entry): entry is Record<string, unknown> => entry !== null);
+  }
+
+  const record = parseJsonRecord(value);
+  if (!record) {
+    return [];
+  }
+
+  if (Array.isArray(record.nodes)) {
+    return record.nodes.map((entry) => parseJsonRecord(entry)).filter((entry): entry is Record<string, unknown> => entry !== null);
+  }
+
+  return [record];
+}
+
+function collectDocumentRecords(
+  hint: DocumentObjectView['displayKind'] | 'evidence',
+  ...values: unknown[]
+): Array<{ hint: DocumentObjectView['displayKind'] | 'evidence'; record: Record<string, unknown> }> {
+  return values.flatMap((value) => recordArrayFrom(value).map((record) => ({ hint, record })));
+}
+
+function parseMetadataJson(record: Record<string, unknown>): Record<string, unknown> {
+  return parseJsonRecord(record.metadata_json ?? record.metadata) ?? {};
+}
+
+function normalizeObjectRefsFromRecord(record: Record<string, unknown>): ActivityObjectRef[] {
+  const refs = normalizeActivityObjectRefs(
+    record.linked_object_refs ??
+      record.linkedObjectRefs ??
+      record.object_refs ??
+      record.objectRefs ??
+      (record.object_ref || record.objectRef ? [record.object_ref ?? record.objectRef] : undefined)
+  );
+  const linkRole = readFirstString(record.link_role, record.linkRole);
+  const objectType = readFirstString(record.object_type, record.objectType);
+  const objectId = readFirstString(record.object_id, record.objectId);
+  if (refs.length === 0 && linkRole && objectType && objectId) {
+    return [{ objectType, objectId, linkRole }];
+  }
+  return refs;
+}
+
+function inferDocumentObjectKind(
+  record: Record<string, unknown>,
+  hint: DocumentObjectView['displayKind'] | 'evidence'
+): DocumentObjectView['displayKind'] {
+  if (hint !== 'evidence') {
+    return hint;
+  }
+
+  const objectType = readFirstString(record.object_type, record.objectType, record.kind, record.type)?.toLowerCase();
+  const artifactKind = readFirstString(record.artifact_kind, record.artifactKind)?.toLowerCase();
+  if (objectType === 'native_document') return 'native';
+  if (objectType === 'external_document_ref') return 'external';
+  if (artifactKind === 'curated_report' || artifactKind === 'rollup' || artifactKind === 'generated_summary') return 'curated';
+  if (artifactKind === 'raw_task_receipt' || artifactKind === 'review_packet' || artifactKind === 'output_receipt' || artifactKind === 'audit_trail') return 'raw_proof';
+  return 'unknown';
+}
+
+function displayKindLabel(kind: DocumentObjectView['displayKind']): string {
+  if (kind === 'native') return 'Entity-native markdown';
+  if (kind === 'external') return 'External document ref';
+  if (kind === 'raw_proof') return 'Raw proof artifact';
+  if (kind === 'curated') return 'Curated interpretation';
+  return 'Document/artifact object';
+}
+
+function documentObjectToneClass(tone: ReceiptProofView['statusTone']): string {
+  return receiptToneClass(tone);
+}
+
+function isRestrictedDocumentObject(record: Record<string, unknown>, metadata: Record<string, unknown>): boolean {
+  const permissionState = readFirstString(
+    record.permission_state,
+    record.permissionState,
+    record.entity_permission_state,
+    record.entityPermissionState,
+    metadata.permission_state,
+    metadata.permissionState,
+    metadata.entity_permission_state,
+    metadata.entityPermissionState,
+    metadata.visibility_state
+  )?.toLowerCase();
+  const policy = {
+    ...(parseJsonRecord(record.entity_visibility_policy_json) ?? {}),
+    ...(parseJsonRecord(record.entityVisibilityPolicyJson) ?? {}),
+    ...(parseJsonRecord(record.entity_visibility_policy) ?? {}),
+    ...(parseJsonRecord(record.entityVisibilityPolicy) ?? {}),
+    ...(parseJsonRecord(metadata.entity_visibility_policy_json) ?? {}),
+    ...(parseJsonRecord(metadata.entityVisibilityPolicyJson) ?? {}),
+    ...(parseJsonRecord(metadata.entity_visibility_policy) ?? {}),
+    ...(parseJsonRecord(metadata.entityVisibilityPolicy) ?? {}),
+  };
+  return record.restricted === true ||
+    record.placeholder === true ||
+    metadata.restricted === true ||
+    metadata.placeholder === true ||
+    Boolean(permissionState && permissionState !== 'visible' && permissionState !== 'allowed') ||
+    policy.restricted === true ||
+    policy.allow_preview === false;
+}
+
+function buildDocumentObjectView(
+  taskId: number,
+  hint: DocumentObjectView['displayKind'] | 'evidence',
+  record: Record<string, unknown>
+): DocumentObjectView | null {
+  const metadata = parseMetadataJson(record);
+  const displayKind = inferDocumentObjectKind(record, hint);
+  const objectType: DocumentObjectView['objectType'] =
+    displayKind === 'native'
+      ? 'native_document'
+      : displayKind === 'external'
+        ? 'external_document_ref'
+        : 'evidence_artifact';
+  const restricted = isRestrictedDocumentObject(record, metadata);
+  const id = readFirstString(record.id, record.object_id, record.objectId, record.artifact_id, record.artifactId);
+  const rawTitle = readFirstString(record.title, record.name, record.label, metadata.title, id);
+  if (!id) {
+    return null;
+  }
+  const title = restricted ? 'Restricted object' : rawTitle ?? id;
+  const rawHref = readFirstString(
+    record.external_url,
+    record.externalUrl,
+    record.external_canonical_url,
+    record.externalCanonicalUrl,
+    record.human_path_alias,
+    record.humanPathAlias,
+    record.stable_path,
+    record.stablePath,
+    record.storage_path,
+    record.storagePath,
+    record.href,
+    record.url
+  );
+  const href = restricted || !rawHref ? null : normalizeTaskOutputHref(rawHref) ?? rawHref;
+  const authState = readFirstString(record.auth_state, record.authState, metadata.auth_state);
+  const readinessState = readFirstString(record.readiness_state, record.readinessState, metadata.readiness_state);
+  const integrityState = readFirstString(record.integrity_state, record.integrityState, metadata.integrity_state);
+  const availabilityState = readFirstString(record.availability_state, record.availabilityState, metadata.availability_state);
+  const canonicality = readFirstString(record.canonicality, metadata.canonicality) ??
+    (displayKind === 'external' ? 'linked_context_only' : displayKind === 'native' ? 'entity_native' : 'entity_proof');
+  const mutability = readFirstString(record.mutability_policy, record.mutabilityPolicy, metadata.mutability_policy) ??
+    (displayKind === 'raw_proof' ? 'immutable_append_only' : displayKind === 'curated' || displayKind === 'native' ? 'editable_versioned' : 'reference_only');
+  const objectRefs = normalizeObjectRefsFromRecord(record);
+  const hasTaskRef = objectRefs.some((ref) => ref.objectType === 'task' && ref.objectId === String(taskId));
+  const refs = objectRefs.length > 0
+    ? objectRefs
+    : [{ objectType: 'task', objectId: String(taskId), linkRole: readFirstString(record.link_role, record.linkRole) ?? 'linked_context' }];
+  const degradedMessages = [
+    restricted ? 'Restricted by Entity permissions. Snippets and previews are hidden.' : null,
+    displayKind === 'external' && authState && !['authorized', 'ready'].includes(authState.toLowerCase())
+      ? `Connector auth is ${formatReceiptToken(authState)}.`
+      : null,
+    displayKind === 'external' && readinessState && !['ready', 'live'].includes(readinessState.toLowerCase())
+      ? `Connector readiness is ${formatReceiptToken(readinessState)}.`
+      : null,
+    integrityState && integrityState.toLowerCase() !== 'valid' ? `Integrity state is ${formatReceiptToken(integrityState)}.` : null,
+    availabilityState && !['available', 'unknown'].includes(availabilityState.toLowerCase())
+      ? `Availability is ${formatReceiptToken(availabilityState)}.`
+      : null,
+    !hasTaskRef && objectRefs.length > 0 ? 'Linked through a non-task ObjectRef.' : null,
+  ].filter((entry): entry is string => Boolean(entry));
+  const statusTone: ReceiptProofView['statusTone'] = restricted || degradedMessages.length > 0
+    ? 'warning'
+    : displayKind === 'raw_proof' || displayKind === 'native' || displayKind === 'curated'
+      ? 'ok'
+      : 'muted';
+
+  return {
+    id,
+    objectType,
+    displayKind,
+    label: displayKindLabel(displayKind),
+    title,
+    href,
+    externalHref: href ? /^https?:\/\//i.test(href) : false,
+    sourceLabel: displayKind === 'external'
+      ? formatReceiptToken(readFirstString(record.connector_type, record.connectorType, 'external connector'))
+      : displayKind === 'native'
+        ? 'Entity-owned markdown'
+        : displayKind === 'raw_proof'
+          ? 'Entity proof trail'
+          : displayKind === 'curated'
+            ? 'Entity curated report'
+            : 'Entity object',
+    canonicality: formatReceiptToken(canonicality),
+    mutability: formatReceiptToken(mutability),
+    status: restricted
+      ? 'Restricted'
+      : formatReceiptToken(readFirstString(authState, readinessState, integrityState, availabilityState, 'available')),
+    statusTone,
+    objectRefs: refs,
+    restricted,
+    degradedMessages,
+    externalPreview: displayKind === 'external' && !restricted
+      ? buildExternalDocumentPreviewView(record)
+      : null,
+  };
+}
+
+function buildTaskDocumentObjectViews(task: TaskDetailData, receiptProof: ReceiptProofView | null): DocumentObjectView[] {
+  const metadata = task.metadataRecord;
+  const grouped = firstRecord(
+    metadata.phase2_document_objects,
+    metadata.document_objects,
+    metadata.docs_files_artifacts,
+    metadata.docsArtifacts
+  ) ?? {};
+  const reviewPacket = firstRecord(metadata.review_packet, metadata.review_brief);
+  const entries = [
+    ...collectDocumentRecords('native', metadata.native_documents, metadata.nativeDocuments, grouped.native_documents, grouped.nativeDocuments),
+    ...collectDocumentRecords('external', metadata.external_document_refs, metadata.externalDocumentRefs, grouped.external_document_refs, grouped.externalDocumentRefs),
+    ...collectDocumentRecords('evidence', metadata.evidence_artifacts, metadata.evidenceArtifacts, grouped.evidence_artifacts, grouped.evidenceArtifacts, reviewPacket?.evidence_artifacts),
+    ...collectDocumentRecords('evidence', metadata.curated_artifacts, metadata.curatedArtifacts, grouped.curated_artifacts, grouped.curatedArtifacts),
+    ...collectDocumentRecords('evidence', metadata.document_artifacts, metadata.documentArtifacts, grouped.artifacts),
+    ...collectDocumentRecords('evidence', grouped.objects, grouped.nodes),
+  ];
+
+  if (receiptProof?.artifactId) {
+    entries.push({
+      hint: 'evidence',
+      record: {
+        id: receiptProof.artifactId,
+        title: 'Canonical receipt',
+        artifact_kind: 'raw_task_receipt',
+        stable_path: receiptProof.receiptHref ?? receiptProof.stablePath,
+        content_hash: receiptProof.contentHash,
+        mutability_policy: 'immutable_append_only',
+        integrity_state: receiptProof.integrityState,
+        availability_state: receiptProof.availabilityState,
+        linked_object_refs: [{ object_type: 'task', object_id: String(task.id), link_role: 'receipt' }],
+      },
+    });
+  }
+
+  const views: DocumentObjectView[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const view = buildDocumentObjectView(task.id, entry.hint, entry.record);
+    if (!view) {
+      continue;
+    }
+    const key = `${view.objectType}:${view.id}:${view.objectRefs.map((ref) => ref.linkRole ?? '').join(',')}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    views.push(view);
+  }
+
+  return views;
+}
+
+function formatReceiptToken(value: unknown, fallback = 'Unknown'): string {
+  const text = readNonEmptyString(value);
+  if (!text) {
+    return fallback;
+  }
+
+  return text.replace(/[_-]+/g, ' ');
+}
+
+function receiptStatusTone(status: string, integrityState: string, availabilityState: string): ReceiptProofView['statusTone'] {
+  const normalizedStatus = status.toLowerCase();
+  const normalizedIntegrity = integrityState.toLowerCase();
+  const normalizedAvailability = availabilityState.toLowerCase();
+  if (
+    normalizedStatus.includes('failed') ||
+    normalizedStatus.includes('missing') ||
+    normalizedStatus.includes('integrity') ||
+    normalizedIntegrity !== 'valid' ||
+    (normalizedAvailability !== 'available' && normalizedAvailability !== 'unknown')
+  ) {
+    return 'error';
+  }
+
+  if (normalizedStatus.includes('pending') || normalizedStatus.includes('unknown') || normalizedAvailability === 'unknown') {
+    return 'warning';
+  }
+
+  if (normalizedStatus.includes('not required')) {
+    return 'muted';
+  }
+
+  return 'ok';
+}
+
+function receiptToneClass(tone: ReceiptProofView['statusTone']): string {
+  if (tone === 'ok') {
+    return 'border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]';
+  }
+
+  if (tone === 'error') {
+    return 'border-[var(--error)]/35 bg-[var(--surface-error)] text-[var(--error)]';
+  }
+
+  if (tone === 'warning') {
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-200';
+  }
+
+  return 'border-[var(--border-primary)] bg-[var(--bg-primary)] text-[var(--text-muted)]';
+}
+
+function normalizeReceiptDisplayLink(value: unknown, meta: string | null = null): ReceiptDisplayLink | null {
+  const record = toRecord(value);
+  if (record) {
+    const rawHref = readFirstString(
+      record.href,
+      record.url,
+      record.path,
+      record.stable_path,
+      record.stablePath,
+      record.id
+    );
+    const label = readFirstString(record.label, record.title, record.name, rawHref);
+    if (!label) {
+      return null;
+    }
+
+    const href = rawHref ? normalizeTaskOutputHref(rawHref) ?? rawHref : null;
+    return {
+      label,
+      href,
+      external: href ? /^https?:\/\//i.test(href) : false,
+      meta: meta ?? readFirstString(record.kind, record.type, record.artifact_kind, record.artifactKind),
+    };
+  }
+
+  const text = readNonEmptyString(value);
+  if (!text) {
+    return null;
+  }
+
+  const href = normalizeTaskOutputHref(text) ?? text;
+  return {
+    label: text,
+    href,
+    external: /^https?:\/\//i.test(href),
+    meta,
+  };
+}
+
+function collectReceiptDisplayLinks(...values: unknown[]): ReceiptDisplayLink[] {
+  const links: ReceiptDisplayLink[] = [];
+  const seen = new Set<string>();
+
+  const add = (value: unknown, meta: string | null = null) => {
+    if (Array.isArray(value)) {
+      value.forEach((entry) => add(entry, meta));
+      return;
+    }
+
+    const link = normalizeReceiptDisplayLink(value, meta);
+    if (!link) {
+      return;
+    }
+
+    const key = `${link.label}::${link.href ?? ''}::${link.meta ?? ''}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    links.push(link);
+  };
+
+  values.forEach((value) => add(value));
+  return links;
+}
+
+function buildReceiptProofView(
+  task: TaskDetailData,
+  outputLinks: Array<{ label: string; href: string; external: boolean }>
+): ReceiptProofView | null {
+  const metadata = task.metadataRecord;
+  const receipt = firstRecord(metadata.phase2_receipt, metadata.receipt, metadata.receipt_artifact);
+  const reviewPacket = firstRecord(metadata.review_packet, metadata.review_brief);
+  const hasReceiptMetadata = Boolean(receipt || readNonEmptyString(metadata.receipt_status));
+  const doneWithoutReceipt = task.column === 'done' && !hasReceiptMetadata;
+  const receiptActivity = task.activity.find((entry) => entry.activityEventType === 'receipt_created' || entry.activityEventType === 'receipt_failed');
+
+  if (!hasReceiptMetadata && !doneWithoutReceipt && !receiptActivity) {
+    return null;
+  }
+
+  const artifactId = readFirstString(receipt?.artifact_id, receipt?.artifactId, metadata.receipt_artifact_id);
+  const artifactKind = readFirstString(receipt?.artifact_kind, receipt?.artifactKind) ?? 'raw_task_receipt';
+  const mutability = readFirstString(receipt?.mutability_policy, receipt?.mutabilityPolicy) ?? (artifactKind === 'raw_task_receipt' ? 'immutable_append_only' : 'unknown');
+  const stablePath = readFirstString(receipt?.stable_path, receipt?.stablePath);
+  const receiptHref = readFirstString(receipt?.human_path_alias, receipt?.humanPathAlias, stablePath);
+  const contentHash = readFirstString(receipt?.content_hash, receipt?.contentHash, metadata.receipt_content_hash);
+  const integrityState = readFirstString(receipt?.integrity_state, receipt?.integrityState) ?? (artifactId ? 'valid' : 'missing_body');
+  const availabilityState = readFirstString(receipt?.availability_state, receipt?.availabilityState) ?? (artifactId ? 'available' : 'unknown');
+  const rawStatus = readFirstString(
+    metadata.receipt_status,
+    receipt?.receipt_status,
+    receipt?.status,
+    artifactId ? 'created' : null,
+    doneWithoutReceipt ? 'missing_receipt' : null
+  ) ?? 'not_required_yet';
+  const status = formatReceiptToken(rawStatus, 'Unknown');
+  const evidenceLinks = collectReceiptDisplayLinks(
+    metadata.evidence_links,
+    metadata.evidence_artifacts,
+    metadata.output_artifact_ids,
+    metadata.output_artifacts,
+    reviewPacket?.evidence_links,
+    reviewPacket?.evidence_artifacts,
+    reviewPacket?.output_artifact_ids,
+    reviewPacket?.output_artifacts
+  );
+  const normalizedOutputLinks = outputLinks.map((link) => ({
+    ...link,
+    meta: link.external ? 'external output' : 'Entity output',
+  }));
+  const evidenceSummary = readFirstString(
+    metadata.evidence_summary,
+    receipt?.evidence_summary,
+    reviewPacket?.evidence_summary,
+    reviewPacket?.evidence,
+    reviewPacket?.requested_outcome,
+    outputLinks.length > 0 ? 'Output links are attached.' : null
+  ) ?? 'No evidence summary recorded.';
+  const missingEvidenceReason = readFirstString(
+    metadata.missing_evidence_reason,
+    receipt?.missing_evidence_reason,
+    reviewPacket?.missing_evidence_reason
+  );
+  const missingEvidence = normalizeBoolean(metadata.missing_evidence ?? receipt?.missing_evidence) ||
+    Boolean(missingEvidenceReason) ||
+    (task.column === 'done' && evidenceLinks.length === 0 && outputLinks.length === 0 && evidenceSummary === 'No evidence summary recorded.');
+  const degradedMessages = [
+    doneWithoutReceipt ? 'Completed task has no canonical receipt metadata.' : null,
+    missingEvidence ? missingEvidenceReason ?? 'No evidence links or output artifacts were recorded.' : null,
+    integrityState !== 'valid' ? `Integrity state is ${formatReceiptToken(integrityState)}.` : null,
+    availabilityState !== 'available' && availabilityState !== 'unknown' ? `Availability is ${formatReceiptToken(availabilityState)}.` : null,
+    readFirstString(metadata.receipt_error, receipt?.error) ? `Receipt error: ${readFirstString(metadata.receipt_error, receipt?.error)}` : null,
+  ].filter((entry): entry is string => Boolean(entry));
+
+  return {
+    status,
+    statusTone: receiptStatusTone(status, integrityState, availabilityState),
+    artifactId,
+    artifactKind: formatReceiptToken(artifactKind),
+    artifactMode: artifactKind === 'raw_task_receipt'
+      ? 'raw'
+      : artifactKind.includes('curated')
+        ? 'curated'
+        : 'unknown',
+    mutability: formatReceiptToken(mutability),
+    stablePath,
+    receiptHref,
+    contentHash,
+    integrityState: formatReceiptToken(integrityState),
+    availabilityState: formatReceiptToken(availabilityState),
+    createdAt: readFirstString(receipt?.created_at, receipt?.createdAt),
+    evidenceSummary,
+    missingEvidence,
+    missingEvidenceReason,
+    evidenceLinks,
+    outputLinks: normalizedOutputLinks,
+    reviewDecision: readFirstString(metadata.review_decision, receipt?.review_decision, receipt?.reviewDecision) ?? 'Pending',
+    approvalDecision: readFirstString(metadata.human_gate_decision, receipt?.human_gate_decision, receipt?.humanGateDecision) ?? 'Not recorded',
+    provenance: readFirstString(receipt?.provenance, metadata.provenance, metadata.source, receiptActivity?.provenance) ?? 'Entity task metadata',
+    degradedMessages,
+  };
+}
+
+type ReviewDecision = 'pending' | 'accepted' | 'needs_fix' | 'rejected';
+
+const REVIEW_DECISION_LABELS: Record<ReviewDecision, string> = {
+  pending: 'Pending',
+  accepted: 'Accepted',
+  needs_fix: 'Needs fix',
+  rejected: 'Rejected',
+};
+
+function normalizeReviewDecision(value: unknown): ReviewDecision {
+  const normalized = readNonEmptyString(value)?.toLowerCase().replace(/[\s-]+/g, '_');
+  if (normalized === 'request_fix') {
+    return 'needs_fix';
+  }
+  if (normalized === 'accepted' || normalized === 'needs_fix' || normalized === 'rejected') {
+    return normalized;
+  }
+  return 'pending';
+}
+
+function buildReviewMetadataPatch(
+  task: TaskDetailData,
+  decision: ReviewDecision,
+  reviewer: string
+): string {
+  return JSON.stringify({
+    ...task.metadataRecord,
+    review_decision: decision,
+    reviewed_by: reviewer,
+    reviewed_at: new Date().toISOString(),
+  });
 }
 
 async function requestOptionalJson<T = unknown>(
@@ -942,6 +1856,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const [attachmentPath, setAttachmentPath] = useState('');
   const [noteInput, setNoteInput] = useState('');
   const [commentInput, setCommentInput] = useState('');
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [replyTargetId, setReplyTargetId] = useState<number | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const { tasks: boardTasks, reloadTasks } = useTaskBoard({ apiBase, autoLoad: false });
@@ -1104,6 +2019,11 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     () => composeAssigneeOptions(activeAgentNames, userProfile.displayName, form?.assignee),
     [activeAgentNames, form?.assignee, userProfile.displayName],
   );
+  const actorAliases = useMemo(
+    () => uniqueStrings([userProfile.displayName, userProfile.handle, userProfile.email])
+      .map((entry) => entry.toLowerCase()),
+    [userProfile.displayName, userProfile.email, userProfile.handle],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -1153,6 +2073,18 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
   const commentTree = useMemo(() => buildCommentTree(comments), [comments]);
   const outputLinks = useMemo(() => extractTaskOutputLinks(task?.output ?? ''), [task?.output]);
+  const receiptProof = useMemo(() => (task ? buildReceiptProofView(task, outputLinks) : null), [outputLinks, task]);
+  const documentObjectViews = useMemo(() => (task ? buildTaskDocumentObjectViews(task, receiptProof) : []), [receiptProof, task]);
+  const worktypeOverlay = useMemo(() => (task ? buildWorktypeOverlayView(task) : null), [task]);
+  const reviewActorEligible = task
+    ? principalMatches(actorAliases, task.reviewerPrincipalId ?? task.reviewer)
+    : false;
+  const humanGateActorEligible = task
+    ? principalMatches(actorAliases, task.approverPrincipalId ?? task.approver)
+    : false;
+  const humanGateRequestEligible = task
+    ? humanGateActorEligible || principalMatches(actorAliases, task.ownerPrincipalId)
+    : false;
   const outputIsEmpty = task ? task.output.trim().length === 0 && outputLinks.length === 0 : true;
   const outputExpanded = !outputIsEmpty || outputSectionOpen;
   const subtasks = useMemo(() => {
@@ -1216,23 +2148,91 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
   // Live-refresh this task's detail + comments when the server broadcasts
   // changes for it (e.g. an @mentioned agent's reply or task pickup).
-  useEntityWebSocket((message) => {
-    if (Number(message.taskId) !== taskId) {
+  useEffect(() => {
+    if (typeof window === 'undefined') {
       return;
     }
-    if (
-      message.type === 'task:comment' ||
-      message.type === 'task:updated' ||
-      message.type === 'task:moved'
-    ) {
-      void supplementalRef.current(taskId, {
-        preserveOutput: true,
-        preserveDependencyInput: true,
-      });
-    }
-  });
+    let active = true;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
 
-  const mention = useMentionAutocomplete(activeAgentNames, setCommentInput);
+    const connect = () => {
+      if (!active) {
+        return;
+      }
+      try {
+        const url = new URL('ws://' + window.location.host);
+        const token = window.localStorage.getItem('entity-api-token');
+        if (token && token.trim()) {
+          url.searchParams.set('token', token.trim());
+        }
+        socket = new WebSocket(url.toString());
+      } catch {
+        socket = new WebSocket('ws://' + window.location.host);
+      }
+
+      socket.onmessage = (event) => {
+        let message: { type?: string; taskId?: unknown };
+        try {
+          message = JSON.parse(String(event.data)) as { type?: string; taskId?: unknown };
+        } catch {
+          return;
+        }
+        if (Number(message.taskId) !== taskId) {
+          return;
+        }
+        if (
+          message.type === 'task:comment' ||
+          message.type === 'task:updated' ||
+          message.type === 'task:moved'
+        ) {
+          void supplementalRef.current(taskId, {
+            preserveOutput: true,
+            preserveDependencyInput: true,
+          });
+        }
+      };
+
+      socket.onclose = () => {
+        socket = null;
+        if (!active) {
+          return;
+        }
+        reconnectTimer = window.setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      active = false;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        socket.close();
+      }
+    };
+  }, [taskId]);
+
+  const mentionMatches = useMemo(() => {
+    if (mentionQuery === null) {
+      return [];
+    }
+    const query = mentionQuery.toLowerCase();
+    return activeAgentNames.filter((name) => name.toLowerCase().includes(query)).slice(0, 6);
+  }, [activeAgentNames, mentionQuery]);
+
+  const handleCommentInputChange = (value: string) => {
+    setCommentInput(value);
+    const match = value.match(/@([\w.-]*)$/);
+    setMentionQuery(match ? match[1] : null);
+  };
+
+  const applyMention = (name: string) => {
+    setCommentInput((prev) => prev.replace(/@([\w.-]*)$/, `@${name} `));
+    setMentionQuery(null);
+  };
 
   const clearStaleBlockerReason = (detail: TaskDetailData) => {
     const stalePatterns = [
@@ -1565,8 +2565,52 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
       return;
     }
 
+    if (task.reviewRequired && (decision === 'accepted' || decision === 'needs_fix')) {
+      const endpoint = decision === 'accepted' ? 'accept' : 'request-fix';
+      setBusyAction('review');
+      setError(null);
+      setSaveMessage(null);
+      try {
+        await requestJsonWithFallback({
+          urls: buildApiCandidates(`/tasks/${task.id}/review/${endpoint}`, apiBase),
+          init: {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              actor_principal_id: userProfile.displayName,
+              actor_type: 'human',
+              reason: decision === 'accepted'
+                ? 'Accepted from task detail review panel.'
+                : 'Fix requested from task detail review panel.',
+            }),
+          },
+          continueOnStatuses: [],
+          fallbackError: 'Unable to update review state.',
+        });
+        await loadSupplementalData(task.id, { preserveOutput: true, preserveDependencyInput: true });
+        if (options.complete && decision === 'accepted') {
+          await patchTask(
+            { column: 'done' },
+            {
+              successMessage: 'Review accepted and task moved to Done.',
+              action: 'review',
+            }
+          );
+        } else {
+          setStatus(`Review marked ${REVIEW_DECISION_LABELS[decision].toLowerCase()}.`);
+        }
+        void reloadTasks().catch(() => undefined);
+      } catch (saveError) {
+        setError(toErrorMessage(saveError, 'Unable to update review state.'));
+        await loadSupplementalData(task.id, { preserveOutput: true, preserveDependencyInput: true }).catch(() => undefined);
+      } finally {
+        setBusyAction(null);
+      }
+      return;
+    }
+
     const reviewer = userProfile.displayName || 'Reviewer';
-    const metadata = buildReviewDecisionMetadata(task.metadataRecord, { decision, reviewer });
+    const metadata = buildReviewMetadataPatch(task, decision, reviewer);
     await patchTask(
       {
         metadata,
@@ -1579,6 +2623,46 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
         action: 'review',
       }
     );
+  };
+
+  const saveHumanGateAction = async (action: 'request' | 'approve' | 'reject') => {
+    if (!task) {
+      return;
+    }
+
+    setBusyAction(`human-gate-${action}`);
+    setError(null);
+    setSaveMessage(null);
+    try {
+      await requestJsonWithFallback({
+        urls: buildApiCandidates(`/tasks/${task.id}/human-gate/${action}`, apiBase),
+        init: {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            actor_principal_id: userProfile.displayName,
+            actor_type: 'human',
+            reason: `Human gate ${action} from task detail panel.`,
+          }),
+        },
+        continueOnStatuses: [],
+        fallbackError: 'Unable to update human gate.',
+      });
+      await loadSupplementalData(task.id, { preserveOutput: true, preserveDependencyInput: true });
+      setStatus(
+        action === 'request'
+          ? 'Human gate requested.'
+          : action === 'approve'
+            ? 'Human gate approved.'
+            : 'Human gate rejected.'
+      );
+      void reloadTasks().catch(() => undefined);
+    } catch (saveError) {
+      setError(toErrorMessage(saveError, 'Unable to update human gate.'));
+      await loadSupplementalData(task.id, { preserveOutput: true, preserveDependencyInput: true }).catch(() => undefined);
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const addNote = async () => {
@@ -1901,6 +2985,62 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
         </div>
       );
     });
+
+  const accountabilityRows = task
+    ? [
+        {
+          label: 'Initiator',
+          value: formatAccountabilityField(task.initiatorPrincipalId),
+          meta: task.initiatorType ?? 'type unknown',
+        },
+        {
+          label: 'Owner',
+          value: formatAccountabilityField(task.ownerPrincipalId),
+          meta: task.ownerPrincipalType ?? 'principal type unknown',
+        },
+        {
+          label: 'Assignee',
+          value: formatAccountabilityField(task.assignee === 'Unassigned' ? null : task.assignee),
+          meta: task.assignmentState ?? 'assignment state unknown',
+        },
+        {
+          label: 'Executor',
+          value: task.executorPrincipalId
+            ? formatAccountabilityField(task.executorPrincipalId)
+            : task.taskmasterDrivable
+              ? { label: 'Task Master drivable', degraded: false }
+              : formatAccountabilityField(null),
+          meta: task.taskmasterDrivable ? 'policy-drivable unassigned state' : 'individual executor expected',
+        },
+        {
+          label: 'Submitted by',
+          value: formatAccountabilityField(task.submittedBy),
+          meta: 'review submission principal',
+        },
+        {
+          label: 'Reviewer',
+          value: formatAccountabilityField(task.reviewer),
+          meta: 'review decision principal',
+        },
+        {
+          label: 'Approver',
+          value: formatAccountabilityField(task.approver),
+          meta: 'human gate principal',
+        },
+      ]
+    : [];
+  const routingState = task
+    ? buildRoutingStateView({
+        assignee: task.assignee,
+        assignmentState: task.assignmentState,
+        taskmasterDrivable: task.taskmasterDrivable,
+        executorPrincipalId: task.executorPrincipalId,
+        ownerPrincipalId: task.ownerPrincipalId,
+        ownerPrincipalType: task.ownerPrincipalType,
+        metadataRecord: task.metadataRecord,
+        activityEventTypes: task.activity.map((entry) => entry.activityEventType),
+      })
+    : null;
 
   return (
     <div className="fixed inset-0 z-[85] pointer-events-none">
@@ -2258,91 +3398,689 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                />
 	              </section>
 
+	              <section
+	                style={{ order: 2 }}
+	                className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+	                data-testid="task-accountability-panel"
+	              >
+	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+	                  <div>
+	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                      Accountability
+	                    </div>
+	                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+	                      Work-object principals for ownership, execution, review, and approval.
+	                    </p>
+	                  </div>
+	                  {accountabilityRows.some((row) => row.value.degraded) ? (
+	                    <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-200">
+	                      Unknown or legacy fields present
+	                    </span>
+	                  ) : (
+	                    <span className="rounded-full border border-[var(--accent)]/25 bg-[var(--surface-accent)] px-2 py-0.5 text-[11px] text-[var(--accent)]">
+	                      Complete
+	                    </span>
+	                  )}
+	                </div>
+	                <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+	                  <div className={accountabilityCardClass(formatAccountabilityField(task.createdByPrincipalId ?? task.createdBy).degraded)}>
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Created by</div>
+	                    <div>{formatAccountabilityField(task.createdByPrincipalId ?? task.createdBy).label}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">record creator</div>
+	                  </div>
+	                  {accountabilityRows.map((row) => (
+	                    <div key={row.label} className={accountabilityCardClass(row.value.degraded)}>
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">{row.label}</div>
+	                      <div>{row.value.label}</div>
+	                      <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{row.meta}</div>
+	                    </div>
+	                  ))}
+	                </div>
+	              </section>
+
+	              <section
+	                style={{ order: 2 }}
+	                className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+	                data-testid="task-routing-state-panel"
+	              >
+	                <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+	                  <div>
+	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                      Task Master Routing
+	                    </div>
+	                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+	                      Task Master helps recover policy-drivable work; it is not the universal executor for every task.
+	                    </p>
+	                  </div>
+	                  {routingState ? (
+	                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${routingToneClass(routingState.tone)}`}>
+	                      {routingState.label}
+	                    </span>
+	                  ) : null}
+	                </div>
+	                {routingState ? (
+	                  <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Policy reason</div>
+	                      <div>{routingState.reason}</div>
+	                    </div>
+	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Assignment state</div>
+	                      <div>{task.assignmentState ?? 'Unknown'}</div>
+	                      <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">Assignee: {task.assignee || 'Unassigned'}</div>
+	                    </div>
+	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Executor</div>
+	                      <div>{task.executorPrincipalId ?? (task.taskmasterDrivable ? 'Task Master drivable' : 'Individual executor expected')}</div>
+	                      <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+	                        Owner: {task.ownerPrincipalId ?? 'Unknown'}{task.ownerPrincipalType ? ` (${task.ownerPrincipalType})` : ''}
+	                      </div>
+	                    </div>
+	                    {routingState.reasonChain.length > 0 ? (
+	                      <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
+	                        <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Routing reason chain</div>
+	                        <ol className="mt-1 list-decimal space-y-1 pl-4">
+	                          {routingState.reasonChain.map((entry, index) => (
+	                            <li key={`${index}-${entry}`}>{entry}</li>
+	                          ))}
+	                        </ol>
+	                      </div>
+	                    ) : null}
+	                  </div>
+	                ) : null}
+	              </section>
+
+                  {worktypeOverlay ? (
+                    <section
+                      style={{ order: 2 }}
+                      className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+                      data-testid="task-worktype-overlay-panel"
+                    >
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                            Worktype Overlay
+                          </div>
+                          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                            Domain fields shown with registry labels, not engineering schema terms.
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-[var(--accent)]/25 bg-[var(--surface-accent)] px-2 py-0.5 text-xs text-[var(--accent)]">
+                          {worktypeOverlay.label}
+                        </span>
+                      </div>
+                      <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-[var(--text-muted)]">
+                        <span>{worktypeOverlay.schema}</span>
+                        <span>sensitivity: {worktypeOverlay.sensitivity}</span>
+                      </div>
+                      {worktypeOverlay.rows.length > 0 ? (
+                        <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+                          {worktypeOverlay.rows.map((row) => (
+                            <div key={row.label} className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">{row.label}</span>
+                                {row.indexable ? <span className="text-[10px] text-sky-300">filterable</span> : null}
+                              </div>
+                              <div className="mt-0.5 capitalize">{row.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-[var(--text-muted)]">No overlay values recorded yet.</p>
+                      )}
+                    </section>
+                  ) : null}
+
 	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
 	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-	                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
-	                    Review
+	                  <div>
+	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                      Review Policy
+	                    </div>
+	                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+	                      Reviewer assignment, reason chain, and review decision.
+	                    </p>
 	                  </div>
-	                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${
-	                    hasReviewMetadata(task.metadataRecord)
-	                      ? 'border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]'
-	                      : 'border-amber-500/25 bg-amber-500/10 text-amber-200'
-	                  }`}>
-	                    {hasReviewMetadata(task.metadataRecord) ? 'Packet present' : 'Needs packet'}
+	                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${reviewGateToneClass(task.reviewState, task.reviewRequired)}`}>
+	                    {task.reviewRequired ? formatReviewGateToken(task.reviewState, 'Pending') : 'Not required'}
 	                  </span>
 	                </div>
 	                <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
 	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
-	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reviewer</div>
-	                    <div>{normalizeBoolean(task.metadataRecord.henry_required ?? task.metadataRecord.requires_henry) ? 'Henry' : reviewField(task.metadataRecord.reviewer ?? task.metadataRecord.review_owner)}</div>
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Eligible reviewer</div>
+	                    <div>{reviewField(task.reviewerPrincipalId ?? task.reviewer ?? task.metadataRecord.reviewer ?? task.metadataRecord.review_owner)}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+	                      {reviewActorEligible ? 'Controls available to you' : 'Controls hidden unless profile matches reviewer'}
+	                    </div>
 	                  </div>
 	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
 	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Decision</div>
-	                    <div>{reviewField(task.metadataRecord.review_decision, 'Pending')}</div>
+	                    <div>{formatReviewGateToken(task.reviewState, 'Pending')}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{reviewField(task.metadataRecord.review_decision_reason ?? task.metadataRecord.review_note, 'No note recorded')}</div>
 	                  </div>
 	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
 	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Type / Risk</div>
 	                    <div>{reviewField(task.metadataRecord.review_type ?? task.metadataRecord.review_class)} / {reviewField(task.metadataRecord.risk_level)}</div>
 	                  </div>
 	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
-	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reviewed By</div>
-	                    <div>{reviewField(task.metadataRecord.reviewed_by)}</div>
-	                  </div>
-	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
 	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Packet</div>
-	                    <div>{reviewPacketSummary(task.metadataRecord)}</div>
+	                    <div>{hasReviewMetadata(task.metadataRecord) ? reviewPacketSummary(task.metadataRecord) : 'No legacy packet metadata'}</div>
 	                  </div>
-	                  {readNonEmptyString(task.metadataRecord.review_note) ? (
+	                  {task.policyReasonChain.length > 0 ? (
 	                    <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 sm:col-span-2">
-	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Review Note</div>
-	                      <div>{readNonEmptyString(task.metadataRecord.review_note)}</div>
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Reason Chain</div>
+	                      <ol className="mt-1 list-decimal space-y-1 pl-4">
+	                        {task.policyReasonChain.slice(0, 5).map((entry, index) => (
+	                          <li key={`${index}-${readFirstString(entry.decision, entry.reason) ?? 'reason'}`}>{formatReasonChainEntry(entry, index)}</li>
+	                        ))}
+	                      </ol>
+	                    </div>
+	                  ) : null}
+	                  {task.overrideAudit.length > 0 ? (
+	                    <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-amber-100 sm:col-span-2">
+	                      <div className="text-[10px] uppercase tracking-[0.1em] text-amber-200/80">Override Audit</div>
+	                      <ol className="mt-1 list-decimal space-y-1 pl-4">
+	                        {task.overrideAudit.slice(0, 4).map((entry, index) => (
+	                          <li key={`${index}-${readFirstString(entry.actor, entry.reason) ?? 'override'}`}>{formatReasonChainEntry(entry, index)}</li>
+	                        ))}
+	                      </ol>
 	                    </div>
 	                  ) : null}
 	                </div>
-                  {hasReviewMetadata(task.metadataRecord) ? (
+                  {task.reviewRequired ? (
                     <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--border-primary)] pt-3">
-                      <button
-                        type="button"
-                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
-                        onClick={() => void saveReviewDecision('accepted')}
-                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'accepted'}
-                      >
-                        Accept review
-                      </button>
-                      <button
-                        type="button"
-                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
-                        onClick={() => void saveReviewDecision('accepted', { complete: true })}
-                        disabled={busyAction !== null}
-                      >
-                        Accept + Done
-                      </button>
-                      <button
-                        type="button"
-                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
-                        onClick={() => void saveReviewDecision('needs_fix')}
-                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'needs_fix'}
-                      >
-                        Needs fix
-                      </button>
-                      <button
-                        type="button"
-                        className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
-                        onClick={() => void saveReviewDecision('rejected')}
-                        disabled={busyAction !== null || normalizeReviewDecision(task.metadataRecord.review_decision) === 'rejected'}
-                      >
-                        Reject
-                      </button>
-                      {normalizeReviewDecision(task.metadataRecord.review_decision) !== 'accepted' ? (
+                      {reviewActorEligible ? (
+                        <>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveReviewDecision('accepted')}
+                            disabled={busyAction !== null || task.reviewState === 'accepted'}
+                          >
+                            Accept review
+                          </button>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveReviewDecision('accepted', { complete: true })}
+                            disabled={busyAction !== null || (task.humanGateRequired && task.humanGateState !== 'approved')}
+                          >
+                            Accept + Done
+                          </button>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveReviewDecision('needs_fix')}
+                            disabled={busyAction !== null || task.reviewState === 'request_fix'}
+                          >
+                            Request fix
+                          </button>
+                        </>
+                      ) : (
+                        <div className="text-[11px] text-[var(--text-muted)]">
+                          Review controls are hidden because your profile does not match the eligible reviewer.
+                        </div>
+                      )}
+                      {task.reviewState !== 'accepted' ? (
                         <div className="basis-full text-[11px] text-[var(--text-muted)]">
-                          Done is locked until the review decision is accepted.
+                          Done is locked until the required review is accepted.
                         </div>
                       ) : null}
                     </div>
                   ) : null}
 	              </section>
 
-	              <section style={{ order: 3 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
+	              <section style={{ order: 3 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
+	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+	                  <div>
+	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+	                      Human Gate
+	                    </div>
+	                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+	                      Separate approval state for high-risk or externally visible work.
+	                    </p>
+	                  </div>
+	                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${reviewGateToneClass(task.humanGateState, task.humanGateRequired)}`}>
+	                    {task.humanGateRequired ? formatReviewGateToken(task.humanGateState, 'Pending') : 'Not required'}
+	                  </span>
+	                </div>
+	                <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Human approver</div>
+	                    <div>{reviewField(task.approverPrincipalId ?? task.approver)}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+	                      {humanGateActorEligible ? 'Controls available to you' : 'Controls hidden unless profile matches approver'}
+	                    </div>
+	                  </div>
+	                  <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Decision</div>
+	                    <div>{formatReviewGateToken(task.humanGateState)}</div>
+	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{reviewField(task.metadataRecord.human_gate_reason, 'No note recorded')}</div>
+	                  </div>
+	                </div>
+                  {task.humanGateRequired ? (
+                    <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--border-primary)] pt-3">
+                      {task.humanGateState === 'pending' && humanGateActorEligible ? (
+                        <>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveHumanGateAction('approve')}
+                            disabled={busyAction !== null}
+                          >
+                            Approve human gate
+                          </button>
+                          <button
+                            type="button"
+                            className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                            onClick={() => void saveHumanGateAction('reject')}
+                            disabled={busyAction !== null}
+                          >
+                            Reject human gate
+                          </button>
+                        </>
+                      ) : task.humanGateState !== 'approved' && task.humanGateState !== 'rejected' && humanGateRequestEligible ? (
+                        <button
+                          type="button"
+                          className="mc-shell-btn px-3 py-1.5 text-xs font-medium"
+                          onClick={() => void saveHumanGateAction('request')}
+                          disabled={busyAction !== null}
+                        >
+                          Request human gate
+                        </button>
+                      ) : (
+                        <div className="text-[11px] text-[var(--text-muted)]">
+                          Human-gate controls are hidden until the assigned human approver is viewing this task.
+                        </div>
+                      )}
+                      {task.humanGateState !== 'approved' ? (
+                        <div className="basis-full text-[11px] text-[var(--text-muted)]">
+                          Done is locked until the required human gate is approved.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+	              </section>
+
+                  <TaskChatContextPanel
+                    taskId={task.id}
+                    apiBase={apiBase}
+                    proofAvailable={Boolean(receiptProof)}
+                    documentObjectCount={documentObjectViews.length}
+                    outputLinkCount={outputLinks.length}
+                  />
+
+                  {receiptProof ? (
+                    <section
+                      style={{ order: 3 }}
+                      className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+                      data-testid="task-receipt-proof-panel"
+                    >
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                            Receipt and Proof
+                          </div>
+                          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                            Canonical receipt metadata, evidence state, and artifact identity.
+                          </p>
+                        </div>
+                        <span className={`rounded-full border px-2 py-0.5 text-[11px] ${receiptToneClass(receiptProof.statusTone)}`}>
+                          {receiptProof.status}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Receipt Link</div>
+                          {receiptProof.receiptHref ? (
+                            <a
+                              href={receiptProof.receiptHref}
+                              className="mt-0.5 block break-all text-sky-300 hover:text-sky-200"
+                              data-testid="task-receipt-link"
+                            >
+                              {receiptProof.receiptHref}
+                            </a>
+                          ) : (
+                            <div className="mt-0.5 text-amber-200">No stable receipt link recorded.</div>
+                          )}
+                          {receiptProof.artifactId ? (
+                            <div className="mt-1 break-all text-[10px] text-[var(--text-muted)]">Artifact {receiptProof.artifactId}</div>
+                          ) : null}
+                        </div>
+
+                        <div
+                          className={`rounded-md border px-2 py-1.5 ${
+                            receiptProof.artifactMode === 'raw'
+                              ? 'border-sky-500/25 bg-sky-500/10'
+                              : receiptProof.artifactMode === 'curated'
+                                ? 'border-violet-500/25 bg-violet-500/10'
+                                : 'border-[var(--border-primary)] bg-[var(--bg-primary)]'
+                          }`}
+                        >
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Artifact Type</div>
+                          <div>{receiptProof.artifactMode === 'raw' ? 'Raw proof artifact' : receiptProof.artifactMode === 'curated' ? 'Curated interpretation' : 'Artifact type unknown'}</div>
+                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                            {receiptProof.artifactKind} / {receiptProof.mutability}
+                          </div>
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Integrity</div>
+                          <div data-testid="task-receipt-integrity-state">{receiptProof.integrityState}</div>
+                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">Availability: {receiptProof.availabilityState}</div>
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Provenance</div>
+                          <div>{receiptProof.provenance}</div>
+                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                            {receiptProof.createdAt ? `Created ${formatDateTime(receiptProof.createdAt)}` : 'Creation time unknown'}
+                          </div>
+                        </div>
+
+                        <div
+                          className={`rounded-md border px-2 py-1.5 sm:col-span-2 ${
+                            receiptProof.missingEvidence
+                              ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+                              : 'border-[var(--border-primary)] bg-[var(--bg-primary)]'
+                          }`}
+                          data-testid="task-receipt-missing-evidence"
+                        >
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Evidence Summary</div>
+                          <div>{receiptProof.evidenceSummary}</div>
+                          <div className="mt-1 text-[11px]">
+                            {receiptProof.missingEvidence
+                              ? `Missing evidence: ${receiptProof.missingEvidenceReason ?? 'no evidence links or output artifacts were recorded'}`
+                              : 'Missing evidence: no'}
+                          </div>
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Review</div>
+                          <div>{receiptProof.reviewDecision}</div>
+                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">Approval: {receiptProof.approvalDecision}</div>
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5">
+                          <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Content Hash</div>
+                          <div className="break-all">{receiptProof.contentHash ?? 'Not recorded'}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                            Evidence References
+                          </div>
+                          {receiptProof.evidenceLinks.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {receiptProof.evidenceLinks.map((link) => (
+                                <a
+                                  key={`${link.label}-${link.href ?? 'no-href'}`}
+                                  href={link.href ?? undefined}
+                                  target={link.external ? '_blank' : undefined}
+                                  rel={link.external ? 'noreferrer' : undefined}
+                                  className="block min-w-0 rounded border border-[var(--border-primary)] px-2 py-1.5 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <span className="block truncate">{link.label}</span>
+                                  {link.meta ? <span className="mt-0.5 block text-[10px] text-[var(--text-muted)]">{link.meta}</span> : null}
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-[var(--text-muted)]">No structured evidence references recorded.</div>
+                          )}
+                        </div>
+
+                        <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                            Output Links
+                          </div>
+                          {receiptProof.outputLinks.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {receiptProof.outputLinks.map((link) => (
+                                <a
+                                  key={link.href ?? link.label}
+                                  href={link.href ?? undefined}
+                                  target={link.external ? '_blank' : undefined}
+                                  rel={link.external ? 'noreferrer' : undefined}
+                                  className="block min-w-0 rounded border border-[var(--border-primary)] px-2 py-1.5 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <span className="block truncate">{link.label}</span>
+                                  {link.meta ? <span className="mt-0.5 block text-[10px] text-[var(--text-muted)]">{link.meta}</span> : null}
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-[var(--text-muted)]">No output artifact links recorded.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {receiptProof.degradedMessages.length > 0 ? (
+                        <ul className="mt-3 list-disc space-y-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-2 pl-6 text-xs text-amber-100">
+                          {receiptProof.degradedMessages.map((message) => (
+                            <li key={message}>{message}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </section>
+                  ) : null}
+
+                  {documentObjectViews.length > 0 ? (
+                    <section
+                      style={{ order: 4 }}
+                      className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
+                      data-testid="task-document-object-panel"
+                    >
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                            Docs, Files, and Artifacts
+                          </div>
+                          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                            External refs, Entity-native markdown, raw proof, and curated interpretation are labeled separately.
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-0.5 text-[11px] text-[var(--text-muted)]">
+                          {documentObjectViews.length} object{documentObjectViews.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-2 lg:grid-cols-2">
+                        {documentObjectViews.map((object) => (
+                          <article
+                            key={`${object.objectType}-${object.id}-${object.objectRefs.map((ref) => ref.linkRole ?? 'link').join('-')}`}
+                            className={`rounded-md border px-3 py-2 text-xs ${
+                              object.displayKind === 'external'
+                                ? 'border-amber-500/25 bg-amber-500/10'
+                                : object.displayKind === 'native'
+                                  ? 'border-emerald-500/25 bg-emerald-500/10'
+                                  : object.displayKind === 'raw_proof'
+                                    ? 'border-sky-500/25 bg-sky-500/10'
+                                    : object.displayKind === 'curated'
+                                      ? 'border-violet-500/25 bg-violet-500/10'
+                                      : 'border-[var(--border-primary)] bg-[var(--bg-primary)]'
+                            }`}
+                            data-testid="task-document-object-card"
+                            data-object-kind={object.displayKind}
+                          >
+                            <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                                  {object.label}
+                                </div>
+                                {object.href ? (
+                                  <a
+                                    href={object.href}
+                                    target={object.externalHref ? '_blank' : undefined}
+                                    rel={object.externalHref ? 'noreferrer' : undefined}
+                                    className="mt-0.5 block truncate text-sm font-medium text-sky-300 hover:text-sky-200"
+                                  >
+                                    {object.title}
+                                  </a>
+                                ) : (
+                                  <div className="mt-0.5 truncate text-sm font-medium text-[var(--text-primary)]">
+                                    {object.title}
+                                  </div>
+                                )}
+                              </div>
+                              <span className={`rounded-full border px-2 py-0.5 text-[10px] ${documentObjectToneClass(object.statusTone)}`}>
+                                {object.status}
+                              </span>
+                            </div>
+
+                            <div className="grid gap-1.5 text-[11px] text-[var(--text-secondary)] sm:grid-cols-2">
+                              <div>
+                                <span className="text-[var(--text-muted)]">Source: </span>
+                                {object.sourceLabel}
+                              </div>
+                              <div>
+                                <span className="text-[var(--text-muted)]">Canonicality: </span>
+                                {object.canonicality}
+                              </div>
+                              <div>
+                                <span className="text-[var(--text-muted)]">Mutability: </span>
+                                {object.mutability}
+                              </div>
+                              <div className="break-all">
+                                <span className="text-[var(--text-muted)]">ID: </span>
+                                {object.restricted ? 'Hidden' : object.id}
+                              </div>
+                            </div>
+
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {object.objectRefs.map((ref) => (
+                                <span
+                                  key={`${ref.objectType}-${ref.objectId}-${ref.linkRole ?? 'link'}`}
+                                  className="rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]"
+                                  data-testid="task-document-object-link-role"
+                                >
+                                  {ref.linkRole ?? 'linked'} to {ref.objectType}:{ref.objectId}
+                                </span>
+                              ))}
+                            </div>
+
+                            {object.externalPreview ? (
+                              <div
+                                className={`mt-3 rounded-md border px-2.5 py-2 ${
+                                  object.externalPreview.degraded
+                                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+                                    : 'border-emerald-500/25 bg-emerald-500/10 text-emerald-100'
+                                }`}
+                                data-testid="task-external-doc-preview"
+                                data-read-only-google-mutation-controls="none"
+                              >
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                                      External Preview
+                                    </div>
+                                    <div className="mt-0.5 truncate text-sm font-semibold">
+                                      {object.externalPreview.title}
+                                    </div>
+                                    <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                                      {object.externalPreview.ownershipLabel}
+                                    </div>
+                                  </div>
+                                  {object.externalPreview.canOpen && object.externalPreview.openUrl ? (
+                                    <a
+                                      href={object.externalPreview.openUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="rounded border border-sky-400/30 bg-sky-500/10 px-2 py-1 text-[11px] font-medium text-sky-200 hover:text-sky-100"
+                                      data-testid="task-external-doc-open-link"
+                                    >
+                                      Open external doc
+                                    </a>
+                                  ) : (
+                                    <span className="rounded border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1 text-[11px] text-[var(--text-muted)]">
+                                      No external link available
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="mt-2 grid gap-1.5 text-[11px] text-[var(--text-secondary)] sm:grid-cols-2">
+                                  <div>
+                                    <span className="text-[var(--text-muted)]">Connector: </span>
+                                    {object.externalPreview.connectorLabel}
+                                  </div>
+                                  <div>
+                                    <span className="text-[var(--text-muted)]">Auth: </span>
+                                    {object.externalPreview.authLabel}
+                                  </div>
+                                  <div>
+                                    <span className="text-[var(--text-muted)]">Readiness: </span>
+                                    {object.externalPreview.readinessLabel}
+                                  </div>
+                                  <div>
+                                    <span className="text-[var(--text-muted)]">Scopes: </span>
+                                    {object.externalPreview.scopeLabel}
+                                  </div>
+                                  {object.externalPreview.mimeLabel ? (
+                                    <div className="sm:col-span-2">
+                                      <span className="text-[var(--text-muted)]">MIME: </span>
+                                      {object.externalPreview.mimeLabel}
+                                    </div>
+                                  ) : null}
+                                  {object.externalPreview.externalPermissionSummary ? (
+                                    <div className="sm:col-span-2">
+                                      <span className="text-[var(--text-muted)]">External permission: </span>
+                                      {object.externalPreview.externalPermissionSummary}
+                                    </div>
+                                  ) : null}
+                                </div>
+
+                                <div
+                                  className="mt-2 rounded border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 text-[11px]"
+                                  data-testid="task-external-doc-preview-snippet"
+                                >
+                                  {object.externalPreview.previewAvailable && object.externalPreview.previewText
+                                    ? object.externalPreview.previewText
+                                    : 'Preview unavailable until Google auth and preview scope are healthy.'}
+                                </div>
+
+                                <div
+                                  className="mt-2 rounded border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-1.5 text-[11px] text-[var(--text-secondary)]"
+                                  data-testid="task-external-doc-readonly-posture"
+                                >
+                                  {object.externalPreview.readOnlyMessage}
+                                </div>
+
+                                {object.externalPreview.degradedMessages.length > 0 ? (
+                                  <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px]">
+                                    {object.externalPreview.degradedMessages.map((message) => (
+                                      <li key={message}>{message}</li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </div>
+                            ) : null}
+
+                            {object.restricted ? (
+                              <div
+                                className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100"
+                                data-testid="task-document-object-placeholder"
+                              >
+                                Restricted by Entity permissions. Snippets and previews are hidden.
+                              </div>
+                            ) : null}
+
+                            {object.degradedMessages.length > 0 ? (
+                              <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] text-amber-100">
+                                {object.degradedMessages.map((message) => (
+                                  <li key={message}>{message}</li>
+                                ))}
+                              </ul>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+
+	              <section style={{ order: 5 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
 	                <div className={`${outputExpanded ? 'mb-2' : ''} flex flex-wrap items-center justify-between gap-2`}>
 	                  <div className="flex min-w-0 items-center gap-2">
 	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
@@ -2665,7 +4403,27 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                       </div>
                     ) : (
 	                      <div className="space-y-2">
-	                        {visibleActivity.map((activity) => (
+	                        {visibleActivity.map((activity) => {
+                          const actorLabel = activity.actorPrincipalId
+                            ? `${activity.actorPrincipalId} (${formatActivityToken(activity.actorType)})`
+                            : `${formatActivityToken(activity.actorType)} actor`;
+                          const schemaLabel = activity.schemaStatus === 'structured'
+                            ? 'structured'
+                            : activity.schemaStatus === 'legacy_unknown'
+                              ? 'weak legacy event'
+                              : formatActivityToken(activity.schemaStatus);
+                          const provenanceItems = [
+                            `event: ${formatActivityToken(activity.activityEventType)}`,
+                            `actor: ${actorLabel}`,
+                            `schema: ${schemaLabel}`,
+                            activity.payloadVersion ? `payload v${activity.payloadVersion}` : null,
+                            activity.permissionState !== 'visible' ? `permission: ${formatActivityToken(activity.permissionState)}` : null,
+                            activity.reason ? `reason: ${activity.reason}` : null,
+                            activity.provenance ? `provenance: ${activity.provenance}` : null,
+                            ...activity.objectRefs.slice(0, 3).map((ref) => `object: ${formatObjectRef(ref)}`),
+                          ].filter((item): item is string => Boolean(item));
+
+                          return (
 	                          <article
 	                            key={activity.id}
 	                            className="min-w-0 overflow-hidden rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2"
@@ -2691,13 +4449,38 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                              <div className="mt-0.5 w-full min-w-0 max-w-full overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[1.35] text-[var(--text-secondary)] [overflow-wrap:anywhere]">{activity.description}</div>
 	                            </div>
 
+                              <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                                {provenanceItems.map((item) => (
+                                  <span
+                                    key={item}
+                                    className={activity.degraded ? 'rounded-full border border-amber-500/40 px-2 py-0.5 text-amber-300' : ''}
+                                  >
+                                    {item}
+                                  </span>
+                                ))}
+                              </div>
+
 	                            {activityView === 'technical' ? (
 	                            <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
-	                              {activityView === 'technical' ? <span>{activity.type.replace(/_/g, ' ')}</span> : null}
-	                              {activityView === 'technical' && activity.taskColumn ? <span>{activity.taskColumn}</span> : null}
-	                              {activityView === 'technical' && activity.filePath ? <span>{activity.filePath}</span> : null}
+	                              <span>{activity.type.replace(/_/g, ' ')}</span>
+	                              {activity.legacyType ? <span>legacy: {formatActivityToken(activity.legacyType)}</span> : null}
+	                              {activity.taskColumn ? <span>{activity.taskColumn}</span> : null}
+	                              {activity.filePath ? <span>{activity.filePath}</span> : null}
+	                              {activity.warnings.map((warning) => (
+                                  <span key={`${activity.id}-${warning.code}`} className="rounded-full border border-amber-500/40 px-2 py-0.5 text-amber-300">
+                                    {formatActivityToken(warning.code)}
+                                  </span>
+                                ))}
 	                            </div>
 	                            ) : null}
+
+                            {activityView === 'technical' && activity.warnings.length > 0 ? (
+                              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-200">
+                                {activity.warnings.map((warning) => (
+                                  <li key={`${activity.id}-${warning.code}-${warning.message}`}>{warning.message}</li>
+                                ))}
+                              </ul>
+                            ) : null}
 
                             {activityView === 'technical' && activity.metadataText ? (
                               <pre className="mt-3 overflow-x-auto rounded-lg border border-[var(--border-primary)] bg-[#0f0f0f] px-3 py-3 text-xs text-[#d1d5db]">
@@ -2705,7 +4488,8 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                               </pre>
                             ) : null}
                           </article>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
 
@@ -2757,17 +4541,17 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                         <input
                           type="text"
                           value={commentInput}
-                          onChange={(event) => mention.onChange(event.target.value)}
+                          onChange={(event) => handleCommentInputChange(event.target.value)}
                           onKeyDown={(event) => {
-                            if (event.key === 'Escape' && mention.active) {
+                            if (event.key === 'Escape' && mentionQuery !== null) {
                               event.preventDefault();
-                              mention.close();
+                              setMentionQuery(null);
                               return;
                             }
                             if (event.key === 'Enter') {
                               event.preventDefault();
-                              if (mention.active && mention.matches.length > 0) {
-                                mention.apply(mention.matches[0]!);
+                              if (mentionQuery !== null && mentionMatches.length > 0) {
+                                applyMention(mentionMatches[0]!);
                                 return;
                               }
                               void postComment();
@@ -2776,17 +4560,17 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                           placeholder="Add a comment... use @ to mention an agent"
                           className="mc-shell-input w-full px-3 py-2 text-sm"
                         />
-                        {mention.active && mention.matches.length > 0 ? (
+                        {mentionQuery !== null && mentionMatches.length > 0 ? (
                           <div className="absolute bottom-full left-0 z-30 mb-1 w-64 overflow-hidden rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
                             <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
                               Mention an agent
                             </div>
-                            {mention.matches.map((name) => (
+                            {mentionMatches.map((name) => (
                               <button
                                 key={name}
                                 type="button"
                                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-tertiary)]"
-                                onClick={() => mention.apply(name)}
+                                onClick={() => applyMention(name)}
                               >
                                 <span aria-hidden="true">🤖</span>
                                 <span>@{name}</span>

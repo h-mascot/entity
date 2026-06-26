@@ -1,4 +1,4 @@
-import type { CreateTaskInput, TaskRecord, UpdateTaskInput } from './index';
+import type { ClaimTaskForTaskMasterInput, CreateTaskInput, TaskMasterClaimResult, TaskRecord, UpdateTaskInput } from './index';
 import { createCloudTaskAdapter, type CloudTaskAdapterOptions } from './cloud';
 import { createLocalTaskAdapter, type LocalTaskAdapterOptions } from './local';
 
@@ -10,6 +10,7 @@ export interface TaskAdapter {
   getTask: (id: number) => Promise<TaskRecord | undefined>;
   createTask: (input: CreateTaskInput) => Promise<TaskRecord>;
   updateTask: (id: number, updates: UpdateTaskInput) => Promise<TaskRecord | undefined>;
+  claimTaskForTaskMaster: (id: number, input?: ClaimTaskForTaskMasterInput) => Promise<TaskMasterClaimResult>;
   moveTask: (id: number, nextColumn: string) => Promise<TaskRecord | undefined>;
   deleteTask: (id: number) => Promise<boolean>;
 }
@@ -22,6 +23,7 @@ export interface TaskSyncLayer {
   getTask: (id: number) => Promise<TaskRecord | undefined>;
   createTask: (input: CreateTaskInput) => Promise<TaskRecord>;
   updateTask: (id: number, updates: UpdateTaskInput) => Promise<TaskRecord | undefined>;
+  claimTaskForTaskMaster: (id: number, input?: ClaimTaskForTaskMasterInput) => Promise<TaskMasterClaimResult>;
   moveTask: (id: number, nextColumn: string) => Promise<TaskRecord | undefined>;
   deleteTask: (id: number) => Promise<boolean>;
 }
@@ -151,6 +153,8 @@ export function createTaskSyncLayer(options: TaskSyncLayerOptions = {}): TaskSyn
     getTask: (id: number) => getAdapter().getTask(id),
     createTask: (input: CreateTaskInput) => getAdapter().createTask(input),
     updateTask: (id: number, updates: UpdateTaskInput) => getAdapter().updateTask(id, updates),
+    claimTaskForTaskMaster: (id: number, input?: ClaimTaskForTaskMasterInput) =>
+      getAdapter().claimTaskForTaskMaster(id, input),
     moveTask: (id: number, nextColumn: string) => getAdapter().moveTask(id, nextColumn),
     deleteTask: (id: number) => getAdapter().deleteTask(id),
   };

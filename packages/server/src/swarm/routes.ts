@@ -62,7 +62,7 @@ function buildCreateJobPayload(body: Record<string, unknown>): CreateSwarmJobInp
   return {
     title: title ?? `Swarm Job ${Date.now()}`,
     spec: spec ?? 'No spec provided',
-    repo: readTrimmedString(body.repo) ?? 'https://github.com/curacel/entity',
+    repo: readTrimmedString(body.repo) ?? 'https://github.com/example/entity',
     branch: readTrimmedString(body.branch) ?? 'main',
     provider: readTrimmedString(body.provider) ?? 'acp',
     priority: priority && isSwarmPriority(priority) ? priority : undefined,

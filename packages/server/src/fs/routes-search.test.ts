@@ -1,0 +1,458 @@
+import express, { Router } from 'express';
+import http from 'http';
+import { describe, expect, it, vi } from 'vitest';
+import type { FileIndexRecord, FileSyncRunRecord } from '../../../db/src/file-index';
+import type { FileSourceRecord } from '../../../db/src/file-sources';
+import type { FileSourceAdapter } from './adapters/types';
+import { registerSearchRoutes, type SearchRouteDeps } from './routes-search';
+
+const syncedAt = '2026-06-24T03:00:00.000Z';
+const indexedAt = '2026-06-24T03:05:00.000Z';
+
+function source(overrides: Partial<FileSourceRecord> = {}): FileSourceRecord {
+  return {
+    id: 'workspace',
+    display_name: 'Workspace',
+    type: 'local',
+    base_url: null,
+    base_path: '/workspace',
+    auth_type: 'none',
+    auth_ref: null,
+    enabled: true,
+    icon: null,
+    capabilities: '{}',
+    health: 'ok',
+    last_synced_at: syncedAt,
+    created_at: syncedAt,
+    updated_at: syncedAt,
+    ...overrides,
+  };
+}
+
+function indexRecord(overrides: Partial<FileIndexRecord> = {}): FileIndexRecord {
+  return {
+    id: 'workspace:plans/renewal.md',
+    source_id: 'workspace',
+    path: 'plans/renewal.md',
+    title: 'Renewal plan',
+    type: 'plan',
+    agent: 'entity-mc',
+    origin: 'task',
+    is_recurring: false,
+    recurring_pattern: null,
+    tags: JSON.stringify(['customer', 'renewal']),
+    updated_at: '2026-06-24T02:55:00.000Z',
+    indexed_at: indexedAt,
+    preview: 'Permitted indexed snippet',
+    content_hash: 'sha256:indexed',
+    ...overrides,
+  };
+}
+
+function syncRun(overrides: Partial<FileSyncRunRecord> = {}): FileSyncRunRecord {
+  return {
+    id: 42,
+    source_id: 'workspace',
+    status: 'ok',
+    started_at: '2026-06-24T02:59:00.000Z',
+    finished_at: syncedAt,
+    error: null,
+    files_scanned: 5,
+    files_indexed: 5,
+    ...overrides,
+  };
+}
+
+async function withSearchServer(deps: SearchRouteDeps, run: (baseUrl: string) => Promise<void>): Promise<void> {
+  const app = express();
+  const router = Router();
+  registerSearchRoutes(router, deps);
+  app.use('/api/fs', router);
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+  try {
+    await run(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
+}
+
+describe('file-source search routes', () => {
+  it('returns indexed search results in a stable permission/search envelope', async () => {
+    const workspaceSource = source();
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [workspaceSource]),
+        getSource: vi.fn((id: string) => (id === workspaceSource.id ? workspaceSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => [indexRecord()]),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=renewal&indexState=indexed`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.indexed).toBe(true);
+      expect(body.indexState).toMatchObject({ mode: 'indexed', fallbackUsed: false, degraded: false });
+      expect(body.results[0]).toMatchObject({
+        id: 'workspace:plans/renewal.md',
+        objectType: 'file',
+        object_type: 'file',
+        title: 'Renewal plan',
+        snippet: 'Permitted indexed snippet',
+        source: {
+          id: 'workspace',
+          name: 'Workspace',
+          type: 'local',
+          health: 'ok',
+        },
+        deepLink: {
+          kind: 'file_source',
+          sourceId: 'workspace',
+          path: 'plans/renewal.md',
+        },
+        scope: {
+          sourceId: 'workspace',
+          sourceType: 'local',
+        },
+        recency: {
+          updatedAt: '2026-06-24T02:55:00.000Z',
+          indexedAt,
+        },
+        provenance: {
+          indexed: true,
+          origin: 'task',
+          agent: 'entity-mc',
+          contentHash: 'sha256:indexed',
+          tags: ['customer', 'renewal'],
+        },
+        permissionState: 'visible',
+        permission_state: 'visible',
+        entity_permission_state: 'visible',
+        connectorState: {
+          health: 'ok',
+          lastSyncedAt: syncedAt,
+          latestSyncRun: {
+            status: 'ok',
+            filesScanned: 5,
+            filesIndexed: 5,
+          },
+        },
+        indexState: {
+          indexed: true,
+          degraded: false,
+          latestSyncStatus: 'ok',
+        },
+      });
+    });
+  });
+
+  it('surfaces Helm status references without exposing deep Helm object search', async () => {
+    const helmStatusSource = source({
+      id: 'helm-status',
+      display_name: 'Helm Runtime Status',
+      type: 'local',
+      base_path: '/workspace/status/helm',
+      capabilities: JSON.stringify({
+        entity_visibility_policy: {
+          allow_preview: true,
+          reference_only: true,
+        },
+      }),
+    });
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [helmStatusSource]),
+        getSource: vi.fn((id: string) => (id === helmStatusSource.id ? helmStatusSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => [
+          indexRecord({
+            id: 'helm-status:runtimes/book-status.md',
+            source_id: helmStatusSource.id,
+            path: 'runtimes/book-status.md',
+            title: 'Book runtime status reference',
+            type: 'runtime_status_ref',
+            agent: 'book',
+            tags: JSON.stringify(['helm-status', 'runtime-reference']),
+            preview: 'Helm status reference: health degraded, readiness degraded, open in Helm for runtime details.',
+            content_hash: 'sha256:helm-status-ref',
+          }),
+        ]),
+        getLatestSyncRun: vi.fn(() => syncRun({ source_id: helmStatusSource.id })),
+      },
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=helm%20status&indexState=indexed`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0]).toMatchObject({
+        objectType: 'file',
+        object_type: 'file',
+        title: 'Book runtime status reference',
+        type: 'runtime_status_ref',
+        source: {
+          id: 'helm-status',
+          name: 'Helm Runtime Status',
+        },
+        deepLink: {
+          kind: 'file_source',
+          sourceId: 'helm-status',
+          path: 'runtimes/book-status.md',
+        },
+        provenance: {
+          indexed: true,
+          origin: 'task',
+          agent: 'book',
+          tags: ['helm-status', 'runtime-reference'],
+        },
+      });
+      const serialized = JSON.stringify(body);
+      expect(serialized).toContain('Helm status reference');
+      expect(serialized).not.toContain('helmObject');
+      expect(serialized).not.toContain('runtimeAdminPayload');
+      expect(serialized).not.toContain('deploymentMutation');
+      expect(serialized).not.toContain('/api/helm/objects');
+    });
+  });
+
+  it('surfaces degraded connector and fallback index visibility with scoped filters', async () => {
+    const degradedSource = source({
+      id: 'degraded-docs',
+      display_name: 'Degraded Docs',
+      type: 'docsify',
+      health: 'degraded',
+      last_synced_at: '2026-06-24T01:00:00.000Z',
+    });
+    const adapter: FileSourceAdapter = {
+      key: 'fake',
+      validate: vi.fn(async () => undefined),
+      capabilities: vi.fn(() => ({ read: true, write: false, rename: false, delete: false, list: true, search: false })),
+      list: vi.fn(async () => [
+        { sourceId: degradedSource.id, path: 'incidents/customer-risk.md', name: 'customer-risk.md', isDirectory: false, kind: 'file' as const, updatedAt: '2026-06-24T02:00:00.000Z' },
+      ]),
+      read: vi.fn(async () => ({ content: '', contentType: 'text/markdown' })),
+      write: vi.fn(async () => ({})),
+      mkdir: vi.fn(async () => undefined),
+    };
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [degradedSource]),
+        getSource: vi.fn((id: string) => (id === degradedSource.id ? degradedSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => []),
+        getLatestSyncRun: vi.fn(() => syncRun({
+          source_id: degradedSource.id,
+          status: 'error',
+          finished_at: '2026-06-24T01:00:00.000Z',
+          error: 'connector timeout',
+          files_scanned: 3,
+          files_indexed: 0,
+        })),
+      },
+      createAdapter: vi.fn(() => adapter),
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=customer&connectorHealth=degraded&indexState=fallback`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.indexed).toBe(false);
+      expect(body.indexState).toMatchObject({ mode: 'fallback', fallbackUsed: true, degraded: true });
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0]).toMatchObject({
+        id: 'degraded-docs:incidents/customer-risk.md',
+        title: 'customer-risk.md',
+        snippet: null,
+        source: {
+          id: 'degraded-docs',
+          name: 'Degraded Docs',
+          type: 'docsify',
+          health: 'degraded',
+        },
+        provenance: {
+          indexed: false,
+          origin: 'unknown',
+          agent: 'other',
+        },
+        connectorState: {
+          health: 'degraded',
+          latestSyncRun: {
+            status: 'error',
+            error: 'connector timeout',
+          },
+        },
+        indexState: {
+          indexed: false,
+          degraded: true,
+          latestSyncStatus: 'error',
+        },
+      });
+      expect(deps.createAdapter).toHaveBeenCalledWith(degradedSource);
+    });
+  });
+
+  it('suppresses stale indexed previews when source policy disables search preview', async () => {
+    const restrictedSource = source({
+      capabilities: JSON.stringify({
+        entity_visibility_policy: {
+          restricted: true,
+          allow_preview: false,
+        },
+      }),
+    });
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [restrictedSource]),
+        getSource: vi.fn((id: string) => (id === restrictedSource.id ? restrictedSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => [
+          indexRecord({
+            title: 'Customer risk compensation notes',
+            preview: 'Do not leak stale indexed compensation snippet',
+          }),
+        ]),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=compensation&indexState=indexed`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0]).toMatchObject({
+        title: 'Restricted file',
+        preview: null,
+        snippet: null,
+        permissionState: 'restricted',
+        permission_state: 'restricted',
+        entity_permission_state: 'restricted',
+        restricted: true,
+        placeholder: true,
+        permission_reasons: ['source permission policy restricts search preview'],
+      });
+      expect(JSON.stringify(body)).not.toContain('Do not leak stale indexed compensation snippet');
+      expect(JSON.stringify(body)).not.toContain('Customer risk compensation notes');
+    });
+  });
+
+  it('suppresses restricted indexed previews before returning file search results', async () => {
+    const workspaceSource = source();
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [workspaceSource]),
+        getSource: vi.fn((id: string) => (id === workspaceSource.id ? workspaceSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => [indexRecord({
+          title: 'Restricted indexed account memo',
+          preview: 'Do not leak indexed customer preview',
+          sensitivity: 'customer',
+        })]),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=account&indexState=indexed`, {
+        headers: { 'x-entity-org-id': 'default-org' },
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.results[0]).toMatchObject({
+        id: 'workspace:plans/renewal.md',
+        title: 'Restricted file',
+        preview: null,
+        snippet: null,
+        permission_state: 'restricted',
+        entity_permission_state: 'restricted',
+        restricted: true,
+        placeholder: true,
+      });
+      expect(JSON.stringify(body)).not.toContain('Restricted indexed account memo');
+      expect(JSON.stringify(body)).not.toContain('Do not leak indexed customer preview');
+    });
+  });
+
+  it('suppresses restricted fallback previews before returning source search results', async () => {
+    const workspaceSource = source();
+    const adapter: FileSourceAdapter = {
+      key: 'fake',
+      validate: vi.fn(async () => undefined),
+      capabilities: vi.fn(() => ({ read: true, write: false, rename: false, delete: false, list: true, search: false })),
+      list: vi.fn(async () => [
+        {
+          sourceId: workspaceSource.id,
+          path: 'restricted/customer-note.md',
+          name: 'Restricted customer note',
+          isDirectory: false,
+          kind: 'file' as const,
+          updatedAt: '2026-06-24T02:00:00.000Z',
+          sensitivity: 'customer',
+        },
+      ]),
+      read: vi.fn(async () => ({ content: '', contentType: 'text/markdown' })),
+      write: vi.fn(async () => ({})),
+      mkdir: vi.fn(async () => undefined),
+    };
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [workspaceSource]),
+        getSource: vi.fn((id: string) => (id === workspaceSource.id ? workspaceSource : undefined)),
+      },
+      indexRepo: {
+        search: vi.fn(() => []),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+      createAdapter: vi.fn(() => adapter),
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=customer&indexState=fallback`, {
+        headers: { 'x-entity-org-id': 'default-org' },
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.results[0]).toMatchObject({
+        id: 'workspace:restricted/customer-note.md',
+        title: 'Restricted file',
+        preview: null,
+        snippet: null,
+        permission_state: 'restricted',
+        entity_permission_state: 'restricted',
+        restricted: true,
+        placeholder: true,
+      });
+      expect(JSON.stringify(body)).not.toContain('Restricted customer note');
+    });
+  });
+
+  it('rejects invalid connector/index filters before searching', async () => {
+    const deps: SearchRouteDeps = {
+      sourceRepo: { listSources: vi.fn(() => []), getSource: vi.fn(() => undefined) },
+      indexRepo: { search: vi.fn(() => []), getLatestSyncRun: vi.fn(() => undefined) },
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?indexState=stale`);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: 'indexState must be indexed, fallback, or all' });
+      expect(deps.indexRepo?.search).not.toHaveBeenCalled();
+    });
+  });
+});

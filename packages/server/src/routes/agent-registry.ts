@@ -8,14 +8,24 @@ import type {
   UpdateAgentRegistryInput,
 } from '../../../db/src';
 import { buildAgentCapabilityCard } from '../agent/agent-capability-card';
+import {
+  createHelmLightControlAdapter,
+  HELM_LIGHT_CONTROL_ACTIONS,
+  type HelmLightControlAction,
+  type HelmLightControlAdapter,
+} from '../agent/helm-light-controls';
+import { createHelmStatusAdapter, type HelmRuntimeStatusSummary, type HelmStatusAdapter } from '../agent/helm-status-adapter';
 
 interface AgentRegistryRouterDeps {
   agentRegistryRepo: AgentRegistryRepository;
   moduleRegistryRepo: ModuleRegistryRepository;
+  helmStatusAdapter?: HelmStatusAdapter;
+  helmLightControlAdapter?: HelmLightControlAdapter;
 }
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_.-]{1,63}$/;
 const STATUS_VALUES = new Set(['active', 'idle', 'disabled', 'template', 'archived']);
+const CONTROL_ACTIONS = new Set<string>(HELM_LIGHT_CONTROL_ACTIONS);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -69,13 +79,21 @@ function validateStatus(status: string | null | undefined): string | undefined {
 function serializeAgent(
   agent: AgentRegistryRecord,
   moduleRegistryRepo: ModuleRegistryRepository,
-): AgentRegistryRecord & { avatarUrl?: string; capabilities: ReturnType<typeof buildAgentCapabilityCard> } {
+  runtimeStatus: HelmRuntimeStatusSummary,
+): AgentRegistryRecord & {
+  avatarUrl?: string;
+  capabilities: ReturnType<typeof buildAgentCapabilityCard>;
+  runtime_status: HelmRuntimeStatusSummary;
+  runtimeStatus: HelmRuntimeStatusSummary;
+} {
   const grants = moduleRegistryRepo.listAgentModuleGrants(agent.id);
   const modules = moduleRegistryRepo.listModules();
   return {
     ...agent,
     avatarUrl: agent.avatar_url || undefined,
     capabilities: buildAgentCapabilityCard({ agent, grants, modules }),
+    runtime_status: runtimeStatus,
+    runtimeStatus,
   };
 }
 
@@ -95,6 +113,12 @@ function parseCreateAgentInput(body: unknown): CreateAgentRegistryInput {
     description: optionalString(body, 'description') ?? null,
     adapter_type: optionalString(body, 'adapter_type') ?? optionalString(body, 'adapterType') ?? null,
     runtime_type: optionalString(body, 'runtime_type') ?? optionalString(body, 'runtimeType') ?? null,
+    runtime_binding_id: optionalString(body, 'runtime_binding_id') ?? optionalString(body, 'runtimeBindingId') ?? null,
+    provider_type: optionalString(body, 'provider_type') ?? optionalString(body, 'providerType') ?? null,
+    helm_managed: body.helm_managed === undefined && body.helmManaged === undefined
+      ? false
+      : Boolean(body.helm_managed ?? body.helmManaged),
+    binding_state: optionalString(body, 'binding_state') ?? optionalString(body, 'bindingState') ?? null,
     status: validateStatus(optionalString(body, 'status')) ?? 'active',
     instructions_path: optionalString(body, 'instructions_path') ?? optionalString(body, 'instructionsPath') ?? null,
     metadata_json: normalizeJsonField(body.metadata_json ?? body.metadata ?? undefined, '{}', 'metadata_json'),
@@ -116,6 +140,9 @@ function parseUpdateAgentInput(body: unknown): UpdateAgentRegistryInput {
     ['description', 'description'],
     ['adapter_type', 'adapter_type'],
     ['runtime_type', 'runtime_type'],
+    ['runtime_binding_id', 'runtime_binding_id'],
+    ['provider_type', 'provider_type'],
+    ['binding_state', 'binding_state'],
     ['instructions_path', 'instructions_path'],
   ] as Array<[string, keyof UpdateAgentRegistryInput]>) {
     const value = optionalString(body, bodyKey);
@@ -128,6 +155,15 @@ function parseUpdateAgentInput(body: unknown): UpdateAgentRegistryInput {
   if (adapterType !== undefined) updates.adapter_type = adapterType;
   const runtimeType = optionalString(body, 'runtimeType');
   if (runtimeType !== undefined) updates.runtime_type = runtimeType;
+  const runtimeBindingId = optionalString(body, 'runtimeBindingId');
+  if (runtimeBindingId !== undefined) updates.runtime_binding_id = runtimeBindingId;
+  const providerType = optionalString(body, 'providerType');
+  if (providerType !== undefined) updates.provider_type = providerType;
+  const bindingState = optionalString(body, 'bindingState');
+  if (bindingState !== undefined) updates.binding_state = bindingState;
+  if ('helm_managed' in body || 'helmManaged' in body) {
+    updates.helm_managed = Boolean(body.helm_managed ?? body.helmManaged);
+  }
   const instructionsPath = optionalString(body, 'instructionsPath');
   if (instructionsPath !== undefined) updates.instructions_path = instructionsPath;
   if ('metadata_json' in body || 'metadata' in body) {
@@ -148,40 +184,75 @@ function parseGrantInput(body: unknown, agentId: string, moduleIdFromPath?: stri
   };
 }
 
+function parseControlInput(body: unknown): { action: HelmLightControlAction; actorPrincipalId: string } {
+  if (!isRecord(body)) throw new Error('body must be an object');
+  const action = requiredString(body, 'action') as HelmLightControlAction;
+  if (!CONTROL_ACTIONS.has(action)) {
+    throw new Error(`action must be one of: ${HELM_LIGHT_CONTROL_ACTIONS.join(', ')}`);
+  }
+  return {
+    action,
+    actorPrincipalId: optionalString(body, 'actor_principal_id') ?? optionalString(body, 'actorPrincipalId') ?? 'unknown',
+  };
+}
+
 export function createAgentRegistryRouter(deps: AgentRegistryRouterDeps): Router {
   const router = createRouter();
   const { agentRegistryRepo, moduleRegistryRepo } = deps;
+  const helmStatusAdapter = deps.helmStatusAdapter ?? createHelmStatusAdapter();
+  const helmLightControlAdapter = deps.helmLightControlAdapter ?? createHelmLightControlAdapter();
 
-  router.get('/agents/registry', (_req, res) => {
-    const list = agentRegistryRepo
+  router.get('/agents/registry', async (_req, res) => {
+    const list = await Promise.all(agentRegistryRepo
       .listAgents()
-      .map((agent) => serializeAgent(agent, moduleRegistryRepo));
+      .map(async (agent) => serializeAgent(agent, moduleRegistryRepo, await helmStatusAdapter.getStatus(agent))));
     return res.json({ list });
   });
 
-  router.post('/agents', (req, res) => {
+  router.post('/agents', async (req, res) => {
     try {
       const input = parseCreateAgentInput(req.body);
       if (agentRegistryRepo.getAgent(input.id ?? input.slug) || agentRegistryRepo.getAgentBySlug(input.slug)) {
         return res.status(409).json({ error: 'Agent already exists.' });
       }
       const agent = agentRegistryRepo.createAgent(input);
-      return res.status(201).json({ agent: serializeAgent(agent, moduleRegistryRepo) });
+      return res.status(201).json({ agent: serializeAgent(agent, moduleRegistryRepo, await helmStatusAdapter.getStatus(agent)) });
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid agent payload.' });
     }
   });
 
-  router.patch('/agents/:id', (req, res) => {
+  router.patch('/agents/:id', async (req, res) => {
     const agent = findAgent(agentRegistryRepo, String(req.params.id));
     if (!agent) return res.status(404).json({ error: 'Agent not found.' });
     try {
       const updates = parseUpdateAgentInput(req.body);
       const updated = agentRegistryRepo.updateAgent(agent.id, updates);
       if (!updated) return res.status(404).json({ error: 'Agent not found.' });
-      return res.json({ agent: serializeAgent(updated, moduleRegistryRepo) });
+      return res.json({ agent: serializeAgent(updated, moduleRegistryRepo, await helmStatusAdapter.getStatus(updated)) });
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid agent update payload.' });
+    }
+  });
+
+  router.post('/agents/:id/runtime-controls', async (req, res) => {
+    const agent = findAgent(agentRegistryRepo, String(req.params.id));
+    if (!agent) return res.status(404).json({ error: 'Agent not found.' });
+    try {
+      const input = parseControlInput(req.body);
+      const result = await helmLightControlAdapter.requestControl(agent, input.action, input.actorPrincipalId);
+      const statusCode = result.status === 'accepted' ? 202 : result.status === 'denied' ? 403 : 503;
+      return res.status(statusCode).json({
+        agent_id: agent.id,
+        action: input.action,
+        accepted: result.accepted,
+        status: result.status,
+        reason: result.reason,
+        audit: result.audit,
+        helm_link: result.helm_link,
+      });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid runtime control payload.' });
     }
   });
 

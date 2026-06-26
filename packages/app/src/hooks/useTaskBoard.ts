@@ -39,6 +39,17 @@ export interface TaskActivity {
 
 export interface TaskBoardTask {
   id: number;
+  org_id: string | null;
+  team_id: string | null;
+  project_id: number | null;
+  created_by_principal_id: string | null;
+  initiator_principal_id: string | null;
+  initiator_type: string | null;
+  owner_principal_id: string | null;
+  owner_principal_type: string | null;
+  executor_principal_id: string | null;
+  assignment_state: string | null;
+  taskmaster_drivable: boolean;
   name: string;
   description: string | null;
   column: TaskColumn;
@@ -57,6 +68,12 @@ export interface TaskBoardTask {
   created_at: string;
   updated_at: string;
   metadata: string | null;
+  worktype: string | null;
+  policy_inputs_json: string | null;
+  review_required?: boolean;
+  review_state?: string | null;
+  human_gate_required?: boolean;
+  human_gate_state?: string | null;
   output: string | null;
   output_links_count: number;
   parent_task_id: number | null;
@@ -66,6 +83,17 @@ export interface TaskBoardTask {
 
 export interface CreateTaskPayload {
   name: string;
+  org_id?: string;
+  team_id?: string;
+  project_id?: number | null;
+  created_by_principal_id?: string;
+  initiator_principal_id?: string;
+  initiator_type?: string;
+  owner_principal_id?: string;
+  owner_principal_type?: string;
+  executor_principal_id?: string;
+  assignment_state?: string;
+  taskmaster_drivable?: boolean;
   description?: string;
   assignee?: string;
   column?: TaskColumn;
@@ -80,6 +108,8 @@ export interface CreateTaskPayload {
   due_at?: string | null;
   recurring?: boolean;
   metadata?: string;
+  worktype?: string;
+  policy_inputs_json?: string;
 }
 
 interface TaskBoardState {
@@ -205,6 +235,15 @@ function normalizeBlocked(value: unknown): boolean {
 }
 
 function normalizeBlockerReason(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeOptionalString(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
   }
@@ -448,9 +487,21 @@ function normalizeTask(raw: unknown): TaskBoardTask | null {
   const parentTaskId = Number.isInteger(parentTaskIdCandidate) && parentTaskIdCandidate > 0 ? parentTaskIdCandidate : null;
   const subtaskCountCandidate = Number(row.subtask_count ?? row.subtaskCount ?? metadataRecord?.subtask_count);
   const subtaskDoneCountCandidate = Number(row.subtask_done_count ?? row.subtaskDoneCount ?? metadataRecord?.subtask_done_count);
+  const projectIdCandidate = Number(row.project_id ?? row.projectId);
 
   return {
     id,
+    org_id: normalizeOptionalString(row.org_id ?? row.orgId),
+    team_id: normalizeOptionalString(row.team_id ?? row.teamId),
+    project_id: Number.isInteger(projectIdCandidate) && projectIdCandidate > 0 ? projectIdCandidate : null,
+    created_by_principal_id: normalizeOptionalString(row.created_by_principal_id ?? row.createdByPrincipalId),
+    initiator_principal_id: normalizeOptionalString(row.initiator_principal_id ?? row.initiatorPrincipalId),
+    initiator_type: normalizeOptionalString(row.initiator_type ?? row.initiatorType),
+    owner_principal_id: normalizeOptionalString(row.owner_principal_id ?? row.ownerPrincipalId),
+    owner_principal_type: normalizeOptionalString(row.owner_principal_type ?? row.ownerPrincipalType),
+    executor_principal_id: normalizeOptionalString(row.executor_principal_id ?? row.executorPrincipalId),
+    assignment_state: normalizeOptionalString(row.assignment_state ?? row.assignmentState),
+    taskmaster_drivable: normalizeBlocked(row.taskmaster_drivable ?? row.taskmasterDrivable),
     name,
     description: typeof row.description === 'string' ? row.description : null,
     column: normalizeTaskColumn(row.column),
@@ -469,6 +520,12 @@ function normalizeTask(raw: unknown): TaskBoardTask | null {
     created_at: toTimestamp(row.created_at),
     updated_at: toTimestamp(row.updated_at ?? row.created_at),
     metadata,
+    worktype: normalizeOptionalString(row.worktype ?? metadataRecord?.worktype),
+    policy_inputs_json: typeof row.policy_inputs_json === 'string' ? row.policy_inputs_json : null,
+    review_required: normalizeBlocked(row.review_required ?? row.reviewRequired ?? metadataRecord?.review_required),
+    review_state: normalizeOptionalString(row.review_state ?? row.reviewState ?? metadataRecord?.review_state),
+    human_gate_required: normalizeBlocked(row.human_gate_required ?? row.humanGateRequired ?? metadataRecord?.human_gate_required),
+    human_gate_state: normalizeOptionalString(row.human_gate_state ?? row.humanGateState ?? metadataRecord?.human_gate_state),
     output: outputValue,
     output_links_count: outputLinksCount,
     parent_task_id: parentTaskId,
@@ -562,6 +619,17 @@ function buildOfflineQueuedTask(payload: CreateTaskPayload, queueId: number): Ta
 
   return {
     id: -Math.abs(queueId),
+    org_id: normalizeOptionalString(payload.org_id) ?? 'default-org',
+    team_id: normalizeOptionalString(payload.team_id) ?? 'default-team',
+    project_id: payload.project_id ?? payload.projectIds?.[0] ?? null,
+    created_by_principal_id: normalizeOptionalString(payload.created_by_principal_id),
+    initiator_principal_id: normalizeOptionalString(payload.initiator_principal_id) ?? 'legacy-unknown',
+    initiator_type: normalizeOptionalString(payload.initiator_type) ?? 'unknown',
+    owner_principal_id: normalizeOptionalString(payload.owner_principal_id) ?? 'legacy-owner',
+    owner_principal_type: normalizeOptionalString(payload.owner_principal_type) ?? 'unknown',
+    executor_principal_id: normalizeOptionalString(payload.executor_principal_id),
+    assignment_state: normalizeOptionalString(payload.assignment_state),
+    taskmaster_drivable: Boolean(payload.taskmaster_drivable),
     name: payload.name.trim() || 'Offline Task',
     description: typeof payload.description === 'string' ? payload.description : null,
     column: normalizeTaskColumn(payload.column ?? 'backlog'),
@@ -588,7 +656,10 @@ function buildOfflineQueuedTask(payload: CreateTaskPayload, queueId: number): Ta
         due_date: dueDate,
         due_at: dueDate,
         recurring: payload.recurring,
+        worktype: payload.worktype,
       }),
+    worktype: normalizeOptionalString(payload.worktype),
+    policy_inputs_json: payload.policy_inputs_json ?? null,
     output: null,
     output_links_count: 0,
     parent_task_id: null,
@@ -684,6 +755,17 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
           // Keep top-level fields plus metadata for API compatibility across MC versions.
           body: JSON.stringify({
             name,
+            org_id: payload.org_id,
+            team_id: payload.team_id,
+            project_id: payload.project_id,
+            created_by_principal_id: payload.created_by_principal_id,
+            initiator_principal_id: payload.initiator_principal_id,
+            initiator_type: payload.initiator_type,
+            owner_principal_id: payload.owner_principal_id,
+            owner_principal_type: payload.owner_principal_type,
+            executor_principal_id: payload.executor_principal_id,
+            assignment_state: payload.assignment_state,
+            taskmaster_drivable: payload.taskmaster_drivable,
             description: payload.description,
             assignee: payload.assignee,
             column: payload.column,
@@ -695,6 +777,8 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
             due_date: dueDate,
             due_at: dueDate,
             recurring: payload.recurring,
+            worktype: payload.worktype,
+            policy_inputs_json: payload.policy_inputs_json,
             metadata:
               payload.metadata ??
               JSON.stringify({
@@ -704,6 +788,7 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
                 due_date: dueDate,
                 due_at: dueDate,
                 recurring: payload.recurring,
+                worktype: payload.worktype,
               }),
           }),
         },
@@ -767,6 +852,25 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
           : existing?.projects ?? [];
         const optimisticTask: TaskBoardTask = {
           id: taskId,
+          org_id: existing?.org_id ?? normalizeOptionalString(payload.org_id) ?? 'default-org',
+          team_id: existing?.team_id ?? normalizeOptionalString(payload.team_id) ?? 'default-team',
+          project_id: payload.project_id ?? existing?.project_id ?? payload.projectIds?.[0] ?? null,
+          created_by_principal_id:
+            normalizeOptionalString(payload.created_by_principal_id) ?? existing?.created_by_principal_id ?? null,
+          initiator_principal_id:
+            normalizeOptionalString(payload.initiator_principal_id) ?? existing?.initiator_principal_id ?? 'legacy-unknown',
+          initiator_type: normalizeOptionalString(payload.initiator_type) ?? existing?.initiator_type ?? 'unknown',
+          owner_principal_id:
+            normalizeOptionalString(payload.owner_principal_id) ?? existing?.owner_principal_id ?? 'legacy-owner',
+          owner_principal_type:
+            normalizeOptionalString(payload.owner_principal_type) ?? existing?.owner_principal_type ?? 'unknown',
+          executor_principal_id:
+            normalizeOptionalString(payload.executor_principal_id) ?? existing?.executor_principal_id ?? null,
+          assignment_state: normalizeOptionalString(payload.assignment_state) ?? existing?.assignment_state ?? null,
+          taskmaster_drivable:
+            typeof payload.taskmaster_drivable === 'boolean'
+              ? payload.taskmaster_drivable
+              : existing?.taskmaster_drivable ?? false,
           name: typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim() : existing?.name ?? `Task #${taskId}`,
           description: Object.prototype.hasOwnProperty.call(payload, 'description')
             ? typeof payload.description === 'string'
@@ -812,6 +916,8 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
             typeof payload.metadata === 'string'
               ? payload.metadata
               : existing?.metadata ?? null,
+          worktype: normalizeOptionalString(payload.worktype) ?? existing?.worktype ?? null,
+          policy_inputs_json: payload.policy_inputs_json ?? existing?.policy_inputs_json ?? null,
           output: existing?.output ?? null,
           output_links_count: existing?.output_links_count ?? 0,
           parent_task_id: existing?.parent_task_id ?? null,
@@ -859,6 +965,17 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
           const now = new Date().toISOString();
           return {
             id: taskId,
+            org_id: null,
+            team_id: null,
+            project_id: null,
+            created_by_principal_id: null,
+            initiator_principal_id: 'legacy-unknown',
+            initiator_type: 'unknown',
+            owner_principal_id: 'legacy-owner',
+            owner_principal_type: 'unknown',
+            executor_principal_id: null,
+            assignment_state: null,
+            taskmaster_drivable: false,
             name: `Task #${taskId}`,
             description: null,
             column,
@@ -877,6 +994,8 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
             created_at: now,
             updated_at: now,
             metadata: null,
+            worktype: null,
+            policy_inputs_json: null,
             output: null,
             output_links_count: 0,
             parent_task_id: null,

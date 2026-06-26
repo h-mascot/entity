@@ -61,7 +61,7 @@ describe('Swarm → Symphony E2E Lifecycle', () => {
       body: JSON.stringify({
         title: 'Fix login button alignment',
         spec: 'The login button on /auth/login is misaligned on mobile. Fix CSS grid layout.',
-        repo: 'https://github.com/curacel/entity',
+        repo: 'https://github.com/example/entity',
         branch: 'fix/login-button',
         provider: 'symphony',
         priority: 'high',
@@ -164,7 +164,7 @@ describe('Swarm → Symphony E2E Lifecycle', () => {
         test_result: 'pass',
         test_output: '42 tests passed, 0 failed',
         screenshots: ['screenshot-mobile-fixed.png'],
-        artifacts: { pr_url: 'https://github.com/curacel/entity/pull/123' },
+        artifacts: { pr_url: 'https://github.com/example/entity/pull/123' },
         duration_sec: 180,
       }),
     });
@@ -228,7 +228,7 @@ describe('Swarm → Symphony Failure Path', () => {
       body: JSON.stringify({
         title: 'Broken migration',
         spec: 'Run DB migration that will fail',
-        repo: 'https://github.com/curacel/entity',
+        repo: 'https://github.com/example/entity',
         provider: 'symphony',
       }),
     });
@@ -273,7 +273,7 @@ describe('Swarm → Symphony Release Path', () => {
       body: JSON.stringify({
         title: 'Releasable task',
         spec: 'Claim then release',
-        repo: 'https://github.com/curacel/entity',
+        repo: 'https://github.com/example/entity',
         provider: 'symphony',
       }),
     });

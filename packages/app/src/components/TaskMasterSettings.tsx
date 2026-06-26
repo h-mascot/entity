@@ -259,6 +259,46 @@ export default function TaskMasterSettings({ apiBase }: TaskMasterSettingsProps)
         </div>
       </div>
 
+      <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium text-[var(--text-primary)]">Review and Human Gate Policy</h3>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              Task detail uses these states to decide what review controls are visible.
+            </p>
+          </div>
+          <span className="rounded-full border border-[var(--accent)]/25 bg-[var(--surface-accent)] px-2 py-0.5 text-[11px] text-[var(--accent)]">
+            Policy-backed
+          </span>
+        </div>
+        <div className="grid gap-2 text-xs text-[var(--text-secondary)] md:grid-cols-2">
+          <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Resolver</div>
+            <p className="mt-1">
+              Workspace, org, team, task, risk, agent-trust, and external-side-effect inputs produce a reason chain.
+            </p>
+          </div>
+          <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Separation of duties</div>
+            <p className="mt-1">
+              Eligible review controls stay hidden when the current profile is the wrong reviewer or approver.
+            </p>
+          </div>
+          <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Human gate</div>
+            <p className="mt-1">
+              Human approval is tracked separately from review and must approve before required work can move to done.
+            </p>
+          </div>
+          <div className="rounded-md border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2">
+            <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Override audit</div>
+            <p className="mt-1">
+              Any override metadata is surfaced as audit context, not hidden inside raw task JSON.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Trigger Controls */}
       <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
         <h3 className="mb-3 text-sm font-medium text-[var(--text-primary)]">Manual Trigger</h3>

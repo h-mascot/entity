@@ -1,14 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createSearchRouter } from '../routes/search';
 import type { Request, Response } from 'express';
+import { execFile } from 'child_process';
 
-// Mock child_process.exec to prevent actual SSH/qmd calls
+// Mock child_process.execFile to prevent actual SSH/qmd calls
 vi.mock('child_process', () => ({
-  exec: vi.fn(),
+  execFile: vi.fn(),
 }));
 
-function mockReq(query: Record<string, any> = {}): Partial<Request> {
-  return { query } as any;
+const mockExecFile = vi.mocked(execFile);
+
+function mockReq(query: Record<string, any> = {}, headers: Record<string, string> = {}): Partial<Request> {
+  const normalizedHeaders = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
+  return {
+    query,
+    header: vi.fn((name: string) => normalizedHeaders[name.toLowerCase()]),
+  } as any;
 }
 
 function mockRes(): any {
@@ -26,6 +33,7 @@ describe('Search Router', () => {
   let handlers: Record<string, { method: string; path: string; handler: Function }[]>;
 
   beforeEach(() => {
+    mockExecFile.mockReset();
     router = createSearchRouter();
     // Extract registered handlers from the router stack
     handlers = {};
@@ -99,6 +107,56 @@ describe('Search Router', () => {
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({ error: 'full must be a boolean' });
     });
+
+    it('should require request org before executing search', async () => {
+      const handler = handlers['/']?.find(h => h.method === 'get')?.handler;
+      const req = mockReq({ q: 'test' });
+      const res = mockRes();
+      await handler!(req, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'request org required', code: 'request_org_required' });
+    });
+
+    it('should suppress restricted search result snippets and content before returning results', async () => {
+      const handler = handlers['/']?.find(h => h.method === 'get')?.handler;
+      mockExecFile.mockImplementation(((_file: string, _args: readonly string[] | null | undefined, _options: unknown, callback: any) => {
+        callback(null, JSON.stringify([
+          {
+            file: 'qmd://docs/restricted.md',
+            title: 'Restricted strategy memo',
+            snippet: 'Do not leak this snippet',
+            body: 'Do not leak this full content',
+            org_id: 'org-a',
+            acl_json: JSON.stringify({ restricted: true }),
+          },
+        ]), '');
+        return {} as any;
+      }) as any);
+
+      const req = mockReq({ q: 'strategy', full: 'true' }, { 'x-entity-org-id': 'org-a' });
+      const res = mockRes();
+      await handler!(req, res);
+
+      expect(res.status).not.toHaveBeenCalled();
+      const payload = res.json.mock.calls[0][0];
+      expect(payload.results[0]).toMatchObject({
+        id: 'docs/restricted.md',
+        title: null,
+        snippet: null,
+        content: null,
+        permission_state: 'restricted',
+        entity_permission_state: 'restricted',
+        restricted: true,
+        placeholder: true,
+        permission: {
+          allowed: false,
+          object_type: 'search_result',
+          object_id: 'docs/restricted.md',
+        },
+      });
+      expect(JSON.stringify(payload)).not.toContain('Do not leak');
+      expect(JSON.stringify(payload)).not.toContain('Restricted strategy memo');
+    });
   });
 
   describe('GET /document', () => {
@@ -120,6 +178,15 @@ describe('Search Router', () => {
       await handler!(req, res);
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({ error: 'lines must be a range like 40-50' });
+    });
+
+    it('should require request org before returning document content', async () => {
+      const handler = handlers['/document']?.find(h => h.method === 'get')?.handler;
+      const req = mockReq({ id: 'test-doc' });
+      const res = mockRes();
+      await handler!(req, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'request org required', code: 'request_org_required' });
     });
   });
 

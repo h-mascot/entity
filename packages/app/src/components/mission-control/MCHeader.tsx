@@ -31,10 +31,10 @@ export default function MCHeader({
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">
-            Mission Control
+            Entity work plane
           </div>
           <h1 className="truncate text-lg font-semibold leading-tight text-[var(--text-primary)]">
-            Tasks
+            Workspace tasks, proof, and review
           </h1>
         </div>
 

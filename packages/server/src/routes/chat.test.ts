@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import fs from 'fs';
 import os from 'os';
@@ -116,65 +116,84 @@ describe('chat routes', () => {
   });
 
   it('returns persisted assistant message ids so threads survive refresh', async () => {
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    const guardedFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (!url.startsWith(baseUrl)) {
+        throw new Error(`unexpected external chat fetch: ${url}`);
+      }
+
+      return originalFetch(input, init);
+    }) as typeof fetch);
+
     await postJson('/setup', {});
 
-    const categoryResponse = await postJson('/categories', { name: 'QA' });
-    const categoryPayload = await categoryResponse.json() as { category: { id: string } };
+    try {
+      const categoryResponse = await postJson('/categories', { name: 'QA' });
+      const categoryPayload = await categoryResponse.json() as { category: { id: string } };
 
-    const channelResponse = await postJson('/channels', {
-      categoryId: categoryPayload.category.id,
-      name: 'qa-thread-route',
-      agents: ['book'],
-    });
-    const channelPayload = await channelResponse.json() as { channel: { id: string } };
+      const channelResponse = await postJson('/channels', {
+        categoryId: categoryPayload.category.id,
+        name: 'qa-thread-route',
+        agents: ['book'],
+      });
+      const channelPayload = await channelResponse.json() as { channel: { id: string } };
 
-    const sendResponse = await postJson('/send', {
-      channelId: channelPayload.channel.id,
-      targetAgent: 'book',
-      agents: ['book'],
-      content: 'hello persisted replies',
-      messageId: 'user-message-1',
-    });
-    const sendPayload = await sendResponse.json() as {
-      message: { id: string };
-      messages: Array<{ id?: string; channelId?: string; content?: string }>;
-    };
+      const sendResponse = await postJson('/send', {
+        channelId: channelPayload.channel.id,
+        targetAgent: 'book',
+        agents: ['book'],
+        content: 'hello persisted replies',
+        messageId: 'user-message-1',
+      });
+      const sendPayload = await sendResponse.json() as {
+        message: { id: string };
+        messages: Array<{ id?: string; channelId?: string; content?: string }>;
+      };
 
-    expect(sendResponse.status).toBe(201);
-    expect(sendPayload.message.id).toBe('user-message-1');
-    expect(sendPayload.messages).toHaveLength(1);
-    expect(sendPayload.messages[0].id).toBeTruthy();
-    expect(sendPayload.messages[0].channelId).toBe(channelPayload.channel.id);
+      expect(sendResponse.status).toBe(201);
+      expect(sendPayload.message.id).toBe('user-message-1');
+      expect(sendPayload.messages).toHaveLength(1);
+      expect(sendPayload.messages[0].id).toBeTruthy();
+      expect(sendPayload.messages[0].channelId).toBe(channelPayload.channel.id);
 
-    const replyId = sendPayload.messages[0].id!;
-    const threadResponse = await postJson('/threads', {
-      channelId: channelPayload.channel.id,
-      parentMessageId: replyId,
-      title: 'Assistant reply thread',
-    });
-    const threadPayload = await threadResponse.json() as { thread: { id: string; parentMessageId: string } };
-    expect(threadPayload.thread.parentMessageId).toBe(replyId);
-
-    await postJson('/send', {
-      channelId: channelPayload.channel.id,
-      threadId: threadPayload.thread.id,
-      parentMessageId: replyId,
-      targetAgent: 'book',
-      agents: ['book'],
-      content: 'reply in thread',
-      messageId: 'thread-user-message-1',
-    });
-
-    const threadsResponse = await fetch(`${baseUrl}/channels/${channelPayload.channel.id}/threads`);
-    const threadsPayload = await threadsResponse.json() as {
-      threads: Array<{ parentMessageId: string; messageCount: number }>;
-    };
-
-    expect(threadsPayload.threads).toEqual([
-      expect.objectContaining({
+      const replyId = sendPayload.messages[0].id!;
+      const threadResponse = await postJson('/threads', {
+        channelId: channelPayload.channel.id,
         parentMessageId: replyId,
-        messageCount: 2,
-      }),
-    ]);
+        title: 'Assistant reply thread',
+      });
+      const threadPayload = await threadResponse.json() as { thread: { id: string; parentMessageId: string } };
+      expect(threadPayload.thread.parentMessageId).toBe(replyId);
+
+      await postJson('/send', {
+        channelId: channelPayload.channel.id,
+        threadId: threadPayload.thread.id,
+        parentMessageId: replyId,
+        targetAgent: 'book',
+        agents: ['book'],
+        content: 'reply in thread',
+        messageId: 'thread-user-message-1',
+      });
+
+      const threadsResponse = await fetch(`${baseUrl}/channels/${channelPayload.channel.id}/threads`);
+      const threadsPayload = await threadsResponse.json() as {
+        threads: Array<{ parentMessageId: string; messageCount: number }>;
+      };
+
+      expect(threadsPayload.threads).toEqual([
+        expect.objectContaining({
+          parentMessageId: replyId,
+          messageCount: 2,
+        }),
+      ]);
+    } finally {
+      guardedFetch.mockRestore();
+    }
   });
 });

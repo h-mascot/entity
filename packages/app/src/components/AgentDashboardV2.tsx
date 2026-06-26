@@ -1,12 +1,13 @@
 import { useEffect, useId, useMemo, useState, type CSSProperties } from 'react';
 import type { ActivityEntry } from '../hooks/useActivityStream';
 import type { TaskBoardTask } from '../hooks/useTaskBoard';
+import AgentManagementSurface from './AgentManagementSurface';
 import { getAgentRegistryRecord, resolveAgentAvatarUrl } from '../lib/agentRegistry';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
 
 type SidebarAgentStatus = 'online' | 'offline';
-type AgentRuntimeStatus = 'active' | 'idle' | 'blocked' | 'offline';
-type AgentTab = 'activity' | 'output' | 'health' | 'queue';
+type AgentRuntimeStatus = 'active' | 'idle' | 'blocked' | 'degraded' | 'offline' | 'unknown';
+type AgentTab = 'management' | 'activity' | 'output' | 'health' | 'queue';
 type FeedCategory = 'tool' | 'file' | 'message' | 'error';
 type TaskColumn = 'backlog' | 'todo' | 'doing' | 'review' | 'done';
 
@@ -21,6 +22,21 @@ interface SidebarAgent {
   runtime: string;
   status: SidebarAgentStatus;
   rawStatus?: string;
+  runtimeStatus?: HelmRuntimeStatusSummary;
+}
+
+interface HelmRuntimeStatusSummary {
+  source: 'helm';
+  binding_id: string | null;
+  state: 'healthy' | 'degraded' | 'unavailable' | 'unknown';
+  health: 'healthy' | 'degraded' | 'unavailable' | 'unknown';
+  readiness: 'ready' | 'degraded' | 'unavailable' | 'unknown';
+  current_work: string | null;
+  heartbeat_at: string | null;
+  checked_at: string;
+  stale: boolean;
+  reason: string;
+  helm_link: string | null;
 }
 
 interface AgentDashboardV2Props {
@@ -95,6 +111,7 @@ interface CrewCardAgent {
   errors: number;
   lastAction: string;
   lastActionAt: string | null;
+  runtimeStatus?: HelmRuntimeStatusSummary;
   sparklineValues: number[];
   sparklineLabels: string[];
   uptimeSeconds?: number;
@@ -143,8 +160,22 @@ const STATUS_META: Record<
     badgeText: 'var(--error)',
     glow: 'inset 0 0 0 1px var(--error)',
   },
+  degraded: {
+    label: 'Degraded',
+    dot: 'var(--review-warning)',
+    badgeBg: 'var(--surface-muted)',
+    badgeText: 'var(--review-warning)',
+    glow: 'inset 0 0 0 1px var(--review-warning)',
+  },
   offline: {
     label: 'Offline',
+    dot: 'var(--text-muted)',
+    badgeBg: 'var(--surface-muted)',
+    badgeText: 'var(--text-secondary)',
+    glow: 'inset 0 0 0 1px var(--border-secondary)',
+  },
+  unknown: {
+    label: 'Unknown',
     dot: 'var(--text-muted)',
     badgeBg: 'var(--surface-muted)',
     badgeText: 'var(--text-secondary)',
@@ -160,6 +191,7 @@ const FEED_META: Record<FeedCategory, { dot: string; text: string }> = {
 };
 
 const TAB_ITEMS: Array<{ id: AgentTab; label: string }> = [
+  { id: 'management', label: 'Management' },
   { id: 'activity', label: 'Activity Feed' },
   { id: 'output', label: 'Work Output' },
   { id: 'health', label: 'Health' },
@@ -329,6 +361,29 @@ function normalizeOnlineStatus(value: unknown): SidebarAgentStatus {
   }
 
   return 'online';
+}
+
+function normalizeHelmRuntimeStatus(value: unknown): HelmRuntimeStatusSummary | undefined {
+  const record = toRecord(value);
+  if (!record || record.source !== 'helm') {
+    return undefined;
+  }
+  const state = normalizeText(record.state).toLowerCase();
+  const health = normalizeText(record.health).toLowerCase();
+  const readiness = normalizeText(record.readiness).toLowerCase();
+  return {
+    source: 'helm',
+    binding_id: normalizeText(record.binding_id) || null,
+    state: state === 'healthy' || state === 'degraded' || state === 'unavailable' || state === 'unknown' ? state : 'unknown',
+    health: health === 'healthy' || health === 'degraded' || health === 'unavailable' || health === 'unknown' ? health : 'unknown',
+    readiness: readiness === 'ready' || readiness === 'degraded' || readiness === 'unavailable' || readiness === 'unknown' ? readiness : 'unknown',
+    current_work: normalizeText(record.current_work) || null,
+    heartbeat_at: normalizeText(record.heartbeat_at) || null,
+    checked_at: normalizeText(record.checked_at) || new Date().toISOString(),
+    stale: record.stale === true,
+    reason: normalizeText(record.reason) || 'helm_status_unknown',
+    helm_link: normalizeText(record.helm_link) || null,
+  };
 }
 
 function normalizeTaskColumn(value: unknown): TaskColumn {
@@ -505,6 +560,15 @@ function formatDuration(seconds: number): string {
 }
 
 function resolveRuntimeStatus(agent: SidebarAgent, hasActiveTask: boolean, hasRecentActivity: boolean): AgentRuntimeStatus {
+  if (agent.runtimeStatus?.state === 'degraded') {
+    return 'degraded';
+  }
+  if (agent.runtimeStatus?.state === 'unavailable') {
+    return 'offline';
+  }
+  if (agent.runtimeStatus?.state === 'unknown') {
+    return 'unknown';
+  }
   if (agent.status === 'offline') {
     return 'offline';
   }
@@ -572,6 +636,7 @@ function parseAgents(payload: unknown): SidebarAgent[] {
         runtime,
         status: normalizeOnlineStatus(record.status),
         rawStatus: normalizeText(record.status) || undefined,
+        runtimeStatus: normalizeHelmRuntimeStatus(record.runtime_status ?? record.runtimeStatus),
       } as SidebarAgent;
     })
     .filter((entry): entry is SidebarAgent => entry !== null);
@@ -867,6 +932,7 @@ export default function AgentDashboardV2({
   agents,
   selectedAgentId,
   onSelectAgent,
+  tasks,
   wsConnected,
 }: AgentDashboardV2Props) {
   const [liveAgents, setLiveAgents] = useState<SidebarAgent[]>([]);
@@ -1010,7 +1076,9 @@ export default function AgentDashboardV2({
         status: resolveRuntimeStatus(agent, doingTasks.length > 0, hasRecentActivity),
         currentTask:
           doingTasks[0] === undefined
-            ? null
+            ? agent.runtimeStatus?.current_work
+              ? { title: agent.runtimeStatus.current_work, priority: 'P2' }
+              : null
             : {
                 title: doingTasks[0].name,
                 priority: doingTasks[0].priority,
@@ -1023,6 +1091,7 @@ export default function AgentDashboardV2({
         errors: agentActivities.filter((entry) => isErrorType(entry.type)).length,
         lastAction: lastActivity?.description || lastActivity?.action || 'No recent activity',
         lastActionAt: lastActivity?.createdAt ?? null,
+        runtimeStatus: agent.runtimeStatus,
         sparklineValues: sparkline.values,
         sparklineLabels: sparkline.labels,
         uptimeSeconds: metrics?.system?.uptimeSeconds ?? undefined,
@@ -1031,7 +1100,7 @@ export default function AgentDashboardV2({
           memoryLoad: metrics?.system?.memPercent ?? null,
           queueDepth: doingTasks.length,
           restarts: null,
-          heartbeatAt: null,
+          heartbeatAt: agent.runtimeStatus?.heartbeat_at ?? null,
         },
       };
     });
@@ -1050,9 +1119,9 @@ export default function AgentDashboardV2({
     return crewAgents.find((agent) => agent.identityKeys.includes(selectedIdentity)) ?? null;
   }, [crewAgents, selectedAgentId]);
 
-  const [detailTab, setDetailTab] = useState<AgentTab>('activity');
+  const [detailTab, setDetailTab] = useState<AgentTab>('management');
   useEffect(() => {
-    setDetailTab('activity');
+    setDetailTab('management');
   }, [selectedAgent?.sidebarId]);
 
   const crewStats = useMemo(() => {
@@ -1476,7 +1545,7 @@ export default function AgentDashboardV2({
             <div>
               <div className="entity-ops-section-title">Agent Detail</div>
               <div className="mt-0.5 text-sm text-[var(--text-secondary)]">
-                Health, output, activity, and queue for {selectedAgent.name}
+                Management, activity, output, health, and queue for {selectedAgent.name}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1495,16 +1564,32 @@ export default function AgentDashboardV2({
                 <span className="ml-2 font-mono text-[10px] opacity-75">
                   {tab.id === 'activity'
                     ? selectedFeed.length
-                    : tab.id === 'output'
-                      ? outputFiles.length
-                      : tab.id === 'queue'
-                        ? selectedQueue.length
-                        : selectedAgent.status}
+                    : tab.id === 'management'
+                      ? selectedAgent.status
+                      : tab.id === 'output'
+                        ? outputFiles.length
+                        : tab.id === 'queue'
+                          ? selectedQueue.length
+                          : selectedAgent.status}
                 </span>
               </button>
             ))}
             </div>
           </div>
+
+          {detailTab === 'management' && (
+            <div className="p-3">
+              <AgentManagementSurface
+                agentId={selectedAgent.sidebarId}
+                agentName={selectedAgent.name}
+                runtime={selectedAgent.runtime}
+                model={selectedAgent.model}
+                currentTaskTitle={selectedAgent.currentTask?.title ?? null}
+                runtimeStatus={selectedAgent.runtimeStatus}
+                tasks={tasks}
+              />
+            </div>
+          )}
 
           {detailTab === 'activity' && (
             <div className="grid min-h-[360px] lg:grid-cols-[170px_minmax(0,1fr)_300px]">
@@ -1570,10 +1655,18 @@ export default function AgentDashboardV2({
                   <dd className="truncate">{selectedAgent.runtime}</dd>
                   <dt className="text-[var(--text-muted)]">Status</dt>
                   <dd style={{ color: statusMeta.badgeText }}>{statusMeta.label}</dd>
+                  <dt className="text-[var(--text-muted)]">Runtime state</dt>
+                  <dd className="truncate">
+                    {selectedAgent.runtimeStatus
+                      ? `${selectedAgent.runtimeStatus.state} · ${selectedAgent.runtimeStatus.reason.replace(/_/g, ' ')}`
+                      : 'Not reported'}
+                  </dd>
+                  <dt className="text-[var(--text-muted)]">Readiness</dt>
+                  <dd className="truncate">{selectedAgent.runtimeStatus?.readiness ?? 'unknown'}</dd>
                   <dt className="text-[var(--text-muted)]">Tasks</dt>
                   <dd>{selectedAgent.tasks} total · {selectedAgent.tasksDoing} active</dd>
                   <dt className="text-[var(--text-muted)]">Last seen</dt>
-                  <dd>{formatRelative(selectedAgent.lastActionAt)}</dd>
+                  <dd>{formatRelative(selectedAgent.health.heartbeatAt ?? selectedAgent.lastActionAt)}</dd>
                 </dl>
                 <div className="mt-5 border-t border-[var(--border-primary)] pt-4">
                   <div className="entity-ops-section-title">Currently Working On</div>
@@ -1646,6 +1739,39 @@ export default function AgentDashboardV2({
 
           {detailTab === 'health' && (
             <div className="grid gap-3 lg:grid-cols-2">
+              {selectedAgent.runtimeStatus && (
+                <div className="entity-ops-panel px-4 py-3 lg:col-span-2">
+                  <div className="mb-2 entity-ops-section-title">Helm Runtime Status</div>
+                  <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <div className="text-[var(--text-muted)]">State</div>
+                      <div className="mt-1 text-[var(--text-primary)]">{selectedAgent.runtimeStatus.state}</div>
+                    </div>
+                    <div>
+                      <div className="text-[var(--text-muted)]">Readiness</div>
+                      <div className="mt-1 text-[var(--text-primary)]">{selectedAgent.runtimeStatus.readiness}</div>
+                    </div>
+                    <div>
+                      <div className="text-[var(--text-muted)]">Heartbeat</div>
+                      <div className="mt-1 text-[var(--text-primary)]">{selectedAgent.runtimeStatus.heartbeat_at ? formatRelative(selectedAgent.runtimeStatus.heartbeat_at) : 'unknown'}</div>
+                    </div>
+                    <div>
+                      <div className="text-[var(--text-muted)]">Reason</div>
+                      <div className="mt-1 text-[var(--text-primary)]">{selectedAgent.runtimeStatus.reason.replace(/_/g, ' ')}</div>
+                    </div>
+                  </div>
+                  {selectedAgent.runtimeStatus.helm_link && (
+                    <a
+                      href={selectedAgent.runtimeStatus.helm_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex text-xs text-[var(--accent)]"
+                    >
+                      Open in Helm
+                    </a>
+                  )}
+                </div>
+              )}
               <div className="entity-ops-panel px-4 py-3">
                 <div className="mb-2 entity-ops-section-title">Resource Load</div>
                 <div className="mb-2 text-xs text-[var(--text-secondary)]">

@@ -82,6 +82,11 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
     return '□';
   };
 
+  const isRestrictedResult = (result: UnifiedSearchResult) => {
+    const permissionState = result.permissionState ?? result.permission_state ?? result.entity_permission_state ?? 'visible';
+    return result.restricted === true || result.placeholder === true || permissionState !== 'visible';
+  };
+
   return (
     <div className="entity-ops-surface flex h-full w-full flex-col gap-3 overflow-hidden p-4">
       <div className="shrink-0">
@@ -171,38 +176,59 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
           <div className="entity-ops-empty text-sm">No files found. Adjust filters or query.</div>
         )}
         <div className="space-y-2">
-          {results.map((result) => (
-            <button
-              key={result.id}
-              type="button"
-              onClick={() => onOpen(result.sourceId, result.path)}
-              className="entity-ops-row entity-ops-focus grid w-full grid-cols-[42px_minmax(0,1fr)_150px_32px] gap-3 p-3 text-left"
-              aria-label={`Open ${result.title}`}
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border-secondary)] bg-[var(--surface-accent)] font-mono text-xs text-[var(--accent)]">
-                {resultIcon(result)}
-              </div>
-              <div className="min-w-0">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <div className="truncate text-sm font-semibold text-[var(--text-primary)]">{result.title}</div>
-                  <span className="entity-ops-chip">{result.origin || 'unknown'}</span>
+          {results.map((result) => {
+            const restricted = isRestrictedResult(result);
+            const safePreview = restricted ? null : result.preview ?? result.snippet ?? null;
+            const resultTitle = restricted ? 'Restricted file' : result.title;
+            const metadata = restricted
+              ? `${result.sourceName} • Access restricted • snippets and previews hidden`
+              : `${result.sourceName} • ${result.path} • ${result.type} • ${result.agent}`;
+
+            return (
+              <button
+                key={result.id}
+                type="button"
+                onClick={() => {
+                  if (!restricted) {
+                    onOpen(result.sourceId, result.path);
+                  }
+                }}
+                disabled={restricted}
+                data-testid={restricted ? 'file-search-restricted-result' : undefined}
+                className={`entity-ops-row entity-ops-focus grid w-full grid-cols-[42px_minmax(0,1fr)_150px_32px] gap-3 p-3 text-left ${
+                  restricted ? 'cursor-not-allowed opacity-80' : ''
+                }`}
+                aria-label={restricted ? 'Restricted file result' : `Open ${resultTitle}`}
+              >
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border-secondary)] bg-[var(--surface-accent)] font-mono text-xs text-[var(--accent)]">
+                  {restricted ? '••' : resultIcon(result)}
                 </div>
-                <div className="mt-1 truncate text-[11px] text-[var(--text-muted)]">
-                  {result.sourceName} • {result.path} • {result.type} • {result.agent}
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <div className="truncate text-sm font-semibold text-[var(--text-primary)]">{resultTitle}</div>
+                    <span className="entity-ops-chip">{restricted ? 'restricted' : result.origin || 'unknown'}</span>
+                  </div>
+                  <div className="mt-1 truncate text-[11px] text-[var(--text-muted)]">
+                    {metadata}
+                  </div>
+                  {restricted ? (
+                    <div className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--text-secondary)]">
+                      Restricted by Entity permissions. Snippets and previews are hidden.
+                    </div>
+                  ) : safePreview ? (
+                    <div className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--text-secondary)]">{safePreview}</div>
+                  ) : null}
                 </div>
-                {result.preview && (
-                  <div className="mt-1 line-clamp-2 text-xs leading-5 text-[var(--text-secondary)]">{result.preview}</div>
-                )}
-              </div>
-              <div className="hidden min-w-0 self-center text-right text-xs text-[var(--text-muted)] md:block">
-                <div>{formatResultDate(result)}</div>
-                <div className="mt-1 truncate">{result.type} • {result.agent}</div>
-              </div>
-              <div className="self-center text-lg text-[var(--text-muted)]" aria-hidden="true">
-                ›
-              </div>
-            </button>
-          ))}
+                <div className="hidden min-w-0 self-center text-right text-xs text-[var(--text-muted)] md:block">
+                  <div>{formatResultDate(result)}</div>
+                  <div className="mt-1 truncate">{restricted ? 'Restricted' : `${result.type} • ${result.agent}`}</div>
+                </div>
+                <div className="self-center text-lg text-[var(--text-muted)]" aria-hidden="true">
+                  {restricted ? '!' : '›'}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

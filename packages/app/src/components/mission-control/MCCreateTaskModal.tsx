@@ -4,6 +4,15 @@ import type { CreateTaskPayload, TaskBoardTask, TaskColumn, TaskPriority } from 
 import { useUserProfile } from '../../lib/userProfile';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
+import {
+  buildPolicyInputsJson,
+  fetchWorktypeRegistry,
+  getEditableWorktypeFields,
+  getWorktypeLabel,
+  orderedWorktypes,
+  type WorktypeOverlayValues,
+  type WorktypeRegistryEntry,
+} from './utils/worktypeRegistry';
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 const CREATE_TASK_COLUMNS = ['backlog', 'todo', 'doing'] as const;
@@ -25,6 +34,8 @@ interface CreateTaskFormState {
   column: CreateTaskColumn;
   recurring: boolean;
   projectIds: number[];
+  worktype: string;
+  overlayValues: WorktypeOverlayValues;
 }
 
 interface MCCreateTaskModalProps {
@@ -44,6 +55,8 @@ const DEFAULT_FORM: CreateTaskFormState = {
   column: 'backlog',
   recurring: false,
   projectIds: [],
+  worktype: 'general',
+  overlayValues: {},
 };
 
 export default function MCCreateTaskModal({
@@ -62,6 +75,7 @@ export default function MCCreateTaskModal({
   const [projectError, setProjectError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [worktypeRegistry, setWorktypeRegistry] = useState<WorktypeRegistryEntry[]>([]);
   const [userProfile] = useUserProfile();
   const [activeAgentNames, setActiveAgentNames] = useState<string[]>([]);
   const assigneeOptions = useMemo(
@@ -163,6 +177,22 @@ export default function MCCreateTaskModal({
     }
 
     let cancelled = false;
+    void fetchWorktypeRegistry(apiBase).then((registry) => {
+      if (!cancelled) {
+        setWorktypeRegistry(registry);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    let cancelled = false;
     void fetchActiveAgentNames(apiBase)
       .then((names) => {
         if (!cancelled) {
@@ -195,6 +225,15 @@ export default function MCCreateTaskModal({
     const projectsById = new Map(projects.map((project) => [project.id, project]));
     return form.projectIds.map((projectId) => projectsById.get(projectId)).filter((entry): entry is ProjectOption => Boolean(entry));
   }, [form.projectIds, projects]);
+  const availableWorktypes = useMemo(() => orderedWorktypes(worktypeRegistry).filter((entry) => entry.worktype !== 'general'), [worktypeRegistry]);
+  const selectedWorktype = useMemo(
+    () => availableWorktypes.find((entry) => entry.worktype === form.worktype) ?? null,
+    [availableWorktypes, form.worktype],
+  );
+  const selectedWorktypeFields = useMemo(
+    () => selectedWorktype ? getEditableWorktypeFields(selectedWorktype) : [],
+    [selectedWorktype],
+  );
 
   const assigneeRequired = form.column === 'todo' || form.column === 'doing';
 
@@ -212,6 +251,17 @@ export default function MCCreateTaskModal({
     setForm((current) => ({
       ...current,
       [key]: value,
+    }));
+    setSubmitError(null);
+  };
+
+  const updateOverlayField = (fieldName: string, value: string | boolean) => {
+    setForm((current) => ({
+      ...current,
+      overlayValues: {
+        ...current.overlayValues,
+        [fieldName]: value,
+      },
     }));
     setSubmitError(null);
   };
@@ -235,8 +285,18 @@ export default function MCCreateTaskModal({
 
     try {
       const projectNames = selectedProjects.map((project) => project.name);
+      const currentPrincipal = userProfile.displayName || 'Local User';
+      const executorPrincipal = form.assignee !== 'Unassigned' ? form.assignee : undefined;
+      const policyInputsJson = buildPolicyInputsJson(form.worktype, form.overlayValues);
       const task = await onCreateTask({
         name: trimmedName,
+        created_by_principal_id: currentPrincipal,
+        initiator_principal_id: currentPrincipal,
+        initiator_type: 'human',
+        owner_principal_id: currentPrincipal,
+        owner_principal_type: 'human',
+        executor_principal_id: executorPrincipal,
+        assignment_state: executorPrincipal ? 'assigned' : 'unassigned',
         description: form.description.trim() || undefined,
         assignee: form.assignee,
         column: form.column,
@@ -245,12 +305,16 @@ export default function MCCreateTaskModal({
         projectIds: form.projectIds,
         due_date: form.dueDate || null,
         recurring: form.recurring,
+        worktype: form.worktype !== 'general' ? form.worktype : undefined,
+        policy_inputs_json: policyInputsJson,
         metadata: JSON.stringify({
           priority: form.priority,
           due_date: form.dueDate || null,
           recurring: form.recurring,
           project_ids: form.projectIds,
           project_names: projectNames,
+          worktype: form.worktype,
+          policy_inputs_json: policyInputsJson,
         }),
       });
 
@@ -419,6 +483,93 @@ export default function MCCreateTaskModal({
                     </div>
                   </div>
                 </div>
+
+                <section
+                  className="rounded-xl border border-[var(--border-primary)] bg-[var(--bg-primary)] px-4 py-4"
+                  data-testid="worktype-overlay-create"
+                >
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                        Worktype Overlay
+                      </div>
+                      <p className="mt-1 text-xs text-[var(--text-muted)]">
+                        Use domain fields for sales, customer success, people, or operations work.
+                      </p>
+                    </div>
+                    <label className="min-w-[220px]">
+                      <span className="sr-only">Worktype</span>
+                      <select
+                        value={form.worktype}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setForm((current) => ({
+                            ...current,
+                            worktype: value,
+                            overlayValues: {},
+                          }));
+                        }}
+                        className="mc-shell-input w-full px-3 py-2 text-sm"
+                        data-testid="worktype-overlay-select"
+                      >
+                        <option value="general">General task</option>
+                        {availableWorktypes.map((entry) => (
+                          <option key={entry.worktype} value={entry.worktype}>
+                            {getWorktypeLabel(entry)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  {selectedWorktype ? (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {selectedWorktypeFields.map((field) => (
+                        <label key={field.name} className="min-w-0">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                            {field.plan_label}
+                          </span>
+                          {field.type === 'enum' && field.allowed_values ? (
+                            <select
+                              value={typeof form.overlayValues[field.name] === 'string' ? String(form.overlayValues[field.name]) : ''}
+                              onChange={(event) => updateOverlayField(field.name, event.target.value)}
+                              className="mc-shell-input w-full px-3 py-2 text-sm"
+                              data-testid={`worktype-overlay-field-${field.name}`}
+                            >
+                              <option value="">Unset</option>
+                              {field.allowed_values.map((option) => (
+                                <option key={option} value={option}>
+                                  {option.replace(/_/g, ' ')}
+                                </option>
+                              ))}
+                            </select>
+                          ) : field.type === 'boolean' ? (
+                            <span className="flex h-[38px] items-center rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 text-sm text-[var(--text-secondary)]">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(form.overlayValues[field.name])}
+                                onChange={(event) => updateOverlayField(field.name, event.target.checked)}
+                                data-testid={`worktype-overlay-field-${field.name}`}
+                              />
+                              <span className="ml-2">Required</span>
+                            </span>
+                          ) : (
+                            <input
+                              type={field.type === 'number' ? 'number' : 'text'}
+                              value={typeof form.overlayValues[field.name] === 'string' ? String(form.overlayValues[field.name]) : ''}
+                              onChange={(event) => updateOverlayField(field.name, event.target.value)}
+                              placeholder={field.plan_label}
+                              className="mc-shell-input w-full px-3 py-2 text-sm"
+                              data-testid={`worktype-overlay-field-${field.name}`}
+                            />
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-[var(--text-muted)]">No domain overlay selected.</div>
+                  )}
+                </section>
 
                 <section className="rounded-xl border border-[var(--border-primary)] bg-[var(--bg-primary)] px-4 py-4">
                   <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">

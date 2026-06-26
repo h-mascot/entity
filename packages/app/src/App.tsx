@@ -51,6 +51,7 @@ import { useFollowMode } from './hooks/useFollowMode';
 import { useWatchModeAutoFollow } from './hooks/useWatchModeAutoFollow';
 import { useTaskBoard, type TaskBoardTask } from './hooks/useTaskBoard';
 import { useIsMobile } from './hooks/useIsMobile';
+import { useEntityNotifications } from './hooks/useEntityNotifications';
 import { useNotificationCenter } from './hooks/useNotificationCenter';
 import { useSyncStatus } from './hooks/useSyncStatus';
 import { runtime } from './config/runtime';
@@ -109,6 +110,20 @@ interface AgentCapability {
   identityLabel?: string;
 }
 
+interface AgentRuntimeStatusSummary {
+  source: 'helm';
+  binding_id: string | null;
+  state: 'healthy' | 'degraded' | 'unavailable' | 'unknown';
+  health: 'healthy' | 'degraded' | 'unavailable' | 'unknown';
+  readiness: 'ready' | 'degraded' | 'unavailable' | 'unknown';
+  current_work: string | null;
+  heartbeat_at: string | null;
+  checked_at: string;
+  stale: boolean;
+  reason: string;
+  helm_link: string | null;
+}
+
 interface Agent {
   id: string;
   slug?: string;
@@ -124,6 +139,7 @@ interface Agent {
   adapterType?: string;
   runtimeType?: string;
   capabilities?: AgentCapability;
+  runtimeStatus?: AgentRuntimeStatusSummary;
   metadata?: Record<string, unknown> | null;
   lastActivity?: {
     action: string;
@@ -429,6 +445,42 @@ function parseJsonRecord(value: unknown): Record<string, unknown> | null {
   }
 }
 
+function normalizeRuntimeStatus(value: unknown): AgentRuntimeStatusSummary | undefined {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  if (!record || record.source !== 'helm') {
+    return undefined;
+  }
+
+  const state = String(record.state ?? '').toLowerCase();
+  const health = String(record.health ?? '').toLowerCase();
+  const readiness = String(record.readiness ?? '').toLowerCase();
+  const normalizedState = state === 'healthy' || state === 'degraded' || state === 'unavailable' || state === 'unknown'
+    ? state
+    : 'unknown';
+  const normalizedHealth = health === 'healthy' || health === 'degraded' || health === 'unavailable' || health === 'unknown'
+    ? health
+    : 'unknown';
+  const normalizedReadiness = readiness === 'ready' || readiness === 'degraded' || readiness === 'unavailable' || readiness === 'unknown'
+    ? readiness
+    : 'unknown';
+
+  return {
+    source: 'helm',
+    binding_id: typeof record.binding_id === 'string' && record.binding_id.trim() ? record.binding_id.trim() : null,
+    state: normalizedState,
+    health: normalizedHealth,
+    readiness: normalizedReadiness,
+    current_work: typeof record.current_work === 'string' && record.current_work.trim() ? record.current_work.trim() : null,
+    heartbeat_at: typeof record.heartbeat_at === 'string' && record.heartbeat_at.trim() ? record.heartbeat_at.trim() : null,
+    checked_at: typeof record.checked_at === 'string' && record.checked_at.trim() ? record.checked_at.trim() : new Date().toISOString(),
+    stale: record.stale === true,
+    reason: typeof record.reason === 'string' && record.reason.trim() ? record.reason.trim() : 'helm_status_unknown',
+    helm_link: typeof record.helm_link === 'string' && /^https?:\/\//.test(record.helm_link) ? record.helm_link : null,
+  };
+}
+
 function normalizeAgentStatus(value: unknown): 'online' | 'offline' {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return ['online', 'active', 'running', 'ready'].includes(normalized) ? 'online' : 'offline';
@@ -534,6 +586,7 @@ function normalizeAgentFromApi(entry: any, userDisplayName?: string): Agent | nu
     entry?.capabilities?.adapterType;
   const runtimeType = entry?.runtimeType || entry?.runtime_type || entry?.capabilities?.runtimeType;
   const rawStatus = String(entry?.status ?? entry?.rawStatus ?? entry?.capabilities?.status ?? '').trim();
+  const runtimeStatus = normalizeRuntimeStatus(entry?.runtime_status ?? entry?.runtimeStatus);
   const capabilities = entry?.capabilities
     ? {
         ...entry.capabilities,
@@ -557,6 +610,7 @@ function normalizeAgentFromApi(entry: any, userDisplayName?: string): Agent | nu
     adapterType: adapterType || undefined,
     runtimeType: runtimeType || undefined,
     capabilities,
+    runtimeStatus,
     metadata,
     avatarUrl: resolveAgentAvatarUrl(id) || resolveAgentAvatarUrl(slug) || registryRecord?.avatarUrl || entry?.avatarUrl || entry?.avatar_url || undefined,
   };
@@ -1114,6 +1168,19 @@ function buildTaskSearchSnippet(task: TaskBoardTask, query: string): string {
   return `${prefix}${excerpt}${suffix}`;
 }
 
+function isKnownTaskPrincipal(value: string | null | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return Boolean(normalized) && normalized !== 'unknown' && !normalized.startsWith('legacy-');
+}
+
+function isExecutableTaskColumn(task: TaskBoardTask): boolean {
+  return task.column === 'todo' || task.column === 'doing' || task.column === 'review';
+}
+
 function normalizePath(path: string): string {
   return path.startsWith('/') ? path : `/${path}`;
 }
@@ -1365,6 +1432,13 @@ export default function App() {
   const [authorshipRanges, setAuthorshipRanges] = useState<DocumentAuthorshipRangeRecord[]>([]);
   const [manualAuthorshipAuthor, setManualAuthorshipAuthor] = useState<DocumentAuthorshipActor>('human');
   const [sidebarTab, setSidebarTab] = useState<WorkspaceTab>(() => {
+    if (typeof window !== 'undefined') {
+      const requestedTab = new URLSearchParams(window.location.search).get('tab') as WorkspaceTab | null;
+      const validTabs: readonly string[] = ['files', 'agents', 'tasks', 'services', 'chat', 'admin'];
+      if (requestedTab && validTabs.includes(requestedTab)) {
+        return requestedTab;
+      }
+    }
     if (typeof window === 'undefined' || !window.localStorage) {
       return 'files';
     }
@@ -1473,6 +1547,12 @@ export default function App() {
   const [loginGateArmedOnLoad] = useState<boolean>(() => readLoginRequired());
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => readAuthSession());
   const [userProfile, saveUserProfile] = useUserProfile();
+  const entityNotifications = useEntityNotifications({
+    apiBase: runtime.apiBase,
+    recipientPrincipalId: userProfile.handle,
+    enabled: notificationsPanelOpen,
+  });
+  const totalNotificationsUnreadCount = notificationsUnreadCount + entityNotifications.unreadCount;
   const [profileNameDraft, setProfileNameDraft] = useState<string>(() => readUserProfile().displayName);
   const [profileHandleDraft, setProfileHandleDraft] = useState<string>(() => readUserProfile().handle);
   const [profileAvatarDraft, setProfileAvatarDraft] = useState<string>(() => readUserProfile().avatarUrl);
@@ -3114,6 +3194,33 @@ export default function App() {
       return true;
     });
   }, [tasks, mcAssigneeFilter, mcPriorityFilter, mcProjectFilter]);
+  const workPlaneSummary = useMemo(() => {
+    const projectKeys = new Set<string>();
+    for (const task of tasks) {
+      for (const project of task.projects) {
+        projectKeys.add(project.id ? `id:${project.id}` : `name:${project.name.toLowerCase()}`);
+      }
+      if (task.project_id) {
+        projectKeys.add(`id:${task.project_id}`);
+      }
+    }
+
+    const executableTasks = tasks.filter(isExecutableTaskColumn);
+    return {
+      projects: projectKeys.size,
+      ownedTasks: tasks.filter((task) => isKnownTaskPrincipal(task.owner_principal_id)).length,
+      unknownAccountability: tasks.filter(
+        (task) => !isKnownTaskPrincipal(task.initiator_principal_id) || !isKnownTaskPrincipal(task.owner_principal_id),
+      ).length,
+      executableTasks: executableTasks.length,
+      executableWithAssigneeOrExecutor: executableTasks.filter(
+        (task) =>
+          isKnownTaskPrincipal(task.executor_principal_id) ||
+          (task.assignee.trim() !== '' && task.assignee.toLowerCase() !== 'unassigned') ||
+          task.taskmaster_drivable,
+      ).length,
+    };
+  }, [tasks]);
 
   const selectedAgentData = selectedAgent ? agents.find((agent) => agent.id === selectedAgent) : null;
   const selectedSource = currentSourceId ? fileSources.find((source) => source.id === currentSourceId) : null;
@@ -4588,6 +4695,14 @@ export default function App() {
       return (
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
+            <div className="mr-1 min-w-[12rem]" data-testid="app-work-plane-heading">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">
+                Entity work plane
+              </div>
+              <div className="text-xs text-[var(--text-secondary)]">
+                Workspace tasks, proof, and review
+              </div>
+            </div>
             {BUILTIN_MC_BOARD_TABS.map((board) => (
               <button
                 key={board}
@@ -4620,6 +4735,28 @@ export default function App() {
               </span>
             ) : (
               <>
+                <div
+                  data-testid="app-work-plane-summary"
+                  className="flex flex-wrap items-center gap-1 text-[11px] text-[var(--text-secondary)]"
+                  aria-label="Entity work plane summary"
+                >
+                  <span className="mc-shell-pill px-2 py-1">
+                    {workPlaneSummary.projects} projects
+                  </span>
+                  <span className="mc-shell-pill px-2 py-1">
+                    {workPlaneSummary.ownedTasks}/{tasks.length} owners
+                  </span>
+                  <span
+                    className={`mc-shell-pill px-2 py-1 ${
+                      workPlaneSummary.unknownAccountability > 0 ? 'text-amber-200' : 'text-[var(--accent)]'
+                    }`}
+                  >
+                    {workPlaneSummary.unknownAccountability} unknown accountability
+                  </span>
+                  <span className="mc-shell-pill px-2 py-1">
+                    {workPlaneSummary.executableWithAssigneeOrExecutor}/{workPlaneSummary.executableTasks} active executable
+                  </span>
+                </div>
                 <select
                   value={mcAssigneeFilter}
                   onChange={(event) => setMcAssigneeFilter(event.target.value as MCAssigneeFilter)}
@@ -5039,12 +5176,12 @@ export default function App() {
               title="Notifications"
             >
               <span aria-hidden="true">🔔</span>
-              {notificationsUnreadCount > 0 ? (
+              {totalNotificationsUnreadCount > 0 ? (
                 <span
                   className="mc-unread-badge-pulse absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold text-white"
-                  aria-label={`${notificationsUnreadCount} unread notifications`}
+                  aria-label={`${totalNotificationsUnreadCount} unread notifications`}
                 >
-                  {notificationsUnreadCount > 99 ? '99+' : notificationsUnreadCount}
+                  {totalNotificationsUnreadCount > 99 ? '99+' : totalNotificationsUnreadCount}
                 </span>
               ) : null}
             </button>
@@ -5983,6 +6120,10 @@ export default function App() {
         onSelect={selectNotificationInPanel}
         onMarkAllRead={markAllNotificationsRead}
         onClearAll={clearAllNotifications}
+        entityNotifications={entityNotifications.notifications}
+        entityNotificationsLoading={entityNotifications.loading}
+        entityNotificationsError={entityNotifications.error}
+        onEntityNotificationRead={(id) => void entityNotifications.markState(id, 'read')}
       />
 
       <FileHistoryPanel

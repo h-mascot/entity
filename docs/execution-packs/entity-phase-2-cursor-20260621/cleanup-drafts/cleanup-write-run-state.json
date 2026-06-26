@@ -1,0 +1,614 @@
+{
+  "schemaVersion": 1,
+  "project": "Entity Phase 2",
+  "scope": "body-only Linear description updates for THE-21..THE-95",
+  "startedAt": "2026-06-21T21:56:08.818784+00:00",
+  "status": "COMPLETED",
+  "completed": [
+    "THE-21",
+    "THE-22",
+    "THE-23",
+    "THE-24",
+    "THE-25",
+    "THE-26",
+    "THE-27",
+    "THE-28",
+    "THE-29",
+    "THE-30",
+    "THE-31",
+    "THE-32",
+    "THE-33",
+    "THE-34",
+    "THE-35",
+    "THE-36",
+    "THE-37",
+    "THE-38",
+    "THE-39",
+    "THE-40",
+    "THE-41",
+    "THE-42",
+    "THE-43",
+    "THE-44",
+    "THE-45",
+    "THE-46",
+    "THE-47",
+    "THE-48",
+    "THE-49",
+    "THE-50",
+    "THE-51",
+    "THE-52",
+    "THE-53",
+    "THE-54",
+    "THE-55",
+    "THE-56",
+    "THE-57",
+    "THE-58",
+    "THE-59",
+    "THE-60",
+    "THE-61",
+    "THE-62",
+    "THE-63",
+    "THE-64",
+    "THE-65",
+    "THE-66",
+    "THE-67",
+    "THE-68",
+    "THE-69",
+    "THE-70",
+    "THE-71",
+    "THE-72",
+    "THE-73",
+    "THE-74",
+    "THE-75",
+    "THE-76",
+    "THE-77",
+    "THE-78",
+    "THE-79",
+    "THE-80",
+    "THE-81",
+    "THE-82",
+    "THE-83",
+    "THE-84",
+    "THE-85",
+    "THE-86",
+    "THE-87",
+    "THE-88",
+    "THE-89",
+    "THE-90",
+    "THE-91",
+    "THE-92",
+    "THE-93",
+    "THE-94",
+    "THE-95"
+  ],
+  "failed": [],
+  "history": [
+    {
+      "issue": "THE-21",
+      "sourceId": "THE-6.1",
+      "time": "2026-06-21T21:56:09.551841+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:09.431Z"
+    },
+    {
+      "issue": "THE-22",
+      "sourceId": "THE-6.2",
+      "time": "2026-06-21T21:56:10.309873+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:10.220Z"
+    },
+    {
+      "issue": "THE-23",
+      "sourceId": "THE-6.3",
+      "time": "2026-06-21T21:56:11.134681+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:11.041Z"
+    },
+    {
+      "issue": "THE-24",
+      "sourceId": "THE-6.4",
+      "time": "2026-06-21T21:56:11.901980+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:11.793Z"
+    },
+    {
+      "issue": "THE-25",
+      "sourceId": "THE-6.5",
+      "time": "2026-06-21T21:56:12.884523+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:12.759Z"
+    },
+    {
+      "issue": "THE-26",
+      "sourceId": "THE-7.1",
+      "time": "2026-06-21T21:56:13.780134+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:13.671Z"
+    },
+    {
+      "issue": "THE-27",
+      "sourceId": "THE-7.2",
+      "time": "2026-06-21T21:56:16.569867+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:16.443Z"
+    },
+    {
+      "issue": "THE-28",
+      "sourceId": "THE-7.3",
+      "time": "2026-06-21T21:56:17.376051+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:17.281Z"
+    },
+    {
+      "issue": "THE-29",
+      "sourceId": "THE-7.4",
+      "time": "2026-06-21T21:56:19.011905+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:18.869Z"
+    },
+    {
+      "issue": "THE-30",
+      "sourceId": "THE-7.5",
+      "time": "2026-06-21T21:56:19.908540+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:19.793Z"
+    },
+    {
+      "issue": "THE-31",
+      "sourceId": "THE-8.1",
+      "time": "2026-06-21T21:56:20.780983+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:20.657Z"
+    },
+    {
+      "issue": "THE-32",
+      "sourceId": "THE-8.2",
+      "time": "2026-06-21T21:56:22.494071+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:22.386Z"
+    },
+    {
+      "issue": "THE-33",
+      "sourceId": "THE-8.3",
+      "time": "2026-06-21T21:56:23.277486+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:23.164Z"
+    },
+    {
+      "issue": "THE-34",
+      "sourceId": "THE-8.4",
+      "time": "2026-06-21T21:56:24.097068+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:23.987Z"
+    },
+    {
+      "issue": "THE-35",
+      "sourceId": "THE-8.5",
+      "time": "2026-06-21T21:56:25.064084+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:24.835Z"
+    },
+    {
+      "issue": "THE-36",
+      "sourceId": "THE-9.1",
+      "time": "2026-06-21T21:56:25.971937+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:25.858Z"
+    },
+    {
+      "issue": "THE-37",
+      "sourceId": "THE-9.2",
+      "time": "2026-06-21T21:56:26.722800+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:26.602Z"
+    },
+    {
+      "issue": "THE-38",
+      "sourceId": "THE-9.3",
+      "time": "2026-06-21T21:56:27.524953+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:27.429Z"
+    },
+    {
+      "issue": "THE-39",
+      "sourceId": "THE-9.4",
+      "time": "2026-06-21T21:56:28.366158+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:28.240Z"
+    },
+    {
+      "issue": "THE-40",
+      "sourceId": "THE-9.5",
+      "time": "2026-06-21T21:56:29.413609+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:29.297Z"
+    },
+    {
+      "issue": "THE-41",
+      "sourceId": "THE-10.1",
+      "time": "2026-06-21T21:56:30.283484+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:30.178Z"
+    },
+    {
+      "issue": "THE-42",
+      "sourceId": "THE-10.2",
+      "time": "2026-06-21T21:56:31.943351+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:31.835Z"
+    },
+    {
+      "issue": "THE-43",
+      "sourceId": "THE-10.3",
+      "time": "2026-06-21T21:56:32.762619+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:32.581Z"
+    },
+    {
+      "issue": "THE-44",
+      "sourceId": "THE-10.4",
+      "time": "2026-06-21T21:56:33.648821+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:33.512Z"
+    },
+    {
+      "issue": "THE-45",
+      "sourceId": "THE-10.5",
+      "time": "2026-06-21T21:56:34.477033+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:34.364Z"
+    },
+    {
+      "issue": "THE-46",
+      "sourceId": "THE-11.1",
+      "time": "2026-06-21T21:56:35.245091+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:35.133Z"
+    },
+    {
+      "issue": "THE-47",
+      "sourceId": "THE-11.2",
+      "time": "2026-06-21T21:56:36.032737+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:35.921Z"
+    },
+    {
+      "issue": "THE-48",
+      "sourceId": "THE-11.3",
+      "time": "2026-06-21T21:56:36.898546+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:36.752Z"
+    },
+    {
+      "issue": "THE-49",
+      "sourceId": "THE-11.4",
+      "time": "2026-06-21T21:56:38.473375+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:38.364Z"
+    },
+    {
+      "issue": "THE-50",
+      "sourceId": "THE-11.5",
+      "time": "2026-06-21T21:56:40.307210+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:40.189Z"
+    },
+    {
+      "issue": "THE-51",
+      "sourceId": "THE-12.1",
+      "time": "2026-06-21T21:56:41.061842+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:40.955Z"
+    },
+    {
+      "issue": "THE-52",
+      "sourceId": "THE-12.2",
+      "time": "2026-06-21T21:56:41.824372+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:41.717Z"
+    },
+    {
+      "issue": "THE-53",
+      "sourceId": "THE-12.3",
+      "time": "2026-06-21T21:56:42.689528+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:42.577Z"
+    },
+    {
+      "issue": "THE-54",
+      "sourceId": "THE-12.4",
+      "time": "2026-06-21T21:56:43.783705+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:43.507Z"
+    },
+    {
+      "issue": "THE-55",
+      "sourceId": "THE-12.5",
+      "time": "2026-06-21T21:56:45.093096+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:44.652Z"
+    },
+    {
+      "issue": "THE-56",
+      "sourceId": "THE-13.1",
+      "time": "2026-06-21T21:56:45.909709+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:45.792Z"
+    },
+    {
+      "issue": "THE-57",
+      "sourceId": "THE-13.2",
+      "time": "2026-06-21T21:56:46.693105+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:46.567Z"
+    },
+    {
+      "issue": "THE-58",
+      "sourceId": "THE-13.3",
+      "time": "2026-06-21T21:56:47.604392+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:47.491Z"
+    },
+    {
+      "issue": "THE-59",
+      "sourceId": "THE-13.4",
+      "time": "2026-06-21T21:56:48.540673+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:48.417Z"
+    },
+    {
+      "issue": "THE-60",
+      "sourceId": "THE-13.5",
+      "time": "2026-06-21T21:56:49.397196+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:49.301Z"
+    },
+    {
+      "issue": "THE-61",
+      "sourceId": "THE-14.1",
+      "time": "2026-06-21T21:56:50.306549+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:50.194Z"
+    },
+    {
+      "issue": "THE-62",
+      "sourceId": "THE-14.2",
+      "time": "2026-06-21T21:56:51.547025+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:51.457Z"
+    },
+    {
+      "issue": "THE-63",
+      "sourceId": "THE-14.3",
+      "time": "2026-06-21T21:56:55.872264+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:54.774Z"
+    },
+    {
+      "issue": "THE-64",
+      "sourceId": "THE-14.4",
+      "time": "2026-06-21T21:56:56.799548+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:56.674Z"
+    },
+    {
+      "issue": "THE-65",
+      "sourceId": "THE-14.5",
+      "time": "2026-06-21T21:56:57.625952+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:57.523Z"
+    },
+    {
+      "issue": "THE-66",
+      "sourceId": "THE-15.1",
+      "time": "2026-06-21T21:56:58.555877+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:58.447Z"
+    },
+    {
+      "issue": "THE-67",
+      "sourceId": "THE-15.2",
+      "time": "2026-06-21T21:56:59.435978+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:56:59.296Z"
+    },
+    {
+      "issue": "THE-68",
+      "sourceId": "THE-15.3",
+      "time": "2026-06-21T21:57:00.489958+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:00.251Z"
+    },
+    {
+      "issue": "THE-69",
+      "sourceId": "THE-15.4",
+      "time": "2026-06-21T21:57:01.317108+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:01.198Z"
+    },
+    {
+      "issue": "THE-70",
+      "sourceId": "THE-15.5",
+      "time": "2026-06-21T21:57:02.142043+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:02.028Z"
+    },
+    {
+      "issue": "THE-71",
+      "sourceId": "THE-16.1",
+      "time": "2026-06-21T21:57:03.028382+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:02.896Z"
+    },
+    {
+      "issue": "THE-72",
+      "sourceId": "THE-16.2",
+      "time": "2026-06-21T21:57:04.105517+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:03.990Z"
+    },
+    {
+      "issue": "THE-73",
+      "sourceId": "THE-16.3",
+      "time": "2026-06-21T21:57:05.174007+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:04.881Z"
+    },
+    {
+      "issue": "THE-74",
+      "sourceId": "THE-16.4",
+      "time": "2026-06-21T21:57:07.325408+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:07.181Z"
+    },
+    {
+      "issue": "THE-75",
+      "sourceId": "THE-16.5",
+      "time": "2026-06-21T21:57:09.510785+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:09.335Z"
+    },
+    {
+      "issue": "THE-76",
+      "sourceId": "THE-17.1",
+      "time": "2026-06-21T21:57:10.324273+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:10.186Z"
+    },
+    {
+      "issue": "THE-77",
+      "sourceId": "THE-17.2",
+      "time": "2026-06-21T21:57:11.229621+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:11.052Z"
+    },
+    {
+      "issue": "THE-78",
+      "sourceId": "THE-17.3",
+      "time": "2026-06-21T21:57:13.730037+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:13.119Z"
+    },
+    {
+      "issue": "THE-79",
+      "sourceId": "THE-17.4",
+      "time": "2026-06-21T21:57:15.990611+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:15.834Z"
+    },
+    {
+      "issue": "THE-80",
+      "sourceId": "THE-17.5",
+      "time": "2026-06-21T21:57:18.946633+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:18.804Z"
+    },
+    {
+      "issue": "THE-81",
+      "sourceId": "THE-18.1",
+      "time": "2026-06-21T21:57:19.860149+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:19.727Z"
+    },
+    {
+      "issue": "THE-82",
+      "sourceId": "THE-18.2",
+      "time": "2026-06-21T21:57:20.684987+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:20.555Z"
+    },
+    {
+      "issue": "THE-83",
+      "sourceId": "THE-18.3",
+      "time": "2026-06-21T21:57:21.518679+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:21.355Z"
+    },
+    {
+      "issue": "THE-84",
+      "sourceId": "THE-18.4",
+      "time": "2026-06-21T21:57:22.437537+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:22.319Z"
+    },
+    {
+      "issue": "THE-85",
+      "sourceId": "THE-18.5",
+      "time": "2026-06-21T21:57:23.860912+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:23.741Z"
+    },
+    {
+      "issue": "THE-86",
+      "sourceId": "THE-19.1",
+      "time": "2026-06-21T21:57:27.900163+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:25.445Z"
+    },
+    {
+      "issue": "THE-87",
+      "sourceId": "THE-19.2",
+      "time": "2026-06-21T21:57:28.929369+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:28.824Z"
+    },
+    {
+      "issue": "THE-88",
+      "sourceId": "THE-19.3",
+      "time": "2026-06-21T21:57:30.302958+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:30.161Z"
+    },
+    {
+      "issue": "THE-89",
+      "sourceId": "THE-19.4",
+      "time": "2026-06-21T21:57:31.182667+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:30.988Z"
+    },
+    {
+      "issue": "THE-90",
+      "sourceId": "THE-19.5",
+      "time": "2026-06-21T21:57:32.119768+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:31.958Z"
+    },
+    {
+      "issue": "THE-91",
+      "sourceId": "THE-20.1",
+      "time": "2026-06-21T21:57:33.051130+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:32.935Z"
+    },
+    {
+      "issue": "THE-92",
+      "sourceId": "THE-20.2",
+      "time": "2026-06-21T21:57:33.949099+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:33.844Z"
+    },
+    {
+      "issue": "THE-93",
+      "sourceId": "THE-20.3",
+      "time": "2026-06-21T21:57:34.755631+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:34.637Z"
+    },
+    {
+      "issue": "THE-94",
+      "sourceId": "THE-20.4",
+      "time": "2026-06-21T21:57:36.949579+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:36.441Z"
+    },
+    {
+      "issue": "THE-95",
+      "sourceId": "THE-20.5",
+      "time": "2026-06-21T21:57:37.856681+00:00",
+      "status": "updated_description_only",
+      "linearUpdatedAt": "2026-06-21T21:57:37.737Z"
+    }
+  ],
+  "updatedAt": "2026-06-21T21:57:38.160439+00:00",
+  "finishedAt": "2026-06-21T21:57:38.160426+00:00"
+}

@@ -20,7 +20,6 @@ import { EforgeProvider } from './providers/eforge';
 import { CodexProvider } from './providers/codex';
 import { CcpProvider } from './providers/ccp';
 import { FlywheelProvider } from './providers/flywheel';
-import { PaperclipProvider } from './providers/paperclip';
 
 // Bootstrap: register built-in providers (once)
 let _registered = false;
@@ -33,7 +32,6 @@ function ensureProvidersRegistered(): void {
   swarmProviderRegistry.register(new CodexProvider());
   swarmProviderRegistry.register(new CcpProvider());
   swarmProviderRegistry.register(new FlywheelProvider());
-  swarmProviderRegistry.register(new PaperclipProvider());
 }
 
 /**
