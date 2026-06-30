@@ -160,6 +160,11 @@ if [[ "$MODE" == "--all" || "$MODE" == "--frontend-only" ]]; then
   rsync -avz --delete -e "ssh ${SSH_OPTS[*]}" --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/app/dist/" "${PROD_HOST}:${FRONTEND_DIST}/"
 fi
 
+if [[ -n "$RELEASE_SHA" ]]; then
+  log "Syncing runtime dependencies into immutable release..."
+  rsync -az --delete -e "ssh ${SSH_OPTS[*]}"     --exclude='.cache/'     --exclude='*.log'     "${MAC_ENTITY_DIR}/node_modules/" "${PROD_HOST}:${ENTITY_DIR}/node_modules/"
+fi
+
 SYMLINK_TARGET=$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' '${SERVER_DIST}/db/entity-tasks.db' 2>/dev/null || echo NOT_A_SYMLINK")
 if [[ "$SYMLINK_TARGET" != "$PROD_DB" ]]; then
   warn "DB symlink was broken. Restoring explicit configured DB target."
