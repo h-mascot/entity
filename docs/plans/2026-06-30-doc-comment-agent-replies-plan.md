@@ -48,6 +48,7 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 | 22:15 | Step 1 | ⏳ | Parallel code audit started; major doc-comment @mention gap found |
 | 22:22 | Step 1-3 | ✅ | Added document-comment responder and editor service hook |
 | 22:23 | Step 4 | ✅ | `cd packages/server && npm run build && npx vitest run` passed |
+| 22:27 | Step 4 | ✅ | Fixed malformed editor bearer auth regex; full server gate and workspace build pass |
 
 ## Files Touched
 
@@ -57,6 +58,8 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 - `packages/server/src/agent/document-comment-responder.test.ts` — created — responder unit tests
 - `packages/server/src/editor/service.ts` — modified — invokes document mention responder from comments/replies
 - `packages/server/src/editor/service.test.ts` — created — service hook tests
+- `packages/server/src/editor/auth.ts` — modified — fixes Documents API bearer token parsing
+- `packages/server/src/editor/auth.test.ts` — created — route-level service token auth tests
 - `packages/server/src/editor/index.ts` — modified — accepts agent registry dependency
 - `packages/server/src/index.ts` — modified — passes agent registry into editor module
 
