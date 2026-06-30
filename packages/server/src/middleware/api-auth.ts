@@ -75,6 +75,7 @@ function extractBearerToken(req: Request | IncomingMessage): string | null {
 /** Routes that match exactly (no sub-paths). */
 const PUBLIC_EXACT_ROUTES: readonly string[] = [
   "/api/health",
+  "/api/version",
 ];
 
 /** Routes where the prefix and all sub-paths are public. */
