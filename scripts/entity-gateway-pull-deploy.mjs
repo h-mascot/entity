@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, renameSync, readFileSync, rmSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -286,9 +286,7 @@ function switchSymlink(currentLink, nextTarget, previousLink) {
   const tmpLink = `${currentLink}.next-${process.pid}`;
   try { unlinkSync(tmpLink); } catch {}
   symlinkSync(nextTarget, tmpLink);
-  try { unlinkSync(currentLink); } catch {}
-  symlinkSync(nextTarget, currentLink);
-  try { unlinkSync(tmpLink); } catch {}
+  renameSync(tmpLink, currentLink);
   if (previousLink && previousTarget) {
     try { unlinkSync(previousLink); } catch {}
     symlinkSync(previousTarget, previousLink);
