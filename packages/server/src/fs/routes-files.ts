@@ -1,11 +1,13 @@
 import type { Request, Response, Router } from 'express';
-import { createFileSourceRepository } from '../../../db/src/file-sources';
+import { createFileSourceRepository, type FileSourceRepository } from '../../../db/src/file-sources';
 import { isTextualContentType } from '../file-types';
 import { createFileSourceAdapter } from './adapters/registry';
 import { assertSourceEnabled, emitFsAudit, normalizeSourceRelativePath } from './security';
 import { recordFsOperation } from './metrics';
 
-const sourceRepo = createFileSourceRepository();
+export interface FileRouteDeps {
+  sourceRepo?: FileSourceRepository;
+}
 
 function parseSourceId(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) {
@@ -63,7 +65,9 @@ function parseWriteMode(value: unknown): 'create' | 'overwrite' {
   return normalized === 'overwrite' ? 'overwrite' : 'create';
 }
 
-export function registerFileRoutes(router: Router): void {
+export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): void {
+  const sourceRepo = deps.sourceRepo ?? createFileSourceRepository();
+
   router.get('/tree', async (req: Request, res: Response) => {
     let sourceId = '';
     let normalizedPath = '';

@@ -94,7 +94,7 @@ export function registerFileSystemRoutes(app: Express, options: FileSystemRouteO
     return res.json({ generatedAt: metrics.generatedAt, operations: metrics.operations, sources });
   });
 
-  registerFileRoutes(router);
+  registerFileRoutes(router, { sourceRepo });
   registerSearchRoutes(router);
 
   app.use('/api/fs', router);
