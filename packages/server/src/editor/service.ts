@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import type { AgentRegistryRecord } from '../../../db/src';
 import { createAgentTokenRepository, type AgentTokenRepository } from '../../../db/src/agent-tokens';
 import {
   DOCUMENT_PRESENCE_STATUSES,
@@ -20,6 +21,10 @@ import {
   type JsonValue,
 } from '../../../db/src/document-collab';
 import { createFileSourceRepository, type FileSourceRepository } from '../../../db/src/file-sources';
+import {
+  createDocumentCommentMentionResponder,
+  type DocumentCommentMentionTrigger,
+} from '../agent/document-comment-responder';
 import { createFileSourceAdapter } from '../fs/adapters/registry';
 import type { FileSourceAdapter, SourceCapability } from '../fs/adapters/types';
 import type { EditorWsBroadcaster } from './ws';
@@ -32,6 +37,8 @@ export interface EditorServiceOptions {
   collaborationRepository?: DocumentCollaborationRepository;
   tokenRepository?: AgentTokenRepository;
   sourceRepository?: FileSourceRepository;
+  listAgents?: () => AgentRegistryRecord[];
+  documentCommentMentionResponder?: (trigger: DocumentCommentMentionTrigger) => Promise<void> | void;
 }
 
 export interface EditorModuleHealth {
@@ -988,6 +995,56 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
     return session;
   };
 
+  const readDocumentMentionContext = async (docId: string, comment: DocumentCommentRecord) => {
+    const normalizedDocId = requireNonEmptyString(docId, 'docId');
+    const session = ensureDocumentSession(normalizedDocId) ?? collaboration.getSessionByDocId(normalizedDocId);
+    const parsed = parseDocIdParts(normalizedDocId);
+    const sourceId = session?.source_id ?? parsed.sourceId ?? null;
+    const documentPath = session?.path ?? parsed.path ?? null;
+
+    if (!sourceId || !documentPath) {
+      return {
+        docId: normalizedDocId,
+        sourceId,
+        path: documentPath,
+        content: comment.selected_text ?? '',
+      };
+    }
+
+    const { adapter } = requireSourceAdapter(sourceId);
+    const file = await adapter.read(documentPath);
+    return {
+      docId: normalizedDocId,
+      sourceId,
+      path: documentPath,
+      content: file.content,
+    };
+  };
+
+  const documentCommentMentionResponder =
+    options.documentCommentMentionResponder ??
+    (options.listAgents
+      ? createDocumentCommentMentionResponder({
+          listAgents: options.listAgents,
+          readDocumentContext: readDocumentMentionContext,
+          listThreadReplies: (docId, commentId) => collaboration.listCommentReplies(docId, commentId),
+          createReply: (input) =>
+            collaboration.createCommentReply({
+              doc_id: input.docId,
+              comment_id: input.commentId,
+              author: input.author,
+              text: input.text,
+            }),
+          broadcastReply: (docId, commentId, reply) =>
+            options.broadcaster.broadcastComment(docId, {
+              actor: reply.author,
+              action: 'replied',
+              commentId,
+              replyId: reply.id,
+            }),
+        })
+      : undefined);
+
   return {
     repositories: {
       collaboration,
@@ -1052,7 +1109,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         ? requireOptionalString(input.selectedText, 'selectedText')
         : null;
 
-      collaboration.createComment({
+      const comment = collaboration.createComment({
         doc_id: normalizedDocId,
         author: normalizedActorId,
         start_offset: from,
@@ -1064,6 +1121,11 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
 
       const snapshot = collaboration.getCollaborationSnapshot(normalizedDocId);
       options.broadcaster.broadcastComment(normalizedDocId, { actor: normalizedActorId, action: 'created' });
+      void documentCommentMentionResponder?.({
+        kind: 'comment',
+        docId: normalizedDocId,
+        comment,
+      });
       return { docId: normalizedDocId, threads: mapCommentThreads(snapshot) };
     },
     replyToComment: (docId: string, actorId: string, commentId: string, input: DocumentCommentReplyCreateInput) => {
@@ -1078,7 +1140,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       }
 
       const text = requireNonEmptyString(input.text, 'text');
-      collaboration.createCommentReply({
+      const reply = collaboration.createCommentReply({
         doc_id: normalizedDocId,
         comment_id: normalizedCommentId,
         author: normalizedActorId,
@@ -1090,6 +1152,12 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         actor: normalizedActorId,
         action: 'replied',
         commentId: normalizedCommentId,
+      });
+      void documentCommentMentionResponder?.({
+        kind: 'reply',
+        docId: normalizedDocId,
+        comment: existing,
+        reply,
       });
       return { docId: normalizedDocId, threads: mapCommentThreads(snapshot) };
     },

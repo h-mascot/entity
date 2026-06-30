@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 import { Router } from 'express';
 import type { WebSocket } from 'ws';
+import type { AgentRegistryRecord } from '../../../db/src';
 import { createEditorRouteAuth } from './auth';
 import { registerEditorReviewWebhookRoutes } from './reviews';
 import { registerEditorRoutes } from './routes';
@@ -11,6 +12,7 @@ export interface RegisterEditorModuleOptions {
   enabled: boolean;
   wsClients: ReadonlySet<WebSocket>;
   openClawBaseUrl: string;
+  listAgents?: () => AgentRegistryRecord[];
 }
 
 export function registerEditorModule(app: Express, options: RegisterEditorModuleOptions): void {
@@ -23,6 +25,7 @@ export function registerEditorModule(app: Express, options: RegisterEditorModule
   const service = createEditorService({
     openClawBaseUrl: options.openClawBaseUrl,
     broadcaster,
+    listAgents: options.listAgents,
   });
   const auth = createEditorRouteAuth({
     tokenRepository: service.repositories.tokens,
