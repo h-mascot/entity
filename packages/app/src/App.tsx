@@ -3415,6 +3415,12 @@ export default function App() {
   const documentsReady = Boolean(runtime.agentNativeEditorEnabled && currentDocId && currentSourceId && documentsAuth);
 
   useEffect(() => {
+    if (currentDocId && rightSidebarHasPanels) {
+      setRightSidebarCollapsed(false);
+    }
+  }, [currentDocId, rightSidebarHasPanels]);
+
+  useEffect(() => {
     documentsReadyRef.current = documentsReady;
   }, [documentsReady]);
 
@@ -5678,7 +5684,7 @@ export default function App() {
 	
 	                {runtime.agentNativeEditorEnabled && (
 	                  <aside
-	                    className={`hidden shrink-0 flex-col border-l border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 lg:flex ${
+	                    className={`flex shrink-0 flex-col border-l border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 ${
                       rightSidebarIsCollapsed ? 'w-8' : 'w-[280px]'
                     }`}
                   >

@@ -108,6 +108,7 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 | 22:22 | Step 1-3 | ✅ | Added document-comment responder and editor service hook |
 | 22:23 | Step 4 | ✅ | `cd packages/server && npm run build && npx vitest run` passed |
 | 22:27 | Step 4 | ✅ | Fixed malformed editor bearer auth regex; full server gate and workspace build pass |
+| 22:52 | Step 5 | ⏳ | Browser found comment sidebar hidden; made collaboration sidebar visible and auto-expanded when panels load |
 
 ## Files Touched
 
@@ -121,6 +122,7 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 - `packages/server/src/editor/auth.test.ts` — created — route-level service token auth tests
 - `packages/server/src/editor/index.ts` — modified — accepts agent registry dependency
 - `packages/server/src/index.ts` — modified — passes agent registry into editor module
+- `packages/app/src/App.tsx` — modified — makes document collaboration sidebar visible and auto-expands when threads load
 
 ## Resume Instructions
 
