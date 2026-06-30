@@ -1,4 +1,5 @@
 import type { Request, Response, Router } from 'express';
+import type { DocumentCommentMentionTrigger } from '../agent/document-comment-responder';
 import type { EditorRouteAuth } from './auth';
 import {
   EditorServiceError,
@@ -17,6 +18,7 @@ import {
 export interface RegisterEditorRoutesOptions {
   auth: EditorRouteAuth;
   service: EditorService;
+  commentMentionResponder?: (trigger: DocumentCommentMentionTrigger) => Promise<void>;
 }
 
 interface EditorRouteErrorBody {
@@ -297,7 +299,16 @@ export function registerEditorRoutes(router: Router, options: RegisterEditorRout
 
     try {
       const input = req.body as unknown as DocumentCommentCreateInput;
-      res.json(options.service.createComment(docId, actorId, input));
+      const result = options.service.createComment(docId, actorId, input);
+      res.json(result);
+      if (result.createdThreadId) {
+        void options.commentMentionResponder?.({
+          docId,
+          commentId: result.createdThreadId,
+          actorId,
+          body: input.text,
+        });
+      }
     } catch (error) {
       const mapped = mapRouteError(error);
       res.status(mapped.status).json(mapped.body);
@@ -332,7 +343,14 @@ export function registerEditorRoutes(router: Router, options: RegisterEditorRout
 
       try {
         const input = req.body as unknown as DocumentCommentReplyCreateInput;
-        res.json(options.service.replyToComment(docId, actorId, commentId, input));
+        const result = options.service.replyToComment(docId, actorId, commentId, input);
+        res.json(result);
+        void options.commentMentionResponder?.({
+          docId,
+          commentId,
+          actorId,
+          body: input.text,
+        });
       } catch (error) {
         const mapped = mapRouteError(error);
         res.status(mapped.status).json(mapped.body);

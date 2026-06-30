@@ -20,6 +20,7 @@ import {
   type JsonValue,
 } from '../../../db/src/document-collab';
 import { createFileSourceRepository, type FileSourceRepository } from '../../../db/src/file-sources';
+import type { DocumentCommentMentionContext } from '../agent/document-comment-responder';
 import { createFileSourceAdapter } from '../fs/adapters/registry';
 import type { FileSourceAdapter, SourceCapability } from '../fs/adapters/types';
 import type { EditorWsBroadcaster } from './ws';
@@ -123,6 +124,8 @@ export interface DocumentCommentThread {
 export interface DocumentCommentsResponse {
   docId: string;
   threads: DocumentCommentThread[];
+  createdThreadId?: string;
+  repliedThreadId?: string;
 }
 
 export interface DocumentCommentCreateInput {
@@ -303,6 +306,7 @@ export interface EditorService {
   readonly broadcaster: EditorWsBroadcaster;
   getHealth: () => EditorModuleHealth;
   getDocumentState: (docId: string) => DocumentStateResponse;
+  getCommentMentionContext: (docId: string, commentId: string) => Promise<DocumentCommentMentionContext>;
   getComments: (docId: string) => DocumentCommentsResponse;
   createComment: (docId: string, actorId: string, input: DocumentCommentCreateInput) => DocumentCommentsResponse;
   replyToComment: (
@@ -988,6 +992,47 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
     return session;
   };
 
+  const buildDocumentExcerpt = async (
+    session: DocumentCollaborationSnapshot['session'],
+    from: number,
+    to: number
+  ): Promise<Pick<DocumentCommentMentionContext, 'documentExcerpt' | 'documentExcerptRange' | 'documentReadError'>> => {
+    const sourceId = normalizeOptionalString(session?.source_id ?? null);
+    const documentPath = normalizeOptionalString(session?.path ?? null);
+    if (!sourceId || !documentPath) {
+      return {
+        documentExcerpt: null,
+        documentExcerptRange: null,
+        documentReadError: 'document source/path is missing',
+      };
+    }
+
+    try {
+      const { adapter } = requireSourceAdapter(sourceId);
+      const file = await adapter.read(documentPath);
+      const content = file.content;
+      const anchorStart = Math.min(Math.max(0, from), content.length);
+      const anchorEnd = Math.min(Math.max(anchorStart, to), content.length);
+      const radius = 700;
+      const excerptStart = Math.max(0, anchorStart - radius);
+      const excerptEnd = Math.min(content.length, anchorEnd + radius);
+      return {
+        documentExcerpt: content.slice(excerptStart, excerptEnd),
+        documentExcerptRange: {
+          from: excerptStart,
+          to: excerptEnd,
+        },
+        documentReadError: null,
+      };
+    } catch (error) {
+      return {
+        documentExcerpt: null,
+        documentExcerptRange: null,
+        documentReadError: error instanceof Error ? error.message : 'unable to read document content',
+      };
+    }
+  };
+
   return {
     repositories: {
       collaboration,
@@ -1030,6 +1075,33 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         collaboration: collaborationSnapshot,
       };
     },
+    getCommentMentionContext: async (docId: string, commentId: string) => {
+      const normalizedDocId = requireNonEmptyString(docId, 'docId');
+      const normalizedCommentId = requireNonEmptyString(commentId, 'commentId');
+      ensureDocumentSession(normalizedDocId);
+      const comment = collaboration.getComment(normalizedDocId, normalizedCommentId);
+      if (!comment) {
+        throw new EditorServiceError('COMMENT_NOT_FOUND', 'Comment was not found.', 404);
+      }
+
+      const replies = collaboration.listCommentReplies(normalizedDocId, normalizedCommentId);
+      const session = collaboration.getSessionByDocId(normalizedDocId);
+      const excerpt = await buildDocumentExcerpt(session, comment.start_offset, comment.end_offset);
+      return {
+        docId: normalizedDocId,
+        sourceId: session?.source_id ?? null,
+        path: session?.path ?? null,
+        range: {
+          from: comment.start_offset,
+          to: comment.end_offset,
+        },
+        selectedText: comment.selected_text ?? null,
+        commentAuthor: comment.author,
+        commentText: comment.text,
+        replies,
+        ...excerpt,
+      };
+    },
     getComments: (docId: string) => {
       const normalizedDocId = requireNonEmptyString(docId, 'docId');
       ensureDocumentSession(normalizedDocId);
@@ -1052,7 +1124,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         ? requireOptionalString(input.selectedText, 'selectedText')
         : null;
 
-      collaboration.createComment({
+      const comment = collaboration.createComment({
         doc_id: normalizedDocId,
         author: normalizedActorId,
         start_offset: from,
@@ -1064,7 +1136,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
 
       const snapshot = collaboration.getCollaborationSnapshot(normalizedDocId);
       options.broadcaster.broadcastComment(normalizedDocId, { actor: normalizedActorId, action: 'created' });
-      return { docId: normalizedDocId, threads: mapCommentThreads(snapshot) };
+      return { docId: normalizedDocId, threads: mapCommentThreads(snapshot), createdThreadId: comment.id };
     },
     replyToComment: (docId: string, actorId: string, commentId: string, input: DocumentCommentReplyCreateInput) => {
       const normalizedDocId = requireNonEmptyString(docId, 'docId');
@@ -1091,7 +1163,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         action: 'replied',
         commentId: normalizedCommentId,
       });
-      return { docId: normalizedDocId, threads: mapCommentThreads(snapshot) };
+      return { docId: normalizedDocId, threads: mapCommentThreads(snapshot), repliedThreadId: normalizedCommentId };
     },
     resolveComment: (docId: string, actorId: string, commentId: string, input: DocumentCommentResolveInput) => {
       const normalizedDocId = requireNonEmptyString(docId, 'docId');

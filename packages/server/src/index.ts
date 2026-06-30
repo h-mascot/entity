@@ -5956,6 +5956,7 @@ registerEditorModule(app, {
   enabled: AGENT_NATIVE_EDITOR_ENABLED,
   wsClients,
   openClawBaseUrl: OPENCLAW,
+  listAgents: () => agentRegistryRepo.listAgents(),
 });
 registerPluginManagementRoutes({
   app,
