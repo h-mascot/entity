@@ -50,6 +50,7 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 | 22:23 | Step 4 | ✅ | `cd packages/server && npm run build && npx vitest run` passed |
 | 22:27 | Step 4 | ✅ | Fixed malformed editor bearer auth regex; full server gate and workspace build pass |
 | 22:52 | Step 5 | ⏳ | Browser found comment sidebar hidden; made collaboration sidebar visible and auto-expanded when panels load |
+| 23:02 | Step 5 | ⏳ | Browser found UI/backend docId mismatch; normalized frontend doc IDs to `source:/path` |
 
 ## Files Touched
 
@@ -64,6 +65,7 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 - `packages/server/src/editor/index.ts` — modified — accepts agent registry dependency
 - `packages/server/src/index.ts` — modified — passes agent registry into editor module
 - `packages/app/src/App.tsx` — modified — makes document collaboration sidebar visible and auto-expands when threads load
+- `packages/app/src/App.tsx` — modified — normalizes document IDs to `source:/path`
 
 ## Resume Instructions
 

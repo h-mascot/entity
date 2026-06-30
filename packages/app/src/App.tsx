@@ -685,7 +685,8 @@ function describeQueuedWrite(item: OfflineQueueSnapshotItem): string {
 }
 
 function buildDocumentId(sourceId: string | null, filePath: string): string {
-  return sourceId ? `${sourceId}:${filePath}` : `local:${filePath}`;
+  const normalizedPath = filePath.startsWith('/') ? filePath : `/${filePath}`;
+  return sourceId ? `${sourceId}:${normalizedPath}` : `local:${normalizedPath}`;
 }
 
 function normalizeDetectedContentType(contentType: string | null | undefined): string {
