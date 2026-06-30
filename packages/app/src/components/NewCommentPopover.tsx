@@ -118,7 +118,7 @@ export function NewCommentPopover({
             </button>
           </div>
           <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-            Mentions ready: type @Assistant, @Human
+            Tag an agent (e.g. @Assistant) and they'll reply in this thread
           </div>
         </div>
       </div>

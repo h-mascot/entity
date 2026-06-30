@@ -27,7 +27,10 @@ export interface CreateEditorRouteAuthOptions {
 
 const AUTHORIZATION_BEARER_PATTERN=/^Bear...$/i;
 const SERVICE_ACTOR_HEADER = 'x-entity-actor';
-const DEFAULT_KNOWN_ACTOR_IDS = ['assistant'] as const;
+// `human` is included so a person commenting via a service token keeps a
+// distinct identity from the `assistant` agent (otherwise the agent responder
+// would treat the human's own comment as an agent reply and skip it).
+const DEFAULT_KNOWN_ACTOR_IDS = ['human', 'assistant'] as const;
 const KNOWN_ACTORS_ENV_KEY = 'ENTITY_AGENT_NATIVE_EDITOR_KNOWN_ACTORS';
 const OPTIONAL_KNOWN_ACTOR_ENV: Record<string, string> = {
   henry: 'ENTITY_AGENT_NATIVE_EDITOR_ENABLE_HENRY_ACTOR',

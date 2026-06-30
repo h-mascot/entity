@@ -1499,7 +1499,7 @@ export default function App() {
     initialDocumentsAuth?.kind === 'service' ? 'service' : 'bearer'
   );
   const [documentsAuthActorDraft, setDocumentsAuthActorDraft] = useState<string>(() =>
-    initialDocumentsAuth?.kind === 'service' ? initialDocumentsAuth.actorId : 'ada'
+    initialDocumentsAuth?.kind === 'service' ? initialDocumentsAuth.actorId : 'human'
   );
   const [commentThreads, setCommentThreads] = useState<DocumentCommentThread[]>([]);
   const [suggestions, setSuggestions] = useState<DocumentSuggestionUiRecord[]>([]);
@@ -4229,7 +4229,7 @@ export default function App() {
                     if (documentsAuthKindDraft === 'service') {
                       const actorId = documentsAuthActorDraft.trim().toLowerCase();
                       if (!actorId) {
-                        pushToast('Service tokens require an actor id (ada/spock/scotty).', 'warning');
+                        pushToast('Service tokens require an actor id (e.g. human).', 'warning');
                         return;
                       }
                       setDocumentsAuth({ kind: 'service', token, actorId });
@@ -4257,7 +4257,7 @@ export default function App() {
                         value={documentsAuthActorDraft}
                         onChange={(event) => setDocumentsAuthActorDraft(event.target.value)}
                         className="mc-shell-input w-full px-3 py-2 text-sm"
-                        placeholder="X-Entity-Actor (ada/spock/scotty)"
+                        placeholder="X-Entity-Actor (e.g. human)"
                         aria-label="Service token actor id"
                       />
                     ) : (

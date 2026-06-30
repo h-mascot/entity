@@ -22,6 +22,7 @@ import {
 import { createFileSourceRepository, type FileSourceRepository } from '../../../db/src/file-sources';
 import { createFileSourceAdapter } from '../fs/adapters/registry';
 import type { FileSourceAdapter, SourceCapability } from '../fs/adapters/types';
+import type { DocumentCommentMentionEvent } from './comment-responder';
 import type { EditorWsBroadcaster } from './ws';
 
 type JsonObject = Record<string, JsonValue>;
@@ -32,6 +33,11 @@ export interface EditorServiceOptions {
   collaborationRepository?: DocumentCollaborationRepository;
   tokenRepository?: AgentTokenRepository;
   sourceRepository?: FileSourceRepository;
+  /**
+   * Invoked (fire-and-forget) after a comment or reply is created so an agent
+   * responder can react to @mentions. Errors thrown here are swallowed.
+   */
+  onCommentMention?: (event: DocumentCommentMentionEvent) => void;
 }
 
 export interface EditorModuleHealth {
@@ -303,6 +309,8 @@ export interface EditorService {
   readonly broadcaster: EditorWsBroadcaster;
   getHealth: () => EditorModuleHealth;
   getDocumentState: (docId: string) => DocumentStateResponse;
+  /** Reads the backing file content for a document, or null when unavailable. */
+  readDocumentContent: (docId: string) => Promise<string | null>;
   getComments: (docId: string) => DocumentCommentsResponse;
   createComment: (docId: string, actorId: string, input: DocumentCommentCreateInput) => DocumentCommentsResponse;
   replyToComment: (
@@ -988,6 +996,34 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
     return session;
   };
 
+  const emitCommentMention = (event: DocumentCommentMentionEvent): void => {
+    if (!options.onCommentMention) {
+      return;
+    }
+    try {
+      options.onCommentMention(event);
+    } catch {
+      // Mention handling is best-effort and must never break comment writes.
+    }
+  };
+
+  const readDocumentContent = async (docId: string): Promise<string | null> => {
+    const normalizedDocId = requireNonEmptyString(docId, 'docId');
+    const session = ensureDocumentSession(normalizedDocId) ?? collaboration.getSessionByDocId(normalizedDocId);
+    const sourceId = normalizeOptionalString(session?.source_id ?? null);
+    const documentPath = normalizeOptionalString(session?.path ?? null);
+    if (!sourceId || !documentPath) {
+      return null;
+    }
+    try {
+      const { adapter } = requireSourceAdapter(sourceId);
+      const file = await adapter.read(documentPath);
+      return file.content;
+    } catch {
+      return null;
+    }
+  };
+
   return {
     repositories: {
       collaboration,
@@ -1001,6 +1037,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       storage: 'sqlite',
       openClawBaseUrl,
     }),
+    readDocumentContent,
     getDocumentState: (docId: string) => {
       const normalizedDocId = requireNonEmptyString(docId, 'docId');
       const ensuredSession = ensureDocumentSession(normalizedDocId);
@@ -1052,7 +1089,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         ? requireOptionalString(input.selectedText, 'selectedText')
         : null;
 
-      collaboration.createComment({
+      const created = collaboration.createComment({
         doc_id: normalizedDocId,
         author: normalizedActorId,
         start_offset: from,
@@ -1064,6 +1101,14 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
 
       const snapshot = collaboration.getCollaborationSnapshot(normalizedDocId);
       options.broadcaster.broadcastComment(normalizedDocId, { actor: normalizedActorId, action: 'created' });
+      emitCommentMention({
+        docId: normalizedDocId,
+        commentId: created.id,
+        author: normalizedActorId,
+        text,
+        selectedText,
+        range: { from, to },
+      });
       return { docId: normalizedDocId, threads: mapCommentThreads(snapshot) };
     },
     replyToComment: (docId: string, actorId: string, commentId: string, input: DocumentCommentReplyCreateInput) => {
@@ -1090,6 +1135,14 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         actor: normalizedActorId,
         action: 'replied',
         commentId: normalizedCommentId,
+      });
+      emitCommentMention({
+        docId: normalizedDocId,
+        commentId: normalizedCommentId,
+        author: normalizedActorId,
+        text,
+        selectedText: existing.selected_text ?? null,
+        range: { from: existing.start_offset, to: existing.end_offset },
       });
       return { docId: normalizedDocId, threads: mapCommentThreads(snapshot) };
     },
