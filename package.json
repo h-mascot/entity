@@ -28,7 +28,9 @@
     "verify:sandbox": "bash scripts/entity-verify-sandbox.sh",
     "deploy:sandbox": "bash scripts/entity-deploy-sandbox.sh",
     "ship:sandbox": "npm run ctrl:gate && npm run deploy:sandbox",
-    "promote:prod": "bash scripts/entity-promote-prod.sh"
+    "promote:prod": "bash scripts/entity-promote-prod.sh",
+    "release:info": "node scripts/entity-release-info.mjs",
+    "release:check": "node scripts/entity-release-info.mjs --check"
   },
   "workspaces": [
     "packages/*",

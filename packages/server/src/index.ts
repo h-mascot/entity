@@ -156,6 +156,7 @@ import {
   setApiNoStoreHeaders,
   setFrontendStaticCacheHeaders,
 } from "./static-cache";
+import { readReleaseInfo } from "./release-info";
 import { createApiAuthMiddleware, createWsAuthHandler } from "./middleware/api-auth";
 // Load .env from project root
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
@@ -192,6 +193,12 @@ app.get("/api/health", (_req, res) => {
     uptimeSeconds: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
   });
+});
+
+// Release identity probe used by sandbox/prod promotion checks. Public so
+// deployment verifiers can prove the live runtime SHA without a bearer token.
+app.get("/api/version", (_req, res) => {
+  res.json(readReleaseInfo(process.cwd()));
 });
 
 function registerPhase2DiagnosticsRoutes(prefix: "" | "/api") {
