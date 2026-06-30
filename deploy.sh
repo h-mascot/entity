@@ -40,6 +40,10 @@ SERVER_DIST="${ENTITY_DIR}/packages/server/dist"
 FRONTEND_DIST="${ENTITY_DIR}/packages/app/dist"
 SKIP_MAC_BUILD="${ENTITY_SKIP_MAC_BUILD:-0}"
 DRY_RUN="${ENTITY_DEPLOY_DRY_RUN:-0}"
+SKIP_RESTART="${ENTITY_DEPLOY_SKIP_RESTART:-0}"
+RELEASE_SHA="${ENTITY_RELEASE_SHA:-}"
+RELEASE_BRANCH="${ENTITY_RELEASE_BRANCH:-}"
+RELEASE_ENVIRONMENT="${ENTITY_RELEASE_ENVIRONMENT:-sandbox-or-prod-agnostic}"
 if [[ -z "$PROD_HTTP_HOST" ]]; then
   PROD_BASE_URL=""
 elif [[ "$PROD_HTTP_HOST" == http://* || "$PROD_HTTP_HOST" == https://* ]]; then
@@ -78,6 +82,10 @@ runtimeLogPath=${RUNTIME_LOG_PATH}
 runtimeLaunchdService=${RUNTIME_LAUNCHD_SERVICE:-<unset>}
 runtimeNodeEntry=${RUNTIME_NODE_ENTRY}
 skipMacBuild=${SKIP_MAC_BUILD}
+skipRestart=${SKIP_RESTART}
+releaseSha=${RELEASE_SHA:-<unset>}
+releaseBranch=${RELEASE_BRANCH:-<unset>}
+releaseEnvironment=${RELEASE_ENVIRONMENT}
 EOF
 fi
 
@@ -155,6 +163,17 @@ SYMLINK_TARGET=$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "python3 -c 'import os, sys
 if [[ "$SYMLINK_TARGET" != "$PROD_DB" ]]; then
   warn "DB symlink was broken. Restoring explicit configured DB target."
   ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "rm -f '${SERVER_DIST}/db/entity-tasks.db' && ln -s '${PROD_DB}' '${SERVER_DIST}/db/entity-tasks.db'"
+fi
+
+if [[ -n "$RELEASE_SHA" ]]; then
+  log "Writing release identity metadata for ${RELEASE_SHA}..."
+  node "${SCRIPT_DIR}/scripts/entity-release-info.mjs" --root "${ENTITY_DIR}" --sha "${RELEASE_SHA}" --branch "${RELEASE_BRANCH}" --environment "${RELEASE_ENVIRONMENT}" --write >/dev/null
+fi
+
+if [[ "$SKIP_RESTART" == "1" ]]; then
+  log "ENTITY_DEPLOY_SKIP_RESTART=1 set; skipping service restart and live API verification."
+  log "Deploy complete without restart: ${TASK_COUNT} preflight tasks"
+  exit 0
 fi
 
 log "Restarting server..."
