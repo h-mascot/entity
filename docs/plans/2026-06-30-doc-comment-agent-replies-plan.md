@@ -17,8 +17,8 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 - [x] Step 2 depends on identifying existing UI/API flows
 - [x] Step 3 depends on backend doc-comment and task-comment responder context
 - [x] Step 4 depends on implementation changes
-- [ ] Step 5 depends on automated tests passing
-- [ ] Step 6 depends on a local server with built app assets
+- [x] Step 5 depends on automated tests passing
+- [x] Step 6 depends on a local server with built app assets
 
 ## Plan
 
@@ -34,10 +34,10 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 - [x] Step 4: Build and run automated gates
   - **Files:** server/app build output only
   - **Verify:** `cd packages/server && npm run build && npx vitest run`; `npm run build`
-- [ ] Step 5: Manually verify Doc Hub workflows in browser
+- [x] Step 5: Manually verify Doc Hub workflows in browser
   - **Files:** none
   - **Verify:** Browser proof for open/edit markdown, selected-text comment, agent reply, and a degraded/no-model response
-- [ ] Step 6: Commit, push, and create/update PR
+- [x] Step 6: Commit, push, and create/update PR
   - **Files:** all modified files
   - **Verify:** `git status --short`; `git push -u origin cursor/doc-comment-agent-replies-c07b`
 
@@ -51,6 +51,7 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 | 22:27 | Step 4 | ✅ | Fixed malformed editor bearer auth regex; full server gate and workspace build pass |
 | 22:52 | Step 5 | ⏳ | Browser found comment sidebar hidden; made collaboration sidebar visible and auto-expanded when panels load |
 | 23:02 | Step 5 | ⏳ | Browser found UI/backend docId mismatch; normalized frontend doc IDs to `source:/path` |
+| 23:08 | Step 5-6 | ✅ | Browser proof recorded and PR request updated |
 
 ## Files Touched
 
@@ -77,7 +78,7 @@ User wants an exhaustive audit of Doc Hub capabilities beyond viewing documents,
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Tests pass (if applicable)
-- [ ] PR created or updated
-- [ ] ACTIVE_PLAN.md cleared or updated for next task
+- [x] All steps complete
+- [x] Tests pass (if applicable)
+- [x] PR created or updated
+- [x] ACTIVE_PLAN.md cleared or updated for next task
