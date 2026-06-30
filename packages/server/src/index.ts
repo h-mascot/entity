@@ -73,6 +73,10 @@ import {
 } from "./agent";
 import { buildAgentCapabilityCard } from "./agent/agent-capability-card";
 import { createCommentMentionResponder } from "./agent/comment-responder";
+import {
+  getTaskAgentLanguageModel,
+  getTaskAgentSettings,
+} from "./agent/settings";
 import { mergeRegistryAgentDisplay } from "./agent/agent-display";
 import {
   buildTaskPaginationMeta,
@@ -5956,6 +5960,25 @@ registerEditorModule(app, {
   enabled: AGENT_NATIVE_EDITOR_ENABLED,
   wsClients,
   openClawBaseUrl: OPENCLAW,
+  // Lets a document comment that @mentions an agent get an agent reply that is
+  // grounded in the document content and the commented selection.
+  commentMention: {
+    listAgents: () => agentRegistryRepo.listAgents(),
+    getModel: () => getTaskAgentLanguageModel(),
+    getProviderModelLabel: () => {
+      const settings = getTaskAgentSettings();
+      return `${settings.provider}/${settings.model}`;
+    },
+    logActivity: ({ agentName, docId, commentId, summary }) =>
+      logActivity({
+        source: "agent",
+        type: "message_sent",
+        action: `@${agentName} replied to a document comment`,
+        description: summary,
+        agentName,
+        metadata: { docId, commentId },
+      }),
+  },
 });
 registerPluginManagementRoutes({
   app,

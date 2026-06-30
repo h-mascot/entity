@@ -26,12 +26,28 @@ import type { EditorWsBroadcaster } from './ws';
 
 type JsonObject = Record<string, JsonValue>;
 
+/** Emitted after a comment or reply is persisted, so listeners (e.g. the agent
+ * @mention responder) can react. Fire-and-forget; never blocks the response. */
+export interface DocumentCommentActivity {
+  docId: string;
+  commentId: string;
+  /** Identity of the actor that authored the comment/reply. */
+  actorId: string;
+  /** The comment or reply body text. */
+  text: string;
+  kind: 'comment' | 'reply';
+}
+
+export type DocumentCommentActivityHandler = (activity: DocumentCommentActivity) => void;
+
 export interface EditorServiceOptions {
   openClawBaseUrl: string;
   broadcaster: EditorWsBroadcaster;
   collaborationRepository?: DocumentCollaborationRepository;
   tokenRepository?: AgentTokenRepository;
   sourceRepository?: FileSourceRepository;
+  /** Invoked fire-and-forget after a comment/reply is created. */
+  onCommentActivity?: DocumentCommentActivityHandler;
 }
 
 export interface EditorModuleHealth {
@@ -324,6 +340,14 @@ export interface EditorService {
   applyEdit: (docId: string, actorId: string, input: DocumentEditInput) => Promise<DocumentEditResult>;
   upsertAuthorship: (docId: string, actorId: string, input: DocumentAuthorshipInput) => DocumentAuthorshipResult;
   upsertCursorPresence: (docId: string, actorId: string, input: CursorPresenceUpdateInput) => CursorPresenceUpdateResult;
+  /** Reads the backing document content from its file source, or null if unavailable. */
+  readDocumentContent: (docId: string) => Promise<DocumentContentSnapshot | null>;
+}
+
+export interface DocumentContentSnapshot {
+  content: string;
+  sourceId: string | null;
+  path: string | null;
 }
 
 const PRESENCE_STATUSES = new Set<string>(DOCUMENT_PRESENCE_STATUSES);
@@ -1052,7 +1076,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         ? requireOptionalString(input.selectedText, 'selectedText')
         : null;
 
-      collaboration.createComment({
+      const created = collaboration.createComment({
         doc_id: normalizedDocId,
         author: normalizedActorId,
         start_offset: from,
@@ -1064,6 +1088,13 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
 
       const snapshot = collaboration.getCollaborationSnapshot(normalizedDocId);
       options.broadcaster.broadcastComment(normalizedDocId, { actor: normalizedActorId, action: 'created' });
+      options.onCommentActivity?.({
+        docId: normalizedDocId,
+        commentId: created.id,
+        actorId: normalizedActorId,
+        text,
+        kind: 'comment',
+      });
       return { docId: normalizedDocId, threads: mapCommentThreads(snapshot) };
     },
     replyToComment: (docId: string, actorId: string, commentId: string, input: DocumentCommentReplyCreateInput) => {
@@ -1090,6 +1121,13 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         actor: normalizedActorId,
         action: 'replied',
         commentId: normalizedCommentId,
+      });
+      options.onCommentActivity?.({
+        docId: normalizedDocId,
+        commentId: normalizedCommentId,
+        actorId: normalizedActorId,
+        text,
+        kind: 'reply',
       });
       return { docId: normalizedDocId, threads: mapCommentThreads(snapshot) };
     },
@@ -1639,6 +1677,24 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         action,
         presence,
       };
+    },
+    readDocumentContent: async (docId: string) => {
+      const normalizedDocId = requireNonEmptyString(docId, 'docId');
+      const session = collaboration.getSessionByDocId(normalizedDocId) ?? ensureDocumentSession(normalizedDocId);
+      const parsed = parseDocIdParts(normalizedDocId);
+      const sourceId = normalizeOptionalString(session?.source_id ?? null) ?? parsed.sourceId;
+      const path = normalizeOptionalString(session?.path ?? null) ?? parsed.path;
+      if (!sourceId || !path) {
+        return null;
+      }
+
+      try {
+        const { adapter } = requireSourceAdapter(sourceId);
+        const file = await adapter.read(path);
+        return { content: file.content, sourceId, path };
+      } catch {
+        return null;
+      }
     },
   };
 }
