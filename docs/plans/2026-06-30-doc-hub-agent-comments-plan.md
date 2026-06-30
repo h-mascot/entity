@@ -39,7 +39,7 @@ Relevant Phase 2 docs and Linear context read:
 - [x] Step 4: Run required server proof and full affected builds.
   - **Files:** none
   - **Verify:** `cd packages/server && npm run build && npx vitest run`; `npm run build`
-- [ ] Step 5: Manually verify Doc Hub in browser, including success and degraded paths.
+- [x] Step 5: Manually verify Doc Hub in browser, including success and degraded paths.
   - **Files:** `/opt/cursor/artifacts/*`
   - **Verify:** browser demo video showing selected-text comment with `@assistant` reply and document context
 - [ ] Step 6: Commit, push, open/update PR, and summarize audit findings plus proof.
@@ -53,7 +53,8 @@ Relevant Phase 2 docs and Linear context read:
 | 22:15Z | Setup | COMPLETE | Branch created from `main`; async install absent. |
 | 22:25Z | Step 1 | COMPLETE | Found file preview/edit/save, comments/suggestions/reviews, docs read route, and the missing document-comment agent responder. |
 | 22:35Z | Steps 2-3 | COMPLETE | Added document-comment responder, editor route wiring, and focused responder tests; focused Vitest passed. |
-| 22:45Z | Step 4 | COMPLETE | Server build + 76 Vitest files / 561 tests passed; root build passed with Vite chunk-size warning only. |
+| 22:45Z | Step 4 | COMPLETE | Server build + 77 Vitest files / 563 tests passed; root build passed with Vite chunk-size warning only. |
+| 23:05Z | Step 5 | COMPLETE | Browser video shows selected-text document comment with `@assistant` and Assistant reply in the same thread; missing-token API check returns `AUTH_TOKEN_REQUIRED`. |
 
 ## Files Touched
 
@@ -61,6 +62,8 @@ Relevant Phase 2 docs and Linear context read:
 - `docs/plans/ACTIVE_PLAN.md` - modified - active execution pointer for this workflow.
 - `packages/server/src/agent/document-comment-responder.ts` - created - responds to document comment @mentions with selected text, thread, and excerpt context.
 - `packages/server/src/agent/document-comment-responder.test.ts` - created - focused coverage for document comment mention behavior.
+- `packages/server/src/editor/auth.ts` - modified - fixes Bearer token parsing for Documents API routes.
+- `packages/server/src/editor/auth.test.ts` - created - covers valid Bearer tokens and malformed auth rejection.
 - `packages/server/src/editor/service.ts` - modified - exposes document comment context and created/replied thread ids.
 - `packages/server/src/editor/routes.ts` - modified - fires document comment mention responder after comment/reply creation.
 - `packages/server/src/editor/index.ts` - modified - wires the document responder into the editor module.
@@ -79,5 +82,5 @@ Relevant Phase 2 docs and Linear context read:
 - [ ] All steps complete
 - [x] Server tests pass
 - [x] Root build passes
-- [ ] Browser proof video saved
+- [x] Browser proof video saved
 - [ ] Changes committed, pushed, and PR created/updated
