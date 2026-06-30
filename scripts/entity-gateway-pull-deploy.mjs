@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 
@@ -20,6 +20,10 @@ const config = {
   prodLogPath: process.env.ENTITY_PROD_LOG_PATH || '',
   prodLaunchdService: process.env.ENTITY_PROD_LAUNCHD_SERVICE || '',
   prodNodeEntry: process.env.ENTITY_PROD_NODE_ENTRY || '',
+  releaseBaseDir: process.env.ENTITY_RELEASE_BASE_DIR || '',
+  currentLink: process.env.ENTITY_RELEASE_CURRENT_LINK || '',
+  previousLink: process.env.ENTITY_RELEASE_PREVIOUS_LINK || '',
+  releaseEnvironment: process.env.ENTITY_RELEASE_ENVIRONMENT || 'sandbox',
   runtimeWorkspace: process.env.ENTITY_RUNTIME_WORKSPACE || '',
   nodeBinDir: process.env.ENTITY_DEPLOY_NODE_BIN_DIR || dirname(process.execPath),
 };
@@ -147,6 +151,10 @@ function printConfig() {
     prodLogPath: config.prodLogPath || '<unset>',
     prodLaunchdService: config.prodLaunchdService || '<unset>',
     prodNodeEntry: config.prodNodeEntry || '<unset>',
+    releaseBaseDir: config.releaseBaseDir || '<unset>',
+    currentLink: config.currentLink || '<unset>',
+    previousLink: config.previousLink || '<unset>',
+    releaseEnvironment: config.releaseEnvironment,
     runtimeWorkspace: config.runtimeWorkspace || '<unset>',
     nodeBinDir: config.nodeBinDir,
     stateDir,
@@ -236,22 +244,58 @@ async function deploySha(sha) {
   await run('git', ['clean', '-fdx'], { cwd: config.sourceDir });
   await run('npm', ['ci'], { cwd: config.sourceDir });
 
+  const releaseMode = Boolean(config.releaseBaseDir && config.currentLink);
+  const releaseDir = releaseMode ? join(config.releaseBaseDir, sha) : config.prodDir;
+  if (releaseMode) mkdirSync(releaseDir, { recursive: true });
+
   const deployEnv = {
     ...process.env,
     ENTITY_PROD_HOST: config.prodHost,
     ENTITY_PROD_HTTP_HOST: config.prodHttpHost,
     ENTITY_PROD_PORT: config.prodPort,
-    ENTITY_PROD_DIR: config.prodDir,
+    ENTITY_PROD_DIR: releaseDir,
     ENTITY_PROD_DB: config.prodDb,
     ENTITY_SOURCE_DIR: config.sourceDir,
+    ENTITY_RELEASE_SHA: sha,
+    ENTITY_RELEASE_BRANCH: config.branch,
+    ENTITY_RELEASE_ENVIRONMENT: config.releaseEnvironment,
   };
+  if (releaseMode) deployEnv.ENTITY_DEPLOY_SKIP_RESTART = '1';
   if (config.prodLogPath) deployEnv.ENTITY_PROD_LOG_PATH = config.prodLogPath;
   if (config.prodLaunchdService) deployEnv.ENTITY_PROD_LAUNCHD_SERVICE = config.prodLaunchdService;
   if (config.prodNodeEntry) deployEnv.ENTITY_PROD_NODE_ENTRY = config.prodNodeEntry;
   if (config.runtimeWorkspace) deployEnv.ENTITY_RUNTIME_WORKSPACE = config.runtimeWorkspace;
 
   await run('./deploy.sh', ['--all'], { cwd: config.sourceDir, env: deployEnv });
+
+  if (releaseMode) {
+    switchSymlink(config.currentLink, releaseDir, config.previousLink);
+    if (config.prodLaunchdService) {
+      await run('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${config.prodLaunchdService}`]);
+    }
+  }
 }
+
+function switchSymlink(currentLink, nextTarget, previousLink) {
+  let previousTarget = '';
+  try { previousTarget = readFileSync(currentLink, 'utf8'); } catch {}
+  try {
+    const resolved = readlinkSync(currentLink);
+    previousTarget = resolved || previousTarget;
+  } catch {}
+  const tmpLink = `${currentLink}.next-${process.pid}`;
+  try { unlinkSync(tmpLink); } catch {}
+  symlinkSync(nextTarget, tmpLink);
+  try { unlinkSync(currentLink); } catch {}
+  symlinkSync(nextTarget, currentLink);
+  try { unlinkSync(tmpLink); } catch {}
+  if (previousLink && previousTarget) {
+    try { unlinkSync(previousLink); } catch {}
+    symlinkSync(previousTarget, previousLink);
+  }
+  log(`RELEASE_SWITCH current=${currentLink} target=${nextTarget} previous=${previousTarget || '<none>'}`);
+}
+
 
 function readState() {
   if (!existsSync(statePath)) return null;
