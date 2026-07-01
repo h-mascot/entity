@@ -130,13 +130,13 @@ function reviewSummary(task: TaskBoardTask): string | null {
   const reviewType = readString(metadata.review_type ?? metadata.review_class);
   const reviewer = readString(metadata.reviewer ?? metadata.review_owner);
   const decision = readString(metadata.review_decision);
-  const henryRequired = readBoolean(metadata.henry_required ?? metadata.requires_henry);
+  const reviewerRequired = readBoolean(metadata.henry_required ?? metadata.requires_henry);
 
-  if (!reviewType && !reviewer && !decision && !henryRequired) {
+  if (!reviewType && !reviewer && !decision && !reviewerRequired) {
     return task.column === 'review' ? 'Review: needs packet' : null;
   }
 
-  const owner = henryRequired ? 'Henry' : reviewer || 'Unassigned';
+  const owner = reviewerRequired ? 'Required reviewer' : reviewer || 'Unassigned';
   const status = decision || 'pending';
   return `Review: ${owner} / ${status}`;
 }

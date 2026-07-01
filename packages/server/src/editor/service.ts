@@ -1029,7 +1029,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       return {
         documentExcerpt: null,
         documentExcerptRange: null,
-        documentReadError: error instanceof Error ? error.message : 'unable to read document content',
+        documentReadError: 'unable to read document content',
       };
     }
   };

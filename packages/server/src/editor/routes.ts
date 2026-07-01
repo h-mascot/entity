@@ -61,7 +61,7 @@ function mapRouteError(error: unknown): { status: number; body: EditorRouteError
     status: 500,
     body: {
       code: 'INTERNAL_ERROR',
-      error: message,
+      error: 'Internal server error.',
     },
   };
 }

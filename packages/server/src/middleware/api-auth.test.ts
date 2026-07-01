@@ -28,6 +28,7 @@ describe("createApiAuthMiddleware", () => {
 
   afterEach(() => {
     delete process.env.ENTITY_API_TOKEN;
+    delete process.env.ENTITY_AGENT_NATIVE_EDITOR;
     vi.restoreAllMocks();
   });
 
@@ -110,6 +111,19 @@ describe("createApiAuthMiddleware", () => {
 
     expect(next).toHaveBeenCalledOnce();
     expect(status).not.toHaveBeenCalled();
+  });
+
+  it("protects legacy Documents API routes when agent-native editor is disabled", () => {
+    process.env.ENTITY_AGENT_NATIVE_EDITOR = "0";
+    const mw = createApiAuthMiddleware();
+    const req = makeReq("/api/documents/workspace%3A%2Fdoc.md/comments");
+    const { res, status } = makeRes();
+    const next = vi.fn();
+
+    mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(401);
   });
 
   it("does not treat static asset paths like /agent-avatars as protected", () => {

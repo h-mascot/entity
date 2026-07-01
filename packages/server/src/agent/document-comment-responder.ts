@@ -133,9 +133,8 @@ export function createDocumentCommentMentionResponder(deps: DocumentCommentMenti
               temperature: 0.3,
             });
             replyText = result.text.trim() || noModelDocumentReply(agent, context);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : 'unknown error';
-            deps.onError?.(`Provider response failed for ${settings.provider}/${settings.model}: ${message}`);
+          } catch {
+            deps.onError?.(`Provider response failed for ${settings.provider}/${settings.model}.`);
             replyText = `Hi - I'm ${agent.name}. I tried to respond using the configured ${settings.provider}/${settings.model} model, but the request failed. Please check the provider configuration in Admin -> Task Master.`;
           }
         } else {

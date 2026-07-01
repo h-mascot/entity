@@ -49,7 +49,7 @@ export function useReviewCompletion(updateTask: UpdateTaskFn): ReviewCompletion 
   const submit = useCallback<ReviewCompletion['submit']>(
     async (action, note) => {
       if (!task) return null;
-      const reviewer = readUserProfile().displayName || 'Henry';
+      const reviewer = readUserProfile().displayName || 'Reviewer';
       const metadata = buildReviewDecisionMetadata(parseMetadataRecord(task.metadata), {
         decision: reviewActionToDecision(action),
         reviewer,

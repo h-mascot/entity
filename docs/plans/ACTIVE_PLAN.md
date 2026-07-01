@@ -49,6 +49,7 @@ The current branch has a verified working Doc Hub document-comment @agent workfl
 | 01:17 | Step 1-3 | ✅ | Refactored route/service responder boundary; targeted tests passed |
 | 01:19 | Step 4 | ✅ | Full server gate and root build passed |
 | 01:29 | Step 4 | ✅ | Fixed autoreview/thermo findings; targeted tests, full server gate, and root build passed |
+| 01:40 | Step 4 | ✅ | Fixed second review auth/sanitization/default findings; targeted tests, full server gate, and root build passed |
 
 ## Files Touched
 
@@ -64,6 +65,10 @@ The current branch has a verified working Doc Hub document-comment @agent workfl
 - `packages/server/src/middleware/api-auth.test.ts` — modified — covers Documents API global-auth bypass
 - `packages/server/src/editor/auth.ts` — modified — aligns default known service actors with UI hints
 - `packages/server/src/editor/auth.test.ts` — modified — covers default UI service actors
+- `packages/app/src/components/mission-control/useReviewCompletion.ts` — modified — removes private reviewer fallback
+- `packages/app/src/components/mission-control/reviewActions.ts` — modified — uses generic manual review type fallback
+- `packages/app/src/components/mission-control/TaskCard.tsx` — modified — uses generic required-reviewer display label
+- `packages/app/src/components/mission-control/MCOpsView.tsx` — modified — removes private reviewer/type fallbacks
 
 ## Resume Instructions
 

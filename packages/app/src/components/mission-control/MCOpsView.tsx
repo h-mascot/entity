@@ -427,11 +427,11 @@ export default function MCOpsView({
       existing = {};
     }
 
-    const reviewer = readUserProfile().displayName || 'Henry';
+    const reviewer = readUserProfile().displayName || 'Reviewer';
     const decision = action === 'reject' ? 'rejected' : action === 'needs_fix' ? 'needs_fix' : 'accepted';
     const nextMeta = {
       ...existing,
-      review_type: (existing.review_type as string) || (existing.review_class as string) || 'henry',
+      review_type: (existing.review_type as string) || (existing.review_class as string) || 'manual',
       review_decision: decision,
       reviewed_by: reviewer,
       reviewed_at: new Date().toISOString(),

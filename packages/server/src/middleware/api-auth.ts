@@ -81,7 +81,10 @@ const PUBLIC_EXACT_ROUTES: readonly string[] = [
 /** Routes where the prefix and all sub-paths are public. */
 const PUBLIC_PREFIX_ROUTES: readonly string[] = [
   "/api/clickclack",      // has its own auth for SPA cookie requests
-  "/api/documents",       // editor routes enforce their own document token/scopes
+];
+
+const SELF_AUTH_PREFIX_ROUTES: readonly string[] = [
+  "/api/documents",       // agent-native editor routes enforce document token/scopes
 ];
 
 /** Routes matched by pattern because they self-authenticate via a path token. */
@@ -120,10 +123,27 @@ function isPublicRoute(path: string): boolean {
   for (const prefix of PUBLIC_PREFIX_ROUTES) {
     if (path === prefix || path.startsWith(prefix + "/")) return true;
   }
+  if (isAgentNativeEditorEnabled()) {
+    for (const prefix of SELF_AUTH_PREFIX_ROUTES) {
+      if (path === prefix || path.startsWith(prefix + "/")) return true;
+    }
+  }
   for (const pattern of PUBLIC_PATTERN_ROUTES) {
     if (pattern.test(path)) return true;
   }
   return false;
+}
+
+function isAgentNativeEditorEnabled(): boolean {
+  const value = process.env.ENTITY_AGENT_NATIVE_EDITOR;
+  if (typeof value === "undefined") {
+    return true;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return !(normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off");
 }
 
 /**
