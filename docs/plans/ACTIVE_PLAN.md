@@ -5,7 +5,7 @@ Refactor Doc Hub document-comment agent replies toward route/service separation,
 **MC Task:** N/A
 **Created:** 2026-07-01
 **Agent:** GPT-5.5
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 ## Context
 
@@ -17,8 +17,8 @@ The current branch has a verified working Doc Hub document-comment @agent workfl
 - [x] Step 2 depends on comparing the two implementations
 - [x] Step 3 depends on refactor passing targeted tests
 - [x] Step 4 depends on automated gates passing
-- [ ] Step 5 depends on built app and local server
-- [ ] Step 6 depends on final diff and tests
+- [x] Step 5 depends on built app and local server
+- [x] Step 6 depends on final diff and tests
 
 ## Plan
 
@@ -34,10 +34,10 @@ The current branch has a verified working Doc Hub document-comment @agent workfl
 - [x] Step 4: Run full gates
   - **Files:** none
   - **Verify:** `cd packages/server && npm run build && npx vitest run`; `npm run build`
-- [ ] Step 5: Browser/API verify Doc Hub workflow
+- [x] Step 5: Browser/API verify Doc Hub workflow
   - **Files:** artifacts only if new proof is needed
   - **Verify:** `/api/fs/tree`, `/api/documents/:docId/comments`, browser comments sidebar
-- [ ] Step 6: Run requested review passes and push PR update
+- [x] Step 6: Run requested review passes and push PR update
   - **Files:** PR body/artifacts
   - **Verify:** autoreview output and thermo-nuclear review output recorded in final summary
 
@@ -52,6 +52,7 @@ The current branch has a verified working Doc Hub document-comment @agent workfl
 | 01:40 | Step 4 | ✅ | Fixed second review auth/sanitization/default findings; targeted tests, full server gate, and root build passed |
 | 01:51 | Step 4 | ✅ | Fixed final thermo findings for disabled sources, service actor binding, runtime URL exposure, and supported review fallback |
 | 02:02 | Step 4 | ✅ | Fixed final autoreview findings for suggestion acceptance and legacy review type normalization; full gates passed |
+| 02:06 | Step 5-6 | ✅ | Final API/browser proof completed; review passes rerun after fixes |
 
 ## Files Touched
 
@@ -85,7 +86,7 @@ The current branch has a verified working Doc Hub document-comment @agent workfl
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Tests pass (if applicable)
-- [ ] PR created or updated
-- [ ] ACTIVE_PLAN.md cleared or updated for next task
+- [x] All steps complete
+- [x] Tests pass (if applicable)
+- [x] PR created or updated
+- [x] ACTIVE_PLAN.md cleared or updated for next task
