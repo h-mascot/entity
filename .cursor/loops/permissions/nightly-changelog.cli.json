@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Write(CHANGELOG.md)",
+      "Shell(ls)",
+      "Shell(cat)"
+    ],
+    "deny": [
+      "Shell(git)",
+      "Shell(gh)",
+      "Shell(rm)",
+      "Shell(curl)",
+      "Shell(wget)",
+      "Shell(npm)",
+      "Shell(npx)",
+      "Write(.env*)",
+      "Write(package.json)",
+      "Write(package-lock.json)",
+      "Write(packages/**)",
+      "Write(scripts/**)",
+      "Write(.github/**)",
+      "Write(docs/**)",
+      "Write(README.md)",
+      "Write(AGENTS.md)"
+    ]
+  }
+}
