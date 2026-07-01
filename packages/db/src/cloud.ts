@@ -244,6 +244,17 @@ function toTaskList(payload: unknown): TaskRecord[] {
   return [];
 }
 
+function toSubtaskList(payload: unknown): TaskRecord[] {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+  const record = payload as Record<string, unknown>;
+  if (!Array.isArray(record.subtasks)) {
+    return [];
+  }
+  return record.subtasks.map(normalizeTaskRecord).filter((task): task is TaskRecord => task !== null);
+}
+
 function toSingleTask(payload: unknown): TaskRecord | null {
   if (!payload || typeof payload !== 'object') {
     return null;
@@ -424,6 +435,18 @@ export function createCloudTaskAdapter(options: CloudTaskAdapterOptions): TaskAd
     return toTaskList(payload);
   }
 
+  async function listSubtasks(parentTaskId: number): Promise<TaskRecord[]> {
+    const { payload, notFound } = await requestTaskApi(
+      baseUrl,
+      fetchImpl,
+      `/tasks/${parentTaskId}`,
+      undefined,
+      baseHeaders,
+      true
+    );
+    return notFound ? [] : toSubtaskList(payload);
+  }
+
   async function getTask(id: number): Promise<TaskRecord | undefined> {
     const { payload, notFound } = await requestTaskApi(
       baseUrl,
@@ -563,6 +586,7 @@ export function createCloudTaskAdapter(options: CloudTaskAdapterOptions): TaskAd
   return {
     mode: 'CLOUD',
     listTasks,
+    listSubtasks,
     getTask,
     createTask,
     updateTask,

@@ -19,6 +19,7 @@ import { getTaskAgentLanguageModel, getTaskAgentSettings, updateTaskAgentSetting
 import { createTaskAgentTools, type TaskAgentToolDependencies } from './tools';
 import { hasAssignedOwner, isActiveTaskColumn, type ReviewAssessment } from './review-policy';
 import { buildTaskAgentActionActivityEventInput } from '../activity-events';
+import { buildCachedPromptMessages } from './prompt-cache';
 
 export type AgentTriggerEvent = 'review_check' | 'review_hygiene' | 'ownership_check' | 'stale_scan' | 'manual';
 
@@ -156,9 +157,18 @@ export class TaskAgent {
     }
 
     try {
+      const settings = getTaskAgentSettings();
       const result = await generateText({
         model,
-        prompt,
+        messages: buildCachedPromptMessages({
+          provider: settings.provider,
+          cachedSystemContent: [
+            'You are TaskAgent for Entity Mission Control.',
+            'Use the supplied task context to produce concise operational actions and replies.',
+            'Respect task ownership, review gates, human gates, and degraded-state visibility.',
+          ].join('\n'),
+          userContent: prompt,
+        }),
         temperature: 0.2,
       });
 

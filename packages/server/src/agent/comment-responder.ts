@@ -7,7 +7,8 @@ import type {
   TaskRecord,
   UpdateTaskInput,
 } from '../../../db/src';
-import { getTaskAgentLanguageModel } from './settings';
+import { getTaskAgentLanguageModel, getTaskAgentSettings } from './settings';
+import { buildCachedPromptMessages } from './prompt-cache';
 import { hasAssignedOwner, isActiveTaskColumn, isReviewGatedTask, validateReviewCompletion } from './review-policy';
 
 const MENTION_REGEX = /@([a-z0-9][a-z0-9._-]*)/gi;
@@ -229,6 +230,46 @@ export function buildMentionPrompt(
   return lines.filter((line) => line !== '').join('\n');
 }
 
+function buildMentionContextPrompt(
+  task: TaskRecord,
+  comments: TaskCommentRecord[],
+  triggerComment: TaskCommentRecord,
+): string {
+  const recent = comments
+    .filter((comment) => comment.id !== triggerComment.id)
+    .slice(-10)
+    .map((comment) => `- ${comment.author}: ${clampText(comment.body, 500)}`)
+    .join('\n');
+
+  const lines = [
+    'Entity Mission Control task/comment context.',
+    '',
+    '## Task card',
+    `- Title: ${task.name}`,
+    `- Column: ${task.column}`,
+    `- Assignee: ${task.assignee || 'Unassigned'}`,
+    `- Priority: ${task.priority ?? 'P2'}`,
+    task.description ? `- Description: ${clampText(task.description, 1500)}` : '',
+    task.brief ? `- Brief: ${clampText(task.brief, 1000)}` : '',
+    task.output ? `- Output/notes: ${clampText(task.output, 1500)}` : '',
+    '',
+    recent ? `## Recent comments\n${recent}` : '',
+    '',
+    '## The comment mentioning you',
+    `${triggerComment.author}: ${clampText(triggerComment.body, 1000)}`,
+  ];
+  return lines.filter((line) => line !== '').join('\n');
+}
+
+function buildMentionInstructionPrompt(agent: CommentResponderAgent, action: PlannedAction): string {
+  return [
+    `You are ${agent.name}, an agent in Entity Mission Control. You were @mentioned in a task comment.`,
+    'Read the task card and thread context, then reply directly and concisely to the user.',
+    describeAction(action),
+    'Reply as plain text (no markdown headers). Keep it under ~120 words.',
+  ].join('\n');
+}
+
 function noModelReply(agent: CommentResponderAgent, action: PlannedAction): string {
   const base = `Hi — I'm ${agent.name}. I received your message and can see this task's full context.`;
   let actionNote = '';
@@ -261,8 +302,9 @@ export function createCommentMentionResponder(deps: CommentResponderDeps) {
 
       const comments = deps.listComments(taskId);
       const model = getTaskAgentLanguageModel();
+      const settings = getTaskAgentSettings();
 
-      for (const agent of agents) {
+      const plannedReplies = await Promise.all(agents.map(async (agent) => {
         const action = planAction(task, body, agent.name);
 
         let replyBody: string;
@@ -270,7 +312,11 @@ export function createCommentMentionResponder(deps: CommentResponderDeps) {
           try {
             const result = await generateText({
               model,
-              prompt: buildMentionPrompt(agent, task, comments, triggerComment, action),
+              messages: buildCachedPromptMessages({
+                provider: settings.provider,
+                cachedSystemContent: buildMentionContextPrompt(task, comments, triggerComment),
+                userContent: buildMentionInstructionPrompt(agent, action),
+              }),
               temperature: 0.3,
             });
             replyBody = result.text.trim() || noModelReply(agent, action);
@@ -280,6 +326,11 @@ export function createCommentMentionResponder(deps: CommentResponderDeps) {
         } else {
           replyBody = noModelReply(agent, action);
         }
+
+        return { agent, action, replyBody };
+      }));
+
+      for (const { agent, action, replyBody } of plannedReplies) {
 
         const reply = deps.createComment({
           task_id: taskId,

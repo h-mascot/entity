@@ -2352,10 +2352,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
 
       // Always include activity for single-task detail view
       const activity = activityRepository.listActivitiesByTaskId(id, 20);
-      const allTasks = await taskSyncLayer.listTasks();
-      const subtasks = allTasks.filter(
-        (candidate) => readParentTaskId(candidate.metadata) === id,
-      );
+      const subtasks = await taskSyncLayer.listSubtasks(id);
       const enrichedTask = enrichTasksWithSubtaskSummary([
         task,
         ...subtasks,
@@ -3597,10 +3594,7 @@ function registerTaskRoutes(prefix: "" | "/api") {
         broadcast({ type: "task:created", task: subtask });
       }
 
-      const refreshedTasks = await taskSyncLayer.listTasks();
-      const refreshedSubtasks = refreshedTasks.filter(
-        (entry) => readParentTaskId(entry.metadata) === id,
-      );
+      const refreshedSubtasks = await taskSyncLayer.listSubtasks(id);
       return res.status(201).json({
         taskId: parentTask.id,
         createdCount: createdSubtasks.length,
@@ -3624,7 +3618,30 @@ function registerTaskRoutes(prefix: "" | "/api") {
         return res.status(404).json({ error: "task not found" });
       }
 
-      const comments = taskCommentRepository.listComments(id);
+      const limit =
+        typeof req.query.limit === "undefined"
+          ? undefined
+          : Number(req.query.limit);
+      if (
+        typeof limit !== "undefined" &&
+        (!Number.isInteger(limit) || limit <= 0)
+      ) {
+        return res.status(400).json({ error: "limit must be a positive integer" });
+      }
+      const beforeId =
+        typeof req.query.before_id === "undefined"
+          ? undefined
+          : Number(req.query.before_id);
+      if (
+        typeof beforeId !== "undefined" &&
+        (!Number.isInteger(beforeId) || beforeId <= 0)
+      ) {
+        return res.status(400).json({ error: "before_id must be a positive integer" });
+      }
+      const comments = taskCommentRepository.listComments(id, {
+        limit,
+        before_id: beforeId,
+      });
       return res.json(comments);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -6354,34 +6371,6 @@ server.listen(PORT, HOST, () => {
     `Entity TaskAgent: ${AGENT_CONFIG.enabled ? "enabled" : "disabled"}`,
   );
   void ensureSampleTasks();
-
-  // Start file index runner — index all sources on boot, then every 15 minutes
-  if (FS_INDEXER_ENABLED) {
-    import("./fs/index-runner")
-      .then(({ FileIndexRunner }) => {
-        const indexRunner = new FileIndexRunner({ maxFilesPerSource: 10000 });
-        console.log("[FileIndex] Starting initial index run...");
-        indexRunner
-          .runOnce()
-          .then(() => {
-            console.log("[FileIndex] Initial index complete");
-          })
-          .catch((err: unknown) => {
-            console.error("[FileIndex] Initial index error:", err);
-          });
-        setInterval(
-          () => {
-            indexRunner.runOnce().catch((err: unknown) => {
-              console.error("[FileIndex] Periodic index error:", err);
-            });
-          },
-          15 * 60 * 1000,
-        );
-      })
-      .catch((err: unknown) => {
-        console.error("[FileIndex] Failed to load index runner:", err);
-      });
-  }
 
   // Start Swarm self-healer - auto-recover stuck jobs
   import("./swarm/healer")

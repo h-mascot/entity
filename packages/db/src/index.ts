@@ -616,6 +616,7 @@ export interface UpdateTaskInput {
 
 export interface TaskRepository {
   listTasks: () => TaskRecord[];
+  listSubtasks: (parentTaskId: number) => TaskRecord[];
   getTask: (id: number) => TaskRecord | undefined;
   createTask: (input: CreateTaskInput) => TaskRecord;
   updateTask: (id: number, updates: UpdateTaskInput) => TaskRecord | undefined;
@@ -2811,8 +2812,13 @@ export interface CreateTaskCommentInput {
   parent_id?: number | null;
 }
 
+export interface ListTaskCommentsOptions {
+  limit?: number;
+  before_id?: number | null;
+}
+
 export interface TaskCommentRepository {
-  listComments: (taskId: number) => TaskCommentRecord[];
+  listComments: (taskId: number, options?: ListTaskCommentsOptions) => TaskCommentRecord[];
   createComment: (input: CreateTaskCommentInput) => TaskCommentRecord;
 }
 
@@ -5023,6 +5029,15 @@ function bootstrap(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_tasks_column ON tasks(column);
     CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id_metadata ON tasks(
+      CASE WHEN json_valid(metadata) THEN CAST(json_extract(metadata, '$.parent_task_id') AS INTEGER) END
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id_camel_metadata ON tasks(
+      CASE WHEN json_valid(metadata) THEN CAST(json_extract(metadata, '$.parentTaskId') AS INTEGER) END
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_parent_id_metadata ON tasks(
+      CASE WHEN json_valid(metadata) THEN CAST(json_extract(metadata, '$.parent_id') AS INTEGER) END
+    );
 
     CREATE TABLE IF NOT EXISTS activities (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5222,6 +5237,8 @@ function bootstrap(db: Database.Database): void {
       parent_id INTEGER,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE INDEX IF NOT EXISTS idx_task_comments_task_id_id ON task_comments(task_id, id);
 
     CREATE TABLE IF NOT EXISTS roadmaps (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8089,6 +8106,13 @@ export function createTaskRepository(): TaskRepository {
   seedFromMissionControl(db);
 
   const listStmt = db.prepare('SELECT * FROM tasks ORDER BY updated_at DESC, id DESC');
+  const listSubtasksStmt = db.prepare(`
+    SELECT * FROM tasks
+    WHERE CASE WHEN json_valid(metadata) THEN CAST(json_extract(metadata, '$.parent_task_id') AS INTEGER) END = ?
+       OR CASE WHEN json_valid(metadata) THEN CAST(json_extract(metadata, '$.parentTaskId') AS INTEGER) END = ?
+       OR CASE WHEN json_valid(metadata) THEN CAST(json_extract(metadata, '$.parent_id') AS INTEGER) END = ?
+    ORDER BY updated_at DESC, id DESC
+  `);
   const getStmt = db.prepare('SELECT * FROM tasks WHERE id = ?');
   const createStmt = db.prepare(`
     INSERT INTO tasks (
@@ -8154,6 +8178,14 @@ export function createTaskRepository(): TaskRepository {
   return {
     listTasks: () => {
       const rows = listStmt.all() as Array<Record<string, unknown>>;
+      return attachProjectsToTasks(db, rows.map(mapTaskRow));
+    },
+
+    listSubtasks: (parentTaskId: number) => {
+      if (!Number.isInteger(parentTaskId) || parentTaskId <= 0) {
+        return [];
+      }
+      const rows = listSubtasksStmt.all(parentTaskId, parentTaskId, parentTaskId) as Array<Record<string, unknown>>;
       return attachProjectsToTasks(db, rows.map(mapTaskRow));
     },
 
@@ -9161,6 +9193,16 @@ export function createOrgScopedTaskRepository(context: OrgQueryContext): OrgScop
   const legacyRepository = createTaskRepository();
 
   const listStmt = db.prepare('SELECT * FROM tasks WHERE org_id = ? ORDER BY updated_at DESC, id DESC');
+  const listSubtasksStmt = db.prepare(`
+    SELECT * FROM tasks
+    WHERE org_id = ?
+      AND (
+        CASE WHEN json_valid(metadata) THEN CAST(json_extract(metadata, '$.parent_task_id') AS INTEGER) END = ?
+        OR CASE WHEN json_valid(metadata) THEN CAST(json_extract(metadata, '$.parentTaskId') AS INTEGER) END = ?
+        OR CASE WHEN json_valid(metadata) THEN CAST(json_extract(metadata, '$.parent_id') AS INTEGER) END = ?
+      )
+    ORDER BY updated_at DESC, id DESC
+  `);
   const getStmt = db.prepare('SELECT * FROM tasks WHERE id = ? AND org_id = ?');
   const projectInOrgStmt = db.prepare('SELECT id FROM projects WHERE id = ? AND org_id = ?');
   const deleteStmt = db.prepare('DELETE FROM tasks WHERE id = ? AND org_id = ?');
@@ -9181,6 +9223,14 @@ export function createOrgScopedTaskRepository(context: OrgQueryContext): OrgScop
 
     listTasks: () => {
       const rows = listStmt.all(orgId) as Array<Record<string, unknown>>;
+      return attachProjectsToTasksForOrg(db, orgId, rows.map(mapTaskRow));
+    },
+
+    listSubtasks: (parentTaskId: number) => {
+      if (!Number.isInteger(parentTaskId) || parentTaskId <= 0) {
+        return [];
+      }
+      const rows = listSubtasksStmt.all(orgId, parentTaskId, parentTaskId, parentTaskId) as Array<Record<string, unknown>>;
       return attachProjectsToTasksForOrg(db, orgId, rows.map(mapTaskRow));
     },
 
@@ -10060,9 +10110,20 @@ export function createAgentLogRepository(): AgentLogRepository {
 
 export function createTaskCommentRepository(): TaskCommentRepository {
   const db = openEntityDatabase();
+  const maxCommentLimit = 500;
 
   const listStmt = db.prepare(
-    'SELECT * FROM task_comments WHERE task_id = ? ORDER BY datetime(created_at) ASC, id ASC'
+    `
+      SELECT *
+      FROM (
+        SELECT * FROM task_comments
+        WHERE task_id = ?
+          AND (? IS NULL OR id < ?)
+        ORDER BY id DESC
+        LIMIT ?
+      )
+      ORDER BY id ASC
+    `
   );
   const createStmt = db.prepare(`
     INSERT INTO task_comments (
@@ -10075,8 +10136,21 @@ export function createTaskCommentRepository(): TaskCommentRepository {
   const getStmt = db.prepare('SELECT * FROM task_comments WHERE id = ?');
 
   return {
-    listComments: (taskId: number) => {
-      const rows = listStmt.all(taskId) as Array<Record<string, unknown>>;
+    listComments: (taskId: number, options: ListTaskCommentsOptions = {}) => {
+      if (!Number.isInteger(taskId) || taskId <= 0) {
+        return [];
+      }
+      const parsedLimit = Number(options.limit);
+      const safeLimit =
+        Number.isInteger(parsedLimit) && parsedLimit > 0
+          ? Math.min(parsedLimit, maxCommentLimit)
+          : maxCommentLimit;
+      const parsedBeforeId = Number(options.before_id);
+      const beforeId =
+        Number.isInteger(parsedBeforeId) && parsedBeforeId > 0
+          ? parsedBeforeId
+          : null;
+      const rows = listStmt.all(taskId, beforeId, beforeId, safeLimit) as Array<Record<string, unknown>>;
       return rows.map(mapTaskCommentRow);
     },
 

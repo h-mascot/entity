@@ -95,6 +95,7 @@ function makeDependencies(): {
         output: 'output/other-task.md',
       }),
     ]),
+    listSubtasks: vi.fn().mockResolvedValue([]),
     getTask: vi.fn().mockResolvedValue(undefined),
     createTask: vi.fn(),
     updateTask: vi.fn().mockResolvedValue(undefined),
