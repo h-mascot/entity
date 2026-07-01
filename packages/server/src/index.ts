@@ -157,7 +157,10 @@ import {
   setFrontendStaticCacheHeaders,
 } from "./static-cache";
 import { readReleaseInfo } from "./release-info";
-import { createApiAuthMiddleware, createWsAuthHandler } from "./middleware/api-auth";
+import { createApiAuthMiddleware, createWsAuthHandler, isApiAuthEnabled } from "./middleware/api-auth";
+import { assertSecureBindOrThrow } from "./middleware/bind-guard";
+import { shouldRegisterTestErrorRoute } from "./test-error-route";
+import { resolveWorkspaceReadPath } from "./workspace-paths";
 // Load .env from project root
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 const bootstrapConfig = applyBootstrapRuntimeEnv(process.cwd());
@@ -171,6 +174,7 @@ import {
 const app = express();
 const DEFAULT_PORT = 3000;
 const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
+const HOST = process.env.HOST?.trim() || "0.0.0.0";
 const phase2Flags = resolvePhase2Flags();
 
 applySecurityHardening(app);
@@ -1311,6 +1315,10 @@ function sanitizeContentDispositionFilename(value: string): string {
 function mapFileRouteErrorStatus(message: string): number {
   const normalized = message.trim().toLowerCase();
 
+  if (normalized.includes("outside workspace")) {
+    return 403;
+  }
+
   if (
     normalized.includes("required") ||
     normalized.includes("invalid") ||
@@ -1431,13 +1439,14 @@ app.get("/api/files", async (req, res) => {
 
   const dirPath = rawPath || WORKSPACE;
   try {
-    const items = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    const resolvedDirPath = await resolveWorkspaceReadPath(dirPath, WORKSPACE);
+    const items = await fs.promises.readdir(resolvedDirPath, { withFileTypes: true });
     const files = items
       .filter((item) => !item.name.startsWith("."))
       .map((item) => ({
         name: item.name,
         isDirectory: item.isDirectory(),
-        path: path.join(dirPath, item.name),
+        path: path.join(resolvedDirPath, item.name),
       }));
     return res.json(files);
   } catch (err) {
@@ -1462,7 +1471,7 @@ app.get("/api/file/raw", async (req, res) => {
   try {
     const payload = sourceId
       ? await readRawSourceFile(sourceId, requestedPath)
-      : await readRawLocalFile(requestedPath);
+      : await readRawLocalFile(await resolveWorkspaceReadPath(requestedPath, WORKSPACE));
 
     return sendRawFileResponse(res, payload);
   } catch (err) {
@@ -1484,16 +1493,17 @@ app.get("/api/file", async (req, res) => {
   }
 
   try {
+    const resolvedFilePath = await resolveWorkspaceReadPath(filePath, WORKSPACE);
     const [contentBuffer, stats] = await Promise.all([
-      fs.promises.readFile(filePath),
-      fs.promises.stat(filePath),
+      fs.promises.readFile(resolvedFilePath),
+      fs.promises.stat(resolvedFilePath),
     ]);
 
     if (!stats.isFile()) {
       throw new Error("Target path is not a file.");
     }
 
-    const detected = detectContentType({ filePath, content: contentBuffer });
+    const detected = detectContentType({ filePath: resolvedFilePath, content: contentBuffer });
     return res.json({
       content: detected.isBinary ? "" : contentBuffer.toString("utf-8"),
       size: stats.size,
@@ -6221,21 +6231,23 @@ app.get('/api/docs/*', async (req, res) => {
 
 
 // Test error endpoint for Sentry verification
-app.get("/api/test-error", (_req, res) => {
-  console.log("[Test] Sentry test error triggered");
-  // Capture message to Sentry
-  const { Sentry } = require("./sentry");
-  Sentry.captureMessage("Test error from Entity Mission Control", "error");
-  res.json({
-    success: true,
-    message: "Test error sent to Sentry",
-    timestamp: new Date().toISOString(),
+if (shouldRegisterTestErrorRoute()) {
+  app.get("/api/test-error", (_req, res) => {
+    console.log("[Test] Sentry test error triggered");
+    // Capture message to Sentry
+    const { Sentry } = require("./sentry");
+    Sentry.captureMessage("Test error from Entity Mission Control", "error");
+    res.json({
+      success: true,
+      message: "Test error sent to Sentry",
+      timestamp: new Date().toISOString(),
+    });
+    // Also throw an uncaught exception to test error handling
+    setTimeout(() => {
+      throw new Error("Sentry test uncaught exception");
+    }, 100);
   });
-  // Also throw an uncaught exception to test error handling
-  setTimeout(() => {
-    throw new Error("Sentry test uncaught exception");
-  }, 100);
-});
+}
 
 // Serve frontend static files
 const frontendDist = resolveFrontendDist();
@@ -6314,8 +6326,21 @@ process.on("uncaughtException", (err) => {
   shutdown("uncaught exception", 1);
 });
 
-server.listen(PORT, () => {
-  console.log(`Entity server on port ${PORT}`);
+try {
+  assertSecureBindOrThrow({
+    host: HOST,
+    hasToken: isApiAuthEnabled(),
+    allowInsecure: process.env.ENTITY_ALLOW_INSECURE,
+    logger: console,
+  });
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`[Server] Fatal startup security error: ${message}`);
+  process.exit(1);
+}
+
+server.listen(PORT, HOST, () => {
+  console.log(`Entity server on ${HOST}:${PORT}`);
   console.log(`[WS] Sharing HTTP server on port ${PORT}`);
   console.log(`Workspace: ${WORKSPACE}`);
   console.log(`[Plugins] Registered ${pluginRegistry.list().length} plugin(s)`);

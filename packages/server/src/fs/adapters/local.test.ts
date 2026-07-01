@@ -7,7 +7,7 @@ import { LocalFileSourceAdapter } from './local';
 
 const tempRoots: string[] = [];
 
-function sourceFor(basePath: string): FileSourceRecord {
+function sourceFor(basePath: string, overrides: Partial<FileSourceRecord> = {}): FileSourceRecord {
   return {
     id: 'local-test',
     display_name: 'Local Test',
@@ -23,6 +23,7 @@ function sourceFor(basePath: string): FileSourceRecord {
     last_synced_at: null,
     created_at: '2026-06-17T00:00:00.000Z',
     updated_at: '2026-06-17T00:00:00.000Z',
+    ...overrides,
   };
 }
 
@@ -59,5 +60,22 @@ describe('LocalFileSourceAdapter metadata', () => {
       path: 'linked-dir',
       kind: 'other',
     });
+  });
+
+  it('honors stored read-only local source capabilities', () => {
+    const adapter = new LocalFileSourceAdapter(sourceFor('/workspace'));
+    const readOnlyAdapter = new LocalFileSourceAdapter(
+      sourceFor('/workspace', {
+        capabilities: JSON.stringify({
+          read: true,
+          write: false,
+          list: true,
+          search: true,
+        }),
+      }),
+    );
+
+    expect(adapter.capabilities().write).toBe(true);
+    expect(readOnlyAdapter.capabilities().write).toBe(false);
   });
 });

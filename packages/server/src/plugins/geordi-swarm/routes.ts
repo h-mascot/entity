@@ -124,6 +124,48 @@ function buildPrompt(job: SwarmJobRow): string {
   return parts.join('\n');
 }
 
+export function quotePosixShellArg(value: string): string {
+  if (!value || /[\0\r\n]/.test(value)) {
+    throw new Error('Shell argument contains invalid characters.');
+  }
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+export function expandLeadingTilde(rawPath: string, homePath: string): string {
+  const trimmed = rawPath.trim();
+  if (trimmed === '~') {
+    return homePath || '/Users';
+  }
+  if (trimmed.startsWith('~/')) {
+    return `${homePath || '/Users'}${trimmed.slice(1)}`;
+  }
+  return trimmed;
+}
+
+export function buildSshCodexRemoteCommand(input: {
+  repoPath: string;
+  codexBin: string;
+  prompt: string;
+}): string {
+  const repoPath = input.repoPath.trim();
+  const codexBin = input.codexBin.trim();
+  if (!repoPath) {
+    throw new Error('Repository path is required for SSH dispatch.');
+  }
+  if (!codexBin) {
+    throw new Error('Codex binary path is required for SSH dispatch.');
+  }
+
+  return [
+    'cd',
+    quotePosixShellArg(repoPath),
+    '&&',
+    quotePosixShellArg(codexBin),
+    'exec --approval-mode full-auto --quiet',
+    quotePosixShellArg(input.prompt),
+  ].join(' ');
+}
+
 function dispatchToAcp(job: SwarmJobRow, db: PluginRouteContext['db']): string {
   const prompt = buildPrompt(job);
   const runHandle = `acp-${job.id}-${Date.now()}`;
@@ -221,13 +263,13 @@ function dispatchToSsh(job: SwarmJobRow, db: PluginRouteContext['db']): string {
     throw new Error('SSH Codex host not configured. Set GEORDI_SSH_CODEX_HOST env var or configure sshCodexHost in geordi-swarm plugin settings.');
   }
 
-  const repoPath = job.repo.replace('~', macHome || '/Users');
-  const safePrompt = prompt.replace(/'/g, "'\\''");
+  const repoPath = expandLeadingTilde(job.repo, macHome || '/Users');
+  const remoteCommand = buildSshCodexRemoteCommand({ repoPath, codexBin, prompt });
 
   // Dispatch Codex directly on Mac via SSH
   const child = spawn('ssh', [
     macHost,
-    `cd ${repoPath} && ${codexBin} exec --approval-mode full-auto --quiet '${safePrompt}'`,
+    remoteCommand,
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,

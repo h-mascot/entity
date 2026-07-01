@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from 'express';
+import { isTruthyEnv } from '../middleware/bind-guard';
 import { EditorServiceError, type DocumentReviewWebhookPayload, type EditorService } from './service';
 
 interface EditorReviewWebhookErrorBody {
@@ -13,6 +14,19 @@ function normalizeOptionalString(value: unknown): string | null {
 
   const normalized = value.trim();
   return normalized ? normalized : null;
+}
+
+export function shouldAllowOpenClawWebhookWithoutToken(input: {
+  allowInsecure?: unknown;
+  logger?: Pick<Console, 'warn'>;
+}): boolean {
+  if (!isTruthyEnv(input.allowInsecure)) {
+    return false;
+  }
+  input.logger?.warn(
+    '[Security] WARNING: OpenClaw review webhook is accepting unauthenticated callbacks because ENTITY_ALLOW_INSECURE is enabled. Set ENTITY_OPENCLAW_WEBHOOK_TOKEN before exposing this server.',
+  );
+  return true;
 }
 
 function mapWebhookError(error: unknown): { status: number; body: EditorReviewWebhookErrorBody } {
@@ -59,6 +73,12 @@ export function registerEditorReviewWebhookRoutes(app: Express, options: Registe
         } satisfies EditorReviewWebhookErrorBody);
         return;
       }
+    } else if (!shouldAllowOpenClawWebhookWithoutToken({ allowInsecure: process.env.ENTITY_ALLOW_INSECURE, logger: console })) {
+      res.status(503).json({
+        code: 'WEBHOOK_TOKEN_REQUIRED',
+        error: 'ENTITY_OPENCLAW_WEBHOOK_TOKEN is required for OpenClaw review webhooks. Set the token or ENTITY_ALLOW_INSECURE=1 for local-only testing.',
+      } satisfies EditorReviewWebhookErrorBody);
+      return;
     }
 
     try {

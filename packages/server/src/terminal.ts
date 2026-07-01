@@ -327,6 +327,16 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
     socketSessions.set(socket, owned);
   };
 
+  const rejectNonOwnerControl = (socket: WebSocket, session: TerminalSession, action: string): boolean => {
+    if (session.owner === socket) {
+      return false;
+    }
+    safeSend(socket, session.summary, 'error', {
+      message: `Terminal ${action} is only allowed from the owning socket.`,
+    });
+    return true;
+  };
+
   const createSession = (input: CreateTerminalSessionInput = {}): TerminalSessionSummary => {
     const targetId = normalizeTargetId(input.target, targets) ?? targets[0]?.id;
     if (!targetId) {
@@ -443,6 +453,9 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
         if (!session || !data) {
           return;
         }
+        if (rejectNonOwnerControl(socket, session, 'input')) {
+          return;
+        }
 
         try {
           session.process.write(data);
@@ -458,6 +471,9 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
         const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
         const session = sessions.get(sessionId);
         if (!session) {
+          return;
+        }
+        if (rejectNonOwnerControl(socket, session, 'resize')) {
           return;
         }
 

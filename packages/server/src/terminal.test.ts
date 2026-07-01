@@ -106,6 +106,27 @@ describe('createTerminalBridge', () => {
     expect(fakeProcess.write).toHaveBeenCalledWith('ls\n');
   });
 
+  it('rejects terminal input from sockets that do not own the session', () => {
+    const fakeProcess = new FakeProcess();
+    const bridge = createTerminalBridge({
+      workspaceRoot: '/tmp/entity',
+      spawnProcess: vi.fn(() => fakeProcess as any),
+    });
+
+    const session = bridge.createSession({ target: 'local' });
+    const ownerSocket = new FakeSocket();
+    const attackerSocket = new FakeSocket();
+    bridge.handleSocketConnection(ownerSocket as any);
+    bridge.handleSocketConnection(attackerSocket as any);
+    ownerSocket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
+    attackerSocket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
+
+    attackerSocket.emit('message', JSON.stringify({ type: 'terminal:input', sessionId: session.id, data: 'rm -rf /\n' }));
+
+    expect(fakeProcess.write).not.toHaveBeenCalledWith('rm -rf /\n');
+    expect(attackerSocket.send).toHaveBeenCalledWith(expect.stringContaining('Terminal input is only allowed from the owning socket.'));
+  });
+
   it('resizes the pty when a terminal resize message arrives', () => {
     const fakeProcess = new FakeProcess();
     const bridge = createTerminalBridge({
