@@ -15,11 +15,33 @@ The real gaps are in **keeping the public-facing surface honest as the product s
 
 **Adopt (shortlist of 3):**
 
-1. **#001 The docs sweep** — *recommended first manual trial.*
-2. **#025 The fresh-clone loop.**
-3. **#008 The nightly changelog loop.**
+1. **#001 The docs sweep** — *recommended first manual trial.* — ✅ **set up**
+2. **#025 The fresh-clone loop.** — ⏸️ deferred (not in current scope)
+3. **#008 The nightly changelog loop.** — ✅ **set up**
 
 **Foundational fix first (not a loop):** wire the server Vitest suite into CI. See "Prerequisite" below.
+
+---
+
+## Adoption status — loops #001 and #008 set up (2026-07-01)
+
+Loops **#001 (docs sweep)** and **#008 (nightly changelog)** are now set up as
+opt-in Cursor cloud-agent automations. `#025` remains deferred.
+
+- **Automation:** each loop is a committed prompt + restricted CLI permission
+  profile under [`.cursor/loops/`](../.cursor/loops/README.md), run by a scheduled
+  GitHub Actions workflow that launches `cursor-agent` in restricted-autonomy
+  mode (the agent only edits files; a deterministic step opens the PR).
+  - `#001` → [`.github/workflows/loop-docs-sweep.yml`](../.github/workflows/loop-docs-sweep.yml) (weekly + manual).
+  - `#008` → [`.github/workflows/loop-nightly-changelog.yml`](../.github/workflows/loop-nightly-changelog.yml) (nightly + manual), fed by the deterministic `scripts/changelog-window.mjs`.
+- **Opt-in:** merging changes nothing on a schedule. Activate by adding the
+  `CURSOR_API_KEY` secret and setting `ENTITY_LOOPS_ENABLED=true`; manual
+  `workflow_dispatch` trials work with just the key. See the loops README.
+- **First manual trial performed in this PR:**
+  - `#001` fixed the concrete drift below — `AGENTS.md` "Project Structure" now
+    reads `packages/app — Vite + React frontend` (was "Next.js"), matching
+    `packages/app/package.json` and `README.md`.
+  - `#008` seeded `CHANGELOG.md` from the ~2 weeks of history preceding the run.
 
 ---
 

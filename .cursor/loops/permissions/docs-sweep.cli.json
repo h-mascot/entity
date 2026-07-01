@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Write(**/*.md)",
+      "Shell(ls)",
+      "Shell(cat)",
+      "Shell(grep)",
+      "Shell(rg)",
+      "Shell(find)"
+    ],
+    "deny": [
+      "Shell(git)",
+      "Shell(gh)",
+      "Shell(rm)",
+      "Shell(curl)",
+      "Shell(wget)",
+      "Shell(npm)",
+      "Shell(npx)",
+      "Write(.env*)",
+      "Write(**/*.ts)",
+      "Write(**/*.tsx)",
+      "Write(**/*.js)",
+      "Write(**/*.jsx)",
+      "Write(**/*.mjs)",
+      "Write(**/*.cjs)",
+      "Write(**/*.json)",
+      "Write(**/*.yml)",
+      "Write(**/*.yaml)",
+      "Write(**/*.sh)",
+      "Write(packages/**)",
+      "Write(.github/**)",
+      "Write(scripts/**)"
+    ]
+  }
+}

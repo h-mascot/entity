@@ -11,7 +11,7 @@
 ## Project Structure
 
 Monorepo with npm workspaces:
-- `packages/app` — Next.js frontend
+- `packages/app` — Vite + React frontend
 - `packages/server` — Express + TypeScript backend
 - `packages/db` — SQLite database layer
 - `packages/mobile` — Expo mobile app
