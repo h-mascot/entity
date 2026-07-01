@@ -281,7 +281,7 @@ describe('review lifecycle validation', () => {
     expect(validateReviewEntry(validPeerMetadata).ok).toBe(true);
   });
 
-  it('forces high-risk review to Henry unless delegation is explicit', () => {
+  it('requires explicit human review for high-risk review packets unless delegation is explicit', () => {
     const result = validateReviewEntry({
       ...validPeerMetadata,
       risk_level: 'high',
@@ -316,24 +316,24 @@ describe('review lifecycle validation', () => {
     expect(validateReviewCompletion(task, 'Book').ok).toBe(true);
   });
 
-  it('keeps Henry-required tasks Henry-only unless delegated', () => {
+  it('keeps human-required tasks reviewer-only unless delegated', () => {
     const metadata = {
       ...validPeerMetadata,
-      review_type: 'henry',
-      reviewer: 'henry',
-      henry_required: true,
+      review_type: 'human',
+      reviewer: 'Book',
+      human_required: true,
       risk_level: 'high',
-      submitted_by: 'Book',
+      submitted_by: 'Ada',
     };
 
     expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Ada').ok).toBe(false);
-    expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'human').ok).toBe(false);
-    expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Henry').ok).toBe(true);
+    expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Human').ok).toBe(false);
+    expect(validateReviewCompletion(makeTask({ assignee: 'Ada', metadata: JSON.stringify(metadata) }), 'Book').ok).toBe(true);
     expect(
       validateReviewCompletion(
         makeTask({
-          assignee: 'Book',
-          metadata: JSON.stringify({ ...metadata, henry_delegated: true, reviewer: 'Ada' }),
+          assignee: 'Scotty',
+          metadata: JSON.stringify({ ...metadata, human_delegated: true, reviewer: 'Ada', submitted_by: 'Book' }),
         }),
         'Ada'
       ).ok
@@ -349,7 +349,7 @@ describe('review lifecycle validation', () => {
       source: 'discord',
       source_id: 'channel/message',
       review_packet: {
-        requested_outcome: 'Close chat-origin task after showing output to Henry',
+        requested_outcome: 'Close chat-origin task after showing output to the requester',
         evidence: 'The answer was delivered in the originating chat.',
         done_criteria: ['chat output exists'],
       },
@@ -382,10 +382,11 @@ describe('isReviewGatedTask', () => {
 
   it('treats tasks with an explicit review workflow signal as gated', () => {
     expect(isReviewGatedTask(JSON.stringify({ review_type: 'peer' }))).toBe(true);
-    expect(isReviewGatedTask(JSON.stringify({ review_class: 'henry' }))).toBe(true);
+    expect(isReviewGatedTask(JSON.stringify({ review_class: 'human' }))).toBe(true);
     expect(isReviewGatedTask(JSON.stringify({ reviewer: 'Book' }))).toBe(true);
     expect(isReviewGatedTask(JSON.stringify({ review_owner: 'Book' }))).toBe(true);
     expect(isReviewGatedTask(JSON.stringify({ review_decision: 'pending' }))).toBe(true);
+    expect(isReviewGatedTask(JSON.stringify({ human_required: true }))).toBe(true);
     expect(isReviewGatedTask(JSON.stringify({ henry_required: true }))).toBe(true);
     expect(isReviewGatedTask(JSON.stringify({ requires_henry: true }))).toBe(true);
     expect(

@@ -5290,20 +5290,16 @@ function registerDocumentRoutes(prefix: "" | "/api") {
 
     try {
       ensureSession(parts);
-      const result = documentsDb
-        .prepare(
-          `
-          UPDATE document_suggestions
-          SET status = 'accepted', updated_at = datetime('now')
-          WHERE doc_id = ? AND id = ?
-        `,
-        )
-        .run(parts.docId, suggestionId);
-      if (result.changes === 0) {
+      const existing = documentsDb
+        .prepare("SELECT id FROM document_suggestions WHERE doc_id = ? AND id = ? LIMIT 1")
+        .get(parts.docId, suggestionId) as SqlRow | undefined;
+      if (!existing) {
         return res.status(404).json({ error: "suggestion not found" });
       }
 
-      return res.json(buildSuggestionsResponse(parts.docId));
+      return res.status(409).json({
+        error: "Legacy document editor cannot apply suggestions to source content. Reject the suggestion or enable the agent-native editor.",
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return res.status(500).json({ error: message });
@@ -5444,25 +5440,16 @@ function registerDocumentRoutes(prefix: "" | "/api") {
           return res.status(404).json({ error: "review run not found" });
         }
 
-        const result = documentsDb
-          .prepare(
-            `
-          UPDATE document_review_findings
-          SET status = 'applied'
-          WHERE doc_id = ? AND run_id = ? AND id = ?
-        `,
-          )
-          .run(parts.docId, runId, findingId);
-        if (result.changes === 0) {
+        const existing = documentsDb
+          .prepare("SELECT id FROM document_review_findings WHERE doc_id = ? AND run_id = ? AND id = ? LIMIT 1")
+          .get(parts.docId, runId, findingId) as SqlRow | undefined;
+        if (!existing) {
           return res.status(404).json({ error: "review finding not found" });
         }
 
-        const response = buildReviewRunResponse(parts.docId, runId);
-        if (!response) {
-          return res.status(404).json({ error: "review run not found" });
-        }
-
-        return res.json(response);
+        return res.status(409).json({
+          error: "Legacy document editor cannot apply review findings to source content. Ignore the finding or enable the agent-native editor.",
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
         return res.status(500).json({ error: message });

@@ -93,7 +93,7 @@ export interface ReviewValidationResult {
 
 type ReviewMetadata = Record<string, unknown>;
 
-const VALID_REVIEW_TYPES = new Set(['henry', 'peer', 'auto']);
+const VALID_REVIEW_TYPES = new Set(['human', 'peer', 'auto']);
 const VALID_REVIEW_DECISIONS = new Set(['accepted', 'needs_fix', 'escalated', 'pending']);
 const VALID_RISK_LEVELS = new Set(['low', 'medium', 'high']);
 
@@ -212,9 +212,9 @@ function hasDoneCriteria(packet: Record<string, unknown>): boolean {
   return readString(criteria).length > 0;
 }
 
-function isHenryActor(actor: string): boolean {
-  const normalized = normalizeIdentity(actor);
-  return normalized === 'henry' || normalized === 'henry mascot';
+function normalizeReviewType(value: unknown): string {
+  const normalized = readString(value).toLowerCase();
+  return normalized === 'henry' ? 'human' : normalized;
 }
 
 function hasAcceptedDecision(metadata: ReviewMetadata): boolean {
@@ -427,11 +427,11 @@ export function validateReviewEntry(metadata: unknown): ReviewValidationResult {
     };
   }
 
-  const reviewType = readString(parsed.review_type ?? parsed.review_class).toLowerCase();
+  const reviewType = normalizeReviewType(parsed.review_type ?? parsed.review_class);
   if (!VALID_REVIEW_TYPES.has(reviewType)) {
     return {
       ok: false,
-      message: 'Review metadata must include review_type: henry, peer, or auto.',
+      message: 'Review metadata must include review_type: human, peer, or auto.',
       metadata: parsed,
     };
   }
@@ -454,10 +454,13 @@ export function validateReviewEntry(metadata: unknown): ReviewValidationResult {
     };
   }
 
-  if (riskLevel === 'high' && !readBoolean(parsed.henry_required ?? parsed.requires_henry)) {
+  if (
+    riskLevel === 'high' &&
+    !readBoolean(parsed.human_required ?? parsed.requires_human ?? parsed.henry_required ?? parsed.requires_henry)
+  ) {
     return {
       ok: false,
-      message: 'High-risk review tasks must set henry_required=true unless Henry explicitly delegates.',
+      message: 'High-risk review tasks must set human_required=true unless explicit delegation is recorded.',
       metadata: parsed,
     };
   }
@@ -491,7 +494,7 @@ function hasMeaningfulValue(value: unknown): boolean {
 
 /**
  * A task is "review-gated" only when its metadata carries an explicit review
- * workflow signal (review type, reviewer, decision, Henry requirement, or a
+ * workflow signal (review type, reviewer, decision, human-review requirement, or a
  * review packet/brief). Ordinary tasks that never entered a review workflow
  * must not be blocked from completion. This mirrors the frontend's
  * `hasReviewMetadata` check so the UI and server agree on which tasks require a
@@ -504,7 +507,7 @@ export function isReviewGatedTask(metadata: unknown): boolean {
     hasMeaningfulValue(parsed.review_type ?? parsed.review_class) ||
     hasMeaningfulValue(parsed.reviewer ?? parsed.review_owner) ||
     hasMeaningfulValue(parsed.review_decision) ||
-    readBoolean(parsed.henry_required ?? parsed.requires_henry) ||
+    readBoolean(parsed.human_required ?? parsed.requires_human ?? parsed.henry_required ?? parsed.requires_henry) ||
     hasMeaningfulValue(parsed.review_packet) ||
     hasMeaningfulValue(parsed.review_brief)
   );
@@ -532,11 +535,11 @@ export function validateReviewCompletion(
     };
   }
 
-  const reviewType = readString(metadata.review_type ?? metadata.review_class).toLowerCase();
+  const reviewType = normalizeReviewType(metadata.review_type ?? metadata.review_class);
   if (!VALID_REVIEW_TYPES.has(reviewType)) {
     return {
       ok: false,
-      message: 'Task completion requires review_type: henry, peer, or auto.',
+      message: 'Task completion requires review_type: human, peer, or auto.',
       metadata,
     };
   }
@@ -550,12 +553,12 @@ export function validateReviewCompletion(
     };
   }
 
-  const henryRequired = readBoolean(metadata.henry_required ?? metadata.requires_henry);
-  const delegatedByHenry = readBoolean(metadata.henry_delegated ?? metadata.delegated_by_henry);
-  if (henryRequired && !isHenryActor(normalizedActor) && !delegatedByHenry) {
+  const humanRequired = readBoolean(metadata.human_required ?? metadata.requires_human ?? metadata.henry_required ?? metadata.requires_henry);
+  const delegatedByHuman = readBoolean(metadata.human_delegated ?? metadata.delegated_by_human ?? metadata.henry_delegated ?? metadata.delegated_by_henry);
+  if (humanRequired && !reviewerMatchesActor(metadata, normalizedActor) && !delegatedByHuman) {
     return {
       ok: false,
-      message: 'Henry-required tasks can only be completed by Henry unless explicit delegation is recorded.',
+      message: 'Human-required tasks can only be completed by the assigned reviewer unless explicit delegation is recorded.',
       metadata,
     };
   }
@@ -571,10 +574,10 @@ export function validateReviewCompletion(
     return { ok: true, metadata: { ...metadata, completedBy: normalizedActor } };
   }
 
-  if (!reviewerMatchesActor(metadata, normalizedActor) && !isHenryActor(normalizedActor)) {
+  if (!reviewerMatchesActor(metadata, normalizedActor)) {
     return {
       ok: false,
-      message: 'Task can only be completed by the assigned reviewer or Henry.',
+      message: 'Task can only be completed by the assigned reviewer.',
       metadata,
     };
   }

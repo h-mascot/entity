@@ -53,6 +53,7 @@ The current branch has a verified working Doc Hub document-comment @agent workfl
 | 01:51 | Step 4 | ✅ | Fixed final thermo findings for disabled sources, service actor binding, runtime URL exposure, and supported review fallback |
 | 02:02 | Step 4 | ✅ | Fixed final autoreview findings for suggestion acceptance and legacy review type normalization; full gates passed |
 | 02:06 | Step 5-6 | ✅ | Final API/browser proof completed; review passes rerun after fixes |
+| 02:13 | Step 6 | ✅ | Fixed closure review findings for disabled sessions, legacy apply endpoints, and generic review policy; full gates passed |
 
 ## Files Touched
 

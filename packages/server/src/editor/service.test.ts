@@ -174,7 +174,7 @@ describe('createEditorService comment mention context', () => {
       openClawBaseUrl: '',
       broadcaster: makeBroadcaster(),
       collaborationRepository: repository,
-      sourceRepository: {} as never,
+      sourceRepository: makeSourceRepository(makeSource()),
       tokenRepository: {} as never,
     });
 
@@ -225,6 +225,30 @@ describe('createEditorService comment mention context', () => {
         insert: 'x',
       })
     ).rejects.toMatchObject({
+      code: 'SOURCE_DISABLED',
+      status: 403,
+    });
+  });
+
+  it('blocks document state and mention context when the file source is disabled', async () => {
+    const repository = makeRepository();
+    const service = createEditorService({
+      openClawBaseUrl: '',
+      broadcaster: makeBroadcaster(),
+      collaborationRepository: repository,
+      sourceRepository: makeSourceRepository(makeSource({ enabled: false })),
+      tokenRepository: {} as never,
+    });
+    const created = service.createComment('workspace:/docs/plan.md', 'Henry', {
+      from: 0,
+      to: 5,
+      text: '@assistant look here',
+      selectedText: 'Intro',
+    });
+    const commentId = created.threads[0].id;
+
+    expect(() => service.getDocumentState('workspace:/docs/plan.md')).toThrow('Document source is disabled.');
+    await expect(service.getCommentMentionContext('workspace:/docs/plan.md', commentId)).rejects.toMatchObject({
       code: 'SOURCE_DISABLED',
       status: 403,
     });

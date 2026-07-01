@@ -950,19 +950,6 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
     }
   };
 
-  const resolveSourceCapabilities = (sourceId: string | null): SourceCapability => {
-    if (!sourceId) {
-      return { ...DEFAULT_SOURCE_CAPABILITIES };
-    }
-
-    try {
-      return requireSourceAdapter(sourceId).capabilities;
-    } catch {
-      // Preserve fallback capabilities if source lookup or adapter creation fails.
-      return { ...DEFAULT_SOURCE_CAPABILITIES };
-    }
-  };
-
   const ensureDocumentSession = (docId: string) => {
     const normalizedDocId = requireNonEmptyString(docId, 'docId');
     const existing = collaboration.getSessionByDocId(normalizedDocId);
@@ -1056,6 +1043,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       const parsed = parseDocIdParts(normalizedDocId);
       const sourceId = session?.source_id ?? parsed.sourceId ?? null;
       const path = session?.path ?? parsed.path ?? null;
+      const capabilities = sourceId ? requireSourceAdapter(sourceId).capabilities : { ...DEFAULT_SOURCE_CAPABILITIES };
 
       return {
         docId: normalizedDocId,
@@ -1067,7 +1055,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         },
         sourceId,
         path,
-        capabilities: resolveSourceCapabilities(sourceId),
+        capabilities,
         authorshipStats: buildAuthorshipStats(collaborationSnapshot),
         presence: collaborationSnapshot.presence,
         commentsSummary: buildCommentsSummary(collaborationSnapshot),
@@ -1088,6 +1076,9 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
 
       const replies = collaboration.listCommentReplies(normalizedDocId, normalizedCommentId);
       const session = collaboration.getSessionByDocId(normalizedDocId);
+      if (session?.source_id) {
+        requireSourceAdapter(session.source_id);
+      }
       const excerpt = await buildDocumentExcerpt(session, comment.start_offset, comment.end_offset);
       return {
         docId: normalizedDocId,
@@ -1247,6 +1238,9 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       const session = collaboration.getSessionByDocId(normalizedDocId);
       const sourceId = normalizeOptionalString(session?.source_id ?? null);
       const documentPath = normalizeOptionalString(session?.path ?? null);
+      if (!sourceId || !documentPath) {
+        throw new EditorServiceError('DOC_SESSION_NOT_FOUND', 'No writable document source exists for this suggestion.', 404);
+      }
       if (sourceId && documentPath) {
         const { adapter, capabilities } = requireSourceAdapter(sourceId);
         if (!capabilities.write) {
