@@ -1,8 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import MCInsightsDashboard from './MCInsightsDashboard';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import KanbanColumn from './KanbanColumn';
-import TaskDetailPanel from './TaskDetailPanel';
-import ReviewActionModal from './ReviewActionModal';
 import { useTaskBoard, type TaskBoardTask, type TaskColumn } from '../../hooks/useTaskBoard';
 import type { MCTab } from './MCHeader';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
@@ -20,6 +17,10 @@ import {
   type WorktypeFieldDefinition,
   type WorktypeRegistryEntry,
 } from './utils/worktypeRegistry';
+
+const LazyMCInsightsDashboard = lazy(() => import('./MCInsightsDashboard'));
+const LazyTaskDetailPanel = lazy(() => import('./TaskDetailPanel'));
+const LazyReviewActionModal = lazy(() => import('./ReviewActionModal'));
 
 interface MCOpsViewProps {
   apiBase?: string;
@@ -499,9 +500,13 @@ export default function MCOpsView({
       {error ? (
         <div className="entity-state-notice entity-state-error mx-4 mt-5 text-sm md:mx-5">{error}</div>
       ) : null}
-      <div className={activeTab === 'insights' && shouldShowInsights ? 'entity-insights-body' : 'hidden'}>
-        <MCInsightsDashboard tasks={filteredTasks} onOpenTask={handleOpenTask} />
-      </div>
+      {activeTab === 'insights' && shouldShowInsights ? (
+        <div className="entity-insights-body">
+          <Suspense fallback={null}>
+            <LazyMCInsightsDashboard tasks={filteredTasks} onOpenTask={handleOpenTask} />
+          </Suspense>
+        </div>
+      ) : null}
       <div className={activeTab === 'insights' && shouldShowInsights ? 'hidden' : ''}>
         <div className="px-4 pb-3 pt-4 md:px-5">
 	          <div className={`entity-state-bar ${summaryStateClass} flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)]/80 p-2 shadow-[0_10px_28px_rgba(0,0,0,0.22)]`}>
@@ -728,25 +733,31 @@ export default function MCOpsView({
         ) : null}
       </div>
       {activeTaskDetailId !== null ? (
-        <TaskDetailPanel
-          key={activeTaskDetailId}
-          apiBase={apiBase}
-          taskId={activeTaskDetailId}
-          onClose={handleCloseTask}
-          onDocsLinkNavigate={onDocsLinkNavigate}
-        />
+        <Suspense fallback={null}>
+          <LazyTaskDetailPanel
+            key={activeTaskDetailId}
+            apiBase={apiBase}
+            taskId={activeTaskDetailId}
+            onClose={handleCloseTask}
+            onDocsLinkNavigate={onDocsLinkNavigate}
+          />
+        </Suspense>
       ) : null}
-      <ReviewActionModal
-        open={reviewModalTask !== null}
-        task={reviewModalTask}
-        busy={reviewBusy}
-        error={reviewError}
-        onClose={() => {
-          setReviewModalTask(null);
-          setReviewError(null);
-        }}
-        onSubmit={handleReviewSubmit}
-      />
+      {reviewModalTask !== null ? (
+        <Suspense fallback={null}>
+          <LazyReviewActionModal
+            open
+            task={reviewModalTask}
+            busy={reviewBusy}
+            error={reviewError}
+            onClose={() => {
+              setReviewModalTask(null);
+              setReviewError(null);
+            }}
+            onSubmit={handleReviewSubmit}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

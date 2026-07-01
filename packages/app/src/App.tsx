@@ -18,17 +18,10 @@ import type {
   EditorSelectionSnapshot,
   EditorSuggestingEditRequest,
 } from './components/CodeMirrorEditor';
-import AuthorshipStatsPanel from './components/editor/AuthorshipStatsPanel';
-import { CommentThreadPanel } from './components/CommentThread';
-import { NewCommentPopover, type NewCommentPopoverAnchor } from './components/NewCommentPopover';
-import { PresenceChips } from './components/PresenceChips';
-import { ReviewPanel } from './components/ReviewPanel';
-import { SuggestionPanel } from './components/SuggestionPanel';
+import type { NewCommentPopoverAnchor } from './components/NewCommentPopover';
 import { ToastViewport } from './components/Toast';
-import QuickSwitcher from './components/QuickSwitcher';
-import MarkdownAudioControls, { type DocsTtsSettings } from './components/MarkdownAudioControls';
+import type { DocsTtsSettings } from './components/MarkdownAudioControls';
 import TaskBoard from './components/TaskBoard';
-import MCCreateTaskModal from './components/mission-control/MCCreateTaskModal';
 import MobileBottomNav, { type MobileTab } from './components/MobileBottomNav';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -50,7 +43,7 @@ import {
 } from './lib/agentRegistry';
 import { readUserProfile, useUserProfile } from './lib/userProfile';
 import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
-import { createDocumentsApiClient, type DocumentsClientAuth } from './lib/documents-client';
+import type { DocumentsApiClient, DocumentsClientAuth } from './lib/documents-client';
 import { usePluginStore } from './stores/pluginStore';
 import {
   OFFLINE_QUEUE_DRAINED_EVENT,
@@ -97,6 +90,16 @@ const AgentsSidebarTab = lazy(() => import('./components/AgentsSidebarTab'));
 const AgentsMobileDetail = lazy(() => import('./components/AgentsMobileDetail'));
 const AgentDashboardV2 = lazy(() => import('./components/AgentDashboardV2'));
 const ChatView = lazy(() => import('./components/Chat/ChatView'));
+const AuthorshipStatsPanel = lazy(() => import('./components/editor/AuthorshipStatsPanel'));
+const CommentThreadPanel = lazy(() => import('./components/CommentThread').then((module) => ({ default: module.CommentThreadPanel })));
+const NewCommentPopover = lazy(() => import('./components/NewCommentPopover').then((module) => ({ default: module.NewCommentPopover })));
+const PresenceChips = lazy(() => import('./components/PresenceChips').then((module) => ({ default: module.PresenceChips })));
+const ReviewPanel = lazy(() => import('./components/ReviewPanel').then((module) => ({ default: module.ReviewPanel })));
+const SuggestionPanel = lazy(() => import('./components/SuggestionPanel').then((module) => ({ default: module.SuggestionPanel })));
+const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
+const MarkdownAudioControls = lazy(() => import('./components/MarkdownAudioControls'));
+const MCCreateTaskModal = lazy(() => import('./components/mission-control/MCCreateTaskModal'));
+const ShowClawFeaturedPage = lazy(() => import('./ShowClawFeaturedPage'));
 
 const LOGIN_REQUIRED_KEY = 'entity.auth.login-required.v1';
 const AUTH_SESSION_KEY = 'entity.auth.session.v1';
@@ -316,6 +319,30 @@ function LazyChatView() {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading chat" />}>
       <ChatView />
+    </Suspense>
+  );
+}
+
+function LazyMarkdownAudioControls(props: ComponentProps<typeof MarkdownAudioControls>) {
+  return (
+    <Suspense fallback={null}>
+      <MarkdownAudioControls {...props} />
+    </Suspense>
+  );
+}
+
+function LazyPresenceChips(props: ComponentProps<typeof PresenceChips>) {
+  return (
+    <Suspense fallback={null}>
+      <PresenceChips {...props} />
+    </Suspense>
+  );
+}
+
+function LazyAuthorshipStatsPanel(props: ComponentProps<typeof AuthorshipStatsPanel>) {
+  return (
+    <Suspense fallback={null}>
+      <AuthorshipStatsPanel {...props} />
     </Suspense>
   );
 }
@@ -1442,6 +1469,34 @@ async function requestWithFallback(urls: string[], init: RequestInit, fallbackMe
   throw lastError ?? new Error(fallbackMessage);
 }
 
+function createLazyDocumentsApiClient(options: { apiBase?: string; auth?: DocumentsClientAuth }): DocumentsApiClient {
+  const loadClient = async () => {
+    const { createDocumentsApiClient } = await import('./lib/documents-client');
+    return createDocumentsApiClient(options);
+  };
+
+  return {
+    getIndex: async (...args) => (await loadClient()).getIndex(...args),
+    getHealth: async (...args) => (await loadClient()).getHealth(...args),
+    getState: async (...args) => (await loadClient()).getState(...args),
+    getComments: async (...args) => (await loadClient()).getComments(...args),
+    postComment: async (...args) => (await loadClient()).postComment(...args),
+    postCommentReply: async (...args) => (await loadClient()).postCommentReply(...args),
+    postCommentResolve: async (...args) => (await loadClient()).postCommentResolve(...args),
+    getSuggestions: async (...args) => (await loadClient()).getSuggestions(...args),
+    postSuggestion: async (...args) => (await loadClient()).postSuggestion(...args),
+    acceptSuggestion: async (...args) => (await loadClient()).acceptSuggestion(...args),
+    rejectSuggestion: async (...args) => (await loadClient()).rejectSuggestion(...args),
+    postReview: async (...args) => (await loadClient()).postReview(...args),
+    getReview: async (...args) => (await loadClient()).getReview(...args),
+    applyReviewFinding: async (...args) => (await loadClient()).applyReviewFinding(...args),
+    ignoreReviewFinding: async (...args) => (await loadClient()).ignoreReviewFinding(...args),
+    postEdit: async (...args) => (await loadClient()).postEdit(...args),
+    postAuthorship: async (...args) => (await loadClient()).postAuthorship(...args),
+    postCursor: async (...args) => (await loadClient()).postCursor(...args),
+  };
+}
+
 interface DocsApiResponse {
   content?: string;
   path?: string;
@@ -1538,76 +1593,13 @@ function resolveDocsPathFromHref(href: string, currentDocsPath: string | null): 
 }
 
 
-function ShowClawFeaturedPage() {
-  const workflow = [
-    'Capture the request as a small contract: one hardcoded page, no CMS, no browse system.',
-    'Freeze the proof order: outcome first, then artifact, then workflow, then reuse notes.',
-    'Build the page directly in Entity so the shipped surface is the proof bundle, not a slide deck.',
-    'Run the production build and deploy from the same repo path to keep the acceptance trail clean.',
-  ];
-
-  const patterns = [
-    'Proof-first page shape: hero → artifact → workflow → reusable patterns → lessons → CTA.',
-    'Hardcoded v0 discipline: remove dynamic data until the first honest page is live.',
-    'Acceptance bundle copy: state request, worker, changed surface, test result, deploy URL, verifier outcome.',
-  ];
-
-  const lessons = [
-    'The trap was taxonomy theater: tags, galleries, and CMS plans before one credible featured page existed.',
-    'The fix was scope brutality: one build, one artifact, one public page, one CTA.',
-    'ProofDesk only becomes real when a skeptical operator can verify work from a single contract surface.',
-  ];
-
-  return (
-    <main className="min-h-screen overflow-auto bg-[#07090d] text-slate-100">
-      <section className="relative isolate overflow-hidden border-b border-white/10">
-        <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_10%,rgba(0,170,255,0.25),transparent_32%),radial-gradient(circle_at_80%_0%,rgba(245,158,11,0.18),transparent_28%),linear-gradient(135deg,#07090d_0%,#0e1726_55%,#050608_100%)]" />
-        <div className="mx-auto grid max-w-6xl gap-10 px-6 py-20 lg:grid-cols-[1.1fr_0.9fr] lg:px-8">
-          <div>
-            <div className="mb-5 inline-flex rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.28em] text-cyan-200">ShowClaw Featured Build · v0</div>
-            <h1 className="max-w-4xl text-5xl font-black tracking-[-0.06em] text-white md:text-7xl">Entity Mission Control, shipped as proof — not lore.</h1>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">ShowClaw’s first featured page documents a real Entity build loop: a requested surface, a worker trail, a proof bundle, and an acceptance outcome a skeptical operator can inspect in under a minute.</p>
-            <p className="mt-5 max-w-2xl rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm font-semibold text-amber-100">Outcome: one hardcoded featured page that explains what changed, what proof exists, how the work moved, and what another builder can steal.</p>
-          </div>
-          <aside className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 shadow-2xl shadow-cyan-950/40 backdrop-blur">
-            <div className="rounded-[1.5rem] border border-cyan-200/20 bg-[#09111c] p-5">
-              <div className="flex items-center justify-between border-b border-white/10 pb-4 text-xs uppercase tracking-[0.22em] text-slate-400"><span>ProofDesk Contract</span><span className="text-emerald-300">Accepted</span></div>
-              <dl className="mt-5 space-y-4 text-sm">
-                {[
-                  ['Request', 'Ship one ShowClaw featured page for Entity.'],
-                  ['Worker', 'Assistant · local · ~/Code/entity'],
-                  ['Changed surface', '/showclaw/entity-featured'],
-                  ['Proof', 'Build output + deployed URL + screenshot-ready page'],
-                  ['Verifier', 'Operator acceptance contract, v0'],
-                ].map(([label, value]) => (
-                  <div key={label} className="grid grid-cols-[104px_minmax(0,1fr)] gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-3"><dt className="text-slate-500">{label}</dt><dd className="font-medium text-slate-100">{value}</dd></div>
-                ))}
-              </dl>
-            </div>
-          </aside>
-        </div>
-      </section>
-      <section className="mx-auto max-w-6xl px-6 py-14 lg:px-8">
-        <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6"><div className="text-xs font-bold uppercase tracking-[0.25em] text-cyan-300">Proof block</div><h2 className="mt-3 text-3xl font-black tracking-[-0.04em] text-white">The artifact is the page.</h2><p className="mt-4 text-slate-300">This public route is the first ProofDesk acceptance test: the work request, changed surface, proof bundle, and verifier outcome are visible without asking an agent to explain itself.</p><p className="mt-5 rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-100">Caption: hardcoded ShowClaw featured page shipped inside Entity, with the proof order preserved on the page itself.</p></div>
-          <div className="rounded-[1.75rem] border border-white/10 bg-[#0b111a] p-6 font-mono text-sm text-slate-300 shadow-xl"><div className="text-emerald-300">$ npm run build</div><div className="mt-3 space-y-1 text-slate-400"><div>✓ packages/app production bundle</div><div>✓ packages/db build</div><div>✓ packages/server build</div><div>✓ deploy.sh published Entity route</div></div></div>
-        </div>
-      </section>
-      <section className="mx-auto grid max-w-6xl gap-6 px-6 pb-14 lg:grid-cols-3 lg:px-8">
-        <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6 lg:col-span-2"><div className="text-xs font-bold uppercase tracking-[0.25em] text-cyan-300">Workflow</div><ol className="mt-5 space-y-4">{workflow.map((item, index) => (<li key={item} className="flex gap-4 rounded-2xl border border-white/10 bg-black/20 p-4"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-300 text-sm font-black text-slate-950">{index + 1}</span><span className="text-slate-200">{item}</span></li>))}</ol></div>
-        <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6"><div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-300">CTA</div><h2 className="mt-3 text-3xl font-black tracking-[-0.04em] text-white">Submit a build.</h2><p className="mt-4 text-sm leading-6 text-slate-300">Bring a shipped artifact, a short proof bundle, and the sharp edge that taught you something. ShowClaw is for work that survives inspection.</p><a href="mailto:showclaw@superada.ai?subject=ShowClaw%20Build%20Submission" className="mt-6 inline-flex rounded-full bg-white px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-cyan-200">Send the proof</a></div>
-      </section>
-      <section className="mx-auto grid max-w-6xl gap-6 px-6 pb-20 lg:grid-cols-2 lg:px-8">
-        <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6"><div className="text-xs font-bold uppercase tracking-[0.25em] text-cyan-300">Reusable patterns</div><ul className="mt-5 space-y-3">{patterns.map((item) => <li key={item} className="rounded-xl border border-white/10 bg-black/20 p-4 text-slate-200">{item}</li>)}</ul></div>
-        <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6"><div className="text-xs font-bold uppercase tracking-[0.25em] text-rose-300">Lessons / sharp edges</div><ul className="mt-5 space-y-3">{lessons.map((item) => <li key={item} className="rounded-xl border border-white/10 bg-black/20 p-4 text-slate-200">{item}</li>)}</ul></div>
-      </section>
-    </main>
-  );
-}
-
 export default function App() {
   if (typeof window !== 'undefined' && window.location.pathname === '/showclaw/entity-featured') {
-    return <ShowClawFeaturedPage />;
+    return (
+      <Suspense fallback={<LazySurfaceFallback label="Loading page" />}>
+        <ShowClawFeaturedPage />
+      </Suspense>
+    );
   }
   const initialDocumentsAuth = readDocumentsAuth();
   const [docsPath, setDocsPath] = useState<string | null>(() => {
@@ -3460,7 +3452,7 @@ export default function App() {
   );
   const documentsClient = useMemo(
     () =>
-      createDocumentsApiClient({
+      createLazyDocumentsApiClient({
         apiBase: runtime.apiBase,
         auth: documentsAuth ?? undefined,
       }),
@@ -5231,7 +5223,7 @@ export default function App() {
             </div>
           )}
           {runtime.agentNativeEditorEnabled && currentDocId && remotePresence.length > 0 && (
-            <PresenceChips
+            <LazyPresenceChips
               presence={remotePresence}
               selectedActorId={followEnabled ? followedActorId : null}
               onSelectActor={(actorId) => {
@@ -5702,7 +5694,7 @@ export default function App() {
         shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
           <div className={`mx-auto max-w-4xl p-8 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
             <LazyMarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-            <MarkdownAudioControls
+            <LazyMarkdownAudioControls
               docsPath={currentFile ?? ''}
               content={fileContent}
               settings={docsTtsSettings}
@@ -5860,7 +5852,7 @@ export default function App() {
                             shouldRenderMarkdownPreview(rightPaneFile, rightPanePreviewMeta.contentType) ? (
                               <div className="mx-auto max-w-4xl p-8">
                                 <LazyMarkdownPreview content={rightPaneContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-                                <MarkdownAudioControls
+                                <LazyMarkdownAudioControls
                                   docsPath={rightPaneFile ?? ''}
                                   content={rightPaneContent}
                                   settings={docsTtsSettings}
@@ -5938,7 +5930,8 @@ export default function App() {
                       {!rightSidebarIsCollapsed && (
                         <div className="min-h-0 flex-1 overflow-auto">
                           {rightSidebarHasComments && (
-                            <CommentThreadPanel
+                            <Suspense fallback={null}>
+                              <CommentThreadPanel
                               threads={commentThreads}
                               onNewFromSelection={() => {
                                 if (!documentsReady || !currentDocId) {
@@ -5998,11 +5991,13 @@ export default function App() {
                                 })();
                               }}
                               selectedThreadId={selectedCommentId}
-                            />
+                              />
+                            </Suspense>
                           )}
 
                           {rightSidebarHasSuggestions && (
-                            <SuggestionPanel
+                            <Suspense fallback={null}>
+                              <SuggestionPanel
                               suggestions={suggestions}
                               selectedSuggestionId={selectedSuggestionId}
                               onSelectSuggestion={(suggestionId) => {
@@ -6066,11 +6061,13 @@ export default function App() {
                                   }
                                 })();
                               }}
-                            />
+                              />
+                            </Suspense>
                           )}
 
                           {rightSidebarHasReview && (
-                            <ReviewPanel
+                            <Suspense fallback={null}>
+                              <ReviewPanel
                               mode={reviewMode}
                               onChangeMode={setReviewMode}
                               onRunReview={() => {
@@ -6102,7 +6099,8 @@ export default function App() {
                               onApplyFix={handleApplyReviewFindingFix}
                               onIgnoreFinding={handleIgnoreReviewFinding}
                               content={fileContent}
-                            />
+                              />
+                            </Suspense>
                           )}
 
                         </div>
@@ -6257,7 +6255,7 @@ export default function App() {
               </div>
             ) : (
               <>
-                <MarkdownAudioControls
+                <LazyMarkdownAudioControls
                   docsPath={docsPath}
                   content={docsContent}
                   settings={docsTtsSettings}
@@ -6310,38 +6308,42 @@ export default function App() {
       data-workspace-tab={sidebarTab}
     >
       {renderInstallCta('bottom-24 md:bottom-8')}
-      <QuickSwitcher
-        isOpen={quickSwitcherOpen}
-        onClose={() => {
-          setQuickSwitcherOpen(false);
-          setQuickSwitcherTargetPane('left');
-        }}
-        onSelect={(path, sourceId) => {
-          if (quickSwitcherTargetPane === 'right') {
-            if (!splitMode) {
-              setSplitMode('horizontal');
-              setSplitRatio(0.5);
-            }
+      {quickSwitcherOpen ? (
+        <Suspense fallback={null}>
+          <QuickSwitcher
+            isOpen={quickSwitcherOpen}
+            onClose={() => {
+              setQuickSwitcherOpen(false);
+              setQuickSwitcherTargetPane('left');
+            }}
+            onSelect={(path, sourceId) => {
+              if (quickSwitcherTargetPane === 'right') {
+                if (!splitMode) {
+                  setSplitMode('horizontal');
+                  setSplitRatio(0.5);
+                }
 
-            if (sourceId) {
-              handleRightPaneSourceFileSelect(sourceId, path);
-              return;
-            }
+                if (sourceId) {
+                  handleRightPaneSourceFileSelect(sourceId, path);
+                  return;
+                }
 
-            handleRightPaneFileSelect(path);
-            return;
-          }
+                handleRightPaneFileSelect(path);
+                return;
+              }
 
-          if (sourceId) {
-            handleSourceFileSelect(sourceId, path);
-            return;
-          }
+              if (sourceId) {
+                handleSourceFileSelect(sourceId, path);
+                return;
+              }
 
-          handleFileSelect(path);
-        }}
-        apiBase={runtime.apiBase}
-        useUnifiedSearch={runtime.fsMultiSourceEnabled}
-      />
+              handleFileSelect(path);
+            }}
+            apiBase={runtime.apiBase}
+            useUnifiedSearch={runtime.fsMultiSourceEnabled}
+          />
+        </Suspense>
+      ) : null}
 
       <LazyNotificationHistoryPanel
         isOpen={notificationsPanelOpen}
@@ -6493,7 +6495,7 @@ export default function App() {
                   </div>
                   {manualAttributionEnabled && (
                     <div className="hidden border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 md:block">
-                      <AuthorshipStatsPanel
+                      <LazyAuthorshipStatsPanel
                         stats={authorshipStats}
                         selectedAuthor={manualAuthorshipAuthor}
                         onSelectAuthor={setManualAuthorshipAuthor}
@@ -6704,15 +6706,19 @@ export default function App() {
 
       {renderOfflineSyncBar(true)}
 
-      <MCCreateTaskModal
-        open={createTaskModalOpen}
-        apiBase={runtime.apiBase}
-        onClose={() => setCreateTaskModalOpen(false)}
-        onCreateTask={createTask}
-        onCreated={(task) => {
-          handleTaskSelect(task.id);
-        }}
-      />
+      {createTaskModalOpen ? (
+        <Suspense fallback={null}>
+          <MCCreateTaskModal
+            open
+            apiBase={runtime.apiBase}
+            onClose={() => setCreateTaskModalOpen(false)}
+            onCreateTask={createTask}
+            onCreated={(task) => {
+              handleTaskSelect(task.id);
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       <div
         id="loginOverlay"
@@ -6775,35 +6781,37 @@ export default function App() {
       )}
 
       {commentPopover && (
-        <NewCommentPopover
-          anchor={commentPopover.anchor}
-          selectedText={commentPopover.selectedText}
-          onCancel={() => setCommentPopover(null)}
-          onSubmit={(text) => {
-            void (async () => {
-              const value = text.trim();
-              if (!value) return;
-              if (!documentsReady || !currentDocId) {
-                pushToast('Connect a Documents token to create comments.', 'warning');
-                return;
-              }
+        <Suspense fallback={null}>
+          <NewCommentPopover
+            anchor={commentPopover.anchor}
+            selectedText={commentPopover.selectedText}
+            onCancel={() => setCommentPopover(null)}
+            onSubmit={(text) => {
+              void (async () => {
+                const value = text.trim();
+                if (!value) return;
+                if (!documentsReady || !currentDocId) {
+                  pushToast('Connect a Documents token to create comments.', 'warning');
+                  return;
+                }
 
-              try {
-                const response = await documentsClient.postComment(currentDocId, {
-                  from: commentPopover.selection.from,
-                  to: commentPopover.selection.to,
-                  text: value,
-                  selectedText: commentPopover.selectedText,
-                });
-                setCommentThreads(response.threads);
-                setCommentPopover(null);
-                pushToast('Comment created.', 'success');
-              } catch (error) {
-                pushToast(error instanceof Error ? error.message : 'Failed to create comment.', 'error');
-              }
-            })();
-          }}
-        />
+                try {
+                  const response = await documentsClient.postComment(currentDocId, {
+                    from: commentPopover.selection.from,
+                    to: commentPopover.selection.to,
+                    text: value,
+                    selectedText: commentPopover.selectedText,
+                  });
+                  setCommentThreads(response.threads);
+                  setCommentPopover(null);
+                  pushToast('Comment created.', 'success');
+                } catch (error) {
+                  pushToast(error instanceof Error ? error.message : 'Failed to create comment.', 'error');
+                }
+              })();
+            }}
+          />
+        </Suspense>
       )}
 
       <ToastViewport

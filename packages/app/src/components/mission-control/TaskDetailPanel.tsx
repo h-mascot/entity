@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
 import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
@@ -17,7 +17,6 @@ import {
 } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
 import { buildRoutingStateView, routingToneClass } from './utils/routingState';
-import TaskChatContextPanel from './TaskChatContextPanel';
 import {
   FALLBACK_WORKTYPE_REGISTRY,
   formatOverlayValue,
@@ -30,6 +29,8 @@ import {
   buildExternalDocumentPreviewView,
   type ExternalDocumentPreviewView,
 } from './utils/externalDocumentPreview';
+
+const TaskChatContextPanel = lazy(() => import('./TaskChatContextPanel'));
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
@@ -3652,13 +3653,15 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                   ) : null}
 	              </section>
 
-                  <TaskChatContextPanel
-                    taskId={task.id}
-                    apiBase={apiBase}
-                    proofAvailable={Boolean(receiptProof)}
-                    documentObjectCount={documentObjectViews.length}
-                    outputLinkCount={outputLinks.length}
-                  />
+                  <Suspense fallback={null}>
+                    <TaskChatContextPanel
+                      taskId={task.id}
+                      apiBase={apiBase}
+                      proofAvailable={Boolean(receiptProof)}
+                      documentObjectCount={documentObjectViews.length}
+                      outputLinkCount={outputLinks.length}
+                    />
+                  </Suspense>
 
                   {receiptProof ? (
                     <section
