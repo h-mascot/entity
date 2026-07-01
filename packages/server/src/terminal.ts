@@ -435,6 +435,10 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
           return;
         }
 
+        if (session.owner && rejectNonOwnerControl(socket, session, 'subscribe')) {
+          return;
+        }
+
         bindSocketToSession(socket, session);
         safeSend(socket, session.summary, 'session', session.summary);
         if (session.history.length > 0) {
@@ -491,6 +495,13 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
 
       if (message.type === 'terminal:close') {
         const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+        const session = sessions.get(sessionId);
+        if (!session) {
+          return;
+        }
+        if (rejectNonOwnerControl(socket, session, 'close')) {
+          return;
+        }
         closeSession(sessionId);
       }
     });

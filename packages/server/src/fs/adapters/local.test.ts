@@ -56,26 +56,46 @@ describe('LocalFileSourceAdapter metadata', () => {
       }),
     ]);
 
-    await expect(adapter.stat('linked-dir')).resolves.toMatchObject({
-      path: 'linked-dir',
-      kind: 'other',
-    });
+    await expect(adapter.stat('linked-dir')).rejects.toThrow('Access outside source root is not allowed.');
   });
 
-  it('honors stored read-only local source capabilities', () => {
+  it('rejects symlink escapes on read and write while allowing in-root files', async () => {
+    const root = await makeTempRoot();
+    const outside = await makeTempRoot();
+    const outsideFile = path.join(outside, 'secret.md');
+    await fs.promises.writeFile(path.join(root, 'inside.md'), '# inside\n', 'utf-8');
+    await fs.promises.writeFile(outsideFile, '# outside\n', 'utf-8');
+    await fs.promises.symlink(outsideFile, path.join(root, 'secret-link.md'));
+
+    const adapter = new LocalFileSourceAdapter(sourceFor(root));
+
+    await expect(adapter.readRaw('inside.md')).resolves.toMatchObject({
+      content: Buffer.from('# inside\n'),
+    });
+    await expect(adapter.write('inside.md', '# updated\n')).resolves.toEqual({
+      updatedAt: expect.any(String),
+    });
+    await expect(fs.promises.readFile(path.join(root, 'inside.md'), 'utf-8')).resolves.toBe('# updated\n');
+
+    await expect(adapter.readRaw('secret-link.md')).rejects.toThrow('Access outside source root is not allowed.');
+    await expect(adapter.write('secret-link.md', '# pwned\n')).rejects.toThrow('Access outside source root is not allowed.');
+    await expect(fs.promises.readFile(outsideFile, 'utf-8')).resolves.toBe('# outside\n');
+  });
+
+  it('uses server-derived local source capabilities instead of stored client JSON', () => {
     const adapter = new LocalFileSourceAdapter(sourceFor('/workspace'));
-    const readOnlyAdapter = new LocalFileSourceAdapter(
+    const clientWritableAdapter = new LocalFileSourceAdapter(
       sourceFor('/workspace', {
         capabilities: JSON.stringify({
           read: true,
-          write: false,
+          write: true,
           list: true,
           search: true,
         }),
       }),
     );
 
-    expect(adapter.capabilities().write).toBe(true);
-    expect(readOnlyAdapter.capabilities().write).toBe(false);
+    expect(adapter.capabilities()).toMatchObject({ read: true, write: false, list: true, search: true });
+    expect(clientWritableAdapter.capabilities().write).toBe(false);
   });
 });

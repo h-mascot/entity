@@ -5,7 +5,7 @@ import type { Express, Response } from "express";
 import type { ActivityType } from "../../../db/src";
 import type { FileSourceRepository } from "../../../db/src/file-sources";
 import { createFileSourceAdapter } from "../fs/adapters/registry";
-import { assertSourceEnabled, normalizeSourceRelativePath } from "../fs/security";
+import { assertSourceEnabled, assertWriteTargetRealpathContained, normalizeSourceRelativePath } from "../fs/security";
 import { detectContentType } from "../file-types";
 import { asyncHandler } from "../middleware/async-handler";
 import { resolveWorkspaceReadPath } from "../workspace-paths";
@@ -41,7 +41,7 @@ export function registerLegacyFileRoutes(
     toWorkspaceRelativePath,
   } = deps;
 
-  function resolveWorkspaceMutationPath(rawPath: string): string {
+  async function resolveWorkspaceMutationPath(rawPath: string): Promise<string> {
     if (rawPath.includes("\0")) {
       throw new Error("Invalid path.");
     }
@@ -58,6 +58,12 @@ export function registerLegacyFileRoutes(
     ) {
       throw new Error("File mutation path must stay inside the workspace.");
     }
+
+    await assertWriteTargetRealpathContained(
+      workspaceRoot,
+      resolvedPath,
+      "File mutation path must stay inside the workspace.",
+    );
 
     return resolvedPath;
   }
@@ -218,7 +224,11 @@ export function registerLegacyFileRoutes(
   function mapFileRouteErrorStatus(message: string): number {
     const normalized = message.trim().toLowerCase();
 
-    if (normalized.includes("outside workspace")) {
+    if (
+      normalized.includes("outside workspace") ||
+      normalized.includes("inside the workspace") ||
+      normalized.includes("outside source root")
+    ) {
       return 403;
     }
 
@@ -422,7 +432,7 @@ export function registerLegacyFileRoutes(
     }
   }));
 
-  app.post("/api/files/:path(*)/versions", (req, res) => {
+  app.post("/api/files/:path(*)/versions", asyncHandler(async (req, res) => {
     const filePath = req.params.path;
     if (!filePath) {
       return res.status(400).json({ error: "path required" });
@@ -437,7 +447,7 @@ export function registerLegacyFileRoutes(
     const summary = normalizeVersionSummary(req.body?.summary) ?? "Snapshot";
 
     try {
-      const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+      const resolvedFilePath = await resolveWorkspaceMutationPath(filePath);
       const version: FileVersion = {
         id: generateVersionId(),
         content,
@@ -454,16 +464,16 @@ export function registerLegacyFileRoutes(
         .status(mapFileRouteErrorStatus(message))
         .json({ error: message });
     }
-  });
+  }));
 
-  app.get("/api/files/:path(*)/versions", (req, res) => {
+  app.get("/api/files/:path(*)/versions", asyncHandler(async (req, res) => {
     const filePath = req.params.path;
     if (!filePath) {
       return res.status(400).json({ error: "path required" });
     }
 
     try {
-      const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+      const resolvedFilePath = await resolveWorkspaceMutationPath(filePath);
       const versions = fileVersionsByPath.get(resolvedFilePath) ?? [];
       const metas: FileVersionMeta[] = versions.map(
         ({ content: _content, ...meta }) => meta,
@@ -475,9 +485,9 @@ export function registerLegacyFileRoutes(
         .status(mapFileRouteErrorStatus(message))
         .json({ error: message });
     }
-  });
+  }));
 
-  app.get("/api/files/:path(*)/versions/:id", (req, res) => {
+  app.get("/api/files/:path(*)/versions/:id", asyncHandler(async (req, res) => {
     const filePath = req.params.path;
     const { id } = req.params;
 
@@ -486,7 +496,7 @@ export function registerLegacyFileRoutes(
     }
 
     try {
-      const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+      const resolvedFilePath = await resolveWorkspaceMutationPath(filePath);
       const versions = fileVersionsByPath.get(resolvedFilePath) ?? [];
       const version = versions.find((entry) => entry.id === id);
       if (!version) {
@@ -500,7 +510,7 @@ export function registerLegacyFileRoutes(
         .status(mapFileRouteErrorStatus(message))
         .json({ error: message });
     }
-  });
+  }));
 
   app.put("/api/file", asyncHandler(async (req, res) => {
     const filePath = req.query.path;
@@ -520,7 +530,7 @@ export function registerLegacyFileRoutes(
     const author = normalizeVersionAuthor(req.body?.author);
     const requestSummary = normalizeVersionSummary(req.body?.summary);
     try {
-      const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+      const resolvedFilePath = await resolveWorkspaceMutationPath(filePath);
       // Auto-save a version snapshot before overwriting.
       try {
         const previousContent = await fs.promises.readFile(resolvedFilePath, "utf-8");
@@ -563,7 +573,7 @@ export function registerLegacyFileRoutes(
       return res.json({ success: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      return res.status(500).json({ error: message });
+      return res.status(mapFileRouteErrorStatus(message)).json({ error: message });
     }
   }));
 
@@ -574,7 +584,7 @@ export function registerLegacyFileRoutes(
     }
 
     try {
-      const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+      const resolvedFilePath = await resolveWorkspaceMutationPath(filePath);
       await fs.promises.mkdir(path.dirname(resolvedFilePath), { recursive: true });
       await fs.promises.writeFile(
         resolvedFilePath,
@@ -595,7 +605,7 @@ export function registerLegacyFileRoutes(
       return res.json({ success: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      return res.status(500).json({ error: message });
+      return res.status(mapFileRouteErrorStatus(message)).json({ error: message });
     }
   }));
 
@@ -610,7 +620,7 @@ export function registerLegacyFileRoutes(
     }
 
     try {
-      const resolvedFilePath = resolveWorkspaceMutationPath(filePath);
+      const resolvedFilePath = await resolveWorkspaceMutationPath(filePath);
       await fs.promises.unlink(resolvedFilePath);
       fileVersionsByPath.delete(resolvedFilePath);
       const relativePath = toWorkspaceRelativePath(resolvedFilePath);
@@ -627,7 +637,7 @@ export function registerLegacyFileRoutes(
       return res.json({ success: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      return res.status(500).json({ error: message });
+      return res.status(mapFileRouteErrorStatus(message)).json({ error: message });
     }
   }));
 
@@ -638,8 +648,8 @@ export function registerLegacyFileRoutes(
     }
 
     try {
-      const resolvedFrom = resolveWorkspaceMutationPath(from);
-      const resolvedTo = resolveWorkspaceMutationPath(to);
+      const resolvedFrom = await resolveWorkspaceMutationPath(from);
+      const resolvedTo = await resolveWorkspaceMutationPath(to);
       await fs.promises.rename(resolvedFrom, resolvedTo);
       const existingVersions = fileVersionsByPath.get(resolvedFrom);
       if (existingVersions) {
@@ -659,7 +669,7 @@ export function registerLegacyFileRoutes(
       return res.json({ success: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      return res.status(500).json({ error: message });
+      return res.status(mapFileRouteErrorStatus(message)).json({ error: message });
     }
   }));
 

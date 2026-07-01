@@ -10,6 +10,7 @@ import {
   type FileSourceType,
 } from '../../../db/src/file-sources';
 import { createFileIndexRepository } from '../../../db/src/file-index';
+import { localSourceCapabilitiesJson } from './adapters/local';
 import { createFileSourceAdapter } from './adapters/registry';
 import { FileIndexRunner } from './index-runner';
 import { recordFsOperation } from './metrics';
@@ -111,6 +112,13 @@ function toSourceResponse(source: FileSourceRecord) {
   };
 }
 
+function capabilitiesForStorage(type: FileSourceType, rawCapabilities: unknown): string | undefined {
+  if (type === 'local') {
+    return localSourceCapabilitiesJson();
+  }
+  return typeof rawCapabilities === 'string' ? rawCapabilities : undefined;
+}
+
 function parsePayload(body: SourcePayload): { ok: true; value: SourcePayload } | { ok: false; error: string } {
   const id = body.id?.trim();
   if (typeof body.id !== 'undefined') {
@@ -195,7 +203,7 @@ export function registerSourceRoutes(app: Express): void {
         auth_ref: payload.authRef?.trim() || undefined,
         enabled: typeof payload.enabled === 'undefined' ? true : toBoolean(payload.enabled),
         icon: payload.icon?.trim() || undefined,
-        capabilities: typeof payload.capabilities === 'string' ? payload.capabilities : undefined,
+        capabilities: capabilitiesForStorage(type, payload.capabilities),
       });
 
       // Kick off an index run for the created source (async; status is reflected via /api/fs/metrics).
@@ -232,6 +240,7 @@ export function registerSourceRoutes(app: Express): void {
       const basePath = nextType === 'local' && (typeof payload.type !== 'undefined' || typeof payload.basePath !== 'undefined')
         ? await assertAllowedLocalSourceBasePath(payload.basePath ?? existing.base_path)
         : payload.basePath;
+      const shouldUpdateCapabilities = nextType === 'local' || typeof payload.capabilities === 'string';
       const updated = repo.updateSource(id, {
         display_name: payload.displayName,
         type: payload.type ? nextType : undefined,
@@ -241,7 +250,7 @@ export function registerSourceRoutes(app: Express): void {
         auth_ref: payload.authRef,
         enabled: typeof payload.enabled === 'undefined' ? undefined : toBoolean(payload.enabled),
         icon: payload.icon,
-        capabilities: typeof payload.capabilities === 'string' ? payload.capabilities : undefined,
+        capabilities: shouldUpdateCapabilities ? capabilitiesForStorage(nextType, payload.capabilities) : undefined,
         health: payload.health ? parseHealth(payload.health) ?? undefined : undefined,
         last_synced_at: payload.lastSyncedAt,
       });

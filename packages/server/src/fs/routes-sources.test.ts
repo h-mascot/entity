@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Router } from 'express';
 import fs from 'fs';
 import http from 'http';
 import os from 'os';
@@ -36,6 +36,27 @@ async function withSourceServer(run: (baseUrl: string) => Promise<void>): Promis
   const app = express();
   app.use(express.json());
   registerSourceRoutes(app);
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+  try {
+    await run(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
+}
+
+async function withSourceAndFileServer(run: (baseUrl: string) => Promise<void>): Promise<void> {
+  vi.resetModules();
+  const { registerSourceRoutes } = await import('./routes-sources');
+  const { registerFileRoutes } = await import('./routes-files');
+  const app = express();
+  app.use(express.json());
+  registerSourceRoutes(app);
+  const router = Router();
+  registerFileRoutes(router);
+  app.use('/api/fs', router);
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const address = server.address();
@@ -85,6 +106,55 @@ describe('source registration routes', () => {
         id: 'workspace-docs',
         basePath: workspaceRoot,
       });
+    });
+  });
+
+  it('clamps local source capabilities on create and update so client JSON cannot enable writes', async () => {
+    const workspaceRoot = await makeTempRoot();
+    const dbRoot = await makeTempRoot();
+    process.env.WORKSPACE = workspaceRoot;
+    process.env.ENTITY_TASK_DB_PATH = path.join(dbRoot, 'entity.sqlite');
+
+    await withSourceAndFileServer(async (baseUrl) => {
+      const created = await fetch(`${baseUrl}/api/fs/sources`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: 'workspace-docs',
+          displayName: 'Workspace Docs',
+          type: 'local',
+          basePath: workspaceRoot,
+          capabilities: JSON.stringify({ read: true, write: true, list: true, search: true }),
+        }),
+      });
+      expect(created.status).toBe(201);
+      const createdBody = (await created.json()) as { capabilities: string };
+      expect(JSON.parse(createdBody.capabilities)).toMatchObject({ read: true, write: false, list: true, search: true });
+
+      const updated = await fetch(`${baseUrl}/api/fs/sources/workspace-docs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          displayName: 'Workspace Docs Updated',
+          capabilities: JSON.stringify({ read: true, write: true, list: true, search: true }),
+        }),
+      });
+      expect(updated.status).toBe(200);
+      const updatedBody = (await updated.json()) as { capabilities: string };
+      expect(JSON.parse(updatedBody.capabilities)).toMatchObject({ read: true, write: false, list: true, search: true });
+
+      const write = await fetch(`${baseUrl}/api/fs/file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceId: 'workspace-docs',
+          path: 'client-enabled.md',
+          content: '# should not write\n',
+        }),
+      });
+      expect(write.status).toBe(403);
+      await expect(write.json()).resolves.toEqual({ error: 'Source is read-only.' });
+      await expect(fs.promises.stat(path.join(workspaceRoot, 'client-enabled.md'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
   });
 });

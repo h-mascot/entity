@@ -127,6 +127,52 @@ describe('createTerminalBridge', () => {
     expect(attackerSocket.send).toHaveBeenCalledWith(expect.stringContaining('Terminal input is only allowed from the owning socket.'));
   });
 
+  it('rejects terminal subscribe from sockets that do not own the session', () => {
+    const fakeProcess = new FakeProcess();
+    const bridge = createTerminalBridge({
+      workspaceRoot: '/tmp/entity',
+      spawnProcess: vi.fn(() => fakeProcess as any),
+    });
+
+    const session = bridge.createSession({ target: 'local' });
+    const ownerSocket = new FakeSocket();
+    const attackerSocket = new FakeSocket();
+    bridge.handleSocketConnection(ownerSocket as any);
+    bridge.handleSocketConnection(attackerSocket as any);
+    ownerSocket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
+    fakeProcess.emitData('secret output');
+
+    attackerSocket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
+    fakeProcess.emitData('later output');
+
+    expect(attackerSocket.send).toHaveBeenCalledWith(expect.stringContaining('Terminal subscribe is only allowed from the owning socket.'));
+    expect(attackerSocket.send).not.toHaveBeenCalledWith(expect.stringContaining('secret output'));
+    expect(attackerSocket.send).not.toHaveBeenCalledWith(expect.stringContaining('later output'));
+  });
+
+  it('rejects terminal close from sockets that do not own the session', () => {
+    const fakeProcess = new FakeProcess();
+    const bridge = createTerminalBridge({
+      workspaceRoot: '/tmp/entity',
+      spawnProcess: vi.fn(() => fakeProcess as any),
+    });
+
+    const session = bridge.createSession({ target: 'local' });
+    const ownerSocket = new FakeSocket();
+    const attackerSocket = new FakeSocket();
+    bridge.handleSocketConnection(ownerSocket as any);
+    bridge.handleSocketConnection(attackerSocket as any);
+    ownerSocket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
+
+    attackerSocket.emit('message', JSON.stringify({ type: 'terminal:close', sessionId: session.id }));
+
+    expect(fakeProcess.kill).not.toHaveBeenCalled();
+    expect(attackerSocket.send).toHaveBeenCalledWith(expect.stringContaining('Terminal close is only allowed from the owning socket.'));
+
+    ownerSocket.emit('message', JSON.stringify({ type: 'terminal:close', sessionId: session.id }));
+    expect(fakeProcess.kill).toHaveBeenCalledWith('SIGTERM');
+  });
+
   it('resizes the pty when a terminal resize message arrives', () => {
     const fakeProcess = new FakeProcess();
     const bridge = createTerminalBridge({

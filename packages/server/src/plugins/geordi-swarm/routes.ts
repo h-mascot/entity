@@ -65,6 +65,7 @@ function updateJob(db: PluginRouteContext['db'], id: string, fields: Record<stri
 /* ── ACP Dispatch (acpx codex exec) ── */
 
 const ACPX_BIN = '/usr/bin/acpx';
+const SSH_CODEX_HOST_PATTERN = /^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?$/;
 
 // Track active dispatch processes
 const activeDispatches = new Map<string, { pid: number; startedAt: number }>();
@@ -140,6 +141,33 @@ export function expandLeadingTilde(rawPath: string, homePath: string): string {
     return `${homePath || '/Users'}${trimmed.slice(1)}`;
   }
   return trimmed;
+}
+
+export function validateSshCodexHost(rawHost: string): string {
+  const host = rawHost.trim();
+  if (!host) {
+    throw new Error('SSH Codex host is required.');
+  }
+  if (host.startsWith('-')) {
+    throw new Error('SSH Codex host must not start with "-".');
+  }
+  if (!SSH_CODEX_HOST_PATTERN.test(host)) {
+    throw new Error('SSH Codex host must be a hostname, host alias, [IPv6], or [user@]host[:port] value.');
+  }
+
+  const portMatch = host.match(/:(\d{1,5})$/);
+  if (portMatch && !host.endsWith(']')) {
+    const port = Number(portMatch[1]);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error('SSH Codex host port must be between 1 and 65535.');
+    }
+  }
+
+  return host;
+}
+
+export function buildSshCodexArgs(macHost: string, remoteCommand: string): string[] {
+  return ['--', validateSshCodexHost(macHost), remoteCommand];
 }
 
 export function buildSshCodexRemoteCommand(input: {
@@ -267,10 +295,7 @@ function dispatchToSsh(job: SwarmJobRow, db: PluginRouteContext['db']): string {
   const remoteCommand = buildSshCodexRemoteCommand({ repoPath, codexBin, prompt });
 
   // Dispatch Codex directly on Mac via SSH
-  const child = spawn('ssh', [
-    macHost,
-    remoteCommand,
-  ], {
+  const child = spawn('ssh', buildSshCodexArgs(macHost, remoteCommand), {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
   });

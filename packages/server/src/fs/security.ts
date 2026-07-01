@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 import type { FileSourceRecord } from '../../../db/src/file-sources';
 
@@ -32,6 +33,74 @@ export function resolveLocalPath(basePath: string, relativePath: string): string
   }
 
   return resolvedTarget;
+}
+
+export function isContainedPath(root: string, target: string): boolean {
+  const relativePath = path.relative(root, target);
+  return (
+    relativePath === '' ||
+    (
+      relativePath !== '..' &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath)
+    )
+  );
+}
+
+async function realpathNearestExistingParent(rootPath: string, targetParentPath: string): Promise<string> {
+  const resolvedRoot = path.resolve(rootPath);
+  let current = path.resolve(targetParentPath);
+
+  while (isContainedPath(resolvedRoot, current)) {
+    try {
+      return await fs.promises.realpath(current);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== 'ENOENT') {
+        throw err;
+      }
+      const next = path.dirname(current);
+      if (next === current) {
+        break;
+      }
+      current = next;
+    }
+  }
+
+  throw new Error('Write target parent does not exist inside source root.');
+}
+
+export async function assertRealpathContained(rootPath: string, targetPath: string, message = 'Access outside source root is not allowed.'): Promise<string> {
+  const realRoot = await fs.promises.realpath(path.resolve(rootPath));
+  const realTarget = await fs.promises.realpath(path.resolve(targetPath));
+  if (!isContainedPath(realRoot, realTarget)) {
+    throw new Error(message);
+  }
+  return realTarget;
+}
+
+export async function assertWriteTargetRealpathContained(rootPath: string, targetPath: string, message = 'Access outside source root is not allowed.'): Promise<void> {
+  const resolvedRoot = path.resolve(rootPath);
+  const resolvedTarget = path.resolve(targetPath);
+  if (!isContainedPath(resolvedRoot, resolvedTarget)) {
+    throw new Error(message);
+  }
+
+  const realRoot = await fs.promises.realpath(resolvedRoot);
+  let realTarget: string;
+  try {
+    realTarget = await fs.promises.realpath(resolvedTarget);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT') {
+      throw err;
+    }
+    realTarget = await realpathNearestExistingParent(resolvedRoot, path.dirname(resolvedTarget));
+  }
+
+  if (!isContainedPath(realRoot, realTarget)) {
+    throw new Error(message);
+  }
 }
 
 function readAllowedHosts(): string[] {

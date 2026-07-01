@@ -3,7 +3,7 @@ import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { detectContentType } from '../../file-types';
 import { assertAllowedLocalSourceBasePath } from '../source-root-guard';
-import { normalizeSourceRelativePath, resolveLocalPath } from '../security';
+import { assertRealpathContained, assertWriteTargetRealpathContained, normalizeSourceRelativePath, resolveLocalPath } from '../security';
 import type { FileSourceAdapter, SourceCapability, SourceNode, SourcePathMetadata } from './types';
 
 function toIsoTimestamp(value: Date): string {
@@ -20,19 +20,17 @@ function toKind(stats: fs.Stats): SourcePathMetadata['kind'] {
   return 'other';
 }
 
-function parseStoredCapabilities(raw: string): Partial<SourceCapability> {
-  try {
-    const parsed = JSON.parse(raw || '{}') as Record<string, unknown>;
-    const out: Partial<SourceCapability> = {};
-    for (const key of ['read', 'write', 'rename', 'delete', 'list', 'search'] as const) {
-      if (typeof parsed[key] === 'boolean') {
-        out[key] = parsed[key];
-      }
-    }
-    return out;
-  } catch {
-    return {};
-  }
+export const LOCAL_SOURCE_CAPABILITY_POLICY: SourceCapability = {
+  read: true,
+  write: false,
+  rename: false,
+  delete: false,
+  list: true,
+  search: true,
+};
+
+export function localSourceCapabilitiesJson(): string {
+  return JSON.stringify(LOCAL_SOURCE_CAPABILITY_POLICY);
 }
 
 function toNode(sourceId: string, rootPath: string, entryName: string, stats: fs.Stats): SourceNode {
@@ -76,15 +74,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
   }
 
   capabilities(): SourceCapability {
-    return {
-      read: true,
-      write: true,
-      rename: false,
-      delete: false,
-      list: true,
-      search: true,
-      ...parseStoredCapabilities(this.source.capabilities),
-    };
+    return { ...LOCAL_SOURCE_CAPABILITY_POLICY };
   }
 
   async list(relativePath: string): Promise<SourceNode[]> {
@@ -95,6 +85,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
 
     const normalizedRelative = normalizeSourceRelativePath(relativePath);
     const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    await assertRealpathContained(basePath, absolutePath);
     const entries = await fs.promises.readdir(absolutePath, { withFileTypes: true });
 
     const nodes = (
@@ -137,6 +128,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
 
     const normalizedRelative = normalizeSourceRelativePath(relativePath);
     const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    await assertRealpathContained(basePath, absolutePath);
     const stats = await fs.promises.lstat(absolutePath);
     const name = normalizedRelative ? path.posix.basename(normalizedRelative) : path.basename(absolutePath);
     const kind = toKind(stats);
@@ -162,6 +154,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     }
 
     const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    await assertRealpathContained(basePath, absolutePath);
     const stats = await fs.promises.stat(absolutePath);
     if (!stats.isFile()) {
       throw new Error('Target path is not a file.');
@@ -190,6 +183,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     }
 
     const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    await assertRealpathContained(basePath, absolutePath);
     const stats = await fs.promises.stat(absolutePath);
     if (!stats.isFile()) {
       throw new Error('Target path is not a file.');
@@ -217,6 +211,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     }
 
     const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    await assertWriteTargetRealpathContained(basePath, absolutePath);
     try {
       const stats = await fs.promises.stat(absolutePath);
       if (!stats.isFile()) {
@@ -230,6 +225,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     }
 
     await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
+    await assertWriteTargetRealpathContained(basePath, absolutePath);
     await fs.promises.writeFile(absolutePath, content, 'utf-8');
     const updatedStats = await fs.promises.stat(absolutePath);
     return {
@@ -249,6 +245,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     }
 
     const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    await assertWriteTargetRealpathContained(basePath, absolutePath);
     try {
       const stats = await fs.promises.stat(absolutePath);
       if (stats.isDirectory()) {
@@ -263,5 +260,6 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     }
 
     await fs.promises.mkdir(absolutePath, { recursive: true });
+    await assertRealpathContained(basePath, absolutePath);
   }
 }
