@@ -13,7 +13,6 @@ import {
 import type {
   EditorAuthorshipRange,
   EditorCursorActivity,
-  EditorNewCommentRequest,
   EditorSelectionRange,
   EditorSelectionSnapshot,
   EditorSuggestingEditRequest,
@@ -22,7 +21,7 @@ import type { NewCommentPopoverAnchor } from './components/NewCommentPopover';
 import { ToastViewport } from './components/Toast';
 import type { DocsTtsSettings } from './components/MarkdownAudioControls';
 import TaskBoard from './components/TaskBoard';
-import MobileBottomNav, { type MobileTab } from './components/MobileBottomNav';
+import type { MobileTab } from './components/MobileBottomNav';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useActivityStream } from './hooks/useActivityStream';
@@ -65,12 +64,8 @@ import type {
   DocumentSuggestionUiRecord,
 } from './types/collaboration';
 
-const MarkdownPreview = lazy(() => import('./components/MarkdownPreview'));
-const CodeMirrorFileViewer = lazy(() => import('./components/CodeMirrorFileViewer'));
-const CodeMirrorEditor = lazy(() => import('./components/CodeMirrorEditor'));
 const FileTree = lazy(() => import('./components/FileTree'));
 const SourceFileTree = lazy(() => import('./components/SourceFileTree'));
-const UnifiedFileDashboard = lazy(() => import('./components/UnifiedFileDashboard'));
 const NotificationHistoryPanel = lazy(() => import('./components/NotificationHistoryPanel'));
 const FileHistoryPanel = lazy(() => import('./components/FileHistoryPanel'));
 const ActivityStream = lazy(() => import('./components/ActivityStream'));
@@ -83,18 +78,15 @@ const AgentsSidebarTab = lazy(() => import('./components/AgentsSidebarTab'));
 const AgentsMobileDetail = lazy(() => import('./components/AgentsMobileDetail'));
 const AgentDashboardV2 = lazy(() => import('./components/AgentDashboardV2'));
 const ChatView = lazy(() => import('./components/Chat/ChatView'));
-const AuthorshipStatsPanel = lazy(() => import('./components/editor/AuthorshipStatsPanel'));
-const CommentThreadPanel = lazy(() => import('./components/CommentThread').then((module) => ({ default: module.CommentThreadPanel })));
 const NewCommentPopover = lazy(() => import('./components/NewCommentPopover').then((module) => ({ default: module.NewCommentPopover })));
-const PresenceChips = lazy(() => import('./components/PresenceChips').then((module) => ({ default: module.PresenceChips })));
-const ReviewPanel = lazy(() => import('./components/ReviewPanel').then((module) => ({ default: module.ReviewPanel })));
-const SuggestionPanel = lazy(() => import('./components/SuggestionPanel').then((module) => ({ default: module.SuggestionPanel })));
 const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
-const MarkdownAudioControls = lazy(() => import('./components/MarkdownAudioControls'));
 const MCCreateTaskModal = lazy(() => import('./components/mission-control/MCCreateTaskModal'));
 const ShowClawFeaturedPage = lazy(() => import('./ShowClawFeaturedPage'));
 const AdminView = lazy(() => import('./views/AdminView'));
 const DocsRouteView = lazy(() => import('./views/DocsRouteView'));
+const MobileView = lazy(() => import('./views/MobileView'));
+const FilesView = lazy(() => import('./views/FilesView'));
+const FilesContextBar = lazy(() => import('./views/FilesContextBar'));
 
 const LOGIN_REQUIRED_KEY = 'entity.auth.login-required.v1';
 const AUTH_SESSION_KEY = 'entity.auth.session.v1';
@@ -118,30 +110,6 @@ function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }
   );
 }
 
-function LazyMarkdownPreview(props: ComponentProps<typeof MarkdownPreview>) {
-  return (
-    <Suspense fallback={<LazySurfaceFallback label="Loading preview" />}>
-      <MarkdownPreview {...props} />
-    </Suspense>
-  );
-}
-
-function LazyCodeMirrorFileViewer(props: ComponentProps<typeof CodeMirrorFileViewer>) {
-  return (
-    <Suspense fallback={<LazySurfaceFallback label="Loading file viewer" />}>
-      <CodeMirrorFileViewer {...props} />
-    </Suspense>
-  );
-}
-
-function LazyCodeMirrorEditor(props: ComponentProps<typeof CodeMirrorEditor>) {
-  return (
-    <Suspense fallback={<LazySurfaceFallback label="Loading editor" />}>
-      <CodeMirrorEditor {...props} />
-    </Suspense>
-  );
-}
-
 function LazyFileTree(props: ComponentProps<typeof FileTree>) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
@@ -154,14 +122,6 @@ function LazySourceFileTree(props: ComponentProps<typeof SourceFileTree>) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
       <SourceFileTree {...props} />
-    </Suspense>
-  );
-}
-
-function LazyUnifiedFileDashboard(props: ComponentProps<typeof UnifiedFileDashboard>) {
-  return (
-    <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
-      <UnifiedFileDashboard {...props} />
     </Suspense>
   );
 }
@@ -258,30 +218,6 @@ function LazyChatView() {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading chat" />}>
       <ChatView />
-    </Suspense>
-  );
-}
-
-function LazyMarkdownAudioControls(props: ComponentProps<typeof MarkdownAudioControls>) {
-  return (
-    <Suspense fallback={null}>
-      <MarkdownAudioControls {...props} />
-    </Suspense>
-  );
-}
-
-function LazyPresenceChips(props: ComponentProps<typeof PresenceChips>) {
-  return (
-    <Suspense fallback={null}>
-      <PresenceChips {...props} />
-    </Suspense>
-  );
-}
-
-function LazyAuthorshipStatsPanel(props: ComponentProps<typeof AuthorshipStatsPanel>) {
-  return (
-    <Suspense fallback={null}>
-      <AuthorshipStatsPanel {...props} />
     </Suspense>
   );
 }
@@ -930,25 +866,6 @@ function deriveBinaryFlag(contentType: string | null | undefined, explicitFlag: 
   return !isTextualContentType(normalized);
 }
 
-function isMarkdownContentType(contentType: string | null | undefined): boolean {
-  const normalized = normalizeDetectedContentType(contentType);
-  if (!normalized) {
-    return false;
-  }
-
-  return normalized === 'text/markdown' || normalized === 'application/markdown' || normalized.includes('markdown');
-}
-
-function isMarkdownFilePath(filePath: string | null): boolean {
-  if (!filePath) return false;
-  const normalized = filePath.trim().toLowerCase();
-  return normalized.endsWith('.md') || normalized.endsWith('.markdown') || normalized.endsWith('.mdx');
-}
-
-function shouldRenderMarkdownPreview(filePath: string | null, contentType: string | null | undefined): boolean {
-  return isMarkdownFilePath(filePath) || isMarkdownContentType(contentType);
-}
-
 function buildRawFilePreviewUrl(filePath: string | null, sourceId: string | null, apiBase = ''): string | null {
   if (!filePath) {
     return null;
@@ -973,33 +890,6 @@ function extractTaskRouteId(pathname: string): number | null {
   return Number.isInteger(taskId) && taskId > 0 ? taskId : null;
 }
 
-function computeDomSelectionAnchor(): NewCommentPopoverAnchor | null {
-  if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return null;
-  }
-
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) {
-    return null;
-  }
-
-  try {
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-    if (!rect || (!Number.isFinite(rect.left) && !Number.isFinite(rect.top))) {
-      return null;
-    }
-
-    return {
-      left: rect.left,
-      top: rect.top,
-      bottom: rect.bottom,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function normalizeAuthorshipActor(author: string): DocumentAuthorshipActor {
   const normalized = author.trim().toLowerCase();
   if (AUTHORSHIP_ACTOR_SET.has(normalized as DocumentAuthorshipActor)) {
@@ -1015,23 +905,6 @@ function toPercent(part: number, whole: number): number {
   }
 
   return Number(((part / whole) * 100).toFixed(2));
-}
-
-function formatAuthorshipBadgePercent(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '0';
-  }
-
-  if (value < 1) {
-    return '<1';
-  }
-
-  const rounded = Math.round(value);
-  if (rounded <= 0) {
-    return '<1';
-  }
-
-  return String(rounded);
 }
 
 function createEmptyAuthorStats(): DocumentAuthorshipAuthorStats {
@@ -4253,23 +4126,6 @@ export default function App() {
     );
   };
 
-  const renderFileHome = () => {
-    if (runtime.fsMultiSourceEnabled) {
-      return <LazyUnifiedFileDashboard apiBase={runtime.apiBase} enabled onOpen={handleSourceFileSelect} />;
-    }
-
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-[var(--text-muted)]">
-        <span className="text-6xl">⚡</span>
-        <span className="text-xl">Select a file to preview</span>
-        <div className="flex gap-4 text-sm">
-          <span className="mc-shell-card px-2 py-1">⌘P quick switch</span>
-          <span className="mc-shell-card px-2 py-1">⌘E edit/preview</span>
-        </div>
-      </div>
-    );
-  };
-
   const renderContextRail = (showCloseButton: boolean) => (
     <>
       {showCloseButton && (
@@ -4601,197 +4457,51 @@ export default function App() {
     }
 
     return (
-      <div className="flex w-full flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-[220px] flex-1 items-center gap-2">
-          {runtime.fsMultiSourceEnabled && currentFile && (
-            <button
-              type="button"
-              onClick={handleBackToDashboard}
-              className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-              title="Back to Dashboard"
-              aria-label="Back to Dashboard"
-            >
-              ←
-            </button>
-          )}
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <div className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">
-              {currentFile ? `${selectedSource ? `${selectedSource.displayName} • ` : ''}${currentFile}` : 'No file selected'}
-            </div>
-            {runtime.fsMultiSourceEnabled && currentSourceId && (
-              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                Source
-              </span>
-            )}
-            {runtime.fsMultiSourceEnabled && currentSourceId && currentFileReadOnly && (
-              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                Read-only
-              </span>
-            )}
-            {currentFileCacheMeta.cached && (
-              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                cached ({currentFileCachedAgeLabel ?? 'just now'})
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={editorCollabMode}
-            onChange={(event) => setEditorCollabMode(event.target.value as EditorCollaborationMode)}
-            className={`rounded border border-[var(--border-secondary)] bg-[var(--bg-tertiary)] px-2 py-1 text-xs text-[var(--text-secondary)] focus:border-[var(--accent)] focus:outline-none ${
-              currentFile ? '' : 'cursor-not-allowed opacity-40'
-            }`}
-            aria-label="Editor mode"
-            disabled={!currentFile}
-            title="Editor mode"
-          >
-            <option value="editing">Editing</option>
-            <option value="suggesting" disabled={!documentsReady}>
-              Suggesting
-            </option>
-            <option value="viewing">Viewing</option>
-          </select>
-          {runtime.agentNativeEditorEnabled && currentFile && authorshipStats.totalRanges > 0 && (
-            <div
-              className="flex items-center gap-1 text-xs text-[var(--text-muted)]"
-              aria-label="Authorship breakdown"
-              title={`Reviewed ${authorshipStats.reviewedPercent}%`}
-            >
-              {authorshipStats.human > 0 && <span>👤 {formatAuthorshipBadgePercent(authorshipStats.human)}%</span>}
-              {authorshipStats.ada > 0 && (
-                <span className="text-purple-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>
-              )}
-              {authorshipStats.spock > 0 && (
-                <span className="text-blue-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>
-              )}
-              {authorshipStats.scotty > 0 && (
-                <span className="text-green-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>
-              )}
-            </div>
-          )}
-          {runtime.agentNativeEditorEnabled && currentDocId && remotePresence.length > 0 && (
-            <LazyPresenceChips
-              presence={remotePresence}
-              selectedActorId={followEnabled ? followedActorId : null}
-              onSelectActor={(actorId) => {
-                const agentId = resolveAgentIdForActor(actorId);
-                if (!agentId) {
-                  pushToast('Follow mode is only available for agent cursors.', 'warning');
-                  return;
-                }
-
-                setEditMode(true);
-                setWatchMode(true);
-
-                setFollowingAgent((current) => {
-                  const normalized = current?.trim?.().toLowerCase?.() ?? '';
-                  const nextNormalized = agentId.trim().toLowerCase();
-                  if (followEnabled && normalized === nextNormalized) {
-                    setFollowDetached(true);
-                    return current;
-                  }
-                  setFollowDetached(false);
-                  return agentId;
-                });
-              }}
-            />
-          )}
-          <button
-            type="button"
-            onClick={toggleWatchMode}
-            disabled={!currentFile}
-            className={`mc-shell-btn px-3 py-1 text-xs font-medium ${
-              watchMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-            } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-          >
-            {watchMode ? 'Watch Mode' : 'Interact Mode'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setEditMode((prev) => !prev)}
-            disabled={!currentFile}
-            className={`mc-shell-btn px-3 py-1 text-xs ${
-              editMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-            } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-          >
-            {editMode ? 'Preview' : 'Edit'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (splitMode) {
-                exitSplitMode();
-                return;
-              }
-              setSplitMode('horizontal');
-              setSplitRatio(0.5);
-              setRightPaneSourceId(null);
-              setRightPaneFile(null);
-              setRightPaneReadOnly(false);
-              setRightPaneUpdatedAt(null);
-              setRightPaneContent('');
-              rightLastContentRef.current = '';
-              if (rightSaveTimeoutRef.current) {
-                clearTimeout(rightSaveTimeoutRef.current);
-                rightSaveTimeoutRef.current = undefined;
-              }
-            }}
-            disabled={!currentFile}
-            className={`mc-shell-btn px-3 py-1 text-xs ${
-              splitMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-            } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-            aria-label={splitMode ? 'Exit split view' : 'Split editor'}
-            title={splitMode ? 'Exit split view' : 'Split editor'}
-          >
-            Split
-          </button>
-          <button
-            type="button"
-            onClick={() => setFileHistoryPanelOpen((prev) => !prev)}
-            disabled={!currentFile || Boolean(currentSourceId)}
-            className={`mc-shell-btn px-3 py-1 text-xs ${
-              fileHistoryPanelOpen ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-            } ${currentFile && !currentSourceId ? '' : 'cursor-not-allowed opacity-40'}`}
-            aria-label="File history"
-            title={currentSourceId ? 'History is only available for local files' : 'File history'}
-          >
-            History
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard
-                .writeText(window.location.href)
-                .then(() => {
-                  pushToast('Link copied to clipboard!', 'success');
-                })
-                .catch(() => {
-                  pushToast('Failed to copy link', 'error');
-                });
-            }}
-            disabled={!currentFile}
-            className={`mc-shell-btn px-3 py-1 text-xs ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-            aria-label="Copy link to this file"
-            title="Copy link to this file"
-          >
-            🔗 Share
-          </button>
-          {editMode && editorCollabMode !== 'viewing' && !watchMode && currentFile && canEditCurrentFile && (
-            <button
-              type="button"
-              onClick={handleSave}
-              className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--text-primary)]"
-            >
-              Save
-            </button>
-          )}
-          {/* Read-only is already shown as a pill next to the filename. */}
-          {savedAgoLabel && (
-            <span className="text-xs text-[var(--accent)]">Saved {savedAgoLabel} ago</span>
-          )}
-        </div>
-      </div>
+      <Suspense fallback={null}>
+        <FilesContextBar
+          runtime={runtime}
+          currentFile={currentFile}
+          handleBackToDashboard={handleBackToDashboard}
+          selectedSource={selectedSource}
+          currentSourceId={currentSourceId}
+          currentFileReadOnly={currentFileReadOnly}
+          currentFileCacheMeta={currentFileCacheMeta}
+          currentFileCachedAgeLabel={currentFileCachedAgeLabel}
+          editorCollabMode={editorCollabMode}
+          setEditorCollabMode={setEditorCollabMode}
+          documentsReady={documentsReady}
+          authorshipStats={authorshipStats}
+          currentDocId={currentDocId}
+          remotePresence={remotePresence}
+          followEnabled={followEnabled}
+          followedActorId={followedActorId}
+          resolveAgentIdForActor={resolveAgentIdForActor}
+          pushToast={pushToast}
+          setEditMode={setEditMode}
+          setWatchMode={setWatchMode}
+          setFollowingAgent={setFollowingAgent}
+          setFollowDetached={setFollowDetached}
+          toggleWatchMode={toggleWatchMode}
+          watchMode={watchMode}
+          editMode={editMode}
+          splitMode={splitMode}
+          exitSplitMode={exitSplitMode}
+          setSplitMode={setSplitMode}
+          setSplitRatio={setSplitRatio}
+          setRightPaneSourceId={setRightPaneSourceId}
+          setRightPaneFile={setRightPaneFile}
+          setRightPaneReadOnly={setRightPaneReadOnly}
+          setRightPaneUpdatedAt={setRightPaneUpdatedAt}
+          setRightPaneContent={setRightPaneContent}
+          rightLastContentRef={rightLastContentRef}
+          rightSaveTimeoutRef={rightSaveTimeoutRef}
+          setFileHistoryPanelOpen={setFileHistoryPanelOpen}
+          fileHistoryPanelOpen={fileHistoryPanelOpen}
+          canEditCurrentFile={canEditCurrentFile}
+          handleSave={handleSave}
+          savedAgoLabel={savedAgoLabel}
+        />
+      </Suspense>
     );
   };
 
@@ -5023,150 +4733,6 @@ export default function App() {
     </div>
   );
 
-  const renderPrimaryEditorContent = () => (
-    <div className="min-h-0 flex-1 overflow-auto">
-      {editMode ? (
-        <div
-          className={`h-full w-full ${followGlowClassName} ${followTypingPulseActive ? 'agent-typing' : ''} ${
-            fileTransitionActive ? 'mc-file-switch-anim' : ''
-          }`}
-        >
-          <LazyCodeMirrorEditor
-            content={fileContent}
-            onChange={handleContentChange}
-            onSave={handleSave}
-            readOnly={editorCollabMode === 'viewing' || watchMode || (editorCollabMode === 'editing' && currentFileReadOnly)}
-            shortcutsEnabled={runtime.agentNativeEditorEnabled}
-            collabMode={editorCollabMode}
-            onSuggestingEdit={documentsReady ? handleSuggestingEdit : undefined}
-            onToggleSuggestingMode={handleToggleSuggestingMode}
-            onExitSuggestingMode={handleExitSuggestingMode}
-            authorshipRanges={manualAttributionEnabled ? editorAuthorshipRanges : undefined}
-            onManualAttribution={manualAttributionEnabled ? handleManualAttribution : undefined}
-            onSelectionChange={setEditorSelection}
-            onCursorActivity={documentsReady ? handleEditorCursorActivity : undefined}
-            onNewComment={(request: EditorNewCommentRequest) => {
-              if (!documentsReady || !currentDocId) {
-                pushToast('Connect a Documents token to use comments.', 'warning');
-                return;
-              }
-
-              setEditMode(true);
-              setCommentPopover({
-                anchor: request.anchor,
-                selection: request.selection,
-                selectedText: request.selectedText,
-              });
-            }}
-            commentThreads={commentThreads}
-            onSelectComment={(commentId) => {
-              const thread = commentThreads.find((entry) => entry.id === commentId) ?? null;
-              if (!thread) return;
-
-              setEditMode(true);
-              setRightSidebarCollapsed(false);
-              setSelectedCommentId(commentId);
-              setFocusRange({ from: thread.range.from, to: thread.range.to });
-
-              window.requestAnimationFrame(() => {
-                document.getElementById(`comment-thread-${commentId}`)?.scrollIntoView({ block: 'nearest' });
-              });
-            }}
-            suggestions={suggestions}
-            onSelectSuggestion={(suggestionId) => {
-              const suggestion = suggestions.find((entry) => entry.id === suggestionId) ?? null;
-              if (!suggestion) return;
-
-              setEditMode(true);
-              setRightSidebarCollapsed(false);
-              setSelectedSuggestionId(suggestionId);
-              setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
-            }}
-            onAcceptSuggestion={(suggestionId) => {
-              void (async () => {
-                if (currentFileReadOnly) {
-                  pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
-                  return;
-                }
-                if (!documentsReady || !currentDocId) {
-                  pushToast('Connect a Documents token to accept suggestions.', 'warning');
-                  return;
-                }
-                try {
-                  const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
-                  setSuggestions(response.suggestions);
-                  pushToast('Suggestion accepted.', 'success');
-                  if (currentSourceId && currentFile) {
-                    const updated = await fetchSourceFile(currentSourceId, currentFile);
-                    setFileContent(updated.content || '');
-                  }
-                } catch (error) {
-                  pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'error');
-                }
-              })();
-            }}
-            onRejectSuggestion={(suggestionId) => {
-              void (async () => {
-                if (!documentsReady || !currentDocId) {
-                  pushToast('Connect a Documents token to reject suggestions.', 'warning');
-                  return;
-                }
-                try {
-                  const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
-                  setSuggestions(response.suggestions);
-                  pushToast('Suggestion rejected.', 'info');
-                } catch (error) {
-                  pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'error');
-                }
-              })();
-            }}
-            reviewFindings={reviewFindings.filter((finding) => finding.status !== 'ignored')}
-            onSelectFinding={(findingId) => {
-              const finding = reviewFindings.find((entry) => entry.id === findingId) ?? null;
-              if (!finding || !finding.range) return;
-
-              setEditMode(true);
-              setSelectedFindingId(findingId);
-              setFocusRange({ from: finding.range.from, to: finding.range.to });
-            }}
-            onApplyFindingFix={handleApplyReviewFindingFix}
-            onIgnoreFinding={handleIgnoreReviewFinding}
-            remotePresence={editorPresence}
-            focusRange={focusRange}
-            followEnabled={followEnabled}
-            followCursor={debouncedFollowCursor}
-            onDetachFollow={() => setFollowDetached(true)}
-          />
-        </div>
-      ) : (
-        shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
-          <div className={`mx-auto max-w-4xl p-8 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-            <LazyMarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-            <LazyMarkdownAudioControls
-              docsPath={currentFile ?? ''}
-              content={fileContent}
-              settings={docsTtsSettings}
-              onSettingsChange={handleDocsTtsSettingsChange}
-              onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-              compact
-            />
-          </div>
-        ) : (
-          <div className={`h-full w-full overflow-hidden ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-            <LazyCodeMirrorFileViewer
-              content={fileContent}
-              filePath={currentFile ?? ''}
-              contentType={currentFilePreviewMeta.contentType}
-              fileSize={currentFilePreviewMeta.size}
-              isBinary={currentFilePreviewMeta.isBinary}
-              rawFileUrl={currentRawFileUrl}
-            />
-          </div>
-        )
-      )}
-    </div>
-  );
-
   const renderDesktopWorkspace = (viewport: 'desktop' | 'tablet') => (
     <>
       {sidebarTab === 'tasks' ? (
@@ -5217,349 +4783,95 @@ export default function App() {
       ) : sidebarTab === 'admin' ? (
         <div className="flex min-h-0 flex-1 flex-col">{renderAdminWorkspace()}</div>
       ) : (
-        <>
-          <div className="flex min-h-0 flex-1 flex-col">
-	            {currentFile ? (
-	              <div className="flex min-h-0 flex-1">
-	                {splitMode ? (
-	                  <div ref={splitContainerRef} className="flex min-h-0 flex-1 overflow-hidden">
-	                    <div
-	                      className={`flex min-h-0 flex-col min-w-0 ${
-	                        splitResizing ? '' : 'transition-[width] duration-150 ease-out'
-	                      }`}
-	                      style={{ width: `${splitRatio * 100}%` }}
-	                    >
-	                      {/* Avoid a second header row: file identity + actions live in the shell context bar above. */}
-	                      {renderPrimaryEditorContent()}
-	                    </div>
-	
-	                    <div
-	                      className="relative w-3 shrink-0 cursor-col-resize touch-none"
-	                      onPointerDown={(event) => {
-	                        event.preventDefault();
-	                        setSplitResizing(true);
-	                        updateSplitRatioFromClientX(event.clientX);
-	                      }}
-	                      role="separator"
-	                      aria-orientation="vertical"
-	                      aria-label="Resize editor panes"
-	                      title="Drag to resize"
-	                    >
-	                      <div className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-[var(--border-secondary)]" />
-	                    </div>
-	
-	                    <div className="flex min-h-0 flex-1 flex-col min-w-0">
-	                      <div className="flex items-center gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-2 py-1 text-xs">
-	                        <span className="flex-1 min-w-0 truncate text-[var(--text-muted)]">
-	                          {rightPaneFile
-	                            ? `${rightPaneSource ? `${rightPaneSource.displayName} • ` : ''}${rightPaneFile}`
-	                            : 'Right pane: no file'}
-	                        </span>
-                        {(rightPaneReadOnly || Boolean(rightPaneSourceId)) && (
-                          <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                            Read-only
-                          </span>
-                        )}
-                        {rightPaneCacheMeta.cached && (
-                          <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                            cached ({rightPaneCachedAgeLabel ?? 'just now'})
-                          </span>
-                        )}
-	                        <button
-	                          type="button"
-	                          onClick={() => {
-	                            setQuickSwitcherTargetPane('right');
-	                            setQuickSwitcherOpen(true);
-	                          }}
-	                          className="mc-shell-btn px-2 py-1 text-[11px]"
-	                        >
-	                          Open
-	                        </button>
-	                        <button
-	                          type="button"
-	                          onClick={exitSplitMode}
-	                          className="mc-shell-btn px-2 py-1 text-[11px]"
-	                          aria-label="Close split view"
-	                          title="Close split view"
-	                        >
-	                          Close
-	                        </button>
-	                      </div>
-	
-	                      <div className="min-h-0 flex-1 overflow-auto">
-	                        {rightPaneFile ? (
-	                          editMode ? (
-	                            <div className="h-full w-full">
-	                              <LazyCodeMirrorEditor
-	                                content={rightPaneContent}
-	                                onChange={handleRightPaneContentChange}
-	                                readOnly={rightPaneReadOnly || Boolean(rightPaneSourceId)}
-	                              />
-	                            </div>
-                          ) : (
-                            shouldRenderMarkdownPreview(rightPaneFile, rightPanePreviewMeta.contentType) ? (
-                              <div className="mx-auto max-w-4xl p-8">
-                                <LazyMarkdownPreview content={rightPaneContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-                                <LazyMarkdownAudioControls
-                                  docsPath={rightPaneFile ?? ''}
-                                  content={rightPaneContent}
-                                  settings={docsTtsSettings}
-                                  onSettingsChange={handleDocsTtsSettingsChange}
-                                  onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-                                  compact
-                                />
-                              </div>
-	                            ) : (
-	                              <div className="h-full w-full overflow-hidden">
-	                                <LazyCodeMirrorFileViewer
-                                    content={rightPaneContent}
-                                    filePath={rightPaneFile ?? ''}
-                                    contentType={rightPanePreviewMeta.contentType}
-                                    fileSize={rightPanePreviewMeta.size}
-                                    isBinary={rightPanePreviewMeta.isBinary}
-                                    rawFileUrl={rightPaneRawFileUrl}
-                                  />
-	                              </div>
-	                            )
-	                          )
-	                        ) : (
-	                          <div className="flex h-full flex-col items-center justify-center gap-3 text-[var(--text-muted)]">
-	                            <div className="text-sm">Open a file to show it in the right pane.</div>
-	                            <button
-	                              type="button"
-	                              onClick={() => {
-	                                setQuickSwitcherTargetPane('right');
-	                                setQuickSwitcherOpen(true);
-	                              }}
-	                              className="mc-shell-btn px-3 py-1 text-xs"
-	                            >
-	                              Open File
-	                            </button>
-	                          </div>
-	                        )}
-	                      </div>
-	                    </div>
-	                  </div>
-	                ) : (
-	                  <div className="flex min-h-0 flex-1 flex-col">
-	                    {/* Avoid a second header row: file identity + actions live in the shell context bar above. */}
-	                    {renderPrimaryEditorContent()}
-	                  </div>
-	                )}
-	
-	                {runtime.agentNativeEditorEnabled && (
-	                  <aside
-	                    className={`flex shrink-0 flex-col border-l border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 ${
-                      rightSidebarIsCollapsed ? 'w-8' : 'w-[280px]'
-                    }`}
-                  >
-                    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
-                      <div className={`flex shrink-0 ${rightSidebarIsCollapsed ? 'justify-center' : 'justify-start'} px-1 py-2`}>
-                        <button
-                          type="button"
-                          onClick={() => setRightSidebarCollapsed((prev) => !prev)}
-                          disabled={!rightSidebarHasPanels}
-                          className={`mc-shell-btn flex h-7 w-7 items-center justify-center px-0 py-0 text-xs ${
-                            !rightSidebarHasPanels ? 'cursor-not-allowed opacity-40' : ''
-                          }`}
-                          aria-label={rightSidebarIsCollapsed ? 'Expand right sidebar' : 'Collapse right sidebar'}
-                          title={
-                            !rightSidebarHasPanels
-                              ? 'No comments/suggestions/reviews'
-                              : rightSidebarIsCollapsed
-                                ? 'Expand sidebar'
-                                : 'Collapse sidebar'
-                          }
-                        >
-                          <span>{rightSidebarIsCollapsed ? '«' : '»'}</span>
-                        </button>
-                      </div>
-
-                      {!rightSidebarIsCollapsed && (
-                        <div className="min-h-0 flex-1 overflow-auto">
-                          {rightSidebarHasComments && (
-                            <Suspense fallback={null}>
-                              <CommentThreadPanel
-                              threads={commentThreads}
-                              onNewFromSelection={() => {
-                                if (!documentsReady || !currentDocId) {
-                                  pushToast('Connect a Documents token to use comments.', 'warning');
-                                  return;
-                                }
-                                if (!editorSelection || editorSelection.to <= editorSelection.from) {
-                                  pushToast('Select some text first.', 'warning');
-                                  return;
-                                }
-
-                                setEditMode(true);
-                                const anchor = computeDomSelectionAnchor() ?? { left: 24, top: 24, bottom: 24 };
-                                setCommentPopover({
-                                  anchor,
-                                  selection: { from: editorSelection.from, to: editorSelection.to },
-                                  selectedText: editorSelection.text,
-                                });
-                              }}
-                              onSelectThread={(threadId) => {
-                                const thread = commentThreads.find((entry) => entry.id === threadId) ?? null;
-                                if (!thread) return;
-                                setEditMode(true);
-                                setSelectedCommentId(threadId);
-                                setFocusRange({ from: thread.range.from, to: thread.range.to });
-                                window.requestAnimationFrame(() => {
-                                  document.getElementById(`comment-thread-${threadId}`)?.scrollIntoView({ block: 'nearest' });
-                                });
-                              }}
-                              onReply={(threadId, text) => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to reply.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.postCommentReply(currentDocId, threadId, { text });
-                                    setCommentThreads(response.threads);
-                                    pushToast('Reply posted.', 'success');
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to post reply.', 'error');
-                                  }
-                                })();
-                              }}
-                              onResolve={(threadId, resolved) => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to resolve comments.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.postCommentResolve(currentDocId, threadId, { resolved });
-                                    setCommentThreads(response.threads);
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to update comment.', 'error');
-                                  }
-                                })();
-                              }}
-                              selectedThreadId={selectedCommentId}
-                              />
-                            </Suspense>
-                          )}
-
-                          {rightSidebarHasSuggestions && (
-                            <Suspense fallback={null}>
-                              <SuggestionPanel
-                              suggestions={suggestions}
-                              selectedSuggestionId={selectedSuggestionId}
-                              onSelectSuggestion={(suggestionId) => {
-                                const suggestion = suggestions.find((entry) => entry.id === suggestionId) ?? null;
-                                if (!suggestion) return;
-                                setEditMode(true);
-                                setSelectedSuggestionId(suggestionId);
-                                setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
-                              }}
-                              onAccept={(suggestionId) => {
-                                void (async () => {
-                                  if (currentFileReadOnly) {
-                                    pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
-                                    return;
-                                  }
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to accept suggestions.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
-                                    setSuggestions(response.suggestions);
-                                    pushToast('Suggestion accepted.', 'success');
-                                    if (currentSourceId && currentFile) {
-                                      const updated = await fetchSourceFile(currentSourceId, currentFile);
-                                      setFileContent(updated.content || '');
-                                    }
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'error');
-                                  }
-                                })();
-                              }}
-                              onReject={(suggestionId) => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to reject suggestions.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
-                                    setSuggestions(response.suggestions);
-                                    pushToast('Suggestion rejected.', 'info');
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'error');
-                                  }
-                                })();
-                              }}
-                              selection={editorSelection}
-                              onCreateSuggestion={(input) => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to create suggestions.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.postSuggestion(currentDocId, input);
-                                    setSuggestions(response.suggestions);
-                                    pushToast('Suggestion created.', 'success');
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to create suggestion.', 'error');
-                                  }
-                                })();
-                              }}
-                              />
-                            </Suspense>
-                          )}
-
-                          {rightSidebarHasReview && (
-                            <Suspense fallback={null}>
-                              <ReviewPanel
-                              mode={reviewMode}
-                              onChangeMode={setReviewMode}
-                              onRunReview={() => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to run reviews.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.postReview(currentDocId, { mode: reviewMode });
-                                    setReviewRun(response.run);
-                                    setReviewFindings(response.findings);
-                                    pushToast('Review started.', 'info');
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to start review.', 'error');
-                                  }
-                                })();
-                              }}
-                              run={reviewRun}
-                              findings={reviewFindings}
-                              selectedFindingId={selectedFindingId}
-                              onSelectFinding={(findingId) => {
-                                const finding = reviewFindings.find((entry) => entry.id === findingId) ?? null;
-                                if (!finding || !finding.range) return;
-                                setEditMode(true);
-                                setSelectedFindingId(findingId);
-                                setFocusRange({ from: finding.range.from, to: finding.range.to });
-                              }}
-                              onApplyFix={handleApplyReviewFindingFix}
-                              onIgnoreFinding={handleIgnoreReviewFinding}
-                              content={fileContent}
-                              />
-                            </Suspense>
-                          )}
-
-                        </div>
-                      )}
-                    </div>
-                  </aside>
-                )}
-              </div>
-            ) : renderFileHome()}
-          </div>
-        </>
+        <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
+          <FilesView
+            runtime={runtime}
+            currentFile={currentFile}
+            handleSourceFileSelect={handleSourceFileSelect}
+            currentSourceId={currentSourceId}
+            fileContent={fileContent}
+            setFileContent={setFileContent}
+            editMode={editMode}
+            setEditMode={setEditMode}
+            splitMode={splitMode}
+            splitContainerRef={splitContainerRef}
+            splitResizing={splitResizing}
+            splitRatio={splitRatio}
+            setSplitResizing={setSplitResizing}
+            updateSplitRatioFromClientX={updateSplitRatioFromClientX}
+            rightPaneFile={rightPaneFile}
+            rightPaneSource={rightPaneSource}
+            rightPaneSourceId={rightPaneSourceId}
+            rightPaneReadOnly={rightPaneReadOnly}
+            rightPaneCacheMeta={rightPaneCacheMeta}
+            rightPaneCachedAgeLabel={rightPaneCachedAgeLabel}
+            setQuickSwitcherTargetPane={setQuickSwitcherTargetPane}
+            setQuickSwitcherOpen={setQuickSwitcherOpen}
+            exitSplitMode={exitSplitMode}
+            rightPaneContent={rightPaneContent}
+            handleRightPaneContentChange={handleRightPaneContentChange}
+            rightPanePreviewMeta={rightPanePreviewMeta}
+            rightPaneRawFileUrl={rightPaneRawFileUrl}
+            handleContentChange={handleContentChange}
+            handleSave={handleSave}
+            editorCollabMode={editorCollabMode}
+            watchMode={watchMode}
+            currentFileReadOnly={currentFileReadOnly}
+            documentsReady={documentsReady}
+            currentDocId={currentDocId}
+            handleSuggestingEdit={handleSuggestingEdit}
+            handleToggleSuggestingMode={handleToggleSuggestingMode}
+            handleExitSuggestingMode={handleExitSuggestingMode}
+            manualAttributionEnabled={manualAttributionEnabled}
+            editorAuthorshipRanges={editorAuthorshipRanges}
+            handleManualAttribution={handleManualAttribution}
+            setEditorSelection={setEditorSelection}
+            handleEditorCursorActivity={handleEditorCursorActivity}
+            commentThreads={commentThreads}
+            setRightSidebarCollapsed={setRightSidebarCollapsed}
+            setSelectedCommentId={setSelectedCommentId}
+            setFocusRange={setFocusRange}
+            suggestions={suggestions}
+            setSelectedSuggestionId={setSelectedSuggestionId}
+            documentsClient={documentsClient}
+            setSuggestions={setSuggestions}
+            pushToast={pushToast}
+            fetchSourceFile={fetchSourceFile}
+            reviewFindings={reviewFindings}
+            setSelectedFindingId={setSelectedFindingId}
+            handleApplyReviewFindingFix={handleApplyReviewFindingFix}
+            handleIgnoreReviewFinding={handleIgnoreReviewFinding}
+            editorPresence={editorPresence}
+            focusRange={focusRange}
+            followEnabled={followEnabled}
+            debouncedFollowCursor={debouncedFollowCursor}
+            setFollowDetached={setFollowDetached}
+            currentFilePreviewMeta={currentFilePreviewMeta}
+            currentRawFileUrl={currentRawFileUrl}
+            handleMarkdownDocsNavigation={handleMarkdownDocsNavigation}
+            docsTtsSettings={docsTtsSettings}
+            handleDocsTtsSettingsChange={handleDocsTtsSettingsChange}
+            rightSidebarHasPanels={rightSidebarHasPanels}
+            rightSidebarIsCollapsed={rightSidebarIsCollapsed}
+            rightSidebarHasComments={rightSidebarHasComments}
+            rightSidebarHasSuggestions={rightSidebarHasSuggestions}
+            rightSidebarHasReview={rightSidebarHasReview}
+            editorSelection={editorSelection}
+            setCommentPopover={setCommentPopover}
+            setCommentThreads={setCommentThreads}
+            selectedCommentId={selectedCommentId}
+            selectedSuggestionId={selectedSuggestionId}
+            reviewMode={reviewMode}
+            setReviewMode={setReviewMode}
+            reviewRun={reviewRun}
+            setReviewRun={setReviewRun}
+            setReviewFindings={setReviewFindings}
+            selectedFindingId={selectedFindingId}
+            followGlowClassName={followGlowClassName}
+            followTypingPulseActive={followTypingPulseActive}
+            fileTransitionActive={fileTransitionActive}
+          />
+        </Suspense>
       )}
       {sidebarTab !== 'admin' && (
         <LazyBottomTerminalPanel
@@ -5762,28 +5074,32 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      <LazyNotificationHistoryPanel
-        isOpen={notificationsPanelOpen}
-        notifications={notifications}
-        selectedId={selectedNotificationId}
-        onClose={closeNotificationsPanel}
-        onSelect={selectNotificationInPanel}
-        onMarkAllRead={markAllNotificationsRead}
-        onClearAll={clearAllNotifications}
-        entityNotifications={entityNotifications.notifications}
-        entityNotificationsLoading={entityNotifications.loading}
-        entityNotificationsError={entityNotifications.error}
-        onEntityNotificationRead={(id) => void entityNotifications.markState(id, 'read')}
-      />
+      {notificationsPanelOpen ? (
+        <LazyNotificationHistoryPanel
+          isOpen={notificationsPanelOpen}
+          notifications={notifications}
+          selectedId={selectedNotificationId}
+          onClose={closeNotificationsPanel}
+          onSelect={selectNotificationInPanel}
+          onMarkAllRead={markAllNotificationsRead}
+          onClearAll={clearAllNotifications}
+          entityNotifications={entityNotifications.notifications}
+          entityNotificationsLoading={entityNotifications.loading}
+          entityNotificationsError={entityNotifications.error}
+          onEntityNotificationRead={(id) => void entityNotifications.markState(id, 'read')}
+        />
+      ) : null}
 
-      <LazyFileHistoryPanel
-        apiBase={runtime.apiBase}
-        filePath={currentSourceId ? null : currentFile}
-        latestSavedContent={fileContent}
-        currentContent={fileContent}
-        isOpen={fileHistoryPanelOpen}
-        onClose={() => setFileHistoryPanelOpen(false)}
-      />
+      {fileHistoryPanelOpen ? (
+        <LazyFileHistoryPanel
+          apiBase={runtime.apiBase}
+          filePath={currentSourceId ? null : currentFile}
+          latestSavedContent={fileContent}
+          currentContent={fileContent}
+          isOpen={fileHistoryPanelOpen}
+          onClose={() => setFileHistoryPanelOpen(false)}
+        />
+      ) : null}
 
       {reloadPrompt && (
         <div className="fixed left-0 right-0 top-0 z-50 flex items-center justify-between border-b border-[var(--border-secondary)] bg-[var(--bg-secondary)] px-4 py-2 text-[var(--text-primary)]">
@@ -5833,295 +5149,103 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col bg-[var(--bg-primary)] pb-14 md:hidden">
-        <div className="flex items-center justify-between border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
-          <div>
-            <div className="text-sm font-semibold">Entity Mission Control</div>
-            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-              {workspaceTab} · {onlineAgents}/{agents.length} agents online
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className="mc-shell-btn inline-flex items-center px-2 py-1 text-[11px]"
-              aria-label={connected ? 'Online' : 'Offline'}
-              title={connected ? 'Online' : 'Offline'}
-            >
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${connected ? 'bg-[var(--accent)]' : 'bg-orange-400'}`}
-                aria-hidden="true"
-              />
-            </span>
-            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{mobileTab}</div>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1">
-          {mobileTab === 'files' && (
-            <div className="flex h-full min-h-0 flex-col">
-              {currentFile ? (
-                <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="flex items-center gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCurrentFile(null);
-                        setFileContent('');
-                        setCurrentFilePreviewMeta(defaultFilePreviewMeta());
-                        setCurrentFileCacheMeta(defaultFileCacheMeta());
-                      }}
-                      className="mc-shell-btn px-2 py-1 text-[11px]"
-                      aria-label="Back to files"
-                    >
-                      ←
-                    </button>
-                    <span className="flex-1 truncate text-[var(--text-muted)]">
-                      {selectedSource ? `${selectedSource.displayName} • ` : ''}{currentFile}
-                    </span>
-                    {currentFileCacheMeta.cached && (
-                      <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                        cached ({currentFileCachedAgeLabel ?? 'just now'})
-                      </span>
-                    )}
-                    {runtime.fsMultiSourceEnabled && (
-                      <button
-                        type="button"
-                        onClick={handleBackToDashboard}
-                        className="mc-shell-btn px-2 py-1 text-[11px]"
-                      >
-                        Back
-                      </button>
-                    )}
-                    <button
-                      disabled={!currentFile}
-                      onClick={() => setEditMode(!editMode)}
-                      className={`mc-shell-btn px-2 py-1 text-[11px] ${
-                        editMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-                      } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-                    >
-                      {editMode ? 'Preview' : 'Edit'}
-                    </button>
-                    {editMode && editorCollabMode !== 'viewing' && !watchMode && canEditCurrentFile && (
-                      <button
-                        onClick={handleSave}
-                        className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-2 py-1 text-[11px] font-medium text-[var(--text-primary)]"
-                      >
-                        Save
-                      </button>
-                    )}
-                  </div>
-                  {manualAttributionEnabled && (
-                    <div className="hidden border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 md:block">
-                      <LazyAuthorshipStatsPanel
-                        stats={authorshipStats}
-                        selectedAuthor={manualAuthorshipAuthor}
-                        onSelectAuthor={setManualAuthorshipAuthor}
-                      />
-                    </div>
-                  )}
-                  <div className="min-h-0 flex-1 overflow-auto">
-                    {editMode ? (
-                      <div
-                        className={`h-full w-full ${followGlowClassName} ${followTypingPulseActive ? 'agent-typing' : ''} ${
-                          fileTransitionActive ? 'mc-file-switch-anim' : ''
-                        }`}
-                      >
-                        <LazyCodeMirrorEditor
-	                          content={fileContent}
-	                          onChange={handleContentChange}
-	                          onSave={handleSave}
-	                          readOnly={editorCollabMode === 'viewing' || watchMode || (editorCollabMode === 'editing' && currentFileReadOnly)}
-	                          shortcutsEnabled={runtime.agentNativeEditorEnabled}
-	                          collabMode={editorCollabMode}
-	                          onSuggestingEdit={documentsReady ? handleSuggestingEdit : undefined}
-	                          onToggleSuggestingMode={handleToggleSuggestingMode}
-	                          onExitSuggestingMode={handleExitSuggestingMode}
-	                          authorshipRanges={manualAttributionEnabled ? editorAuthorshipRanges : undefined}
-	                          onManualAttribution={manualAttributionEnabled ? handleManualAttribution : undefined}
-                          onCursorActivity={documentsReady ? handleEditorCursorActivity : undefined}
-	                          suggestions={suggestions}
-                          onSelectSuggestion={(suggestionId) => {
-                            const suggestion = suggestions.find((entry) => entry.id === suggestionId) ?? null;
-                            if (!suggestion) return;
-                            setEditMode(true);
-                            setSelectedSuggestionId(suggestionId);
-                            setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
-                          }}
-	                          onAcceptSuggestion={(suggestionId) => {
-	                            void (async () => {
-	                              if (currentFileReadOnly) {
-	                                pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
-	                                return;
-	                              }
-	                              if (!documentsReady || !currentDocId) {
-	                                pushToast('Connect a Documents token to accept suggestions.', 'warning');
-	                                return;
-	                              }
-	                              try {
-                                const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
-                                setSuggestions(response.suggestions);
-                                pushToast('Suggestion accepted.', 'success');
-                                if (currentSourceId && currentFile) {
-                                  const updated = await fetchSourceFile(currentSourceId, currentFile);
-                                  setFileContent(updated.content || '');
-                                }
-                              } catch (error) {
-                                pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'error');
-                              }
-                            })();
-                          }}
-                          onRejectSuggestion={(suggestionId) => {
-                            void (async () => {
-                              if (!documentsReady || !currentDocId) {
-                                pushToast('Connect a Documents token to reject suggestions.', 'warning');
-                                return;
-                              }
-                              try {
-                                const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
-                                setSuggestions(response.suggestions);
-                                pushToast('Suggestion rejected.', 'info');
-                              } catch (error) {
-                                pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'error');
-                              }
-                            })();
-                          }}
-                          reviewFindings={reviewFindings.filter((finding) => finding.status !== 'ignored')}
-                          onSelectFinding={(findingId) => {
-                            const finding = reviewFindings.find((entry) => entry.id === findingId) ?? null;
-                            if (!finding || !finding.range) return;
-                            setEditMode(true);
-                            setSelectedFindingId(findingId);
-                            setFocusRange({ from: finding.range.from, to: finding.range.to });
-                          }}
-                          onApplyFindingFix={handleApplyReviewFindingFix}
-                          onIgnoreFinding={handleIgnoreReviewFinding}
-                          remotePresence={editorPresence}
-                          followEnabled={followEnabled}
-                          followCursor={debouncedFollowCursor}
-                          onDetachFollow={() => setFollowDetached(true)}
-                        />
-                      </div>
-                    ) : (
-                      shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
-                        <div className={`mx-auto max-w-3xl p-4 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-                          <LazyMarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-                        </div>
-                      ) : (
-                        <div className={`h-full w-full overflow-hidden ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-                          <LazyCodeMirrorFileViewer
-                            content={fileContent}
-                            filePath={currentFile ?? ''}
-                            contentType={currentFilePreviewMeta.contentType}
-                            fileSize={currentFilePreviewMeta.size}
-                            isBinary={currentFilePreviewMeta.isBinary}
-                            rawFileUrl={currentRawFileUrl}
-                          />
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="min-h-0 flex-1">{renderFileHome()}</div>
-              )}
-            </div>
-          )}
-
-          {mobileTab === 'agents' && (
-            <div className="h-full overflow-auto">
-              {selectedAgent !== null ? (
-                <LazyAgentsMobileDetail
-                  agent={
-                    selectedAgentData ?? {
-                      id: selectedAgent,
-                      name: selectedAgent,
-                      emoji: '🤖',
-                      model: '',
-                      runtime: '',
-                      status: 'offline',
-                    }
-                  }
-                  activities={activities}
-                  tasks={tasks}
-                  onBack={() => setSelectedAgent(null)}
-                />
-              ) : (
-                renderAgentsPanel()
-              )}
-            </div>
-          )}
-
-          {mobileTab === 'tasks' && (
-            activeTaskSubViewPlugin ? (
-              <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
-            ) : (
-              <TaskBoard
-                viewport="mobile"
-                apiBase={runtime.mcOrigin}
-                showInsights={mcBoardTab === 'insights'}
-                activeTab={mcBoardTab === 'insights' ? 'insights' : 'kanban'}
-                highlightTaskId={highlightTaskId}
-                onOpenTask={handleTaskSelect}
-                onCloseTask={handleCloseTaskDetail}
-                onDocsLinkNavigate={handleTaskOutputDocsNavigation}
-                searchQuery={taskSearchQuery}
-                showArchiveColumn={showArchiveColumn}
-                onArchiveColumnVisibilityChange={setShowArchiveColumn}
-                tasks={filteredBoardTasks}
-                loading={tasksLoading}
-                error={tasksError}
-              />
-            )
-          )}
-
-          {mobileTab === 'services' && (
-            <LazyPluginTopLevelSlot apiBase={runtime.apiBase} pluginId="entity-services" />
-          )}
-
-          {mobileTab === 'chat' && (
-            <div className="h-full min-h-0">
-              <LazyChatView />
-            </div>
-          )}
-
-          {mobileTab === 'activity' && (
-            <LazyActivityStream
-              activities={activities}
-              loading={activityLoading}
-              error={activityError}
-              isOpen={mobileActivityPanelOpen}
-              onToggleOpen={() => setMobileActivityPanelOpen((prev) => !prev)}
-              onOpenFile={handleFileSelect}
-              onOpenTask={handleTaskSelect}
-            />
-          )}
-        </div>
-      </div>
-
-      <MobileBottomNav
-        activeTab={mobileTab}
-        onChange={(tab) => {
-          setTabletSidebarOpen(false);
-          setMobileTab(tab);
-          if (tab === 'tasks') {
-            setSidebarTab('tasks');
-            return;
-          }
-          if (tab === 'services') {
-            setSidebarTab('services');
-            return;
-          }
-          if (tab === 'chat') {
-            setSidebarTab('chat');
-            return;
-          }
-          if (tab === 'files' || tab === 'agents') {
-            setSidebarTab(tab);
-          }
-        }}
-      />
-
-      {renderOfflineSyncBar(true)}
+      {isMobile ? (
+        <Suspense fallback={<LazySurfaceFallback label="Loading mobile workspace" />}>
+          <MobileView
+            mobileTab={mobileTab}
+            workspaceTab={workspaceTab}
+            onlineAgents={onlineAgents}
+            agents={agents}
+            connected={connected}
+            currentFile={currentFile}
+            setCurrentFile={setCurrentFile}
+            setFileContent={setFileContent}
+            setCurrentFilePreviewMeta={setCurrentFilePreviewMeta}
+            setCurrentFileCacheMeta={setCurrentFileCacheMeta}
+            selectedSource={selectedSource}
+            currentFileCacheMeta={currentFileCacheMeta}
+            currentFileCachedAgeLabel={currentFileCachedAgeLabel}
+            runtime={runtime}
+            handleBackToDashboard={handleBackToDashboard}
+            editMode={editMode}
+            setEditMode={setEditMode}
+            editorCollabMode={editorCollabMode}
+            watchMode={watchMode}
+            canEditCurrentFile={canEditCurrentFile}
+            handleSave={handleSave}
+            manualAttributionEnabled={manualAttributionEnabled}
+            authorshipStats={authorshipStats}
+            manualAuthorshipAuthor={manualAuthorshipAuthor}
+            setManualAuthorshipAuthor={setManualAuthorshipAuthor}
+            followGlowClassName={followGlowClassName}
+            followTypingPulseActive={followTypingPulseActive}
+            fileTransitionActive={fileTransitionActive}
+            fileContent={fileContent}
+            handleContentChange={handleContentChange}
+            currentFileReadOnly={currentFileReadOnly}
+            documentsReady={documentsReady}
+            handleSuggestingEdit={handleSuggestingEdit}
+            handleToggleSuggestingMode={handleToggleSuggestingMode}
+            handleExitSuggestingMode={handleExitSuggestingMode}
+            editorAuthorshipRanges={editorAuthorshipRanges}
+            handleManualAttribution={handleManualAttribution}
+            handleEditorCursorActivity={handleEditorCursorActivity}
+            suggestions={suggestions}
+            setSelectedSuggestionId={setSelectedSuggestionId}
+            setSelectedFindingId={setSelectedFindingId}
+            setFocusRange={setFocusRange}
+            documentsClient={documentsClient}
+            currentDocId={currentDocId}
+            setSuggestions={setSuggestions}
+            pushToast={pushToast}
+            currentSourceId={currentSourceId}
+            fetchSourceFile={fetchSourceFile}
+            reviewFindings={reviewFindings}
+            handleApplyReviewFindingFix={handleApplyReviewFindingFix}
+            handleIgnoreReviewFinding={handleIgnoreReviewFinding}
+            editorPresence={editorPresence}
+            followEnabled={followEnabled}
+            debouncedFollowCursor={debouncedFollowCursor}
+            setFollowDetached={setFollowDetached}
+            currentFilePreviewMeta={currentFilePreviewMeta}
+            currentRawFileUrl={currentRawFileUrl}
+            handleMarkdownDocsNavigation={handleMarkdownDocsNavigation}
+            docsTtsSettings={docsTtsSettings}
+            handleDocsTtsSettingsChange={handleDocsTtsSettingsChange}
+            selectedAgent={selectedAgent}
+            selectedAgentData={selectedAgentData}
+            activities={activities}
+            tasks={tasks}
+            setSelectedAgent={setSelectedAgent}
+            activeTaskSubViewPlugin={activeTaskSubViewPlugin}
+            mcBoardTab={mcBoardTab}
+            highlightTaskId={highlightTaskId}
+            handleTaskSelect={handleTaskSelect}
+            handleCloseTaskDetail={handleCloseTaskDetail}
+            handleTaskOutputDocsNavigation={handleTaskOutputDocsNavigation}
+            taskSearchQuery={taskSearchQuery}
+            showArchiveColumn={showArchiveColumn}
+            setShowArchiveColumn={setShowArchiveColumn}
+            filteredBoardTasks={filteredBoardTasks}
+            tasksLoading={tasksLoading}
+            tasksError={tasksError}
+            mobileActivityPanelOpen={mobileActivityPanelOpen}
+            setMobileActivityPanelOpen={setMobileActivityPanelOpen}
+            activityLoading={activityLoading}
+            activityError={activityError}
+            handleFileSelect={handleFileSelect}
+            handleSourceFileSelect={handleSourceFileSelect}
+            setTabletSidebarOpen={setTabletSidebarOpen}
+            setMobileTab={setMobileTab}
+            setSidebarTab={setSidebarTab}
+            renderOfflineSyncBar={renderOfflineSyncBar}
+            agentsLoading={agentsLoading}
+            agentsError={agentsError}
+            followingAgent={followingAgent}
+            setFollowingAgent={setFollowingAgent}
+          />
+        </Suspense>
+      ) : null}
 
       {createTaskModalOpen ? (
         <Suspense fallback={null}>
