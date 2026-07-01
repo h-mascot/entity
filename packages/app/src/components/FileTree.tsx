@@ -196,7 +196,10 @@ export default function FileTree({ onSelect, selected }: FileTreeProps) {
     if (
       message.type === 'file:created' ||
       message.type === 'file:deleted' ||
-      message.type === 'file:changed'
+      message.type === 'file:changed' ||
+      message.type === 'file:moved' ||
+      message.type === 'file:renamed' ||
+      message.type === 'file:rename'
     ) {
       triggerRefresh();
     }

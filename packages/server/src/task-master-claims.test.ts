@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type ErrorRequestHandler } from 'express';
 import http from 'http';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -270,6 +270,33 @@ describe('Task Master claim API routes', () => {
         claimed: false,
         reason: 'task is not unassigned Task-Master-drivable work',
       });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('returns a JSON 500 when the claim handler rejects', async () => {
+    const failure = new Error('claim store unavailable');
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTaskMasterClaimRouter({
+      claimTask: vi.fn().mockRejectedValue(failure),
+    }));
+    const forwardedErrors: unknown[] = [];
+    const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+      forwardedErrors.push(error);
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+    };
+    app.use(errorHandler);
+    const server = await listen(app);
+
+    try {
+      const response = await fetch(`${server.baseUrl}/api/tasks/52/claim`, { method: 'POST' });
+      const body = await response.json() as { error: string };
+
+      expect(response.status).toBe(500);
+      expect(body).toEqual({ error: 'claim store unavailable' });
+      expect(forwardedErrors).toEqual([failure]);
     } finally {
       await server.close();
     }

@@ -15,6 +15,7 @@ import {
   type HelmLightControlAdapter,
 } from '../agent/helm-light-controls';
 import { createHelmStatusAdapter, type HelmRuntimeStatusSummary, type HelmStatusAdapter } from '../agent/helm-status-adapter';
+import { asyncHandler } from '../middleware/async-handler';
 
 interface AgentRegistryRouterDeps {
   agentRegistryRepo: AgentRegistryRepository;
@@ -202,14 +203,14 @@ export function createAgentRegistryRouter(deps: AgentRegistryRouterDeps): Router
   const helmStatusAdapter = deps.helmStatusAdapter ?? createHelmStatusAdapter();
   const helmLightControlAdapter = deps.helmLightControlAdapter ?? createHelmLightControlAdapter();
 
-  router.get('/agents/registry', async (_req, res) => {
+  router.get('/agents/registry', asyncHandler(async (_req, res) => {
     const list = await Promise.all(agentRegistryRepo
       .listAgents()
       .map(async (agent) => serializeAgent(agent, moduleRegistryRepo, await helmStatusAdapter.getStatus(agent))));
     return res.json({ list });
-  });
+  }));
 
-  router.post('/agents', async (req, res) => {
+  router.post('/agents', asyncHandler(async (req, res) => {
     try {
       const input = parseCreateAgentInput(req.body);
       if (agentRegistryRepo.getAgent(input.id ?? input.slug) || agentRegistryRepo.getAgentBySlug(input.slug)) {
@@ -220,9 +221,9 @@ export function createAgentRegistryRouter(deps: AgentRegistryRouterDeps): Router
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid agent payload.' });
     }
-  });
+  }));
 
-  router.patch('/agents/:id', async (req, res) => {
+  router.patch('/agents/:id', asyncHandler(async (req, res) => {
     const agent = findAgent(agentRegistryRepo, String(req.params.id));
     if (!agent) return res.status(404).json({ error: 'Agent not found.' });
     try {
@@ -233,9 +234,9 @@ export function createAgentRegistryRouter(deps: AgentRegistryRouterDeps): Router
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid agent update payload.' });
     }
-  });
+  }));
 
-  router.post('/agents/:id/runtime-controls', async (req, res) => {
+  router.post('/agents/:id/runtime-controls', asyncHandler(async (req, res) => {
     const agent = findAgent(agentRegistryRepo, String(req.params.id));
     if (!agent) return res.status(404).json({ error: 'Agent not found.' });
     try {
@@ -254,7 +255,7 @@ export function createAgentRegistryRouter(deps: AgentRegistryRouterDeps): Router
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid runtime control payload.' });
     }
-  });
+  }));
 
   router.delete('/agents/:id', (req, res) => {
     const agent = findAgent(agentRegistryRepo, String(req.params.id));
