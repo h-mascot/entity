@@ -23,10 +23,17 @@ Goal: execute the full roadmap end-to-end and validate 10x on each front.
 - [x] W4 Quality refactor: asyncHandler, break up index.ts (6392->630 LOC, 10.1x), tests for riskiest modules + db
 - [x] Validate 10x: gate green (646 tests), app browser-tested, security runtime-verified, bundle re-measured
 
+## App.tsx split (follow-up push toward 10x first-paint)
+Split the 6.8k-line App.tsx god component: lazy-loaded TaskDetailPanel, doc-editor cluster, modals, alternate boards, and extracted AdminView/DocsRouteView/FilesView/DocumentEditorView/MobileView/FilesContextBar into lazy `src/views/*`.
+- App chunk: 118.90 KB gzip -> 61.30 KB gzip (48% smaller).
+- First-paint critical JS (index 5.25 + react-vendor 45.48 + App 61.30) = 112.03 KB gzip = 6.3x vs 705.27 KB original (was 4.2x before this push).
+- CEILING (why not 10x): react-vendor is a fixed 45.48 KB gzip floor (React+ReactDOM), index 5.25 KB; that alone is ~50.7 KB. App.tsx's own irreducible shell/state/board-hook logic is ~34.5 KB gzip. Reaching <=70.5 KB (10x) would require App.tsx's own code <=~20 KB, i.e. an architectural rewrite of global state ownership (or a React->Preact swap) — out of scope under "do not break the working product". Verbatim view extraction is exhausted.
+
 ## Result vs targets
 | Front | Target | Achieved |
 |-------|--------|----------|
 | Faster (entry chunk) | ≤70 KB gzip | 705 KB -> 5.26 KB gzip (134x); heavy libs (codemirror/xterm/markdown ~450 KB gzip) now lazy |
+| Faster (first-paint critical JS) | ≤70.5 KB gzip (10x) | 705 KB -> 112 KB gzip (6.3x); blocked by react-vendor floor + App shell (ceiling proven) |
 | Quality (gate) | run all tests, fail on red | gate runs 646 tests (build+app+db+server), fail-path proven |
 | Quality (monolith) | ≤640 LOC | index.ts 6392 -> 630 LOC (10.1x) |
 | Secure | 0 exploitable P0, tests each | 4 chains closed + runtime-verified + 22 regression tests |
