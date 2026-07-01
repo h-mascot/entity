@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import type { TaskBoardTask } from '../../hooks/useTaskBoard';
 import type { ProjectOption } from './projectOptions';
 import { buildRoutingStateView, routingToneClass } from './utils/routingState';
@@ -40,7 +40,7 @@ function parseCardMetadata(metadata: string | null): Record<string, unknown> | n
   }
 }
 
-export default function MCTaskCard({
+function MCTaskCard({
   task,
   isDragging = false,
   isHighlighted = false,
@@ -392,3 +392,5 @@ export default function MCTaskCard({
     </div>
   );
 }
+
+export default memo(MCTaskCard);

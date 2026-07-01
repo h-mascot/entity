@@ -1,16 +1,22 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type FormEvent } from 'react';
-import MarkdownPreview from './components/MarkdownPreview';
-import CodeMirrorFileViewer from './components/CodeMirrorFileViewer';
-import FileTree from './components/FileTree';
-import SourceFileTree from './components/SourceFileTree';
-import UnifiedFileDashboard from './components/UnifiedFileDashboard';
-import CodeMirrorEditor, {
-  type EditorAuthorshipRange,
-  type EditorCursorActivity,
-  type EditorNewCommentRequest,
-  type EditorSelectionRange,
-  type EditorSelectionSnapshot,
-  type EditorSuggestingEditRequest,
+import {
+  lazy,
+  Suspense,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  type ComponentProps,
+  type FormEvent,
+} from 'react';
+import type {
+  EditorAuthorshipRange,
+  EditorCursorActivity,
+  EditorNewCommentRequest,
+  EditorSelectionRange,
+  EditorSelectionSnapshot,
+  EditorSuggestingEditRequest,
 } from './components/CodeMirrorEditor';
 import AuthorshipStatsPanel from './components/editor/AuthorshipStatsPanel';
 import { CommentThreadPanel } from './components/CommentThread';
@@ -18,31 +24,12 @@ import { NewCommentPopover, type NewCommentPopoverAnchor } from './components/Ne
 import { PresenceChips } from './components/PresenceChips';
 import { ReviewPanel } from './components/ReviewPanel';
 import { SuggestionPanel } from './components/SuggestionPanel';
-import NotificationHistoryPanel from './components/NotificationHistoryPanel';
-import FileHistoryPanel from './components/FileHistoryPanel';
-import OfflineAwareChat from './components/OfflineAwareChat';
 import { ToastViewport } from './components/Toast';
 import QuickSwitcher from './components/QuickSwitcher';
-import ActivityStream from './components/ActivityStream';
 import MarkdownAudioControls, { type DocsTtsSettings } from './components/MarkdownAudioControls';
-import BottomTerminalPanel from './components/BottomTerminalPanel';
 import TaskBoard from './components/TaskBoard';
-import OnboardingFlow from './components/OnboardingFlow';
-import FileSourcesSettings from './components/settings/FileSourcesSettings';
-import EffectiveConfigSettings from './components/settings/EffectiveConfigSettings';
-import VoiceSettings from './components/settings/VoiceSettings';
-import AgentRegistrySettings from './components/settings/AgentRegistrySettings';
-import TaskMasterSettings from './components/TaskMasterSettings';
-import PluginAdminPanel from './components/plugins/PluginAdminPanel';
-import PluginSubViewSlot from './components/plugins/PluginSubViewSlot';
-import PluginTopLevelSlot from './components/plugins/PluginTopLevelSlot';
 import MCCreateTaskModal from './components/mission-control/MCCreateTaskModal';
-import MCStrategicView from './components/mission-control/MCStrategicView';
 import MobileBottomNav, { type MobileTab } from './components/MobileBottomNav';
-import AgentsSidebarTab from './components/AgentsSidebarTab';
-import AgentsMobileDetail from './components/AgentsMobileDetail';
-import AgentDashboardV2 from './components/AgentDashboardV2';
-import ChatView from './components/Chat/ChatView';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useActivityStream } from './hooks/useActivityStream';
@@ -85,6 +72,32 @@ import type {
   DocumentSuggestionUiRecord,
 } from './types/collaboration';
 
+const MarkdownPreview = lazy(() => import('./components/MarkdownPreview'));
+const CodeMirrorFileViewer = lazy(() => import('./components/CodeMirrorFileViewer'));
+const CodeMirrorEditor = lazy(() => import('./components/CodeMirrorEditor'));
+const FileTree = lazy(() => import('./components/FileTree'));
+const SourceFileTree = lazy(() => import('./components/SourceFileTree'));
+const UnifiedFileDashboard = lazy(() => import('./components/UnifiedFileDashboard'));
+const NotificationHistoryPanel = lazy(() => import('./components/NotificationHistoryPanel'));
+const FileHistoryPanel = lazy(() => import('./components/FileHistoryPanel'));
+const OfflineAwareChat = lazy(() => import('./components/OfflineAwareChat'));
+const ActivityStream = lazy(() => import('./components/ActivityStream'));
+const BottomTerminalPanel = lazy(() => import('./components/BottomTerminalPanel'));
+const OnboardingFlow = lazy(() => import('./components/OnboardingFlow'));
+const FileSourcesSettings = lazy(() => import('./components/settings/FileSourcesSettings'));
+const EffectiveConfigSettings = lazy(() => import('./components/settings/EffectiveConfigSettings'));
+const VoiceSettings = lazy(() => import('./components/settings/VoiceSettings'));
+const AgentRegistrySettings = lazy(() => import('./components/settings/AgentRegistrySettings'));
+const TaskMasterSettings = lazy(() => import('./components/TaskMasterSettings'));
+const PluginAdminPanel = lazy(() => import('./components/plugins/PluginAdminPanel'));
+const PluginSubViewSlot = lazy(() => import('./components/plugins/PluginSubViewSlot'));
+const PluginTopLevelSlot = lazy(() => import('./components/plugins/PluginTopLevelSlot'));
+const MCStrategicView = lazy(() => import('./components/mission-control/MCStrategicView'));
+const AgentsSidebarTab = lazy(() => import('./components/AgentsSidebarTab'));
+const AgentsMobileDetail = lazy(() => import('./components/AgentsMobileDetail'));
+const AgentDashboardV2 = lazy(() => import('./components/AgentDashboardV2'));
+const ChatView = lazy(() => import('./components/Chat/ChatView'));
+
 const LOGIN_REQUIRED_KEY = 'entity.auth.login-required.v1';
 const AUTH_SESSION_KEY = 'entity.auth.session.v1';
 const DOCUMENTS_AUTH_KEY = 'entity.documents.auth.v1';
@@ -95,6 +108,217 @@ const THEME_KEY = 'entity.theme.v1';
 const PWA_INSTALL_CTA_DISMISSED_KEY = 'entity.pwa.install-cta-dismissed.v1';
 const DEFAULT_LOGIN_PASSWORD = 'mission';
 const ENTERPRISE_ADMIN_URL = '';
+
+function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
+  return (
+    <div className="flex h-full min-h-[12rem] w-full items-center justify-center text-sm text-[var(--text-muted)]">
+      <div className="flex items-center gap-2 rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]" aria-hidden="true" />
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function LazyMarkdownPreview(props: ComponentProps<typeof MarkdownPreview>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading preview" />}>
+      <MarkdownPreview {...props} />
+    </Suspense>
+  );
+}
+
+function LazyCodeMirrorFileViewer(props: ComponentProps<typeof CodeMirrorFileViewer>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading file viewer" />}>
+      <CodeMirrorFileViewer {...props} />
+    </Suspense>
+  );
+}
+
+function LazyCodeMirrorEditor(props: ComponentProps<typeof CodeMirrorEditor>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading editor" />}>
+      <CodeMirrorEditor {...props} />
+    </Suspense>
+  );
+}
+
+function LazyFileTree(props: ComponentProps<typeof FileTree>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
+      <FileTree {...props} />
+    </Suspense>
+  );
+}
+
+function LazySourceFileTree(props: ComponentProps<typeof SourceFileTree>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
+      <SourceFileTree {...props} />
+    </Suspense>
+  );
+}
+
+function LazyUnifiedFileDashboard(props: ComponentProps<typeof UnifiedFileDashboard>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
+      <UnifiedFileDashboard {...props} />
+    </Suspense>
+  );
+}
+
+function LazyNotificationHistoryPanel(props: ComponentProps<typeof NotificationHistoryPanel>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading notifications" />}>
+      <NotificationHistoryPanel {...props} />
+    </Suspense>
+  );
+}
+
+function LazyFileHistoryPanel(props: ComponentProps<typeof FileHistoryPanel>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading file history" />}>
+      <FileHistoryPanel {...props} />
+    </Suspense>
+  );
+}
+
+function LazyOfflineAwareChat(props: ComponentProps<typeof OfflineAwareChat>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading chat status" />}>
+      <OfflineAwareChat {...props} />
+    </Suspense>
+  );
+}
+
+function LazyActivityStream(props: ComponentProps<typeof ActivityStream>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading activity" />}>
+      <ActivityStream {...props} />
+    </Suspense>
+  );
+}
+
+function LazyBottomTerminalPanel(props: ComponentProps<typeof BottomTerminalPanel>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading terminal" />}>
+      <BottomTerminalPanel {...props} />
+    </Suspense>
+  );
+}
+
+function LazyOnboardingFlow(props: ComponentProps<typeof OnboardingFlow>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading onboarding" />}>
+      <OnboardingFlow {...props} />
+    </Suspense>
+  );
+}
+
+function LazyFileSourcesSettings(props: ComponentProps<typeof FileSourcesSettings>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading settings" />}>
+      <FileSourcesSettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyEffectiveConfigSettings(props: ComponentProps<typeof EffectiveConfigSettings>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading settings" />}>
+      <EffectiveConfigSettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyVoiceSettings(props: ComponentProps<typeof VoiceSettings>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading settings" />}>
+      <VoiceSettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyAgentRegistrySettings(props: ComponentProps<typeof AgentRegistrySettings>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading agents" />}>
+      <AgentRegistrySettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyTaskMasterSettings(props: ComponentProps<typeof TaskMasterSettings>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading Task Master" />}>
+      <TaskMasterSettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyPluginAdminPanel(props: ComponentProps<typeof PluginAdminPanel>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading plugins" />}>
+      <PluginAdminPanel {...props} />
+    </Suspense>
+  );
+}
+
+function LazyPluginSubViewSlot(props: ComponentProps<typeof PluginSubViewSlot>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading plugin" />}>
+      <PluginSubViewSlot {...props} />
+    </Suspense>
+  );
+}
+
+function LazyPluginTopLevelSlot(props: ComponentProps<typeof PluginTopLevelSlot>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading plugin" />}>
+      <PluginTopLevelSlot {...props} />
+    </Suspense>
+  );
+}
+
+function LazyMCStrategicView() {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading strategy" />}>
+      <MCStrategicView />
+    </Suspense>
+  );
+}
+
+function LazyAgentsSidebarTab(props: ComponentProps<typeof AgentsSidebarTab>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading agents" />}>
+      <AgentsSidebarTab {...props} />
+    </Suspense>
+  );
+}
+
+function LazyAgentsMobileDetail(props: ComponentProps<typeof AgentsMobileDetail>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading agent" />}>
+      <AgentsMobileDetail {...props} />
+    </Suspense>
+  );
+}
+
+function LazyAgentDashboardV2(props: ComponentProps<typeof AgentDashboardV2>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading agents" />}>
+      <AgentDashboardV2 {...props} />
+    </Suspense>
+  );
+}
+
+function LazyChatView() {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading chat" />}>
+      <ChatView />
+    </Suspense>
+  );
+}
 
 interface AgentCapability {
   adapterType?: string;
@@ -3869,7 +4093,7 @@ export default function App() {
   );
 
   const renderAgentsPanel = () => (
-    <AgentsSidebarTab
+    <LazyAgentsSidebarTab
       agents={agents}
       agentsLoading={agentsLoading}
       agentsError={agentsError}
@@ -4059,8 +4283,8 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <EffectiveConfigSettings apiBase={runtime.apiBase} />
-              <FileSourcesSettings apiBase={runtime.apiBase} enabled={runtime.fsMultiSourceEnabled} />
+              <LazyEffectiveConfigSettings apiBase={runtime.apiBase} />
+              <LazyFileSourcesSettings apiBase={runtime.apiBase} enabled={runtime.fsMultiSourceEnabled} />
             </>
           )}
 
@@ -4209,7 +4433,7 @@ export default function App() {
                   {agentsError ? 'Fallback' : 'Connected'}
                 </div>
               </div>
-              <OfflineAwareChat isOffline={isOffline} />
+              <LazyOfflineAwareChat isOffline={isOffline} />
               <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-3">
                 <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                   <div className="text-sm font-medium text-[var(--text-primary)]">Documents API</div>
@@ -4466,11 +4690,11 @@ export default function App() {
           )}
 
           {adminSection === 'plugins' && (
-            <PluginAdminPanel apiBase={runtime.apiBase} />
+            <LazyPluginAdminPanel apiBase={runtime.apiBase} />
           )}
 
           {adminSection === 'agents' && (
-            <AgentRegistrySettings
+            <LazyAgentRegistrySettings
               apiBase={runtime.apiBase}
               onRegistryChanged={() => {
                 fetch('/api/agents')
@@ -4492,11 +4716,11 @@ export default function App() {
           )}
 
           {adminSection === 'voice' && (
-            <VoiceSettings apiBase={runtime.apiBase} />
+            <LazyVoiceSettings apiBase={runtime.apiBase} />
           )}
 
           {adminSection === 'taskMaster' && (
-            <TaskMasterSettings apiBase={runtime.apiBase} />
+            <LazyTaskMasterSettings apiBase={runtime.apiBase} />
           )}
 
         </div>
@@ -4562,7 +4786,7 @@ export default function App() {
   const renderFileSidebarTree = () => {
     if (!runtime.fsMultiSourceEnabled) {
       return (
-        <FileTree
+        <LazyFileTree
           onSelect={(path) => {
             if (watchMode) {
               setFollowDetached(true);
@@ -4575,7 +4799,7 @@ export default function App() {
     }
 
     return (
-      <SourceFileTree
+      <LazySourceFileTree
         apiBase={runtime.apiBase}
         selectedSourceId={currentSourceId}
         selectedPath={currentFile}
@@ -4591,7 +4815,7 @@ export default function App() {
 
   const renderFileHome = () => {
     if (runtime.fsMultiSourceEnabled) {
-      return <UnifiedFileDashboard apiBase={runtime.apiBase} enabled onOpen={handleSourceFileSelect} />;
+      return <LazyUnifiedFileDashboard apiBase={runtime.apiBase} enabled onOpen={handleSourceFileSelect} />;
     }
 
     return (
@@ -5367,7 +5591,7 @@ export default function App() {
             fileTransitionActive ? 'mc-file-switch-anim' : ''
           }`}
         >
-          <CodeMirrorEditor
+          <LazyCodeMirrorEditor
             content={fileContent}
             onChange={handleContentChange}
             onSave={handleSave}
@@ -5477,7 +5701,7 @@ export default function App() {
       ) : (
         shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
           <div className={`mx-auto max-w-4xl p-8 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-            <MarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
+            <LazyMarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
             <MarkdownAudioControls
               docsPath={currentFile ?? ''}
               content={fileContent}
@@ -5489,7 +5713,7 @@ export default function App() {
           </div>
         ) : (
           <div className={`h-full w-full overflow-hidden ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-            <CodeMirrorFileViewer
+            <LazyCodeMirrorFileViewer
               content={fileContent}
               filePath={currentFile ?? ''}
               contentType={currentFilePreviewMeta.contentType}
@@ -5508,9 +5732,9 @@ export default function App() {
       {sidebarTab === 'tasks' ? (
         <div className="flex-1 min-h-0">
           {activeTaskSubViewPlugin ? (
-            <PluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
+            <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
           ) : mcBoardTab === 'strategic' ? (
-            <MCStrategicView />
+            <LazyMCStrategicView />
           ) : (
             <TaskBoard
               viewport={viewport}
@@ -5533,7 +5757,7 @@ export default function App() {
         </div>
       ) : sidebarTab === 'agents' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <AgentDashboardV2
+          <LazyAgentDashboardV2
             agents={agents}
             selectedAgentId={selectedAgent}
             onSelectAgent={setSelectedAgent}
@@ -5544,11 +5768,11 @@ export default function App() {
         </div>
       ) : sidebarTab === 'services' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <PluginTopLevelSlot apiBase={runtime.apiBase} pluginId="entity-services" />
+          <LazyPluginTopLevelSlot apiBase={runtime.apiBase} pluginId="entity-services" />
         </div>
       ) : sidebarTab === 'chat' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <ChatView />
+          <LazyChatView />
         </div>
       ) : sidebarTab === 'admin' ? (
         <div className="flex min-h-0 flex-1 flex-col">{renderAdminWorkspace()}</div>
@@ -5626,7 +5850,7 @@ export default function App() {
 	                        {rightPaneFile ? (
 	                          editMode ? (
 	                            <div className="h-full w-full">
-	                              <CodeMirrorEditor
+	                              <LazyCodeMirrorEditor
 	                                content={rightPaneContent}
 	                                onChange={handleRightPaneContentChange}
 	                                readOnly={rightPaneReadOnly || Boolean(rightPaneSourceId)}
@@ -5635,7 +5859,7 @@ export default function App() {
                           ) : (
                             shouldRenderMarkdownPreview(rightPaneFile, rightPanePreviewMeta.contentType) ? (
                               <div className="mx-auto max-w-4xl p-8">
-                                <MarkdownPreview content={rightPaneContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
+                                <LazyMarkdownPreview content={rightPaneContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
                                 <MarkdownAudioControls
                                   docsPath={rightPaneFile ?? ''}
                                   content={rightPaneContent}
@@ -5647,7 +5871,7 @@ export default function App() {
                               </div>
 	                            ) : (
 	                              <div className="h-full w-full overflow-hidden">
-	                                <CodeMirrorFileViewer
+	                                <LazyCodeMirrorFileViewer
                                     content={rightPaneContent}
                                     filePath={rightPaneFile ?? ''}
                                     contentType={rightPanePreviewMeta.contentType}
@@ -5892,7 +6116,7 @@ export default function App() {
         </>
       )}
       {sidebarTab !== 'admin' && (
-        <BottomTerminalPanel
+        <LazyBottomTerminalPanel
           isOpen={activityPanelOpen}
           onToggleOpen={() => setActivityPanelOpen((prev) => !prev)}
         />
@@ -6040,7 +6264,7 @@ export default function App() {
                   onSettingsChange={handleDocsTtsSettingsChange}
                   onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
                 />
-                <MarkdownPreview
+                <LazyMarkdownPreview
                   content={docsContent}
                   loading={docsLoading}
                   onDocsLinkNavigate={handleMarkdownDocsNavigation}
@@ -6060,7 +6284,7 @@ export default function App() {
 
   if (shouldShowOnboarding) {
     return (
-      <OnboardingFlow
+      <LazyOnboardingFlow
         apiBase={runtime.apiBase}
         routeToken={onboardingToken}
         userProfile={userProfile}
@@ -6119,7 +6343,7 @@ export default function App() {
         useUnifiedSearch={runtime.fsMultiSourceEnabled}
       />
 
-      <NotificationHistoryPanel
+      <LazyNotificationHistoryPanel
         isOpen={notificationsPanelOpen}
         notifications={notifications}
         selectedId={selectedNotificationId}
@@ -6133,7 +6357,7 @@ export default function App() {
         onEntityNotificationRead={(id) => void entityNotifications.markState(id, 'read')}
       />
 
-      <FileHistoryPanel
+      <LazyFileHistoryPanel
         apiBase={runtime.apiBase}
         filePath={currentSourceId ? null : currentFile}
         latestSavedContent={fileContent}
@@ -6283,7 +6507,7 @@ export default function App() {
                           fileTransitionActive ? 'mc-file-switch-anim' : ''
                         }`}
                       >
-                        <CodeMirrorEditor
+                        <LazyCodeMirrorEditor
 	                          content={fileContent}
 	                          onChange={handleContentChange}
 	                          onSave={handleSave}
@@ -6361,11 +6585,11 @@ export default function App() {
                     ) : (
                       shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
                         <div className={`mx-auto max-w-3xl p-4 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-                          <MarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
+                          <LazyMarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
                         </div>
                       ) : (
                         <div className={`h-full w-full overflow-hidden ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-                          <CodeMirrorFileViewer
+                          <LazyCodeMirrorFileViewer
                             content={fileContent}
                             filePath={currentFile ?? ''}
                             contentType={currentFilePreviewMeta.contentType}
@@ -6387,7 +6611,7 @@ export default function App() {
           {mobileTab === 'agents' && (
             <div className="h-full overflow-auto">
               {selectedAgent !== null ? (
-                <AgentsMobileDetail
+                <LazyAgentsMobileDetail
                   agent={
                     selectedAgentData ?? {
                       id: selectedAgent,
@@ -6410,7 +6634,7 @@ export default function App() {
 
           {mobileTab === 'tasks' && (
             activeTaskSubViewPlugin ? (
-              <PluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
+              <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
             ) : (
               <TaskBoard
                 viewport="mobile"
@@ -6432,17 +6656,17 @@ export default function App() {
           )}
 
           {mobileTab === 'services' && (
-            <PluginTopLevelSlot apiBase={runtime.apiBase} pluginId="entity-services" />
+            <LazyPluginTopLevelSlot apiBase={runtime.apiBase} pluginId="entity-services" />
           )}
 
           {mobileTab === 'chat' && (
             <div className="h-full min-h-0">
-              <ChatView />
+              <LazyChatView />
             </div>
           )}
 
           {mobileTab === 'activity' && (
-            <ActivityStream
+            <LazyActivityStream
               activities={activities}
               loading={activityLoading}
               error={activityError}

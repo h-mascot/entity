@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import MCInsightsDashboard from './MCInsightsDashboard';
 import KanbanColumn from './KanbanColumn';
 import TaskDetailPanel from './TaskDetailPanel';
@@ -264,7 +264,7 @@ export default function MCOpsView({
 
   const selectedCount = selectedTaskIds.size;
 
-  const toggleTaskSelection = (taskId: number) => {
+  const toggleTaskSelection = useCallback((taskId: number) => {
     setBulkError(null);
     setSelectedTaskIds((current) => {
       const next = new Set(current);
@@ -275,18 +275,18 @@ export default function MCOpsView({
       }
       return next;
     });
-  };
+  }, []);
 
-  const clearSelection = () => {
+  const clearSelection = useCallback(() => {
     setSelectedTaskIds(new Set());
     setBulkError(null);
-  };
+  }, []);
 
   const handleStatusFilterClick = (next: BoardStatusFilter) => {
     setStatusFilter((current) => (current === next ? 'all' : next));
   };
 
-  const handleToggleBookmark = async (taskId: number) => {
+  const handleToggleBookmark = useCallback(async (taskId: number) => {
     const task = tasks.find((candidate) => candidate.id === taskId);
     if (!task) {
       return;
@@ -297,7 +297,7 @@ export default function MCOpsView({
     } catch (error) {
       console.error('Failed to toggle task bookmark:', error);
     }
-  };
+  }, [tasks, updateTask]);
 
   const handleBulkMove = async () => {
     if (selectedCount === 0 || bulkBusy) {
@@ -390,7 +390,7 @@ export default function MCOpsView({
     setSelectedTaskId(highlightTaskId);
   }, [highlightTaskId]);
 
-  const handleMoveTask = async (taskId: number, column: BoardColumn) => {
+  const handleMoveTask = useCallback(async (taskId: number, column: BoardColumn) => {
     if (column === 'archive') {
       setDraggedTaskId(null);
       return;
@@ -416,7 +416,7 @@ export default function MCOpsView({
       setMovingTaskId(null);
       setDraggedTaskId(null);
     }
-  };
+  }, [onMoveTask, tasks]);
 
   const handleReviewSubmit = async (
     action: 'accept' | 'accept_done' | 'needs_fix' | 'reject',
@@ -469,17 +469,17 @@ export default function MCOpsView({
     }
   };
 
-  const handleOpenTask = (taskId: number) => {
+  const handleOpenTask = useCallback((taskId: number) => {
     setSelectedTaskId(taskId);
     onOpenTask?.(taskId);
-  };
+  }, [onOpenTask]);
 
-  const handleCloseTask = () => {
+  const handleCloseTask = useCallback(() => {
     setSelectedTaskId(null);
     onCloseTask?.();
-  };
+  }, [onCloseTask]);
 
-  const handleUpdateTaskProjects = async (taskId: number, projectIds: number[]) => {
+  const handleUpdateTaskProjects = useCallback(async (taskId: number, projectIds: number[]) => {
     const selectedProjectNames = projectOptions
       .filter((project) => projectIds.includes(project.id))
       .map((project) => project.name);
@@ -488,7 +488,11 @@ export default function MCOpsView({
       projectIds,
       project: selectedProjectNames.length > 0 ? selectedProjectNames.join(', ') : 'General',
     });
-  };
+  }, [projectOptions, updateTask]);
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedTaskId(null);
+  }, []);
 
   return (
     <div>
@@ -703,7 +707,7 @@ export default function MCOpsView({
               draggedTaskId={draggedTaskId}
               highlightTaskId={highlightTaskId}
               movingTaskId={movingTaskId}
-              onDragEnd={() => setDraggedTaskId(null)}
+              onDragEnd={handleDragEnd}
               onDragStart={setDraggedTaskId}
               onMoveTask={handleMoveTask}
               onOpenTask={handleOpenTask}
