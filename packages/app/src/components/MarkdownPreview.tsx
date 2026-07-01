@@ -53,7 +53,40 @@ interface MarkdownPreviewProps {
   content: string;
   loading?: boolean;
   onDocsLinkNavigate?: (href: string) => boolean;
+  /**
+   * Compact variant for embedding the shared doc renderer inside dense surfaces
+   * (e.g. the task Output section) rather than the full-width docs page.
+   */
+  compact?: boolean;
 }
+
+// Shared prose overrides (colors, code, tables, blockquotes) applied in both variants
+// so embedded renders stay visually consistent with the full DocHub document view.
+const SHARED_PROSE_CLASSES = `prose-headings:text-[var(--text-primary)]
+      prose-p:text-[var(--text-secondary)]
+      prose-a:text-[var(--accent)] prose-a:no-underline hover:prose-a:underline
+      prose-strong:text-[var(--text-primary)]
+      prose-code:text-[var(--text-secondary)] prose-code:bg-[var(--bg-secondary)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:border prose-code:border-[var(--border-primary)]
+      prose-pre:bg-[var(--bg-secondary)] prose-pre:border prose-pre:border-[var(--bg-tertiary)] prose-pre:rounded-lg
+      prose-blockquote:border-[var(--border-secondary)] prose-blockquote:bg-[var(--bg-tertiary)] prose-blockquote:rounded-r-lg
+      prose-li:text-[var(--text-secondary)]
+      prose-table:border-collapse
+      prose-th:bg-[var(--bg-secondary)] prose-th:p-2 prose-th:border prose-th:border-[var(--border-primary)]
+      prose-td:p-2 prose-td:border prose-td:border-[var(--border-primary)]
+      prose-img:rounded-lg
+      prose-hr:border-[var(--border-primary)]`;
+
+const FULL_PROSE_CLASSES = `relative prose prose-invert max-w-none
+      prose-headings:border-b prose-headings:border-[var(--border-primary)] prose-headings:pb-2
+      prose-headings:scroll-mt-24 prose-h1:text-3xl prose-h1:leading-tight prose-h2:text-xl prose-h3:text-lg
+      prose-p:leading-relaxed
+      ${SHARED_PROSE_CLASSES}`;
+
+const COMPACT_PROSE_CLASSES = `relative prose prose-invert prose-sm max-w-none
+      prose-headings:mt-3 prose-headings:mb-1.5 prose-headings:pb-1 prose-headings:border-b prose-headings:border-[var(--border-primary)]
+      prose-h1:text-lg prose-h2:text-base prose-h3:text-sm
+      prose-p:my-2 prose-p:leading-relaxed prose-pre:text-xs
+      ${SHARED_PROSE_CLASSES}`;
 
 function isEntityHost(hostname: string): boolean {
   if (typeof window !== 'undefined' && hostname === window.location.hostname) {
@@ -159,7 +192,7 @@ function remarkEntityAutolink() {
   };
 }
 
-export default function MarkdownPreview({ content, loading, onDocsLinkNavigate }: MarkdownPreviewProps) {
+export default function MarkdownPreview({ content, loading, onDocsLinkNavigate, compact }: MarkdownPreviewProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16 text-[var(--text-muted)]">
@@ -183,22 +216,7 @@ export default function MarkdownPreview({ content, loading, onDocsLinkNavigate }
   const hasSignificantHtml = /<\s*\/?\s*[a-z][a-z0-9-]*(?:\s[^>]*?)?\s*\/?>/i.test(content);
 
   return (
-    <div className="relative prose prose-invert max-w-none
-      prose-headings:text-[var(--text-primary)] prose-headings:border-b prose-headings:border-[var(--border-primary)] prose-headings:pb-2
-      prose-headings:scroll-mt-24 prose-h1:text-3xl prose-h1:leading-tight prose-h2:text-xl prose-h3:text-lg
-      prose-p:text-[var(--text-secondary)] prose-p:leading-relaxed
-      prose-a:text-[var(--accent)] prose-a:no-underline hover:prose-a:underline
-      prose-strong:text-[var(--text-primary)]
-      prose-code:text-[var(--text-secondary)] prose-code:bg-[var(--bg-secondary)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:border prose-code:border-[var(--border-primary)]
-      prose-pre:bg-[var(--bg-secondary)] prose-pre:border prose-pre:border-[var(--bg-tertiary)] prose-pre:rounded-lg
-      prose-blockquote:border-[var(--border-secondary)] prose-blockquote:bg-[var(--bg-tertiary)] prose-blockquote:rounded-r-lg
-      prose-li:text-[var(--text-secondary)]
-      prose-table:border-collapse
-      prose-th:bg-[var(--bg-secondary)] prose-th:p-2 prose-th:border prose-th:border-[var(--border-primary)]
-      prose-td:p-2 prose-td:border prose-td:border-[var(--border-primary)]
-      prose-img:rounded-lg
-      prose-hr:border-[var(--border-primary)]
-    ">
+    <div className={compact ? COMPACT_PROSE_CLASSES : FULL_PROSE_CLASSES}>
       {hasSignificantHtml ? (
         <div
           className="not-prose absolute right-2 top-2 z-10 rounded-full border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-muted)]"
