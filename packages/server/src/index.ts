@@ -429,6 +429,10 @@ registerAgentRegistryRoutes(app, {
 
 
 const taskRouteDeps = {
+  AGENT_CONFIG, WORKSPACE, broadcast, buildTaskPreview,
+  deriveSubtaskBreakdown, evidenceArtifactRepository, isValidTaskColumn,
+  mergeTaskMetadataWithParentLink, normalizeBlockerReasonInput,
+  phase2FlagEnabled, phase2Flags, pluginHooks, withReceiptArtifactRef,
   registerCrewRoutes, createCrew, getCrews,
   getSubscribersForCrew, getSubscriptionsForAgent,
   subscribeToCrew, unsubscribeFromCrew,
