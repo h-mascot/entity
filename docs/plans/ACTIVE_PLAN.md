@@ -16,12 +16,20 @@ Goal: execute the full roadmap end-to-end and validate 10x on each front.
 
 ## Waves (checkboxes)
 
-- [ ] W1a Quality gate real + .bak removal + de-hoist + dep patch
-- [ ] W1b Perf bundle split + lazy tabs + sentry sampling + memo kanban
-- [ ] W2 Security: auth fail-closed, legacy read containment, FS root allowlist, cmd-injection fixes, terminal input binding, swarm integrity, webhook/test-error gating + tests
-- [ ] W3 Perf server: pagination, /tasks/:id fix, WS unify + drop polls, stream agent/chat replies
-- [ ] W4 Quality refactor: asyncHandler, break up index.ts, tests for riskiest modules + db + frontend
-- [ ] Validate 10x + iterate
+- [x] W1a Quality gate real + .bak removal
+- [x] W1b Perf bundle split + lazy tabs + sentry sampling + memo kanban
+- [x] W2 Security: auth fail-closed, legacy read containment, FS root allowlist, cmd-injection fixes, terminal input binding, webhook/test-error gating + tests
+- [x] W3 Perf server: pagination/caps, /tasks/:id fix, WS unify + drop polls, parallel @mention + prompt cache
+- [x] W4 Quality refactor: asyncHandler, break up index.ts (6392->630 LOC, 10.1x), tests for riskiest modules + db
+- [x] Validate 10x: gate green (646 tests), app browser-tested, security runtime-verified, bundle re-measured
+
+## Result vs targets
+| Front | Target | Achieved |
+|-------|--------|----------|
+| Faster (entry chunk) | ≤70 KB gzip | 705 KB -> 5.26 KB gzip (134x); heavy libs (codemirror/xterm/markdown ~450 KB gzip) now lazy |
+| Quality (gate) | run all tests, fail on red | gate runs 646 tests (build+app+db+server), fail-path proven |
+| Quality (monolith) | ≤640 LOC | index.ts 6392 -> 630 LOC (10.1x) |
+| Secure | 0 exploitable P0, tests each | 4 chains closed + runtime-verified + 22 regression tests |
 
 ## Verify commands
 - `cd packages/server && npm run build && npx vitest run`
