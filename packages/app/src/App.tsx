@@ -1,5 +1,4 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type FormEvent } from 'react';
-import MarkdownPreview from './components/MarkdownPreview';
 import CodeMirrorFileViewer from './components/CodeMirrorFileViewer';
 import FileTree from './components/FileTree';
 import SourceFileTree from './components/SourceFileTree';
@@ -24,7 +23,8 @@ import OfflineAwareChat from './components/OfflineAwareChat';
 import { ToastViewport } from './components/Toast';
 import QuickSwitcher from './components/QuickSwitcher';
 import ActivityStream from './components/ActivityStream';
-import MarkdownAudioControls, { type DocsTtsSettings } from './components/MarkdownAudioControls';
+import { type DocsTtsSettings } from './components/MarkdownAudioControls';
+import DocumentReadingView from './components/DocumentReadingView';
 import BottomTerminalPanel from './components/BottomTerminalPanel';
 import TaskBoard from './components/TaskBoard';
 import OnboardingFlow from './components/OnboardingFlow';
@@ -5476,17 +5476,15 @@ export default function App() {
         </div>
       ) : (
         shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
-          <div className={`mx-auto max-w-4xl p-8 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-            <MarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-            <MarkdownAudioControls
-              docsPath={currentFile ?? ''}
-              content={fileContent}
-              settings={docsTtsSettings}
-              onSettingsChange={handleDocsTtsSettingsChange}
-              onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-              compact
-            />
-          </div>
+          <DocumentReadingView
+            content={fileContent}
+            docsPath={currentFile ?? ''}
+            ttsSettings={docsTtsSettings}
+            onTtsSettingsChange={handleDocsTtsSettingsChange}
+            onToast={pushToast}
+            onDocsLinkNavigate={handleMarkdownDocsNavigation}
+            animate={fileTransitionActive}
+          />
         ) : (
           <div className={`h-full w-full overflow-hidden ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
             <CodeMirrorFileViewer
@@ -5634,17 +5632,14 @@ export default function App() {
 	                            </div>
                           ) : (
                             shouldRenderMarkdownPreview(rightPaneFile, rightPanePreviewMeta.contentType) ? (
-                              <div className="mx-auto max-w-4xl p-8">
-                                <MarkdownPreview content={rightPaneContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-                                <MarkdownAudioControls
-                                  docsPath={rightPaneFile ?? ''}
-                                  content={rightPaneContent}
-                                  settings={docsTtsSettings}
-                                  onSettingsChange={handleDocsTtsSettingsChange}
-                                  onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-                                  compact
-                                />
-                              </div>
+                              <DocumentReadingView
+                                content={rightPaneContent}
+                                docsPath={rightPaneFile ?? ''}
+                                ttsSettings={docsTtsSettings}
+                                onTtsSettingsChange={handleDocsTtsSettingsChange}
+                                onToast={pushToast}
+                                onDocsLinkNavigate={handleMarkdownDocsNavigation}
+                              />
 	                            ) : (
 	                              <div className="h-full w-full overflow-hidden">
 	                                <CodeMirrorFileViewer
@@ -6025,29 +6020,24 @@ export default function App() {
           </div>
         </header>
         <main className="min-h-0 flex-1 overflow-auto">
-          <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8 lg:py-8">
-            {docsError ? (
+          {docsError ? (
+            <div className="mx-auto w-full max-w-4xl px-6 py-8">
               <div className="rounded-xl border border-[var(--error)]/50 bg-[var(--bg-secondary)] p-4">
                 <div className="text-sm font-medium text-[var(--error)]">Unable to load document</div>
                 <div className="mt-1 text-xs text-[var(--text-muted)]">{docsError}</div>
               </div>
-            ) : (
-              <>
-                <MarkdownAudioControls
-                  docsPath={docsPath}
-                  content={docsContent}
-                  settings={docsTtsSettings}
-                  onSettingsChange={handleDocsTtsSettingsChange}
-                  onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-                />
-                <MarkdownPreview
-                  content={docsContent}
-                  loading={docsLoading}
-                  onDocsLinkNavigate={handleMarkdownDocsNavigation}
-                />
-              </>
-            )}
-          </div>
+            </div>
+          ) : (
+            <DocumentReadingView
+              content={docsContent}
+              docsPath={docsPath}
+              loading={docsLoading}
+              ttsSettings={docsTtsSettings}
+              onTtsSettingsChange={handleDocsTtsSettingsChange}
+              onToast={pushToast}
+              onDocsLinkNavigate={handleMarkdownDocsNavigation}
+            />
+          )}
         </main>
         {renderOfflineSyncBar(false)}
       </div>
@@ -6360,9 +6350,17 @@ export default function App() {
                       </div>
                     ) : (
                       shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
-                        <div className={`mx-auto max-w-3xl p-4 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-                          <MarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-                        </div>
+                        <DocumentReadingView
+                          content={fileContent}
+                          docsPath={currentFile ?? ''}
+                          ttsSettings={docsTtsSettings}
+                          onTtsSettingsChange={handleDocsTtsSettingsChange}
+                          onToast={pushToast}
+                          onDocsLinkNavigate={handleMarkdownDocsNavigation}
+                          tts="none"
+                          dense
+                          animate={fileTransitionActive}
+                        />
                       ) : (
                         <div className={`h-full w-full overflow-hidden ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
                           <CodeMirrorFileViewer
