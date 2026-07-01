@@ -9,6 +9,7 @@ import {
   type TaskPriority,
   useTaskBoard,
 } from '../../hooks/useTaskBoard';
+import { useEntityWebSocket } from '../../hooks/useEntityWebSocket';
 import {
   fetchProjectOptions as fetchAllowedProjectOptions,
   normalizeProjectOption,
@@ -2148,72 +2149,21 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
   // Live-refresh this task's detail + comments when the server broadcasts
   // changes for it (e.g. an @mentioned agent's reply or task pickup).
-  useEffect(() => {
-    if (typeof window === 'undefined') {
+  useEntityWebSocket((message) => {
+    if (Number(message.taskId) !== taskId) {
       return;
     }
-    let active = true;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
-
-    const connect = () => {
-      if (!active) {
-        return;
-      }
-      try {
-        const url = new URL('ws://' + window.location.host);
-        const token = window.localStorage.getItem('entity-api-token');
-        if (token && token.trim()) {
-          url.searchParams.set('token', token.trim());
-        }
-        socket = new WebSocket(url.toString());
-      } catch {
-        socket = new WebSocket('ws://' + window.location.host);
-      }
-
-      socket.onmessage = (event) => {
-        let message: { type?: string; taskId?: unknown };
-        try {
-          message = JSON.parse(String(event.data)) as { type?: string; taskId?: unknown };
-        } catch {
-          return;
-        }
-        if (Number(message.taskId) !== taskId) {
-          return;
-        }
-        if (
-          message.type === 'task:comment' ||
-          message.type === 'task:updated' ||
-          message.type === 'task:moved'
-        ) {
-          void supplementalRef.current(taskId, {
-            preserveOutput: true,
-            preserveDependencyInput: true,
-          });
-        }
-      };
-
-      socket.onclose = () => {
-        socket = null;
-        if (!active) {
-          return;
-        }
-        reconnectTimer = window.setTimeout(connect, 3000);
-      };
-    };
-
-    connect();
-
-    return () => {
-      active = false;
-      if (reconnectTimer !== null) {
-        window.clearTimeout(reconnectTimer);
-      }
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-        socket.close();
-      }
-    };
-  }, [taskId]);
+    if (
+      message.type === 'task:comment' ||
+      message.type === 'task:updated' ||
+      message.type === 'task:moved'
+    ) {
+      void supplementalRef.current(taskId, {
+        preserveOutput: true,
+        preserveDependencyInput: true,
+      });
+    }
+  });
 
   const mentionMatches = useMemo(() => {
     if (mentionQuery === null) {

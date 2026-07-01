@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { runtime } from '../config/runtime';
 import { buildApiCandidates, requestJsonWithFallback } from '../lib/http';
+import { useSharedWebSocket } from '../hooks/useSharedWebSocket';
 
 const POLL_INTERVAL = 5000;
 
@@ -66,7 +67,7 @@ async function fetchDir(dirPath: string): Promise<FileItem[]> {
   });
 }
 
-function FolderNode({ item, depth, onSelect, selected, expandedPaths, currentPath, onToggle, onRefresh }: {
+function FolderNode({ item, depth, onSelect, selected, expandedPaths, currentPath, onToggle, onRefresh, wsConnected, refreshSignal }: {
   item: FileItem;
   depth: number;
   onSelect: (p: string) => void;
@@ -75,33 +76,54 @@ function FolderNode({ item, depth, onSelect, selected, expandedPaths, currentPat
   currentPath: string;
   onToggle: (path: string) => void;
   onRefresh: () => void;
+  wsConnected: boolean;
+  refreshSignal: number;
 }) {
   const [children, setChildren] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const expanded = expandedPaths.has(item.path);
   const isSelected = selected === item.path;
-  const pollRef = useRef<NodeJS.Timeout>();
+  const childrenCountRef = useRef(0);
+
+  useEffect(() => {
+    childrenCountRef.current = children.length;
+  }, [children.length]);
+
+  const loadChildren = useCallback((showLoading = false) => {
+    if (showLoading) {
+      setLoading(true);
+    }
+    fetchDir(item.path)
+      .then(data => { setChildren(data); setError(null); })
+      .catch(err => {
+        if (showLoading) {
+          setError(err.message);
+        }
+      })
+      .finally(() => {
+        if (showLoading) {
+          setLoading(false);
+        }
+      });
+  }, [item.path]);
 
   useEffect(() => {
     if (!expanded) {
-      if (pollRef.current) clearInterval(pollRef.current);
       return;
     }
-    if (children.length === 0) {
-      setLoading(true);
-      fetchDir(item.path)
-        .then(data => { setChildren(data); setError(null); })
-        .catch(err => setError(err.message))
-        .finally(() => setLoading(false));
+    loadChildren(childrenCountRef.current === 0);
+  }, [expanded, loadChildren, refreshSignal]);
+
+  useEffect(() => {
+    if (!expanded || wsConnected) {
+      return;
     }
-    pollRef.current = setInterval(() => {
-      fetchDir(item.path)
-        .then(data => { setChildren(data); setError(null); })
-        .catch(() => {});
+    const intervalId = window.setInterval(() => {
+      loadChildren(false);
     }, POLL_INTERVAL);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [expanded, item.path]);
+    return () => window.clearInterval(intervalId);
+  }, [expanded, loadChildren, wsConnected]);
 
   const handleClick = () => {
     if (item.isDirectory) {
@@ -141,6 +163,8 @@ function FolderNode({ item, depth, onSelect, selected, expandedPaths, currentPat
           currentPath={currentPath}
           onToggle={onToggle}
           onRefresh={onRefresh}
+          wsConnected={wsConnected}
+          refreshSignal={refreshSignal}
         />
       ))}
     </div>
@@ -155,6 +179,7 @@ export default function FileTree({ onSelect, selected }: FileTreeProps) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = useState<'name' | 'type'>('name');
   const [showContextMenu, setShowContextMenu] = useState<{x: number; y: number; path: string; isDir: boolean} | null>(null);
+  const [refreshSignal, setRefreshSignal] = useState(0);
 
   const loadRoot = useCallback(() => {
     fetchDir('')
@@ -162,11 +187,34 @@ export default function FileTree({ onSelect, selected }: FileTreeProps) {
       .catch(err => { setError(err.message); setLoading(false); });
   }, []);
 
+  const triggerRefresh = useCallback(() => {
+    loadRoot();
+    setRefreshSignal((value) => value + 1);
+  }, [loadRoot]);
+
+  const { connected: wsConnected } = useSharedWebSocket((message) => {
+    if (
+      message.type === 'file:created' ||
+      message.type === 'file:deleted' ||
+      message.type === 'file:changed'
+    ) {
+      triggerRefresh();
+    }
+  });
+
   useEffect(() => {
     loadRoot();
-    const interval = setInterval(loadRoot, POLL_INTERVAL);
-    return () => clearInterval(interval);
   }, [loadRoot]);
+
+  useEffect(() => {
+    if (wsConnected) {
+      triggerRefresh();
+      return;
+    }
+
+    const intervalId = window.setInterval(loadRoot, POLL_INTERVAL);
+    return () => window.clearInterval(intervalId);
+  }, [loadRoot, triggerRefresh, wsConnected]);
 
   const togglePath = useCallback((path: string) => {
     setExpandedPaths(prev => {
@@ -261,6 +309,8 @@ export default function FileTree({ onSelect, selected }: FileTreeProps) {
             currentPath=""
             onToggle={togglePath}
             onRefresh={loadRoot}
+            wsConnected={wsConnected}
+            refreshSignal={refreshSignal}
           />
         ))}
       </div>

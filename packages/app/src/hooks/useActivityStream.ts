@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
+import { useSharedWebSocket } from './useSharedWebSocket';
 
 const DEFAULT_API_BASE = '';
 const DEFAULT_MAX_ENTRIES = 200;
@@ -84,7 +85,7 @@ export const useActivityStreamStore = create<ActivityStreamState>((set) => ({
         return state;
       }
       return {
-        activities: [entry, ...state.activities].slice(0, state.maxEntries),
+        activities: [entry, ...state.activities.filter((activity) => activity.id !== entry.id)].slice(0, state.maxEntries),
       };
     }),
   setActivities: (entries) =>
@@ -341,9 +342,23 @@ export function useActivityStream({
   const clearActivities = useActivityStreamStore((state) => state.clearActivities);
   const setPaused = useActivityStreamStore((state) => state.setPaused);
   const setMaxEntries = useActivityStreamStore((state) => state.setMaxEntries);
-  const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(!useMockData);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const wasWsConnectedRef = useRef(false);
+
+  const { connected: wsConnected } = useSharedWebSocket((message) => {
+    if (!enabled || useMockData || message.type !== 'activity:created') {
+      return;
+    }
+
+    const rawActivity = message.activity ?? message.payload;
+    const activity = parseActivity(rawActivity);
+    if (activity) {
+      addActivity(activity);
+      setError(null);
+    }
+  }, { enabled: enabled && !useMockData });
 
   useEffect(() => {
     const safeMaxEntries = Math.max(1, maxEntries);
@@ -353,64 +368,80 @@ export function useActivityStream({
   }, [maxEntries, setMaxEntries, storeMaxEntries]);
 
   useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const fetchActivities = useCallback(async (showLoading = true) => {
+    try {
+      if (showLoading) {
+        setLoading(true);
+      }
+      setError(null);
+      const encodedLimit = encodeURIComponent(String(Math.max(1, maxEntries)));
+      const payload = await requestJsonWithFallback({
+        urls: buildApiCandidates(`/activities?limit=${encodedLimit}`, apiBase),
+        fallbackError: 'Unable to reach activities endpoint.',
+      });
+      if (!mountedRef.current) {
+        return;
+      }
+
+      setActivities(extractActivities(payload));
+    } catch (fetchError) {
+      if (mountedRef.current) {
+        setError(toErrorMessage(fetchError, 'Unable to load activity stream.'));
+      }
+    } finally {
+      if (mountedRef.current && showLoading) {
+        setLoading(false);
+      }
+    }
+  }, [apiBase, maxEntries, setActivities]);
+
+  useEffect(() => {
     if (!enabled || useMockData) {
       if (!enabled) {
         setLoading(false);
-        setConnected(false);
       }
       return;
     }
 
-    let cancelled = false;
-    let intervalId: number | undefined;
-
-    const fetchActivities = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const encodedLimit = encodeURIComponent(String(Math.max(1, maxEntries)));
-        const payload = await requestJsonWithFallback({
-          urls: buildApiCandidates(`/activities?limit=${encodedLimit}`, apiBase),
-          fallbackError: 'Unable to reach activities endpoint.',
-        });
-        if (cancelled) {
-          return;
-        }
-
-        setActivities(extractActivities(payload));
-        setConnected(true);
-      } catch (fetchError) {
-        if (!cancelled) {
-          setConnected(false);
-          setError(toErrorMessage(fetchError, 'Unable to load activity stream.'));
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
-
     void fetchActivities();
+  }, [enabled, fetchActivities, useMockData]);
 
-    intervalId = window.setInterval(() => {
-      void fetchActivities();
+  useEffect(() => {
+    if (!enabled || useMockData || wsConnected) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void fetchActivities(false);
     }, Math.max(1000, pollIntervalMs));
 
     return () => {
-      cancelled = true;
-      if (intervalId !== undefined) {
-        window.clearInterval(intervalId);
-      }
+      window.clearInterval(intervalId);
     };
-  }, [apiBase, enabled, maxEntries, pollIntervalMs, setActivities, useMockData]);
+  }, [enabled, fetchActivities, pollIntervalMs, useMockData, wsConnected]);
+
+  useEffect(() => {
+    if (!enabled || useMockData) {
+      wasWsConnectedRef.current = false;
+      return;
+    }
+
+    if (wsConnected && !wasWsConnectedRef.current) {
+      void fetchActivities(false);
+    }
+    wasWsConnectedRef.current = wsConnected;
+  }, [enabled, fetchActivities, useMockData, wsConnected]);
 
   useEffect(() => {
     if (!enabled || !useMockData) {
       return;
     }
 
-    setConnected(true);
     setLoading(false);
     setError(null);
     const [minDelay, maxDelay] = mockIntervalRangeMs;
@@ -479,7 +510,7 @@ export function useActivityStream({
 
   return {
     activities,
-    connected,
+    connected: useMockData ? true : wsConnected,
     loading,
     error,
     paused,
