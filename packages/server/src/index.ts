@@ -4980,7 +4980,6 @@ function registerDocumentRoutes(prefix: "" | "/api") {
       status: "ok",
       feature: "entity.agent_native_editor",
       storage: "sqlite",
-      openClawBaseUrl: OPENCLAW,
       routes: {
         health: "/api/documents/health",
         state: "/api/documents/:docId/state",
@@ -4999,7 +4998,6 @@ function registerDocumentRoutes(prefix: "" | "/api") {
       status: "ok",
       feature: "entity.agent_native_editor",
       storage: "sqlite",
-      openClawBaseUrl: OPENCLAW,
     });
   });
 

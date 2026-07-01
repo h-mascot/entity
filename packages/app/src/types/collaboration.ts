@@ -343,7 +343,6 @@ export interface DocumentApiIndexResponse {
   status: 'ok';
   feature: 'entity.agent_native_editor';
   storage: 'sqlite';
-  openClawBaseUrl: string;
   routes: DocumentRoutesResponse;
 }
 
@@ -351,5 +350,4 @@ export interface DocumentHealthResponse {
   status: 'ok';
   feature: 'entity.agent_native_editor';
   storage: 'sqlite';
-  openClawBaseUrl: string;
 }

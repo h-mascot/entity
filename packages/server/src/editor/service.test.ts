@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type {
+  FileSourceRecord,
+  FileSourceRepository,
+} from '../../../db/src/file-sources';
+import type {
   DocumentCollaborationRepository,
   DocumentCollaborationSnapshot,
   DocumentCommentRecord,
@@ -8,6 +12,38 @@ import type {
 } from '../../../db/src/document-collab';
 import { createEditorService } from './service';
 import type { EditorWsBroadcaster } from './ws';
+
+function makeSource(overrides: Partial<FileSourceRecord> = {}): FileSourceRecord {
+  const now = new Date().toISOString();
+  return {
+    id: 'workspace',
+    display_name: 'Workspace',
+    type: 'local',
+    base_url: null,
+    base_path: '/tmp',
+    auth_type: 'none',
+    auth_ref: null,
+    enabled: true,
+    icon: null,
+    capabilities: JSON.stringify({ read: true, write: true, list: true, search: true }),
+    health: 'ok',
+    last_synced_at: null,
+    created_at: now,
+    updated_at: now,
+    ...overrides,
+  };
+}
+
+function makeSourceRepository(source: FileSourceRecord): FileSourceRepository {
+  return {
+    listSources: () => [source],
+    getSource: () => source,
+    createSource: () => source,
+    updateSource: () => source,
+    setEnabled: () => source,
+    deleteSource: () => false,
+  };
+}
 
 function makeBroadcaster(): EditorWsBroadcaster & { comments: Array<{ docId: string; payload: Record<string, unknown> }> } {
   const comments: Array<{ docId: string; payload: Record<string, unknown> }> = [];
@@ -145,5 +181,27 @@ describe('createEditorService comment mention context', () => {
     expect(context.replies).toHaveLength(1);
     expect(context.replies[0].text).toBe('@assistant one more note');
     expect(context.documentReadError).toEqual(expect.any(String));
+  });
+
+  it('blocks source mutations when the file source is disabled', async () => {
+    const repository = makeRepository();
+    const service = createEditorService({
+      openClawBaseUrl: '',
+      broadcaster: makeBroadcaster(),
+      collaborationRepository: repository,
+      sourceRepository: makeSourceRepository(makeSource({ enabled: false })),
+      tokenRepository: {} as never,
+    });
+
+    await expect(
+      service.applyEdit('workspace:/docs/plan.md', 'Henry', {
+        from: 0,
+        to: 0,
+        insert: 'x',
+      })
+    ).rejects.toMatchObject({
+      code: 'SOURCE_DISABLED',
+      status: 403,
+    });
   });
 });

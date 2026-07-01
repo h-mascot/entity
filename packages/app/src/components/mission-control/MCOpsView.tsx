@@ -431,7 +431,7 @@ export default function MCOpsView({
     const decision = action === 'reject' ? 'rejected' : action === 'needs_fix' ? 'needs_fix' : 'accepted';
     const nextMeta = {
       ...existing,
-      review_type: (existing.review_type as string) || (existing.review_class as string) || 'manual',
+      review_type: (existing.review_type as string) || (existing.review_class as string) || 'peer',
       review_decision: decision,
       reviewed_by: reviewer,
       reviewed_at: new Date().toISOString(),

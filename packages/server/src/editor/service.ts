@@ -39,7 +39,6 @@ export interface EditorModuleHealth {
   status: 'ok';
   feature: 'entity.agent_native_editor';
   storage: 'sqlite';
-  openClawBaseUrl: string;
 }
 
 export interface DocumentContentRef {
@@ -937,6 +936,9 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
     if (!source) {
       throw new EditorServiceError('SOURCE_NOT_FOUND', 'Document source was not found.', 404);
     }
+    if (!source.enabled) {
+      throw new EditorServiceError('SOURCE_DISABLED', 'Document source is disabled.', 403);
+    }
 
     let capabilities = mergeCapabilities(DEFAULT_SOURCE_CAPABILITIES, parseSourceCapabilityPatch(source.capabilities));
     try {
@@ -1045,7 +1047,6 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       status: 'ok',
       feature: 'entity.agent_native_editor',
       storage: 'sqlite',
-      openClawBaseUrl,
     }),
     getDocumentState: (docId: string) => {
       const normalizedDocId = requireNonEmptyString(docId, 'docId');

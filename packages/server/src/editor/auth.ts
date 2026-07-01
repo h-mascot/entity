@@ -173,6 +173,15 @@ function resolveActorIdentity(
     return null;
   }
 
+  const tokenActor = normalizeActorId(token.actor);
+  if (!tokenActor || tokenActor !== headerActor) {
+    sendAuthError(res, 403, {
+      code: 'SERVICE_ACTOR_MISMATCH',
+      error: 'X-Entity-Actor must match the service token actor.',
+    });
+    return null;
+  }
+
   return {
     actorId: headerActor,
     tokenType: 'service',

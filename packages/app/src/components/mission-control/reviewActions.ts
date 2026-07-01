@@ -33,7 +33,7 @@ export interface BuildReviewMetadataOptions {
   reviewer: string;
   /** Substantive review note; only written when non-empty (server requires ≥20 chars to complete). */
   note?: string;
-  /** Fill `review_type` from the existing value or default to `manual` (used by the board completion flow). */
+  /** Fill `review_type` from the existing value or default to `peer` (used by the board completion flow). */
   ensureReviewType?: boolean;
 }
 
@@ -55,7 +55,7 @@ export function buildReviewDecisionMetadata(
   };
   if (ensureReviewType) {
     next.review_type =
-      readString(metadataRecord.review_type) || readString(metadataRecord.review_class) || 'manual';
+      readString(metadataRecord.review_type) || readString(metadataRecord.review_class) || 'peer';
   }
   const trimmedNote = note?.trim();
   if (trimmedNote) {

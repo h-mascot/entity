@@ -737,7 +737,6 @@ function mapDocumentHealthResponse(value: unknown): DocumentHealthResponse {
     status: toString(record.status, 'DocumentHealthResponse.status') as DocumentHealthResponse['status'],
     feature: toString(record.feature, 'DocumentHealthResponse.feature') as DocumentHealthResponse['feature'],
     storage: toString(record.storage, 'DocumentHealthResponse.storage') as DocumentHealthResponse['storage'],
-    openClawBaseUrl: toString(record.openClawBaseUrl, 'DocumentHealthResponse.openClawBaseUrl'),
   };
 }
 
@@ -747,7 +746,6 @@ function mapDocumentApiIndexResponse(value: unknown): DocumentApiIndexResponse {
     status: toString(record.status, 'DocumentApiIndexResponse.status') as DocumentApiIndexResponse['status'],
     feature: toString(record.feature, 'DocumentApiIndexResponse.feature') as DocumentApiIndexResponse['feature'],
     storage: toString(record.storage, 'DocumentApiIndexResponse.storage') as DocumentApiIndexResponse['storage'],
-    openClawBaseUrl: toString(record.openClawBaseUrl, 'DocumentApiIndexResponse.openClawBaseUrl'),
     routes: mapDocumentRoutesResponse(record.routes),
   };
 }

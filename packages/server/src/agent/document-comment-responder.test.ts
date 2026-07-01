@@ -235,6 +235,7 @@ describe('createDocumentCommentMentionResponder', () => {
     expect(replies).toHaveLength(1);
     expect(replies[0].text).toContain('request failed');
     expect(replies[0].text).not.toContain('private.example.test');
-    expect(errors[0]).toBe('Provider response failed for openai-compatible/azure-deployment.');
+    expect(replies[0].text).not.toContain('azure-deployment');
+    expect(errors[0]).toBe('Provider response failed for a configured document comment model.');
   });
 });

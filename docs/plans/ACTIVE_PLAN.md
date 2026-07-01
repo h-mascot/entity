@@ -50,6 +50,7 @@ The current branch has a verified working Doc Hub document-comment @agent workfl
 | 01:19 | Step 4 | ✅ | Full server gate and root build passed |
 | 01:29 | Step 4 | ✅ | Fixed autoreview/thermo findings; targeted tests, full server gate, and root build passed |
 | 01:40 | Step 4 | ✅ | Fixed second review auth/sanitization/default findings; targeted tests, full server gate, and root build passed |
+| 01:51 | Step 4 | ✅ | Fixed final thermo findings for disabled sources, service actor binding, runtime URL exposure, and supported review fallback |
 
 ## Files Touched
 
@@ -66,9 +67,12 @@ The current branch has a verified working Doc Hub document-comment @agent workfl
 - `packages/server/src/editor/auth.ts` — modified — aligns default known service actors with UI hints
 - `packages/server/src/editor/auth.test.ts` — modified — covers default UI service actors
 - `packages/app/src/components/mission-control/useReviewCompletion.ts` — modified — removes private reviewer fallback
-- `packages/app/src/components/mission-control/reviewActions.ts` — modified — uses generic manual review type fallback
+- `packages/app/src/components/mission-control/reviewActions.ts` — modified — uses supported peer review type fallback
 - `packages/app/src/components/mission-control/TaskCard.tsx` — modified — uses generic required-reviewer display label
 - `packages/app/src/components/mission-control/MCOpsView.tsx` — modified — removes private reviewer/type fallbacks
+- `packages/app/src/types/collaboration.ts` — modified — removes runtime URL from document health/index response types
+- `packages/app/src/lib/documents-client.ts` — modified — stops parsing runtime URL from document health/index responses
+- `packages/server/src/index.ts` — modified — removes runtime URL from legacy document health/index responses
 
 ## Resume Instructions
 

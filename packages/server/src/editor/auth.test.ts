@@ -9,13 +9,13 @@ function hashToken(rawToken: string): string {
   return createHash('sha256').update(rawToken, 'utf8').digest('hex');
 }
 
-function makeToken(rawToken: string, scopes: string[]): AgentTokenRecord {
+function makeToken(rawToken: string, scopes: string[], actor = 'henry'): AgentTokenRecord {
   const now = new Date().toISOString();
   return {
     id: 'token-1',
     token_hash: hashToken(rawToken),
     token_type: 'service',
-    actor: 'henry',
+    actor,
     scopes,
     enabled: true,
     created_at: now,
@@ -118,11 +118,11 @@ describe('createEditorRouteAuth', () => {
   });
 
   it('accepts default UI service actors without extra env flags', async () => {
-    await withDefaultKnownActorServer(makeToken('valid-token', ['documents:read']), async (baseUrl) => {
-      for (const actor of ['ada', 'spock', 'scotty']) {
+    for (const actor of ['ada', 'spock', 'scotty']) {
+      await withDefaultKnownActorServer(makeToken(`valid-token-${actor}`, ['documents:read'], actor), async (baseUrl) => {
         const response = await fetch(`${baseUrl}/protected`, {
           headers: {
-            Authorization: 'Bearer valid-token',
+            Authorization: `Bearer valid-token-${actor}`,
             'X-Entity-Actor': actor,
           },
         });
@@ -132,7 +132,23 @@ describe('createEditorRouteAuth', () => {
           actorId: actor,
           tokenType: 'service',
         });
-      }
+      });
+    }
+  });
+
+  it('rejects service-token actor impersonation', async () => {
+    await withDefaultKnownActorServer(makeToken('valid-token', ['documents:read'], 'ada'), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/protected`, {
+        headers: {
+          Authorization: 'Bearer valid-token',
+          'X-Entity-Actor': 'spock',
+        },
+      });
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        code: 'SERVICE_ACTOR_MISMATCH',
+      });
     });
   });
 });

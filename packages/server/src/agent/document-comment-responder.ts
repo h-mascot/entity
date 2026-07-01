@@ -1,7 +1,7 @@
 import { generateText } from 'ai';
 import type { AgentRegistryRecord } from '../../../db/src';
 import type { DocumentCommentReplyRecord } from '../../../db/src/document-collab';
-import { getTaskAgentLanguageModel, getTaskAgentSettings } from './settings';
+import { getTaskAgentLanguageModel } from './settings';
 import { resolveMentionedAgents, type CommentResponderAgent } from './comment-responder';
 
 export interface DocumentCommentMentionTrigger {
@@ -118,7 +118,6 @@ export function createDocumentCommentMentionResponder(deps: DocumentCommentMenti
         return;
       }
 
-      const settings = deps.getSettings ? deps.getSettings() : getTaskAgentSettings();
       const model = deps.getLanguageModel ? deps.getLanguageModel() : getTaskAgentLanguageModel();
       const context = await deps.getContext(trigger.docId, trigger.commentId);
       const runGenerateText = deps.generateText ?? generateText;
@@ -134,8 +133,8 @@ export function createDocumentCommentMentionResponder(deps: DocumentCommentMenti
             });
             replyText = result.text.trim() || noModelDocumentReply(agent, context);
           } catch {
-            deps.onError?.(`Provider response failed for ${settings.provider}/${settings.model}.`);
-            replyText = `Hi - I'm ${agent.name}. I tried to respond using the configured ${settings.provider}/${settings.model} model, but the request failed. Please check the provider configuration in Admin -> Task Master.`;
+            deps.onError?.('Provider response failed for a configured document comment model.');
+            replyText = `Hi - I'm ${agent.name}. I tried to respond using the configured document comment model, but the request failed. Please check the provider configuration in Admin -> Task Master.`;
           }
         } else {
           replyText = noModelDocumentReply(agent, context);
