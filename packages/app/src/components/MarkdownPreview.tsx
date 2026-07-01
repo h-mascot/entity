@@ -71,8 +71,8 @@ const SHARED_PROSE_CLASSES = `prose-headings:text-[var(--text-primary)]
       prose-blockquote:border-[var(--border-secondary)] prose-blockquote:bg-[var(--bg-tertiary)] prose-blockquote:rounded-r-lg
       prose-li:text-[var(--text-secondary)]
       prose-table:border-collapse
-      prose-th:bg-[var(--bg-secondary)] prose-th:p-2 prose-th:border prose-th:border-[var(--border-primary)]
-      prose-td:p-2 prose-td:border prose-td:border-[var(--border-primary)]
+      prose-th:bg-[var(--bg-secondary)] prose-th:text-[var(--text-primary)] prose-th:p-2 prose-th:border prose-th:border-[var(--border-primary)]
+      prose-td:text-[var(--text-secondary)] prose-td:p-2 prose-td:border prose-td:border-[var(--border-primary)]
       prose-img:rounded-lg
       prose-hr:border-[var(--border-primary)]`;
 
