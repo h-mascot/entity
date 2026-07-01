@@ -429,6 +429,9 @@ registerAgentRegistryRoutes(app, {
 
 
 const taskRouteDeps = {
+  registerCrewRoutes, createCrew, getCrews,
+  getSubscribersForCrew, getSubscriptionsForAgent,
+  subscribeToCrew, unsubscribeFromCrew,
   activityEventService, activityRepository, addTaskProject,
   buildMergeAuditNote, buildOwnerAccountabilityInbox,
   buildTaskMutationActivityEvent, buildTaskPaginationMeta, buildTaskProjectLabel,
