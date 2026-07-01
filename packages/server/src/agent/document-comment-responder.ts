@@ -9,6 +9,7 @@ export interface DocumentCommentMentionTrigger {
   commentId: string;
   actorId: string;
   body: string;
+  replyId?: string | null;
 }
 
 export interface DocumentCommentMentionContext {
@@ -54,9 +55,12 @@ function clampText(value: string | null | undefined, max: number): string {
   return trimmed.length > max ? `${trimmed.slice(0, max)}...` : trimmed;
 }
 
-function formatThread(context: DocumentCommentMentionContext): string {
+function formatThread(context: DocumentCommentMentionContext, excludedReplyId: string | null = null): string {
   const lines = [`- ${context.commentAuthor}: ${clampText(context.commentText, 800)}`];
-  for (const reply of context.replies.slice(-10)) {
+  const replies = excludedReplyId
+    ? context.replies.filter((reply) => reply.id !== excludedReplyId)
+    : context.replies;
+  for (const reply of replies.slice(-10)) {
     lines.push(`  - ${reply.author}: ${clampText(reply.text, 500)}`);
   }
   return lines.join('\n');
@@ -90,7 +94,7 @@ export function buildDocumentMentionPrompt(
     selectedText ? `- Selected text: ${selectedText}` : '- Selected text: unavailable',
     '',
     '## Comment thread',
-    formatThread(context),
+    formatThread(context, trigger.replyId ?? null),
     '',
     '## The message mentioning you',
     `${trigger.actorId}: ${clampText(trigger.body, 1000)}`,
@@ -131,7 +135,8 @@ export function createDocumentCommentMentionResponder(deps: DocumentCommentMenti
             replyText = result.text.trim() || noModelDocumentReply(agent, context);
           } catch (error) {
             const message = error instanceof Error ? error.message : 'unknown error';
-            replyText = `Hi - I'm ${agent.name}. I tried to respond using ${settings.provider}/${settings.model} but the request failed (${message}). Please check the provider configuration in Admin -> Task Master.`;
+            deps.onError?.(`Provider response failed for ${settings.provider}/${settings.model}: ${message}`);
+            replyText = `Hi - I'm ${agent.name}. I tried to respond using the configured ${settings.provider}/${settings.model} model, but the request failed. Please check the provider configuration in Admin -> Task Master.`;
           }
         } else {
           replyText = noModelDocumentReply(agent, context);

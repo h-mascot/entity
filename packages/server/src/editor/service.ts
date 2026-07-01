@@ -126,6 +126,7 @@ export interface DocumentCommentsResponse {
   threads: DocumentCommentThread[];
   createdThreadId?: string;
   repliedThreadId?: string;
+  createdReplyId?: string;
 }
 
 export interface DocumentCommentCreateInput {
@@ -1150,7 +1151,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       }
 
       const text = requireNonEmptyString(input.text, 'text');
-      collaboration.createCommentReply({
+      const reply = collaboration.createCommentReply({
         doc_id: normalizedDocId,
         comment_id: normalizedCommentId,
         author: normalizedActorId,
@@ -1163,7 +1164,12 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
         action: 'replied',
         commentId: normalizedCommentId,
       });
-      return { docId: normalizedDocId, threads: mapCommentThreads(snapshot), repliedThreadId: normalizedCommentId };
+      return {
+        docId: normalizedDocId,
+        threads: mapCommentThreads(snapshot),
+        repliedThreadId: normalizedCommentId,
+        createdReplyId: reply.id,
+      };
     },
     resolveComment: (docId: string, actorId: string, commentId: string, input: DocumentCommentResolveInput) => {
       const normalizedDocId = requireNonEmptyString(docId, 'docId');

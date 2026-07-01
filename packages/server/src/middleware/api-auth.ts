@@ -81,6 +81,7 @@ const PUBLIC_EXACT_ROUTES: readonly string[] = [
 /** Routes where the prefix and all sub-paths are public. */
 const PUBLIC_PREFIX_ROUTES: readonly string[] = [
   "/api/clickclack",      // has its own auth for SPA cookie requests
+  "/api/documents",       // editor routes enforce their own document token/scopes
 ];
 
 /** Routes matched by pattern because they self-authenticate via a path token. */

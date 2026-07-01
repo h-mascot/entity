@@ -130,6 +130,7 @@ describe('createEditorService comment mention context', () => {
       text: '@assistant one more note',
     });
     expect(replied.repliedThreadId).toBe(commentId);
+    expect(replied.createdReplyId).toBe('reply-1');
 
     const context = await service.getCommentMentionContext('workspace:/docs/plan.md', commentId);
     expect(context).toMatchObject({

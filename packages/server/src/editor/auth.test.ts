@@ -61,6 +61,28 @@ async function withAuthServer<T>(token: AgentTokenRecord, fn: (baseUrl: string) 
   }
 }
 
+async function withDefaultKnownActorServer<T>(token: AgentTokenRecord, fn: (baseUrl: string) => Promise<T>): Promise<T> {
+  const app = express();
+  const auth = createEditorRouteAuth({
+    tokenRepository: makeTokenRepository(token),
+  });
+  app.get('/protected', auth.requireScopes(['documents:read']), (req, res) => {
+    res.json(auth.getActorIdentity(req));
+  });
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('test server failed to bind');
+    }
+    return await fn(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
+}
+
 describe('createEditorRouteAuth', () => {
   it('accepts valid service bearer tokens and X-Entity-Actor context', async () => {
     await withAuthServer(makeToken('valid-token', ['documents:read']), async (baseUrl) => {
@@ -92,6 +114,25 @@ describe('createEditorRouteAuth', () => {
       await expect(response.json()).resolves.toMatchObject({
         code: 'AUTH_TOKEN_REQUIRED',
       });
+    });
+  });
+
+  it('accepts default UI service actors without extra env flags', async () => {
+    await withDefaultKnownActorServer(makeToken('valid-token', ['documents:read']), async (baseUrl) => {
+      for (const actor of ['ada', 'spock', 'scotty']) {
+        const response = await fetch(`${baseUrl}/protected`, {
+          headers: {
+            Authorization: 'Bearer valid-token',
+            'X-Entity-Actor': actor,
+          },
+        });
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+          actorId: actor,
+          tokenType: 'service',
+        });
+      }
     });
   });
 });

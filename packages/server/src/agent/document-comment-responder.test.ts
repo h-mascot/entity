@@ -95,6 +95,30 @@ describe('buildDocumentMentionPrompt', () => {
     expect(prompt).toContain('Earlier human context.');
     expect(prompt).toContain('nearby paragraph');
   });
+
+  it('excludes the triggering reply from prior thread history', () => {
+    const context = makeContext({
+      replies: [
+        makeReply({ id: 'older-reply', text: 'Older thread context.' }),
+        makeReply({ id: 'trigger-reply', text: '@assistant please answer this reply' }),
+      ],
+    });
+
+    const prompt = buildDocumentMentionPrompt(
+      { id: 'assistant', slug: 'assistant', name: 'Assistant' },
+      context,
+      {
+        docId: context.docId,
+        commentId: 'comment-1',
+        actorId: 'Henry',
+        body: '@assistant please answer this reply',
+        replyId: 'trigger-reply',
+      },
+    );
+
+    expect(prompt).toContain('Older thread context.');
+    expect(prompt.match(/@assistant please answer this reply/g)).toHaveLength(1);
+  });
 });
 
 describe('createDocumentCommentMentionResponder', () => {
@@ -175,5 +199,42 @@ describe('createDocumentCommentMentionResponder', () => {
     });
 
     expect(createReply).not.toHaveBeenCalled();
+  });
+
+  it('persists a sanitized provider failure reply and reports details to the error hook', async () => {
+    const context = makeContext();
+    const replies: DocumentCommentReplyRecord[] = [];
+    const errors: string[] = [];
+    const responder = createDocumentCommentMentionResponder({
+      listAgents: () => [makeAgent()],
+      getContext: async () => context,
+      getLanguageModel: () => ({ provider: 'test' }),
+      getSettings: () => ({ provider: 'openai-compatible', model: 'azure-deployment' }),
+      generateText: async () => {
+        throw new Error('https://private.example.test deployment secret diagnostic');
+      },
+      onError: (message) => errors.push(message),
+      createReply: (input) => {
+        const reply = makeReply({
+          id: 'reply-provider-error',
+          author: input.author,
+          text: input.text,
+        });
+        replies.push(reply);
+        return reply;
+      },
+    });
+
+    await responder({
+      docId: context.docId,
+      commentId: 'comment-1',
+      actorId: 'Henry',
+      body: '@assistant please check this claim',
+    });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0].text).toContain('request failed');
+    expect(replies[0].text).not.toContain('private.example.test');
+    expect(errors[0]).toContain('private.example.test');
   });
 });

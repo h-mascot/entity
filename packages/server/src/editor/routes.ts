@@ -351,6 +351,7 @@ export function registerEditorRoutes(router: Router, options: RegisterEditorRout
             commentId: result.repliedThreadId,
             actorId,
             body: input.text,
+            replyId: result.createdReplyId ?? null,
           });
         }
       } catch (error) {

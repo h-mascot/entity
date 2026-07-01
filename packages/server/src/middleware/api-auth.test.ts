@@ -100,6 +100,18 @@ describe("createApiAuthMiddleware", () => {
     expect(status).not.toHaveBeenCalled();
   });
 
+  it("exempts Documents API routes so editor auth can validate document tokens", () => {
+    const mw = createApiAuthMiddleware();
+    const req = makeReq("/api/documents/workspace%3A%2Fdoc.md/comments");
+    const { res, status } = makeRes();
+    const next = vi.fn();
+
+    mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(status).not.toHaveBeenCalled();
+  });
+
   it("does not treat static asset paths like /agent-avatars as protected", () => {
     const mw = createApiAuthMiddleware();
     const req = makeReq("/agent-avatars/ada.jpg");
