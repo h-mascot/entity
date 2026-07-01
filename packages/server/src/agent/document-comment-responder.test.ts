@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentRegistryRecord } from '../../../db/src';
-import type { DocumentCommentRecord, DocumentCommentReplyRecord } from '../../../db/src/document-collab';
+import type { DocumentCommentReplyRecord } from '../../../db/src/document-collab';
 import {
   buildDocumentMentionPrompt,
   createDocumentCommentMentionResponder,
-  type DocumentMentionContext,
+  type DocumentCommentMentionContext,
 } from './document-comment-responder';
 
 vi.mock('ai', () => ({
@@ -40,19 +40,19 @@ function makeAgent(overrides: Partial<AgentRegistryRecord> = {}): AgentRegistryR
   };
 }
 
-function makeComment(overrides: Partial<DocumentCommentRecord> = {}): DocumentCommentRecord {
-  const now = new Date().toISOString();
+function makeContext(overrides: Partial<DocumentCommentMentionContext> = {}): DocumentCommentMentionContext {
   return {
-    id: 'comment-1',
-    doc_id: 'workspace:/docs/plan.md',
-    author: 'Henry',
-    start_offset: 6,
-    end_offset: 18,
-    selected_text: 'agent review',
-    text: '@assistant please check this claim',
-    resolved: false,
-    created_at: now,
-    updated_at: now,
+    docId: 'workspace:/docs/plan.md',
+    sourceId: 'workspace',
+    path: '/docs/plan.md',
+    range: { from: 6, to: 18 },
+    selectedText: 'agent review',
+    commentAuthor: 'Henry',
+    commentText: '@assistant please check this claim',
+    replies: [],
+    documentExcerpt: 'Intro agent review should cite this nearby paragraph and conclusion.',
+    documentExcerptRange: { from: 0, to: 68 },
+    documentReadError: null,
     ...overrides,
   };
 }
@@ -73,24 +73,24 @@ function makeReply(overrides: Partial<DocumentCommentReplyRecord> = {}): Documen
 
 describe('buildDocumentMentionPrompt', () => {
   it('includes selected text, thread, and nearby document context', () => {
-    const comment = makeComment();
-    const context: DocumentMentionContext = {
-      docId: comment.doc_id,
-      sourceId: 'workspace',
-      path: '/docs/plan.md',
-      content: 'Intro agent review should cite this nearby paragraph and conclusion.',
-    };
+    const context = makeContext({
+      replies: [makeReply({ id: 'reply-old', text: 'Earlier human context.' })],
+    });
 
     const prompt = buildDocumentMentionPrompt(
       { id: 'assistant', slug: 'assistant', name: 'Assistant' },
-      { kind: 'comment', docId: comment.doc_id, comment },
       context,
-      [makeReply({ id: 'reply-old', text: 'Earlier human context.' })],
+      {
+        docId: context.docId,
+        commentId: 'comment-1',
+        actorId: 'Henry',
+        body: '@assistant please check this claim',
+      },
     );
 
     expect(prompt).toContain('You are Assistant');
     expect(prompt).toContain('Selected text: agent review');
-    expect(prompt).toContain('Path: /docs/plan.md');
+    expect(prompt).toContain('Source/path: workspace:/docs/plan.md');
     expect(prompt).toContain('Henry: @assistant please check this claim');
     expect(prompt).toContain('Earlier human context.');
     expect(prompt).toContain('nearby paragraph');
@@ -99,18 +99,11 @@ describe('buildDocumentMentionPrompt', () => {
 
 describe('createDocumentCommentMentionResponder', () => {
   it('creates a same-thread fallback reply when a document comment mentions an active agent', async () => {
-    const comment = makeComment();
+    const context = makeContext();
     const replies: DocumentCommentReplyRecord[] = [];
-    const broadcasts: Array<{ docId: string; commentId: string; reply: DocumentCommentReplyRecord }> = [];
     const responder = createDocumentCommentMentionResponder({
       listAgents: () => [makeAgent()],
-      readDocumentContext: async () => ({
-        docId: comment.doc_id,
-        sourceId: 'workspace',
-        path: '/docs/plan.md',
-        content: 'Intro agent review should cite this paragraph.',
-      }),
-      listThreadReplies: () => replies,
+      getContext: async () => context,
       createReply: (input) => {
         const reply = makeReply({
           id: `reply-${replies.length + 1}`,
@@ -122,31 +115,27 @@ describe('createDocumentCommentMentionResponder', () => {
         replies.push(reply);
         return reply;
       },
-      broadcastReply: (docId, commentId, reply) => broadcasts.push({ docId, commentId, reply }),
     });
 
-    await responder({ kind: 'comment', docId: comment.doc_id, comment });
+    await responder({
+      docId: context.docId,
+      commentId: 'comment-1',
+      actorId: 'Henry',
+      body: '@assistant please check this claim',
+    });
 
     expect(replies).toHaveLength(1);
     expect(replies[0].author).toBe('Assistant');
-    expect(replies[0].comment_id).toBe(comment.id);
+    expect(replies[0].comment_id).toBe('comment-1');
     expect(replies[0].text).toContain('selected text: "agent review"');
-    expect(broadcasts).toEqual([{ docId: comment.doc_id, commentId: comment.id, reply: replies[0] }]);
   });
 
   it('responds to @mentions in later thread replies without reusing the triggering reply as history', async () => {
-    const comment = makeComment({ text: 'Initial comment without a mention.' });
-    const triggerReply = makeReply();
-    const replies = [triggerReply];
+    const context = makeContext({ commentText: 'Initial comment without a mention.' });
+    const replies: DocumentCommentReplyRecord[] = [];
     const responder = createDocumentCommentMentionResponder({
       listAgents: () => [makeAgent()],
-      readDocumentContext: async () => ({
-        docId: comment.doc_id,
-        sourceId: 'workspace',
-        path: '/docs/plan.md',
-        content: 'Context for a thread reply mention.',
-      }),
-      listThreadReplies: () => replies,
+      getContext: async () => context,
       createReply: (input) => {
         const reply = makeReply({
           id: 'reply-agent',
@@ -158,28 +147,32 @@ describe('createDocumentCommentMentionResponder', () => {
       },
     });
 
-    await responder({ kind: 'reply', docId: comment.doc_id, comment, reply: triggerReply });
+    await responder({
+      docId: context.docId,
+      commentId: 'comment-1',
+      actorId: 'Henry',
+      body: '@assistant can you respond here too?',
+    });
 
-    expect(replies).toHaveLength(2);
-    expect(replies[1].author).toBe('Assistant');
+    expect(replies).toHaveLength(1);
+    expect(replies[0].author).toBe('Assistant');
   });
 
   it('does nothing for unknown or inactive mentions', async () => {
-    const comment = makeComment({ text: '@ghost please help' });
+    const context = makeContext({ commentText: '@ghost please help' });
     const createReply = vi.fn();
     const responder = createDocumentCommentMentionResponder({
       listAgents: () => [makeAgent({ status: 'disabled' })],
-      readDocumentContext: async () => ({
-        docId: comment.doc_id,
-        sourceId: null,
-        path: null,
-        content: '',
-      }),
-      listThreadReplies: () => [],
+      getContext: async () => context,
       createReply,
     });
 
-    await responder({ kind: 'comment', docId: comment.doc_id, comment });
+    await responder({
+      docId: context.docId,
+      commentId: 'comment-1',
+      actorId: 'Henry',
+      body: '@ghost please help',
+    });
 
     expect(createReply).not.toHaveBeenCalled();
   });

@@ -106,9 +106,8 @@ function makeRepository(): DocumentCollaborationRepository {
   };
 }
 
-describe('createEditorService comment mentions', () => {
-  it('invokes the document mention responder for new comments and thread replies', () => {
-    const triggers: string[] = [];
+describe('createEditorService comment mention context', () => {
+  it('returns trigger ids and builds thread context for route-level responders', async () => {
     const repository = makeRepository();
     const service = createEditorService({
       openClawBaseUrl: '',
@@ -116,9 +115,6 @@ describe('createEditorService comment mentions', () => {
       collaborationRepository: repository,
       sourceRepository: {} as never,
       tokenRepository: {} as never,
-      documentCommentMentionResponder: (trigger) => {
-        triggers.push(trigger.kind);
-      },
     });
 
     const created = service.createComment('workspace:/docs/plan.md', 'Henry', {
@@ -128,11 +124,25 @@ describe('createEditorService comment mentions', () => {
       selectedText: 'Intro',
     });
     const commentId = created.threads[0].id;
+    expect(created.createdThreadId).toBe(commentId);
 
-    service.replyToComment('workspace:/docs/plan.md', 'Henry', commentId, {
+    const replied = service.replyToComment('workspace:/docs/plan.md', 'Henry', commentId, {
       text: '@assistant one more note',
     });
+    expect(replied.repliedThreadId).toBe(commentId);
 
-    expect(triggers).toEqual(['comment', 'reply']);
+    const context = await service.getCommentMentionContext('workspace:/docs/plan.md', commentId);
+    expect(context).toMatchObject({
+      docId: 'workspace:/docs/plan.md',
+      sourceId: 'workspace',
+      path: '/docs/plan.md',
+      range: { from: 0, to: 5 },
+      selectedText: 'Intro',
+      commentAuthor: 'Henry',
+      commentText: '@assistant look here',
+    });
+    expect(context.replies).toHaveLength(1);
+    expect(context.replies[0].text).toBe('@assistant one more note');
+    expect(context.documentReadError).toEqual(expect.any(String));
   });
 });

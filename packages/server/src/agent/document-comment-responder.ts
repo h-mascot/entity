@@ -1,28 +1,35 @@
 import { generateText } from 'ai';
 import type { AgentRegistryRecord } from '../../../db/src';
-import type { DocumentCommentRecord, DocumentCommentReplyRecord } from '../../../db/src/document-collab';
+import type { DocumentCommentReplyRecord } from '../../../db/src/document-collab';
 import { getTaskAgentLanguageModel, getTaskAgentSettings } from './settings';
 import { resolveMentionedAgents, type CommentResponderAgent } from './comment-responder';
 
-export interface DocumentMentionContext {
+export interface DocumentCommentMentionTrigger {
+  docId: string;
+  commentId: string;
+  actorId: string;
+  body: string;
+}
+
+export interface DocumentCommentMentionContext {
   docId: string;
   sourceId: string | null;
   path: string | null;
-  content: string;
+  range: {
+    from: number;
+    to: number;
+  };
+  selectedText: string | null;
+  commentAuthor: string;
+  commentText: string;
+  replies: DocumentCommentReplyRecord[];
+  documentExcerpt: string | null;
+  documentExcerptRange: {
+    from: number;
+    to: number;
+  } | null;
+  documentReadError: string | null;
 }
-
-export type DocumentCommentMentionTrigger =
-  | {
-      kind: 'comment';
-      docId: string;
-      comment: DocumentCommentRecord;
-    }
-  | {
-      kind: 'reply';
-      docId: string;
-      comment: DocumentCommentRecord;
-      reply: DocumentCommentReplyRecord;
-    };
 
 export interface DocumentCommentReplyInput {
   docId: string;
@@ -33,10 +40,12 @@ export interface DocumentCommentReplyInput {
 
 export interface DocumentCommentMentionResponderDeps {
   listAgents: () => AgentRegistryRecord[];
-  readDocumentContext: (docId: string, comment: DocumentCommentRecord) => Promise<DocumentMentionContext>;
-  listThreadReplies: (docId: string, commentId: string) => DocumentCommentReplyRecord[];
-  createReply: (input: DocumentCommentReplyInput) => DocumentCommentReplyRecord;
-  broadcastReply?: (docId: string, commentId: string, reply: DocumentCommentReplyRecord) => void;
+  getContext: (docId: string, commentId: string) => Promise<DocumentCommentMentionContext> | DocumentCommentMentionContext;
+  createReply: (input: DocumentCommentReplyInput) => Promise<unknown> | unknown;
+  getLanguageModel?: () => unknown | null;
+  generateText?: typeof generateText;
+  getSettings?: () => { provider: string; model: string };
+  onError?: (message: string) => void;
 }
 
 function clampText(value: string | null | undefined, max: number): string {
@@ -45,71 +54,51 @@ function clampText(value: string | null | undefined, max: number): string {
   return trimmed.length > max ? `${trimmed.slice(0, max)}...` : trimmed;
 }
 
-function triggerText(trigger: DocumentCommentMentionTrigger): string {
-  return trigger.kind === 'reply' ? trigger.reply.text : trigger.comment.text;
-}
-
-function triggerAuthor(trigger: DocumentCommentMentionTrigger): string {
-  return trigger.kind === 'reply' ? trigger.reply.author : trigger.comment.author;
-}
-
-function excerptAroundAnchor(content: string, comment: DocumentCommentRecord, radius = 900): string {
-  if (!content) {
-    return '';
+function formatThread(context: DocumentCommentMentionContext): string {
+  const lines = [`- ${context.commentAuthor}: ${clampText(context.commentText, 800)}`];
+  for (const reply of context.replies.slice(-10)) {
+    lines.push(`  - ${reply.author}: ${clampText(reply.text, 500)}`);
   }
-
-  const start = Math.max(0, Math.min(comment.start_offset, content.length));
-  const end = Math.max(start, Math.min(comment.end_offset, content.length));
-  const excerptStart = Math.max(0, start - radius);
-  const excerptEnd = Math.min(content.length, end + radius);
-  const prefix = excerptStart > 0 ? '...' : '';
-  const suffix = excerptEnd < content.length ? '...' : '';
-  return `${prefix}${content.slice(excerptStart, excerptEnd)}${suffix}`;
+  return lines.join('\n');
 }
 
-function noModelDocumentReply(agent: CommentResponderAgent, trigger: DocumentCommentMentionTrigger): string {
-  const selected = clampText(trigger.comment.selected_text, 160);
+function noModelDocumentReply(agent: CommentResponderAgent, context: DocumentCommentMentionContext): string {
+  const selected = clampText(context.selectedText, 160);
   const selectedNote = selected ? ` I can see the selected text: "${selected}".` : '';
   return `Hi - I'm ${agent.name}. I received your document comment.${selectedNote} I don't have a language model configured yet, so I can't draft a contextual response. Configure a provider/model in Admin -> Task Master and mention me again for a full reply.`;
 }
 
 export function buildDocumentMentionPrompt(
   agent: CommentResponderAgent,
+  context: DocumentCommentMentionContext,
   trigger: DocumentCommentMentionTrigger,
-  context: DocumentMentionContext,
-  threadReplies: DocumentCommentReplyRecord[],
 ): string {
-  const selectedText = clampText(trigger.comment.selected_text, 1000);
-  const anchoredContext = clampText(excerptAroundAnchor(context.content, trigger.comment), 2500);
-  const fullDocumentExcerpt = clampText(context.content, 3500);
-  const recentReplies = threadReplies
-    .filter((reply) => trigger.kind !== 'reply' || reply.id !== trigger.reply.id)
-    .slice(-8)
-    .map((reply) => `- ${reply.author}: ${clampText(reply.text, 500)}`)
-    .join('\n');
+  const selectedText = clampText(context.selectedText, 1000);
+  const sourceLabel = context.sourceId ? `${context.sourceId}:${context.path ?? ''}` : context.path ?? context.docId;
+  const excerptLabel = context.documentExcerptRange
+    ? `characters ${context.documentExcerptRange.from}-${context.documentExcerptRange.to}`
+    : 'unavailable';
 
   const lines = [
     `You are ${agent.name}, an agent in Entity Doc Hub. You were @mentioned in an anchored document comment thread.`,
-    'Answer using the selected text, the nearby document context, and the visible thread. Do not claim access to context that is marked unavailable.',
+    'Answer using the selected text, the nearby document context, and the visible thread. Do not claim that you edited or saved the document unless an explicit edit operation happened.',
     '',
     '## Document',
     `- Doc ID: ${context.docId}`,
-    context.sourceId ? `- Source: ${context.sourceId}` : '',
-    context.path ? `- Path: ${context.path}` : '',
-    `- Anchor offsets: ${trigger.comment.start_offset}-${trigger.comment.end_offset}`,
+    `- Source/path: ${sourceLabel}`,
+    `- Anchor offsets: ${context.range.from}-${context.range.to}`,
     selectedText ? `- Selected text: ${selectedText}` : '- Selected text: unavailable',
     '',
-    '## Root comment',
-    `${trigger.comment.author}: ${clampText(trigger.comment.text, 1000)}`,
-    '',
-    recentReplies ? `## Existing thread replies\n${recentReplies}` : '',
+    '## Comment thread',
+    formatThread(context),
     '',
     '## The message mentioning you',
-    `${triggerAuthor(trigger)}: ${clampText(triggerText(trigger), 1000)}`,
+    `${trigger.actorId}: ${clampText(trigger.body, 1000)}`,
     '',
-    anchoredContext ? `## Nearby document context\n${anchoredContext}` : '## Nearby document context\nUnavailable.',
-    '',
-    fullDocumentExcerpt ? `## Document excerpt\n${fullDocumentExcerpt}` : '',
+    '## Nearby document context',
+    context.documentExcerpt
+      ? `Excerpt (${excerptLabel}):\n${clampText(context.documentExcerpt, 3000)}`
+      : `Unavailable${context.documentReadError ? `: ${context.documentReadError}` : ''}.`,
     '',
     'Reply as plain text. Keep it under ~140 words and make the answer specific to the selected text.',
   ];
@@ -120,55 +109,48 @@ export function buildDocumentMentionPrompt(
 export function createDocumentCommentMentionResponder(deps: DocumentCommentMentionResponderDeps) {
   return async function handleDocumentCommentMention(trigger: DocumentCommentMentionTrigger): Promise<void> {
     try {
-      const agents = resolveMentionedAgents(triggerText(trigger), deps.listAgents());
+      const agents = resolveMentionedAgents(trigger.body, deps.listAgents());
       if (agents.length === 0) {
         return;
       }
 
-      const settings = getTaskAgentSettings();
-      const model = getTaskAgentLanguageModel();
-      let context: DocumentMentionContext;
-      try {
-        context = await deps.readDocumentContext(trigger.docId, trigger.comment);
-      } catch {
-        context = {
-          docId: trigger.docId,
-          sourceId: null,
-          path: null,
-          content: '',
-        };
-      }
-      const threadReplies = deps.listThreadReplies(trigger.docId, trigger.comment.id);
+      const settings = deps.getSettings ? deps.getSettings() : getTaskAgentSettings();
+      const model = deps.getLanguageModel ? deps.getLanguageModel() : getTaskAgentLanguageModel();
+      const context = await deps.getContext(trigger.docId, trigger.commentId);
+      const runGenerateText = deps.generateText ?? generateText;
 
       for (const agent of agents) {
         let replyText: string;
         if (model) {
           try {
-            const result = await generateText({
-              model,
-              prompt: buildDocumentMentionPrompt(agent, trigger, context, threadReplies),
+            const result = await runGenerateText({
+              model: model as Parameters<typeof generateText>[0]['model'],
+              prompt: buildDocumentMentionPrompt(agent, context, trigger),
               temperature: 0.3,
             });
-            replyText = result.text.trim() || noModelDocumentReply(agent, trigger);
+            replyText = result.text.trim() || noModelDocumentReply(agent, context);
           } catch (error) {
             const message = error instanceof Error ? error.message : 'unknown error';
             replyText = `Hi - I'm ${agent.name}. I tried to respond using ${settings.provider}/${settings.model} but the request failed (${message}). Please check the provider configuration in Admin -> Task Master.`;
           }
         } else {
-          replyText = noModelDocumentReply(agent, trigger);
+          replyText = noModelDocumentReply(agent, context);
         }
 
-        const reply = deps.createReply({
+        await deps.createReply({
           docId: trigger.docId,
-          commentId: trigger.comment.id,
+          commentId: trigger.commentId,
           author: agent.name,
           text: replyText,
         });
-        deps.broadcastReply?.(trigger.docId, trigger.comment.id, reply);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';
-      console.warn('[DocumentCommentResponder] Failed to handle document mention:', message);
+      if (deps.onError) {
+        deps.onError(message);
+      } else {
+        console.warn('[DocumentCommentResponder] Failed to handle document mention:', message);
+      }
     }
   };
 }
