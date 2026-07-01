@@ -676,7 +676,7 @@ function getDefaultTaskActor(): string {
   return (
     process.env.ENTITY_TASK_ACTOR?.trim() ||
     process.env.ENTITY_DEFAULT_ACTOR?.trim() ||
-    "Henry"
+    "Human"
   );
 }
 

@@ -78,7 +78,7 @@ function logReviewGateActivity(
 
 export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDependencies): Router {
   const router = Router();
-  const defaultActor = dependencies.defaultActor ?? 'Henry';
+  const defaultActor = dependencies.defaultActor ?? 'Human';
 
   async function getTaskOrRespond(req: Request, res: Response) {
     const taskId = parsePositiveTaskId(req.params.id);
