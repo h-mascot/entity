@@ -4231,6 +4231,16 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                              target={link.external ? '_blank' : undefined}
 	                              rel={link.external ? 'noreferrer' : undefined}
 	                              className="mc-shell-btn shrink-0 px-3 py-1.5 text-xs"
+	                              onClick={(event) => {
+	                                if (event.defaultPrevented || link.external || !onDocsLinkNavigate) {
+	                                  return;
+	                                }
+	                                // Client-side nav records the originating task so the
+	                                // shared doc view can show a "Back to task" button.
+	                                if (onDocsLinkNavigate(link.href)) {
+	                                  event.preventDefault();
+	                                }
+	                              }}
 	                            >
 	                              Open
 	                            </a>
@@ -4736,6 +4746,14 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                             target={link.external ? '_blank' : undefined}
                             rel={link.external ? 'noreferrer' : undefined}
                             className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-primary)] px-4 py-3 hover:border-[var(--border-secondary)]"
+                            onClick={(event) => {
+                              if (event.defaultPrevented || link.external || !onDocsLinkNavigate) {
+                                return;
+                              }
+                              if (onDocsLinkNavigate(link.href)) {
+                                event.preventDefault();
+                              }
+                            }}
                           >
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-[var(--text-primary)]">
