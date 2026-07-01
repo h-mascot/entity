@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "echo 'no db tests yet' && exit 0"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0"
