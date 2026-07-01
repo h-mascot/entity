@@ -53,6 +53,25 @@ function createResponse() {
   };
 }
 
+function registerRouteHandlers(bridge: TerminalBridge): Record<string, (req: any, res: any) => any> {
+  const handlers: Record<string, (req: any, res: any) => any> = {};
+  registerTerminalRoutes(
+    {
+      get: (route: string, handler: (req: any, res: any) => any) => {
+        handlers[`GET ${route}`] = handler;
+      },
+      post: (route: string, handler: (req: any, res: any) => any) => {
+        handlers[`POST ${route}`] = handler;
+      },
+      delete: (route: string, handler: (req: any, res: any) => any) => {
+        handlers[`DELETE ${route}`] = handler;
+      },
+    } as any,
+    bridge,
+  );
+  return handlers;
+}
+
 describe('buildTerminalLaunchSpec', () => {
   it('creates a local script-backed launch for the default local target', () => {
     const spec = buildTerminalLaunchSpec('local', '/tmp/entity', 160, 48);
@@ -88,7 +107,7 @@ describe('createTerminalBridge', () => {
       spawnProcess: spawnProcess as any,
     });
 
-    const session = bridge.createSession({ target: 'local', cols: 120, rows: 40 });
+    const { session } = bridge.createSession({ target: 'local', cols: 120, rows: 40 });
     expect(spawnProcess).toHaveBeenCalledWith('/bin/zsh', ['-f'], expect.objectContaining({
       cols: 120,
       rows: 40,
@@ -113,7 +132,7 @@ describe('createTerminalBridge', () => {
       spawnProcess: vi.fn(() => fakeProcess as any),
     });
 
-    const session = bridge.createSession({ target: 'local' });
+    const { session } = bridge.createSession({ target: 'local' });
     const ownerSocket = new FakeSocket();
     const attackerSocket = new FakeSocket();
     bridge.handleSocketConnection(ownerSocket as any);
@@ -134,7 +153,7 @@ describe('createTerminalBridge', () => {
       spawnProcess: vi.fn(() => fakeProcess as any),
     });
 
-    const session = bridge.createSession({ target: 'local' });
+    const { session } = bridge.createSession({ target: 'local' });
     const ownerSocket = new FakeSocket();
     const attackerSocket = new FakeSocket();
     bridge.handleSocketConnection(ownerSocket as any);
@@ -157,7 +176,7 @@ describe('createTerminalBridge', () => {
       spawnProcess: vi.fn(() => fakeProcess as any),
     });
 
-    const session = bridge.createSession({ target: 'local' });
+    const { session } = bridge.createSession({ target: 'local' });
     const ownerSocket = new FakeSocket();
     const attackerSocket = new FakeSocket();
     bridge.handleSocketConnection(ownerSocket as any);
@@ -180,7 +199,7 @@ describe('createTerminalBridge', () => {
       spawnProcess: vi.fn(() => fakeProcess as any),
     });
 
-    const session = bridge.createSession({ target: 'local' });
+    const { session } = bridge.createSession({ target: 'local' });
     const socket = new FakeSocket();
     bridge.handleSocketConnection(socket as any);
     socket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
@@ -209,7 +228,7 @@ describe('createTerminalBridge', () => {
       spawnProcess: vi.fn(() => fakeProcess as any),
     });
 
-    const session = bridge.createSession({ target: 'local' });
+    const { session } = bridge.createSession({ target: 'local' });
     const socket = new FakeSocket();
     bridge.handleSocketConnection(socket as any);
     socket.emit('message', JSON.stringify({ type: 'terminal:subscribe', sessionId: session.id }));
@@ -220,6 +239,26 @@ describe('createTerminalBridge', () => {
 });
 
 describe('registerTerminalRoutes', () => {
+  const deleteSessionRoute = 'DELETE /api/terminal/sessions/:sessionId';
+  const deleteSessionId = 'session-1';
+  const deleteOwnerToken = 'correct-owner-token';
+
+  function createDeleteBridge(): TerminalBridge {
+    return {
+      listTargets: () => [],
+      createSession: vi.fn(() => {
+        throw new Error('unused');
+      }),
+      closeSession: vi.fn((sessionId: string, ownerToken: string | null): ReturnType<TerminalBridge['closeSession']> => {
+        if (sessionId === 'missing') {
+          return 'not-found';
+        }
+        return ownerToken === deleteOwnerToken ? 'closed' : 'forbidden';
+      }),
+      handleSocketConnection: vi.fn(),
+    };
+  }
+
   it('registers target and session routes with validation', () => {
     const handlers: Record<string, (req: any, res: any) => any> = {};
     const sessionSummary: TerminalSessionSummary = {
@@ -230,6 +269,7 @@ describe('registerTerminalRoutes', () => {
       status: 'starting',
       createdAt: '2026-04-02T00:00:00.000Z',
     };
+    const ownerToken = 'owner-token';
     const bridge: TerminalBridge = {
       listTargets: () => [
         {
@@ -241,8 +281,8 @@ describe('registerTerminalRoutes', () => {
           defaultDirectory: '.',
         },
       ],
-      createSession: vi.fn(() => sessionSummary),
-      closeSession: vi.fn(() => true),
+      createSession: vi.fn(() => ({ session: sessionSummary, ownerToken })),
+      closeSession: vi.fn((_sessionId: string, _ownerToken: string | null): ReturnType<TerminalBridge['closeSession']> => 'closed'),
       handleSocketConnection: vi.fn(),
     };
 
@@ -287,5 +327,82 @@ describe('registerTerminalRoutes', () => {
     handlers['POST /api/terminal/sessions']({ body: { target: 'ada-gw', cols: 90, rows: 20 } }, createResponseBody);
     expect(bridge.createSession).toHaveBeenCalledWith({ target: 'ada-gw', cols: 90, rows: 20 });
     expect(createResponseBody.status).toHaveBeenCalledWith(201);
+    expect(createResponseBody.json).toHaveBeenCalledWith({ session: sessionSummary, ownerToken });
+  });
+
+  it('rejects deleting an existing terminal session without an owner token', () => {
+    const bridge = createDeleteBridge();
+    const handlers = registerRouteHandlers(bridge);
+    const response = createResponse();
+
+    handlers[deleteSessionRoute]({ params: { sessionId: deleteSessionId }, headers: {}, query: {} }, response);
+
+    expect(bridge.closeSession).toHaveBeenCalledWith(deleteSessionId, null);
+    expect(response.status).toHaveBeenCalledWith(403);
+    expect(response.json).toHaveBeenCalledWith({ error: 'terminal owner token required' });
+  });
+
+  it('rejects deleting an existing terminal session with the wrong owner token', () => {
+    const bridge = createDeleteBridge();
+    const handlers = registerRouteHandlers(bridge);
+    const response = createResponse();
+
+    handlers[deleteSessionRoute]({
+      params: { sessionId: deleteSessionId },
+      headers: { 'x-terminal-owner-token': 'wrong-token' },
+      query: {},
+    }, response);
+
+    expect(bridge.closeSession).toHaveBeenCalledWith(deleteSessionId, 'wrong-token');
+    expect(response.status).toHaveBeenCalledWith(403);
+    expect(response.json).toHaveBeenCalledWith({ error: 'terminal owner token required' });
+  });
+
+  it('deletes an existing terminal session with the matching owner token header', () => {
+    const bridge = createDeleteBridge();
+    const handlers = registerRouteHandlers(bridge);
+    const response = createResponse();
+
+    handlers[deleteSessionRoute]({
+      params: { sessionId: deleteSessionId },
+      headers: { 'x-terminal-owner-token': deleteOwnerToken },
+      query: {},
+    }, response);
+
+    expect(bridge.closeSession).toHaveBeenCalledWith(deleteSessionId, deleteOwnerToken);
+    expect(response.status).toHaveBeenCalledWith(204);
+    expect(response.send).toHaveBeenCalled();
+  });
+
+  it('deletes an existing terminal session with the matching owner token query param', () => {
+    const bridge = createDeleteBridge();
+    const handlers = registerRouteHandlers(bridge);
+    const response = createResponse();
+
+    handlers[deleteSessionRoute]({
+      params: { sessionId: deleteSessionId },
+      headers: {},
+      query: { ownerToken: deleteOwnerToken },
+    }, response);
+
+    expect(bridge.closeSession).toHaveBeenCalledWith(deleteSessionId, deleteOwnerToken);
+    expect(response.status).toHaveBeenCalledWith(204);
+    expect(response.send).toHaveBeenCalled();
+  });
+
+  it('returns not found when deleting an unknown terminal session', () => {
+    const bridge = createDeleteBridge();
+    const handlers = registerRouteHandlers(bridge);
+    const response = createResponse();
+
+    handlers[deleteSessionRoute]({
+      params: { sessionId: 'missing' },
+      headers: { 'x-terminal-owner-token': deleteOwnerToken },
+      query: {},
+    }, response);
+
+    expect(bridge.closeSession).toHaveBeenCalledWith('missing', deleteOwnerToken);
+    expect(response.status).toHaveBeenCalledWith(404);
+    expect(response.json).toHaveBeenCalledWith({ error: 'session not found' });
   });
 });
