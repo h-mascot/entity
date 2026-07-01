@@ -119,7 +119,32 @@ Grades per criterion (A best, F worst). "Output — Before" is the shipped-befor
 
 ---
 
-## 8. Notes
+## 8. Follow-up — one harmonized document view
+
+A second round addressed the deeper request: there were **two different document-viewing UIs for the same file** — the Files-tab preview (embedded in the workspace shell) and the standalone `/docs/*` route — that differed in reading width, TTS placement/variant, and padding. They are now unified.
+
+- **Single reading surface.** New `packages/app/src/components/DocumentReadingView.tsx` owns the reading column (consistent `max-w-4xl`, full TTS bar on top, `MarkdownPreview` body). It is used by the Files-tab preview, the split pane, the `/docs/*` route, and the mobile preview, so viewing a document looks identical regardless of entry point. Surrounding chrome (Files context bar vs. docs-route header) stays at the call site.
+- **Back to task.** Opening an Entity docs link from a task now navigates client-side and records the originating task, so the shared doc header shows **"← Back to task #N"** instead of "Entity Home". Previously the output link chips were plain anchors that lost that context.
+- **Table contrast fix (was F-accessibility).** `prose prose-invert` set a light default text color, but table cells had no theme-var override like `p`/`li`/headings. On light-surfaced themes the table body was nearly invisible. `prose-td`/`prose-th` now use `--text-secondary`/`--text-primary` so tables stay legible across themes.
+
+Files-tab view and `/docs` route, now the same reading experience:
+
+![Harmonized — Files tab](actual/05-harmonized-files-view.png)
+![Harmonized — /docs route](actual/06-harmonized-docs-route.png)
+
+Opened from a task — same doc view, with a Back-to-task button:
+
+![Back to task](actual/07-back-to-task.png)
+
+Table text legible after the contrast fix:
+
+![Table contrast fixed](actual/08-table-contrast-fixed.png)
+
+### Recommendation on "card vs. doc page"
+
+Keep both, for different jobs: the task's own raw output stays as an **inline rendered preview in the card** (quick glance, now using the same `MarkdownPreview`), while **linked documents open the unified doc view page** with a Back-to-task button. This gives a fast scan without navigation and a full, consistent reading surface when a real document is opened.
+
+## 9. Notes
 
 - Evaluation is heuristic (expert), not user-tested; treat grades as a benchmark to re-measure after the P1–P3 follow-ups.
 - The demo task output used for the screenshots was seeded locally for the review; no fixture data was committed.
