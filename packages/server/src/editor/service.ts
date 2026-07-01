@@ -1347,7 +1347,7 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       });
 
       try {
-        await fetch(`${openClawBaseUrl}/hooks/review`, {
+        const response = await fetch(`${openClawBaseUrl}/hooks/review`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1362,6 +1362,9 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
             timestamp: new Date().toISOString(),
           }),
         });
+        if (!response.ok) {
+          throw new Error('Review provider rejected the dispatch request.');
+        }
       } catch (error) {
         const updated = collaboration.updateReviewRun(normalizedDocId, run.id, {
           status: 'failed',
@@ -1455,7 +1458,10 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       });
 
       const nextJson = updateFindingsStatusJson(run, normalizedFindingId, 'applied');
-      const updatedRun = collaboration.updateReviewRun(normalizedDocId, normalizedRunId, { result_json: nextJson }) ?? run;
+      const updatedRun = collaboration.updateReviewRun(normalizedDocId, normalizedRunId, { result_json: nextJson });
+      if (!updatedRun) {
+        throw new EditorServiceError('REVIEW_RUN_NOT_FOUND', 'Review run was not found after applying the finding.', 500);
+      }
       options.broadcaster.broadcastReview(normalizedDocId, { actor: normalizedActorId, action: 'applied', runId: normalizedRunId, findingId: normalizedFindingId });
       return { docId: normalizedDocId, run: updatedRun, findings: mapReviewFindings(updatedRun) };
     },

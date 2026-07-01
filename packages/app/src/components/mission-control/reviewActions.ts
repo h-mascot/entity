@@ -22,7 +22,8 @@ function readString(value: unknown): string {
 
 function readSupportedReviewType(value: unknown): string {
   const normalized = readString(value).toLowerCase();
-  return normalized === 'henry' || normalized === 'peer' || normalized === 'auto' ? normalized : '';
+  if (normalized === 'henry') return 'human';
+  return normalized === 'human' || normalized === 'peer' || normalized === 'auto' ? normalized : '';
 }
 
 export function normalizeReviewDecision(value: unknown): ReviewDecision {

@@ -46,7 +46,8 @@ type OwnerInboxGroup = 'stalled' | 'escalated' | 'review_blocked' | 'gate_pendin
 function readSupportedReviewType(value: unknown): string {
   if (typeof value !== 'string') return '';
   const normalized = value.trim().toLowerCase();
-  return normalized === 'henry' || normalized === 'peer' || normalized === 'auto' ? normalized : '';
+  if (normalized === 'henry') return 'human';
+  return normalized === 'human' || normalized === 'peer' || normalized === 'auto' ? normalized : '';
 }
 
 function matchesStatusFilter(task: TaskBoardTask, filter: BoardStatusFilter): boolean {
