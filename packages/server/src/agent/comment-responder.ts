@@ -7,7 +7,7 @@ import type {
   TaskRecord,
   UpdateTaskInput,
 } from '../../../db/src';
-import { getTaskAgentLanguageModel, getTaskAgentSettings } from './settings';
+import { getTaskAgentLanguageModel } from './settings';
 import { hasAssignedOwner, isActiveTaskColumn, isReviewGatedTask, validateReviewCompletion } from './review-policy';
 
 const MENTION_REGEX = /@([a-z0-9][a-z0-9._-]*)/gi;
@@ -261,7 +261,6 @@ export function createCommentMentionResponder(deps: CommentResponderDeps) {
 
       const comments = deps.listComments(taskId);
       const model = getTaskAgentLanguageModel();
-      const settings = getTaskAgentSettings();
 
       for (const agent of agents) {
         const action = planAction(task, body, agent.name);
@@ -275,9 +274,8 @@ export function createCommentMentionResponder(deps: CommentResponderDeps) {
               temperature: 0.3,
             });
             replyBody = result.text.trim() || noModelReply(agent, action);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : 'unknown error';
-            replyBody = `Hi — I'm ${agent.name}. I tried to respond using ${settings.provider}/${settings.model} but the request failed (${message}). Please check the provider configuration in Admin → Task Master.`;
+          } catch {
+            replyBody = `Hi — I'm ${agent.name}. I tried to respond using the configured Task Master model, but the request failed. Please check the provider configuration in Admin → Task Master.`;
           }
         } else {
           replyBody = noModelReply(agent, action);

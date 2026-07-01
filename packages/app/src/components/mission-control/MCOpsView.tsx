@@ -43,6 +43,12 @@ type BoardStatusFilter = 'all' | 'active' | 'review' | 'blocked' | 'starred';
 type OverlayFilter = { worktype: string; field: WorktypeFieldDefinition };
 type OwnerInboxGroup = 'stalled' | 'escalated' | 'review_blocked' | 'gate_pending' | 'receipt_failed' | 'migration_warning';
 
+function readSupportedReviewType(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'henry' || normalized === 'peer' || normalized === 'auto' ? normalized : '';
+}
+
 function matchesStatusFilter(task: TaskBoardTask, filter: BoardStatusFilter): boolean {
   switch (filter) {
     case 'active':
@@ -431,7 +437,7 @@ export default function MCOpsView({
     const decision = action === 'reject' ? 'rejected' : action === 'needs_fix' ? 'needs_fix' : 'accepted';
     const nextMeta = {
       ...existing,
-      review_type: (existing.review_type as string) || (existing.review_class as string) || 'peer',
+      review_type: readSupportedReviewType(existing.review_type) || readSupportedReviewType(existing.review_class) || 'peer',
       review_decision: decision,
       reviewed_by: reviewer,
       reviewed_at: new Date().toISOString(),

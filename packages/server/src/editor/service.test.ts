@@ -9,6 +9,7 @@ import type {
   DocumentCommentRecord,
   DocumentCommentReplyRecord,
   DocumentSessionRecord,
+  DocumentSuggestionRecord,
 } from '../../../db/src/document-collab';
 import { createEditorService } from './service';
 import type { EditorWsBroadcaster } from './ws';
@@ -73,6 +74,7 @@ function makeRepository(): DocumentCollaborationRepository {
   };
   const comments: DocumentCommentRecord[] = [];
   const replies: DocumentCommentReplyRecord[] = [];
+  const suggestions: DocumentSuggestionRecord[] = [];
   const snapshot = (): DocumentCollaborationSnapshot => ({
     session,
     authorship_ranges: [],
@@ -80,7 +82,7 @@ function makeRepository(): DocumentCollaborationRepository {
     presence: [],
     comments,
     comment_replies: replies,
-    suggestions: [],
+    suggestions,
     review_runs: [],
   });
 
@@ -130,10 +132,33 @@ function makeRepository(): DocumentCollaborationRepository {
       replies.push(reply);
       return reply;
     },
-    listSuggestions: () => [],
-    getSuggestion: () => undefined,
-    createSuggestion: (() => undefined) as never,
-    updateSuggestionStatus: () => undefined,
+    listSuggestions: () => suggestions,
+    getSuggestion: (_docId, suggestionId) => suggestions.find((entry) => entry.id === suggestionId),
+    createSuggestion: (input) => {
+      const suggestion: DocumentSuggestionRecord = {
+        id: input.id ?? `suggestion-${suggestions.length + 1}`,
+        doc_id: input.doc_id,
+        author: input.author,
+        type: input.type === 'insert' || input.type === 'delete' || input.type === 'replace' ? input.type : 'replace',
+        start_offset: input.start_offset,
+        end_offset: input.end_offset,
+        original_text: input.original_text,
+        suggested_text: input.suggested_text,
+        reason: input.reason ?? null,
+        status: input.status === 'accepted' || input.status === 'rejected' ? input.status : 'open',
+        created_at: now,
+        updated_at: now,
+      };
+      suggestions.push(suggestion);
+      return suggestion;
+    },
+    updateSuggestionStatus: (_docId, suggestionId, status) => {
+      const suggestion = suggestions.find((entry) => entry.id === suggestionId);
+      if (!suggestion) return undefined;
+      suggestion.status = status;
+      suggestion.updated_at = now;
+      return suggestion;
+    },
     listReviewRuns: () => [],
     getReviewRun: () => undefined,
     createReviewRun: (() => undefined) as never,
@@ -203,5 +228,31 @@ describe('createEditorService comment mention context', () => {
       code: 'SOURCE_DISABLED',
       status: 403,
     });
+  });
+
+  it('does not accept suggestions when the file source is disabled', async () => {
+    const repository = makeRepository();
+    const service = createEditorService({
+      openClawBaseUrl: '',
+      broadcaster: makeBroadcaster(),
+      collaborationRepository: repository,
+      sourceRepository: makeSourceRepository(makeSource({ enabled: false })),
+      tokenRepository: {} as never,
+    });
+
+    const created = service.createSuggestion('workspace:/docs/plan.md', 'Henry', {
+      from: 0,
+      to: 5,
+      originalText: 'Intro',
+      suggestedText: 'Opening',
+      type: 'replace',
+    });
+    const suggestionId = created.suggestions[0].id;
+
+    await expect(service.acceptSuggestion('workspace:/docs/plan.md', 'Henry', suggestionId)).rejects.toMatchObject({
+      code: 'SOURCE_DISABLED',
+      status: 403,
+    });
+    expect(service.getSuggestions('workspace:/docs/plan.md').suggestions[0].status).toBe('pending');
   });
 });

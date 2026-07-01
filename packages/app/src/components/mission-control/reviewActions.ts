@@ -20,6 +20,11 @@ function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function readSupportedReviewType(value: unknown): string {
+  const normalized = readString(value).toLowerCase();
+  return normalized === 'henry' || normalized === 'peer' || normalized === 'auto' ? normalized : '';
+}
+
 export function normalizeReviewDecision(value: unknown): ReviewDecision {
   const normalized = readString(value).toLowerCase().replace(/[\s-]+/g, '_');
   if (normalized === 'accepted' || normalized === 'needs_fix' || normalized === 'rejected') {
@@ -55,7 +60,7 @@ export function buildReviewDecisionMetadata(
   };
   if (ensureReviewType) {
     next.review_type =
-      readString(metadataRecord.review_type) || readString(metadataRecord.review_class) || 'peer';
+      readSupportedReviewType(metadataRecord.review_type) || readSupportedReviewType(metadataRecord.review_class) || 'peer';
   }
   const trimmedNote = note?.trim();
   if (trimmedNote) {

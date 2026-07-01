@@ -1248,20 +1248,11 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
       const sourceId = normalizeOptionalString(session?.source_id ?? null);
       const documentPath = normalizeOptionalString(session?.path ?? null);
       if (sourceId && documentPath) {
-        // Accept/reject is primarily a collaboration overlay update. We only attempt to apply
-        // the suggested text to the backing source if we can prove it is writable.
-        let adapter: FileSourceAdapter | null = null;
-        let capabilities: SourceCapability | null = null;
-        try {
-          const resolved = requireSourceAdapter(sourceId);
-          adapter = resolved.adapter;
-          capabilities = resolved.capabilities;
-        } catch {
-          adapter = null;
-          capabilities = null;
+        const { adapter, capabilities } = requireSourceAdapter(sourceId);
+        if (!capabilities.write) {
+          throw new EditorServiceError('SOURCE_READ_ONLY', 'Document source is read-only.', 403);
         }
 
-        if (adapter && capabilities?.write) {
           let existingContent = '';
           try {
             const file = await adapter.read(documentPath);
@@ -1297,7 +1288,6 @@ export function createEditorService(options: EditorServiceOptions): EditorServic
               version: previousVersion + 1,
             });
           }
-        }
       }
 
       const updated = collaboration.updateSuggestionStatus(normalizedDocId, normalizedSuggestionId, 'accepted');
