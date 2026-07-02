@@ -1,4 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react';
+import DocumentViewerChrome from '../components/DocumentViewerChrome';
 import type { DocsTtsSettings } from '../components/MarkdownAudioControls';
 
 const DocumentReadingView = lazy(() => import('../components/DocumentReadingView'));
@@ -61,26 +62,13 @@ export default function DocsRouteView({
   return (
     <div className="entity-shell flex h-screen flex-col bg-[var(--bg-primary)] text-[var(--text-secondary)]">
       {renderInstallCta('bottom-10')}
-      <header className="flex flex-wrap items-center gap-3 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
-        <button
-          type="button"
-          onClick={onBackToHome}
-          className="mc-shell-btn px-3 py-1 text-xs font-medium"
-        >
-          {docsBackTaskId !== null ? `← Back to task #${docsBackTaskId}` : '← Entity Home'}
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-[var(--text-primary)]">
-            {docsFilename || fallbackFilename}
-          </div>
-          <div className="truncate text-xs text-[var(--text-muted)]">
-            {docsBreadcrumbSegments.length > 0 ? docsBreadcrumbSegments.join(' / ') : docsPath}
-          </div>
-        </div>
-        <div className="hidden max-w-[45%] truncate text-right text-xs text-[var(--text-muted)] sm:block">
-          /docs/{docsPath}
-        </div>
-      </header>
+      <DocumentViewerChrome
+        filename={docsFilename || fallbackFilename}
+        breadcrumb={docsBreadcrumbSegments.length > 0 ? docsBreadcrumbSegments.join(' / ') : docsPath}
+        pathHint={`/docs/${docsPath}`}
+        onBack={onBackToHome}
+        backLabel={docsBackTaskId !== null ? `← Back to task #${docsBackTaskId}` : '← Entity Home'}
+      />
       <main className="min-h-0 flex-1 overflow-auto">
         {docsError ? (
           <div className="mx-auto w-full max-w-4xl px-6 py-8">

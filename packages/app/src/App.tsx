@@ -20,6 +20,7 @@ import type {
 import type { NewCommentPopoverAnchor } from './components/NewCommentPopover';
 import { ToastViewport } from './components/Toast';
 import type { DocsTtsSettings } from './components/MarkdownAudioControls';
+import DocumentViewerChrome from './components/DocumentViewerChrome';
 import TaskBoard from './components/TaskBoard';
 import type { MobileTab } from './components/MobileBottomNav';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
@@ -42,6 +43,7 @@ import {
 } from './lib/agentRegistry';
 import { readUserProfile, useUserProfile } from './lib/userProfile';
 import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
+import { shouldRenderMarkdownPreview } from './lib/markdownFile';
 import type { DocumentsApiClient, DocumentsClientAuth } from './lib/documents-client';
 import { usePluginStore } from './stores/pluginStore';
 import {
@@ -1371,6 +1373,24 @@ function docsFilenameFromPath(pathname: string | null): string {
 
   const parts = normalizeDocsRoutePath(pathname).split('/').filter(Boolean);
   return parts[parts.length - 1] ?? 'Document';
+}
+
+function filePathSegments(filePath: string | null): string[] {
+  return filePath?.split('/').filter(Boolean) ?? [];
+}
+
+function filenameFromFilePath(filePath: string | null): string {
+  const segments = filePathSegments(filePath);
+  return segments[segments.length - 1] ?? 'Document';
+}
+
+function fileBreadcrumbSegments(filePath: string | null, sourceName?: string): string[] {
+  const segments = filePathSegments(filePath);
+  return sourceName ? [sourceName, ...segments] : segments;
+}
+
+function filePathHint(filePath: string, sourceName?: string): string {
+  return sourceName ? `${sourceName} • ${filePath}` : filePath;
 }
 
 function buildDocsApiUrls(docPath: string): string[] {
@@ -4143,6 +4163,12 @@ export default function App() {
     </>
   );
 
+  const shouldShowFilesMarkdownChrome =
+    sidebarTab === 'files' &&
+    Boolean(currentFile) &&
+    !editMode &&
+    shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType);
+
   const renderContextBar = () => {
     if (sidebarTab === 'admin') {
       return (
@@ -4456,6 +4482,63 @@ export default function App() {
       return null;
     }
 
+    if (shouldShowFilesMarkdownChrome && currentFile) {
+      const sourceName = selectedSource?.displayName;
+      const showSourcePill = runtime.fsMultiSourceEnabled && currentSourceId;
+      const showReadOnlyPill = !canEditCurrentFile;
+
+      return (
+        <div className="w-full">
+          <DocumentViewerChrome
+            filename={filenameFromFilePath(currentFile)}
+            breadcrumbSegments={fileBreadcrumbSegments(currentFile, sourceName)}
+            pathHint={filePathHint(currentFile, sourceName)}
+            actions={
+              <>
+                {showSourcePill && (
+                  <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+                    Source
+                  </span>
+                )}
+                {showReadOnlyPill ? (
+                  <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+                    Read-only
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditMode((prev) => !prev)}
+                    className="mc-shell-btn px-3 py-1 text-xs"
+                  >
+                    Edit
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard
+                      .writeText(window.location.href)
+                      .then(() => {
+                        pushToast('Link copied to clipboard!', 'success');
+                      })
+                      .catch(() => {
+                        pushToast('Failed to copy link', 'error');
+                      });
+                  }}
+                  disabled={!currentFile}
+                  className={`mc-shell-btn px-3 py-1 text-xs ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
+                  aria-label="Copy link to this file"
+                  title="Copy link to this file"
+                >
+                  🔗 Share
+                </button>
+              </>
+            }
+          />
+        </div>
+      );
+    }
+
     return (
       <Suspense fallback={null}>
         <FilesContextBar
@@ -4578,7 +4661,13 @@ export default function App() {
           </span>
         </div>
       </div>
-      <div className="entity-context-row flex items-center border-b border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2 lg:px-4">
+      <div
+        className={`entity-context-row flex items-center ${
+          shouldShowFilesMarkdownChrome
+            ? 'bg-transparent p-0'
+            : 'border-b border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2 lg:px-4'
+        }`}
+      >
         {renderContextBar()}
       </div>
     </>
