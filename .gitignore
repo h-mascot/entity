@@ -29,6 +29,7 @@ codedb.snapshot
 
 # Local agent/runtime clutter - do not publish
 .claude/
+.loop-cache/
 artifacts/
 packages/app/artifacts/
 memory/
