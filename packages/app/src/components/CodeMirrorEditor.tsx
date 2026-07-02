@@ -450,7 +450,7 @@ export default function CodeMirrorEditor({
   onSuggestingEdit,
 }: EditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView>();
+  const viewRef = useRef<EditorView | undefined>(undefined);
   const editableCompartmentRef = useRef(new Compartment());
   const readOnlyCompartmentRef = useRef(new Compartment());
   const collabModeCompartmentRef = useRef(new Compartment());

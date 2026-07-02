@@ -230,7 +230,7 @@ export default function MarkdownPreview({ content, loading, onDocsLinkNavigate, 
         remarkPlugins={[remarkGfm, remarkEntityAutolink]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, htmlSchema], rehypeHighlight]}
         components={{
-          a: ({ href, children, ...props }) => {
+          a: ({ href, children, ref: _ref, node: _node, ...props }) => {
             const originalHref = typeof href === 'string' ? href.trim() : '';
             const entityDocsHref = originalHref ? toEntityDocsHref(originalHref) : null;
             const resolvedHref = entityDocsHref ?? originalHref;
@@ -263,7 +263,7 @@ export default function MarkdownPreview({ content, loading, onDocsLinkNavigate, 
               </a>
             );
           },
-          input: ({ type, checked, ...props }) => {
+          input: ({ type, checked, ref: _ref, node: _node, ...props }) => {
             if (type === 'checkbox') {
               return (
                 <input

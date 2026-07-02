@@ -1642,8 +1642,8 @@ export default function App() {
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [pwaInstalled, setPwaInstalled] = useState<boolean>(() => isStandaloneDisplayMode());
   const [installCtaDismissed, setInstallCtaDismissed] = useState<boolean>(() => readInstallCtaDismissed());
-  const saveTimeoutRef = useRef<NodeJS.Timeout>();
-  const rightSaveTimeoutRef = useRef<NodeJS.Timeout>();
+  const saveTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
+  const rightSaveTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const lastContentRef = useRef('');
   const rightLastContentRef = useRef('');
   const currentFileRef = useRef<string | null>(null);
