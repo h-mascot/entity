@@ -13,6 +13,7 @@ interface RegisterFeatureRuntimeRoutesDeps {
   agentNativeEditorEnabled: boolean;
   fsMultiSourceEnabled: boolean;
   devDocumentsToken?: string | null;
+  shouldExposeDevDocumentsToken?: () => boolean;
 }
 
 export function registerActivityRoutes(app: Express, prefix: "" | "/api", deps: RegisterActivityRoutesDeps): void {
@@ -65,16 +66,20 @@ export function registerRuntimeRoutes(app: Express, prefix: "" | "/api", deps: R
     agentNativeEditorEnabled: AGENT_NATIVE_EDITOR_ENABLED,
     fsMultiSourceEnabled: FS_MULTISOURCE_ENABLED,
     devDocumentsToken,
+    shouldExposeDevDocumentsToken = () => Boolean(devDocumentsToken),
   } = deps;
   const base = `${prefix}/runtime`;
 
   app.get(base, (_req, res) => {
+    const gatedDevDocumentsToken = devDocumentsToken && shouldExposeDevDocumentsToken()
+      ? devDocumentsToken
+      : null;
     res.json({
       features: {
         fsMultiSourceEnabled: FS_MULTISOURCE_ENABLED,
         agentNativeEditorEnabled: AGENT_NATIVE_EDITOR_ENABLED,
       },
-      ...(devDocumentsToken ? { devDocumentsToken } : {}),
+      ...(gatedDevDocumentsToken ? { devDocumentsToken: gatedDevDocumentsToken } : {}),
     });
   });
 }

@@ -51,4 +51,13 @@ describe('assertAllowedLocalSourceBasePath', () => {
     expect(isBasePathAllowlisted(path.join(workspaceRoot, 'docs'), { workspaceRoot })).toBe(true);
     expect(isBasePathAllowlisted('/etc', { workspaceRoot })).toBe(false);
   });
+
+  it('does not derive allowlist access for a symlinked base path outside the real workspace root', async () => {
+    const workspaceRoot = await makeTempRoot();
+    const outsideRoot = await makeTempRoot();
+    const symlinkedBasePath = path.join(workspaceRoot, 'linked-outside');
+    await fs.promises.symlink(outsideRoot, symlinkedBasePath, 'dir');
+
+    expect(isBasePathAllowlisted(symlinkedBasePath, { workspaceRoot })).toBe(false);
+  });
 });

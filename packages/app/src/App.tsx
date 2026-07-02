@@ -101,6 +101,9 @@ const PWA_INSTALL_CTA_DISMISSED_KEY = 'entity.pwa.install-cta-dismissed.v1';
 const DEFAULT_LOGIN_PASSWORD = 'mission';
 const ENTERPRISE_ADMIN_URL = '';
 
+type DocumentsAuthOrigin = 'dev-runtime' | 'user';
+type DocumentsAuth = DocumentsClientAuth & { origin?: DocumentsAuthOrigin };
+
 function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
   return (
     <div className="flex h-full min-h-[12rem] w-full items-center justify-center text-sm text-[var(--text-muted)]">
@@ -1030,7 +1033,7 @@ function persistAuthSession(session: AuthSession | null) {
   window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
 }
 
-function readDocumentsAuth(): DocumentsClientAuth | null {
+function readDocumentsAuth(): DocumentsAuth | null {
   if (typeof window === 'undefined') {
     return null;
   }
@@ -1049,6 +1052,8 @@ function readDocumentsAuth(): DocumentsClientAuth | null {
     const record = parsed as Record<string, unknown>;
     const kind = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
     const token = typeof record.token === 'string' ? record.token.trim() : '';
+    const origin =
+      record.origin === 'dev-runtime' || record.origin === 'user' ? record.origin : undefined;
     if (!token) {
       return null;
     }
@@ -1058,16 +1063,16 @@ function readDocumentsAuth(): DocumentsClientAuth | null {
       if (!actorId) {
         return null;
       }
-      return { kind: 'service', token, actorId };
+      return { kind: 'service', token, actorId, ...(origin ? { origin } : {}) };
     }
 
-    return { kind: 'bearer', token };
+    return { kind: 'bearer', token, ...(origin ? { origin } : {}) };
   } catch {
     return null;
   }
 }
 
-function persistDocumentsAuth(auth: DocumentsClientAuth | null) {
+function persistDocumentsAuth(auth: DocumentsAuth | null) {
   if (typeof window === 'undefined') {
     return;
   }
@@ -1080,12 +1085,7 @@ function persistDocumentsAuth(auth: DocumentsClientAuth | null) {
   window.localStorage.setItem(DOCUMENTS_AUTH_KEY, JSON.stringify(auth));
 }
 
-async function readRuntimeDocumentsAuth(): Promise<DocumentsClientAuth | null> {
-  const configuredToken = runtime.devDocumentsToken?.trim();
-  if (configuredToken) {
-    return { kind: 'bearer', token: configuredToken };
-  }
-
+async function readRuntimeDocumentsAuth(): Promise<DocumentsAuth | null> {
   const response = await fetch(`${runtime.apiBase}/api/runtime`, {
     headers: { Accept: 'application/json' },
   });
@@ -1094,8 +1094,21 @@ async function readRuntimeDocumentsAuth(): Promise<DocumentsClientAuth | null> {
   }
 
   const body = (await response.json()) as { devDocumentsToken?: unknown };
-  const token = typeof body.devDocumentsToken === 'string' ? body.devDocumentsToken.trim() : '';
-  return token ? { kind: 'bearer', token } : null;
+  const runtimeToken = typeof body.devDocumentsToken === 'string' ? body.devDocumentsToken.trim() : '';
+  const token = runtimeToken || runtime.devDocumentsToken?.trim() || '';
+  return token ? { kind: 'bearer', token, origin: 'dev-runtime' } : null;
+}
+
+function toDocumentsClientAuth(auth: DocumentsAuth | null): DocumentsClientAuth | undefined {
+  if (!auth) {
+    return undefined;
+  }
+
+  if (auth.kind === 'service') {
+    return { kind: 'service', token: auth.token, actorId: auth.actorId };
+  }
+
+  return { kind: 'bearer', token: auth.token };
 }
 
 function readArchivePreference(): boolean {
@@ -1560,7 +1573,7 @@ export default function App() {
   const [followingAgent, setFollowingAgent] = useState<string | null>(null);
   const [followDetached, setFollowDetached] = useState(false);
   const [docPresenceByDocId, setDocPresenceByDocId] = useState<Record<string, Record<string, any>>>({});
-  const [documentsAuth, setDocumentsAuth] = useState<DocumentsClientAuth | null>(() => initialDocumentsAuth);
+  const [documentsAuth, setDocumentsAuth] = useState<DocumentsAuth | null>(() => initialDocumentsAuth);
   const [documentsAuthTokenDraft, setDocumentsAuthTokenDraft] = useState<string>(() => initialDocumentsAuth?.token ?? '');
   const [documentsAuthKindDraft, setDocumentsAuthKindDraft] = useState<'bearer' | 'service'>(() =>
     initialDocumentsAuth?.kind === 'service' ? 'service' : 'bearer'
@@ -1568,6 +1581,7 @@ export default function App() {
   const [documentsAuthActorDraft, setDocumentsAuthActorDraft] = useState<string>(() =>
     initialDocumentsAuth?.kind === 'service' ? initialDocumentsAuth.actorId : 'ada'
   );
+  const documentsAuthRef = useRef<DocumentsAuth | null>(initialDocumentsAuth);
   const [commentThreads, setCommentThreads] = useState<DocumentCommentThread[]>([]);
   const [suggestions, setSuggestions] = useState<DocumentSuggestionUiRecord[]>([]);
   const [reviewRun, setReviewRun] = useState<DocumentReviewRunRecord | null>(null);
@@ -2159,14 +2173,37 @@ export default function App() {
   }, [documentsAuth]);
 
   useEffect(() => {
-    if (documentsAuth) {
-      return;
-    }
+    documentsAuthRef.current = documentsAuth;
+  }, [documentsAuth]);
 
+  useEffect(() => {
     let cancelled = false;
     readRuntimeDocumentsAuth()
       .then((auth) => {
-        if (cancelled || !auth) {
+        if (cancelled) {
+          return;
+        }
+
+        const currentAuth = documentsAuthRef.current;
+        if (!auth) {
+          if (currentAuth?.origin === 'dev-runtime') {
+            setDocumentsAuth(null);
+            setDocumentsAuthTokenDraft('');
+            setDocumentsAuthKindDraft('bearer');
+            setDocumentsAuthActorDraft('ada');
+          }
+          return;
+        }
+
+        if (currentAuth && currentAuth.origin !== 'dev-runtime') {
+          return;
+        }
+
+        if (
+          currentAuth?.origin === 'dev-runtime' &&
+          currentAuth.kind === auth.kind &&
+          currentAuth.token === auth.token
+        ) {
           return;
         }
 
@@ -2182,7 +2219,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [documentsAuth]);
+  }, []);
 
   useEffect(() => {
     persistArchivePreference(showArchiveColumn);
@@ -3330,7 +3367,7 @@ export default function App() {
     () =>
       createLazyDocumentsApiClient({
         apiBase: runtime.apiBase,
-        auth: documentsAuth ?? undefined,
+        auth: toDocumentsClientAuth(documentsAuth),
       }),
     [documentsAuth]
   );

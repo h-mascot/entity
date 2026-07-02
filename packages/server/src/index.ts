@@ -109,7 +109,7 @@ import { registerTtsRoutes } from "./routes/tts";
 import { registerLegacyFileRoutes } from "./routes/legacy-files";
 import { registerDocumentRoutes } from "./routes/documents";
 import { closeDocumentsDatabase } from "./documents/db";
-import { ensureDevDocumentsToken } from "./editor/dev-token";
+import { ensureDevDocumentsToken, shouldProvisionDevDocumentsToken } from "./editor/dev-token";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
@@ -467,11 +467,13 @@ registerRuntimeRoutes(app, "", {
   agentNativeEditorEnabled: AGENT_NATIVE_EDITOR_ENABLED,
   fsMultiSourceEnabled: FS_MULTISOURCE_ENABLED,
   devDocumentsToken,
+  shouldExposeDevDocumentsToken: shouldProvisionDevDocumentsToken,
 });
 registerRuntimeRoutes(app, "/api", {
   agentNativeEditorEnabled: AGENT_NATIVE_EDITOR_ENABLED,
   fsMultiSourceEnabled: FS_MULTISOURCE_ENABLED,
   devDocumentsToken,
+  shouldExposeDevDocumentsToken: shouldProvisionDevDocumentsToken,
 });
 registerAgentControlRoutes(app, "", { AGENT_CONFIG, parsePositiveId, taskAgent, taskSyncLayer });
 registerAgentControlRoutes(app, "/api", { AGENT_CONFIG, parsePositiveId, taskAgent, taskSyncLayer });
