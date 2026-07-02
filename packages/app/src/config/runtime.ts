@@ -79,6 +79,9 @@ const agentNativeEditorEnabled = toBoolean(
   import.meta.env.VITE_ENTITY_AGENT_NATIVE_EDITOR,
   DEFAULT_AGENT_NATIVE_EDITOR_ENABLED,
 );
+const devDocumentsToken = typeof import.meta.env.VITE_ENTITY_DEV_DOCUMENTS_TOKEN === 'string'
+  ? import.meta.env.VITE_ENTITY_DEV_DOCUMENTS_TOKEN.trim() || undefined
+  : undefined;
 
 export const runtime = {
   apiBase,
@@ -88,6 +91,7 @@ export const runtime = {
   wsUrl,
   fsMultiSourceEnabled,
   agentNativeEditorEnabled,
+  devDocumentsToken,
 };
 
 export type RuntimeConfig = typeof runtime;

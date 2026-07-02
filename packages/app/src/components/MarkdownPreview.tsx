@@ -77,8 +77,12 @@ const SHARED_PROSE_CLASSES = `prose-headings:text-[var(--text-primary)]
       prose-hr:border-[var(--border-primary)]`;
 
 const FULL_PROSE_CLASSES = `relative prose prose-invert max-w-none
-      prose-headings:scroll-mt-24 prose-headings:mt-6 prose-h1:mb-3 prose-h2:mb-2 prose-h1:text-3xl prose-h1:leading-tight prose-h2:text-xl prose-h3:text-lg
-      prose-p:leading-relaxed
+      prose-headings:scroll-mt-24 prose-headings:font-semibold
+      prose-h1:mt-0 prose-h1:mb-5 prose-h1:text-[2rem] prose-h1:leading-tight
+      prose-h2:mt-9 prose-h2:mb-3 prose-h2:text-[1.45rem] prose-h2:leading-snug
+      prose-h3:mt-7 prose-h3:mb-2 prose-h3:text-lg prose-h3:leading-snug
+      prose-p:my-4 prose-p:text-base prose-p:leading-7
+      prose-ul:my-4 prose-ol:my-4 prose-li:my-1
       ${SHARED_PROSE_CLASSES}`;
 
 const COMPACT_PROSE_CLASSES = `relative prose prose-invert prose-sm max-w-none

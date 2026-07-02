@@ -82,10 +82,11 @@ describe('LocalFileSourceAdapter metadata', () => {
     await expect(fs.promises.readFile(outsideFile, 'utf-8')).resolves.toBe('# outside\n');
   });
 
-  it('uses server-derived local source capabilities instead of stored client JSON', () => {
-    const adapter = new LocalFileSourceAdapter(sourceFor('/workspace'));
+  it('derives write access for allowlisted roots instead of stored client JSON', () => {
+    const workspaceRoot = process.env.WORKSPACE ?? process.cwd();
+    const adapter = new LocalFileSourceAdapter(sourceFor(workspaceRoot));
     const clientWritableAdapter = new LocalFileSourceAdapter(
-      sourceFor('/workspace', {
+      sourceFor('/etc', {
         capabilities: JSON.stringify({
           read: true,
           write: true,
@@ -95,7 +96,7 @@ describe('LocalFileSourceAdapter metadata', () => {
       }),
     );
 
-    expect(adapter.capabilities()).toMatchObject({ read: true, write: false, list: true, search: true });
+    expect(adapter.capabilities()).toMatchObject({ read: true, write: true, list: true, search: true });
     expect(clientWritableAdapter.capabilities().write).toBe(false);
   });
 });

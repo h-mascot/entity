@@ -1080,6 +1080,24 @@ function persistDocumentsAuth(auth: DocumentsClientAuth | null) {
   window.localStorage.setItem(DOCUMENTS_AUTH_KEY, JSON.stringify(auth));
 }
 
+async function readRuntimeDocumentsAuth(): Promise<DocumentsClientAuth | null> {
+  const configuredToken = runtime.devDocumentsToken?.trim();
+  if (configuredToken) {
+    return { kind: 'bearer', token: configuredToken };
+  }
+
+  const response = await fetch(`${runtime.apiBase}/api/runtime`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) {
+    return null;
+  }
+
+  const body = (await response.json()) as { devDocumentsToken?: unknown };
+  const token = typeof body.devDocumentsToken === 'string' ? body.devDocumentsToken.trim() : '';
+  return token ? { kind: 'bearer', token } : null;
+}
+
 function readArchivePreference(): boolean {
   if (typeof window === 'undefined') {
     return true;
@@ -2138,6 +2156,32 @@ export default function App() {
 
   useEffect(() => {
     persistDocumentsAuth(documentsAuth);
+  }, [documentsAuth]);
+
+  useEffect(() => {
+    if (documentsAuth) {
+      return;
+    }
+
+    let cancelled = false;
+    readRuntimeDocumentsAuth()
+      .then((auth) => {
+        if (cancelled || !auth) {
+          return;
+        }
+
+        setDocumentsAuth(auth);
+        setDocumentsAuthTokenDraft(auth.token);
+        setDocumentsAuthKindDraft('bearer');
+        setDocumentsAuthActorDraft('ada');
+      })
+      .catch(() => {
+        // Runtime dev auth is optional; Admin-provided tokens still work.
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [documentsAuth]);
 
   useEffect(() => {

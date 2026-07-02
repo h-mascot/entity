@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { detectContentType } from '../../file-types';
-import { assertAllowedLocalSourceBasePath } from '../source-root-guard';
+import { assertAllowedLocalSourceBasePath, isBasePathAllowlisted } from '../source-root-guard';
 import { assertRealpathContained, assertWriteTargetRealpathContained, normalizeSourceRelativePath, resolveLocalPath } from '../security';
 import type { FileSourceAdapter, SourceCapability, SourceNode, SourcePathMetadata } from './types';
 
@@ -29,8 +29,15 @@ export const LOCAL_SOURCE_CAPABILITY_POLICY: SourceCapability = {
   search: true,
 };
 
-export function localSourceCapabilitiesJson(): string {
-  return JSON.stringify(LOCAL_SOURCE_CAPABILITY_POLICY);
+export function deriveLocalSourceCapabilities(basePath: string | undefined | null): SourceCapability {
+  return {
+    ...LOCAL_SOURCE_CAPABILITY_POLICY,
+    write: isBasePathAllowlisted(basePath),
+  };
+}
+
+export function localSourceCapabilitiesJson(basePath?: string | null): string {
+  return JSON.stringify(deriveLocalSourceCapabilities(basePath));
 }
 
 function toNode(sourceId: string, rootPath: string, entryName: string, stats: fs.Stats): SourceNode {
@@ -74,7 +81,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
   }
 
   capabilities(): SourceCapability {
-    return { ...LOCAL_SOURCE_CAPABILITY_POLICY };
+    return deriveLocalSourceCapabilities(this.source.base_path);
   }
 
   async list(relativePath: string): Promise<SourceNode[]> {

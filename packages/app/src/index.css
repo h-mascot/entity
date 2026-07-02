@@ -34,6 +34,11 @@
   --input-bg: var(--bg-secondary);
   --panel-surface: #111;
   --terminal-bg: #050505;
+  --doc-page: #111;
+  --doc-page-border: #2a2a2a;
+  --doc-page-shadow:
+    0 22px 70px rgb(0 0 0 / 0.34),
+    0 2px 10px rgb(0 0 0 / 0.24);
   --body-background: var(--bg-primary);
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "MesloLGS NF", "MesloLGM Nerd Font Mono", "MesloLGS Nerd Font Mono", "Meslo LG S DZ for Powerline", "JetBrains Mono", "SFMono-Regular", SFMono-Regular, Menlo, Consolas, monospace;
@@ -70,6 +75,11 @@
   --input-bg: var(--bg-secondary);
   --panel-surface: #ffffff;
   --terminal-bg: #f8fafc;
+  --doc-page: #ffffff;
+  --doc-page-border: #d8dee9;
+  --doc-page-shadow:
+    0 22px 65px rgb(15 23 42 / 0.12),
+    0 2px 8px rgb(15 23 42 / 0.08);
   --body-background: var(--bg-primary);
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "MesloLGS NF", "MesloLGM Nerd Font Mono", "MesloLGS Nerd Font Mono", "Meslo LG S DZ for Powerline", "JetBrains Mono", "SFMono-Regular", SFMono-Regular, Menlo, Consolas, monospace;
@@ -106,6 +116,11 @@
   --input-bg: #14141e;
   --panel-surface: #14141e;
   --terminal-bg: #101024;
+  --doc-page: #151521;
+  --doc-page-border: #323247;
+  --doc-page-shadow:
+    0 24px 76px rgb(4 4 11 / 0.4),
+    0 2px 12px rgb(4 4 11 / 0.24);
   --body-background: #0b0b12;
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "MesloLGS NF", "MesloLGM Nerd Font Mono", "MesloLGS Nerd Font Mono", "Meslo LG S DZ for Powerline", "JetBrains Mono", "SFMono-Regular", SFMono-Regular, Menlo, Consolas, monospace;
@@ -146,6 +161,11 @@
   --input-bg: rgb(13 39 75 / 0.52);
   --panel-surface: #0c2749;
   --terminal-bg: #071b34;
+  --doc-page: #0c2749;
+  --doc-page-border: rgb(146 198 255 / 0.5);
+  --doc-page-shadow:
+    0 24px 78px rgb(1 8 24 / 0.34),
+    0 2px 12px rgb(1 8 24 / 0.22);
   --body-background:
     radial-gradient(760px circle at 11% -8%, rgb(225 154 195 / 0.34), transparent 44%),
     radial-gradient(1040px circle at 79% -8%, rgb(58 156 230 / 0.42), transparent 55%),
@@ -283,6 +303,11 @@
   --input-bg: rgb(255 255 255 / 0.34);
   --panel-surface: #f1fbf7;
   --terminal-bg: #eafbf4;
+  --doc-page: #fbfffd;
+  --doc-page-border: rgb(116 180 176 / 0.34);
+  --doc-page-shadow:
+    0 22px 66px rgb(70 151 157 / 0.16),
+    0 2px 8px rgb(70 151 157 / 0.1);
   --body-background:
     radial-gradient(860px circle at 12% 0%, rgb(226 255 225 / 0.86), transparent 48%),
     radial-gradient(880px circle at 58% -4%, rgb(124 232 225 / 0.72), transparent 54%),
@@ -429,6 +454,11 @@
   --input-bg: #fff8eb;
   --panel-surface: #fbf0dc;
   --terminal-bg: #fff8eb;
+  --doc-page: #fff8eb;
+  --doc-page-border: rgb(150 112 66 / 0.38);
+  --doc-page-shadow:
+    0 22px 62px rgb(87 62 30 / 0.16),
+    0 2px 8px rgb(87 62 30 / 0.1);
   --terminal-foreground: #1c150d;
   --terminal-cursor: #2e5fa8;
   --terminal-selection: rgb(46 95 168 / 0.18);
@@ -2325,43 +2355,53 @@ textarea {
     color: var(--text-primary);
   }
 
-  .entity-doc-workbench .prose {
+  .entity-doc-canvas {
+    background: transparent;
+  }
+
+  .entity-doc-page {
+    background: var(--doc-page, var(--bg-secondary));
+    border: 1px solid var(--doc-page-border, var(--border-primary));
+    box-shadow: var(--doc-page-shadow, 0 22px 70px rgb(0 0 0 / 0.24));
+  }
+
+  .entity-doc-page .prose {
     color: var(--text-secondary);
+    font-size: 1rem;
+    line-height: 1.68;
   }
 
-  .entity-doc-workbench .prose h1 {
-    margin-bottom: 1.1rem;
-    font-size: 1.85rem;
-    line-height: 1.1;
+  .entity-doc-page .prose h1 {
+    margin-bottom: 1.25rem;
+    color: var(--text-primary);
+    font-size: 2rem;
+    line-height: 1.15;
+    letter-spacing: -0.025em;
   }
 
-  .entity-doc-workbench .prose h2 {
-    position: relative;
-    margin-top: 1.45rem;
-    padding-left: 2rem;
-    font-size: 1.35rem;
+  .entity-doc-page .prose h2 {
+    margin-top: 2.25rem;
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+    font-size: 1.45rem;
+    line-height: 1.25;
+    letter-spacing: -0.015em;
   }
 
-  .entity-doc-workbench .prose h2::before {
-    position: absolute;
-    left: 0;
-    top: 0.12rem;
-    display: inline-grid;
-    height: 1.25rem;
-    width: 1.25rem;
-    place-items: center;
-    border: 1px solid var(--border-secondary);
-    border-radius: 999px;
-    color: var(--text-muted);
-    content: "◎";
-    font-size: 0.8rem;
-    line-height: 1;
+  .entity-doc-page .prose h2::before {
+    content: none;
   }
 
-  .entity-doc-workbench .prose p,
-  .entity-doc-workbench .prose li {
-    font-size: 0.98rem;
-    line-height: 1.55;
+  .entity-doc-page .prose h3 {
+    margin-top: 1.75rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+  }
+
+  .entity-doc-page .prose p,
+  .entity-doc-page .prose li {
+    font-size: 1rem;
+    line-height: 1.68;
   }
 
   .entity-ops-empty {

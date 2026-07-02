@@ -9,12 +9,17 @@ function hashToken(rawToken: string): string {
   return createHash('sha256').update(rawToken, 'utf8').digest('hex');
 }
 
-function makeToken(rawToken: string, scopes: string[], actor = 'henry'): AgentTokenRecord {
+function makeToken(
+  rawToken: string,
+  scopes: string[],
+  actor = 'henry',
+  tokenType: AgentTokenRecord['token_type'] = 'service',
+): AgentTokenRecord {
   const now = new Date().toISOString();
   return {
     id: 'token-1',
     token_hash: hashToken(rawToken),
-    token_type: 'service',
+    token_type: tokenType,
     actor,
     scopes,
     enabled: true,
@@ -84,6 +89,22 @@ async function withDefaultKnownActorServer<T>(token: AgentTokenRecord, fn: (base
 }
 
 describe('createEditorRouteAuth', () => {
+  it('accepts valid agent bearer tokens without X-Entity-Actor', async () => {
+    await withAuthServer(makeToken('valid-agent-token', ['documents:read'], 'assistant', 'agent'), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/protected`, {
+        headers: {
+          Authorization: 'Bearer valid-agent-token',
+        },
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        actorId: 'assistant',
+        tokenType: 'agent',
+      });
+    });
+  });
+
   it('accepts valid service bearer tokens and X-Entity-Actor context', async () => {
     await withAuthServer(makeToken('valid-token', ['documents:read']), async (baseUrl) => {
       const response = await fetch(`${baseUrl}/protected`, {

@@ -12,6 +12,7 @@ interface RegisterDbModeRoutesDeps {
 interface RegisterFeatureRuntimeRoutesDeps {
   agentNativeEditorEnabled: boolean;
   fsMultiSourceEnabled: boolean;
+  devDocumentsToken?: string | null;
 }
 
 export function registerActivityRoutes(app: Express, prefix: "" | "/api", deps: RegisterActivityRoutesDeps): void {
@@ -60,7 +61,11 @@ export function registerDbModeRoutes(app: Express, prefix: "" | "/api", deps: Re
 }
 
 export function registerRuntimeRoutes(app: Express, prefix: "" | "/api", deps: RegisterFeatureRuntimeRoutesDeps): void {
-  const { agentNativeEditorEnabled: AGENT_NATIVE_EDITOR_ENABLED, fsMultiSourceEnabled: FS_MULTISOURCE_ENABLED } = deps;
+  const {
+    agentNativeEditorEnabled: AGENT_NATIVE_EDITOR_ENABLED,
+    fsMultiSourceEnabled: FS_MULTISOURCE_ENABLED,
+    devDocumentsToken,
+  } = deps;
   const base = `${prefix}/runtime`;
 
   app.get(base, (_req, res) => {
@@ -69,6 +74,7 @@ export function registerRuntimeRoutes(app: Express, prefix: "" | "/api", deps: R
         fsMultiSourceEnabled: FS_MULTISOURCE_ENABLED,
         agentNativeEditorEnabled: AGENT_NATIVE_EDITOR_ENABLED,
       },
+      ...(devDocumentsToken ? { devDocumentsToken } : {}),
     });
   });
 }

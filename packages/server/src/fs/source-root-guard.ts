@@ -38,6 +38,16 @@ export function getAllowedLocalSourceRoots(options: LocalSourceRootGuardOptions 
   );
 }
 
+export function isBasePathAllowlisted(basePath: string | undefined | null, options: LocalSourceRootGuardOptions = {}): boolean {
+  const trimmed = basePath?.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const resolvedBasePath = path.resolve(trimmed);
+  return getAllowedLocalSourceRoots(options).some((root) => isContainedPath(root, resolvedBasePath));
+}
+
 export async function assertAllowedLocalSourceBasePath(
   basePath: string | undefined | null,
   options: LocalSourceRootGuardOptions = {},
@@ -49,8 +59,7 @@ export async function assertAllowedLocalSourceBasePath(
 
   const resolvedBasePath = path.resolve(trimmed);
   const allowedRoots = getAllowedLocalSourceRoots(options);
-  const lexicalAllowed = allowedRoots.some((root) => isContainedPath(root, resolvedBasePath));
-  if (!lexicalAllowed) {
+  if (!isBasePathAllowlisted(resolvedBasePath, options)) {
     throw new Error('Local source basePath must stay inside an allowlisted root.');
   }
 

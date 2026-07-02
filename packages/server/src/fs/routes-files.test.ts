@@ -7,14 +7,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FileSourceRecord, FileSourceRepository } from '../../../db/src/file-sources';
 
 const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
+const originalWorkspace = process.env.WORKSPACE;
+const tempRoots: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   if (typeof originalDbPath === 'undefined') {
     delete process.env.ENTITY_TASK_DB_PATH;
   } else {
     process.env.ENTITY_TASK_DB_PATH = originalDbPath;
   }
+  if (typeof originalWorkspace === 'undefined') {
+    delete process.env.WORKSPACE;
+  } else {
+    process.env.WORKSPACE = originalWorkspace;
+  }
+  await Promise.all(tempRoots.splice(0).map((root) => fs.promises.rm(root, { recursive: true, force: true })));
 });
+
+async function makeTempRoot(): Promise<string> {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'entity-file-routes-'));
+  tempRoots.push(root);
+  return root;
+}
 
 function source(overrides: Partial<FileSourceRecord> = {}): FileSourceRecord {
   const timestamp = '2026-06-30T22:45:00.000Z';
@@ -106,6 +120,100 @@ describe('file routes', () => {
       expect(response.status).toBe(404);
       await expect(response.json()).resolves.toEqual({ error: 'Source not found.' });
       expect(updateSource).toHaveBeenCalledWith('missing', expect.objectContaining({ health: 'degraded' }));
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('allows writes for allowlisted local sources and keeps non-allowlisted or non-local sources read-only', async () => {
+    const workspaceRoot = await makeTempRoot();
+    const outsideRoot = await makeTempRoot();
+    process.env.WORKSPACE = workspaceRoot;
+    await fs.promises.writeFile(path.join(workspaceRoot, 'demo.md'), '# Demo\n', 'utf-8');
+    await fs.promises.writeFile(path.join(outsideRoot, 'external.md'), '# External\n', 'utf-8');
+
+    const sources = new Map<string, FileSourceRecord>([
+      ['workspace', source({ id: 'workspace', base_path: workspaceRoot })],
+      ['external', source({ id: 'external', base_path: outsideRoot })],
+      ['remote', source({ id: 'remote', type: 'github', base_path: null })],
+    ]);
+    const updateSource: FileSourceRepository['updateSource'] = vi.fn((id, updates) => {
+      const existing = sources.get(id);
+      if (!existing) {
+        return undefined;
+      }
+      const updated = { ...existing, ...updates } as FileSourceRecord;
+      sources.set(id, updated);
+      return updated;
+    });
+    const repo: FileSourceRepository = {
+      listSources: vi.fn(() => Array.from(sources.values())),
+      getSource: vi.fn((id: string) => sources.get(id)),
+      createSource: vi.fn(() => source()),
+      updateSource,
+      setEnabled: vi.fn(() => undefined),
+      deleteSource: vi.fn(() => false),
+    };
+
+    const { registerFileRoutes } = await import('./routes-files');
+    const app = express();
+    app.use(express.json());
+    const router = Router();
+    registerFileRoutes(router, { sourceRepo: repo });
+    app.use('/api/fs', router);
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+
+    try {
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const workspaceFile = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=demo.md`);
+      expect(workspaceFile.status).toBe(200);
+      await expect(workspaceFile.json()).resolves.toMatchObject({ readOnly: false, content: '# Demo\n' });
+
+      const workspaceWrite = await fetch(`${baseUrl}/api/fs/file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceId: 'workspace',
+          path: 'demo.md',
+          mode: 'overwrite',
+          content: '# Edited\n',
+        }),
+      });
+      expect(workspaceWrite.status).toBe(200);
+      await expect(fs.promises.readFile(path.join(workspaceRoot, 'demo.md'), 'utf-8')).resolves.toBe('# Edited\n');
+
+      const externalFile = await fetch(`${baseUrl}/api/fs/file?sourceId=external&path=external.md`);
+      expect(externalFile.status).toBe(200);
+      await expect(externalFile.json()).resolves.toMatchObject({ readOnly: true, content: '# External\n' });
+
+      const externalWrite = await fetch(`${baseUrl}/api/fs/file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceId: 'external',
+          path: 'external.md',
+          mode: 'overwrite',
+          content: '# Should not write\n',
+        }),
+      });
+      expect(externalWrite.status).toBe(403);
+      await expect(externalWrite.json()).resolves.toEqual({ error: 'Source is read-only.' });
+      await expect(fs.promises.readFile(path.join(outsideRoot, 'external.md'), 'utf-8')).resolves.toBe('# External\n');
+
+      const remoteWrite = await fetch(`${baseUrl}/api/fs/file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceId: 'remote',
+          path: 'remote.md',
+          content: '# Should not write\n',
+        }),
+      });
+      expect(remoteWrite.status).toBe(403);
+      await expect(remoteWrite.json()).resolves.toEqual({ error: 'Source is read-only.' });
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
