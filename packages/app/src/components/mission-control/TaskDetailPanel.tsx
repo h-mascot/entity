@@ -3,6 +3,7 @@ import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorM
 import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
 import MarkdownPreview from '../MarkdownPreview';
+import GovernanceSection from './task-detail/GovernanceSection';
 import {
   TASK_COLUMNS,
   type TaskBoardTask,
@@ -34,7 +35,7 @@ import {
 const TaskChatContextPanel = lazy(() => import('./TaskChatContextPanel'));
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
-type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
+type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks';
 
 const COLUMN_LABELS: Record<TaskColumn, string> = {
   backlog: 'Backlog',
@@ -1874,6 +1875,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const [detailTab, setDetailTab] = useState<DetailTab>('activity');
   const [advancedFieldsOpen, setAdvancedFieldsOpen] = useState(false);
   const [outputSectionOpen, setOutputSectionOpen] = useState(false);
+  const [governanceOpen, setGovernanceOpen] = useState(false);
   const [outputViewOverride, setOutputViewOverride] = useState<'rendered' | 'raw' | null>(null);
   const [outputCopied, setOutputCopied] = useState(false);
   const [activityView, setActivityView] = useState<'human' | 'technical'>('human');
@@ -1887,28 +1889,6 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const [replyTargetId, setReplyTargetId] = useState<number | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
   const { tasks: boardTasks, reloadTasks } = useTaskBoard({ apiBase, autoLoad: false });
-  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
-
-  // Fetch effective config for workspaceRoot
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`${apiBase}/api/config/effective`);
-        if (res.ok && !cancelled) {
-          const data = (await res.json()) as { settings?: { server?: { workspaceRoot?: string } } };
-          if (data.settings?.server?.workspaceRoot) {
-            setWorkspaceRoot(data.settings.server.workspaceRoot);
-          }
-        }
-      } catch {
-        // ignore fetch errors
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [apiBase]);
 
   useEffect(() => {
     const animationId = window.requestAnimationFrame(() => setVisible(true));
@@ -1984,6 +1964,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     setSaveMessage(null);
     setDetailTab('activity');
     setActivityView('human');
+    setGovernanceOpen(false);
     setReplyTargetId(null);
     setReplyDrafts({});
 
@@ -2112,6 +2093,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const humanGateRequestEligible = task
     ? humanGateActorEligible || principalMatches(actorAliases, task.ownerPrincipalId)
     : false;
+  const governanceActorEligible = reviewActorEligible || humanGateActorEligible || humanGateRequestEligible;
   const outputIsEmpty = task ? task.output.trim().length === 0 && outputLinks.length === 0 : true;
   const outputExpanded = !outputIsEmpty || outputSectionOpen;
   const outputIsMarkdown = useMemo(() => looksLikeMarkdown(task?.output ?? ''), [task?.output]);
@@ -2125,6 +2107,12 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
       .filter((candidate) => candidate.parent_task_id === task.id)
       .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
   }, [boardTasks, task]);
+
+  useEffect(() => {
+    if (governanceActorEligible) {
+      setGovernanceOpen(true);
+    }
+  }, [governanceActorEligible]);
 
   const setStatus = (message: string | null) => {
     setSaveMessage(message);
@@ -3033,6 +3021,21 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
         activityEventTypes: task.activity.map((entry) => entry.activityEventType),
       })
     : null;
+  const createdByAccountability = task
+    ? formatAccountabilityField(task.createdByPrincipalId ?? task.createdBy)
+    : { label: 'Unknown (degraded)', degraded: true };
+  const showAccountability = Boolean(
+    !createdByAccountability.degraded || accountabilityRows.some((row) => !row.value.degraded)
+  );
+  const showRoutingState = Boolean(
+    task && routingState && (
+      (routingState.key !== 'assigned' && routingState.key !== 'unknown') ||
+      routingState.reasonChain.length > 0 ||
+      (task.assignmentState !== null && task.assignmentState.trim().toLowerCase() !== 'assigned') ||
+      task.taskmasterDrivable ||
+      Boolean(task.executorPrincipalId)
+    )
+  );
 
   return (
     <div className="fixed inset-0 z-[85] pointer-events-none">
@@ -3127,7 +3130,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
             </div>
           </div>
 
-	          <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)_72px_minmax(0,0.9fr)_minmax(0,0.9fr)]">
+	          <div className="mt-3 grid gap-2 sm:grid-cols-2">
 	            <label className="min-w-0">
 	              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
 	                Assignee
@@ -3150,6 +3153,42 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	              </select>
 	            </label>
 
+	            <label className="min-w-0">
+	              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+	                Column
+	              </span>
+	              <select
+                value={form?.column ?? 'backlog'}
+                onChange={(event) => {
+                  const value = normalizeColumn(event.target.value);
+                  updateFormField('column', value);
+                  void patchTask({ column: value }, { successMessage: 'Column saved.' });
+                }}
+	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs"
+	                disabled={!form || busyAction !== null}
+	              >
+                {TASK_COLUMNS.map((column) => (
+                  <option key={column} value={column}>
+                    {COLUMN_LABELS[column]}
+                  </option>
+                ))}
+	              </select>
+	            </label>
+	          </div>
+
+	          <div className="mt-2">
+	            <button
+	              type="button"
+	              className="text-[11px] font-medium text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
+	              onClick={() => setAdvancedFieldsOpen((current) => !current)}
+	              aria-expanded={advancedFieldsOpen}
+	            >
+	              {advancedFieldsOpen ? 'Hide' : 'Show'} due date, priority, model, estimate, time, blocker
+	            </button>
+	          </div>
+
+	          {advancedFieldsOpen ? (
+	          <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
 	            <label className="min-w-0">
 	              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
 	                Due Date
@@ -3191,28 +3230,6 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
 	            <label className="min-w-0">
 	              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
-	                Column
-	              </span>
-	              <select
-                value={form?.column ?? 'backlog'}
-                onChange={(event) => {
-                  const value = normalizeColumn(event.target.value);
-                  updateFormField('column', value);
-                  void patchTask({ column: value }, { successMessage: 'Column saved.' });
-                }}
-	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs"
-	                disabled={!form || busyAction !== null}
-	              >
-                {TASK_COLUMNS.map((column) => (
-                  <option key={column} value={column}>
-                    {COLUMN_LABELS[column]}
-                  </option>
-                ))}
-	              </select>
-	            </label>
-
-	            <label className="min-w-0">
-	              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
 	                Model
 	              </span>
 	              <select
@@ -3231,21 +3248,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                   ))}
 	              </select>
 	            </label>
-	          </div>
 
-	          <div className="mt-2">
-	            <button
-	              type="button"
-	              className="text-[11px] font-medium text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
-	              onClick={() => setAdvancedFieldsOpen((current) => !current)}
-	              aria-expanded={advancedFieldsOpen}
-	            >
-	              {advancedFieldsOpen ? 'Hide' : 'Show'} estimate, time, blocker
-	            </button>
-	          </div>
-
-	          {advancedFieldsOpen ? (
-	          <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.2fr)]">
 	            <label className="min-w-0">
 	              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
 	                Estimate
@@ -3334,7 +3337,6 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
               { icon: '▣', label: 'Logs', tab: 'logs' as const, count: task?.activity.filter(isTechnicalActivity).length ?? 0 },
               { icon: '◌', label: 'Comments', tab: 'comments' as const, count: comments.length },
               { icon: '☷', label: 'Subtasks', tab: 'subtasks' as const, count: subtasks.length },
-              { icon: '🔗', label: 'Links', tab: 'links' as const, count: outputLinks.length },
             ].map(({ icon, label, tab, count }) => (
               <button
                 key={label}
@@ -3390,8 +3392,13 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                />
 	              </section>
 
+	              <GovernanceSection
+	                open={governanceOpen}
+	                actionEligible={governanceActorEligible}
+	                onToggle={() => setGovernanceOpen((current) => !current)}
+	              >
+	              {showAccountability ? (
 	              <section
-	                style={{ order: 2 }}
 	                className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
 	                data-testid="task-accountability-panel"
 	              >
@@ -3415,9 +3422,9 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                  )}
 	                </div>
 	                <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
-	                  <div className={accountabilityCardClass(formatAccountabilityField(task.createdByPrincipalId ?? task.createdBy).degraded)}>
+	                  <div className={accountabilityCardClass(createdByAccountability.degraded)}>
 	                    <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)]">Created by</div>
-	                    <div>{formatAccountabilityField(task.createdByPrincipalId ?? task.createdBy).label}</div>
+	                    <div>{createdByAccountability.label}</div>
 	                    <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">record creator</div>
 	                  </div>
 	                  {accountabilityRows.map((row) => (
@@ -3429,9 +3436,10 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                  ))}
 	                </div>
 	              </section>
+	              ) : null}
 
+	              {showRoutingState ? (
 	              <section
-	                style={{ order: 2 }}
 	                className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
 	                data-testid="task-routing-state-panel"
 	              >
@@ -3481,10 +3489,10 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                  </div>
 	                ) : null}
 	              </section>
+	              ) : null}
 
                   {worktypeOverlay ? (
                     <section
-                      style={{ order: 2 }}
                       className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
                       data-testid="task-worktype-overlay-panel"
                     >
@@ -3523,7 +3531,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                     </section>
                   ) : null}
 
-	              <section style={{ order: 2 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
+	              <section className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
 	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
 	                  <div>
 	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
@@ -3622,7 +3630,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                   ) : null}
 	              </section>
 
-	              <section style={{ order: 3 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
+	              <section className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
 	                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
 	                  <div>
 	                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
@@ -3706,7 +3714,6 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
                   {receiptProof ? (
                     <section
-                      style={{ order: 3 }}
                       className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
                       data-testid="task-receipt-proof-panel"
                     >
@@ -3864,7 +3871,6 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
                   {documentObjectViews.length > 0 ? (
                     <section
-                      style={{ order: 4 }}
                       className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3"
                       data-testid="task-document-object-panel"
                     >
@@ -4073,6 +4079,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                       </div>
                     </section>
                   ) : null}
+	              </GovernanceSection>
 
 	              <section style={{ order: 5 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2.5">
 	                <div className={`${outputExpanded ? 'mb-2' : ''} flex flex-wrap items-center justify-between gap-2`}>
@@ -4127,23 +4134,13 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                      </>
 	                    ) : null}
 	                    {outputIsEmpty && !outputExpanded ? (
-	                      <>
-	                        <button
-	                          type="button"
-	                          className="mc-shell-btn px-2.5 py-1.5 text-xs"
-	                          onClick={() => setOutputSectionOpen(true)}
-	                        >
-	                          Add output
-	                        </button>
-	                        <button
-	                          type="button"
-	                          className="mc-shell-btn px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
-	                          onClick={() => void autoGenerateSubtasks()}
-	                          disabled={busyAction !== null}
-	                        >
-	                          Auto-subtasks
-	                        </button>
-	                      </>
+	                      <button
+	                        type="button"
+	                        className="mc-shell-btn px-2.5 py-1.5 text-xs"
+	                        onClick={() => setOutputSectionOpen(true)}
+	                      >
+	                        Add output
+	                      </button>
 	                    ) : null}
 	                  </div>
 	                </div>
@@ -4221,14 +4218,6 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                          disabled={busyAction === 'save' || outputInput === task.output}
 	                        >
 	                          Save
-	                        </button>
-	                        <button
-	                          type="button"
-	                          className="mc-shell-btn px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40"
-	                          onClick={() => void autoGenerateSubtasks()}
-	                          disabled={busyAction !== null}
-	                        >
-	                          Auto-subtasks
 	                        </button>
 	                      </div>
 	                    </div>
@@ -4682,49 +4671,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                       </div>
                     )}
                   </div>
-                ) : (
-                  <div>
-                    <div className="mb-4">
-                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">Linked Evidence</h4>
-                      <div className="mt-1 text-xs text-[var(--text-muted)]">
-                        Output links open through Entity docs when they point to local markdown.
-                      </div>
-                    </div>
-                    {outputLinks.length > 0 ? (
-                      <div className="space-y-2">
-                        {outputLinks.map((link) => (
-                          <a
-                            key={link.href}
-                            href={link.href}
-                            target={link.external ? '_blank' : undefined}
-                            rel={link.external ? 'noreferrer' : undefined}
-                            className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-primary)] px-4 py-3 hover:border-[var(--border-secondary)]"
-                            onClick={(event) => {
-                              if (event.defaultPrevented || link.external || !onDocsLinkNavigate) {
-                                return;
-                              }
-                              if (onDocsLinkNavigate(link.href)) {
-                                event.preventDefault();
-                              }
-                            }}
-                          >
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold text-[var(--text-primary)]">
-                                {link.external ? 'External link' : 'Entity docs link'}
-                              </div>
-                              <div className="mt-1 truncate text-xs text-[var(--text-muted)]">{link.label}</div>
-                            </div>
-                            <span className="mc-shell-btn shrink-0 px-3 py-1.5 text-xs">Open</span>
-                          </a>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-xl border border-dashed border-[var(--border-primary)] bg-[var(--bg-primary)] px-4 py-6 text-sm text-[var(--text-muted)]">
-                        No output links found.
-                      </div>
-                    )}
-                  </div>
-                )}
+                ) : null}
               </section>
             </div>
           ) : (

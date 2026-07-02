@@ -140,6 +140,7 @@ import { createActivityLogger } from "./routes/activity-log";
 import { registerFrontendStaticRoutes } from "./routes/frontend-static";
 import { registerAgentMetricsRoute, registerCoreProbeRoutes, registerTestErrorRoute } from "./routes/core";
 import { ensureSampleTasks } from "./routes/sample-tasks";
+import { ensureSampleDocs } from "./routes/sample-docs";
 import { createMigrationCleanupQueueRouter } from "./routes/migration-cleanup-queues";
 import {
   phase2FlagEnabled,
@@ -616,7 +617,16 @@ server.listen(PORT, HOST, () => {
   console.log(
     `Entity TaskAgent: ${AGENT_CONFIG.enabled ? "enabled" : "disabled"}`,
   );
-  void ensureSampleTasks({ logActivity, taskSyncLayer });
+  void (async () => {
+    try {
+      await ensureSampleDocs();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      console.error("[Seed] Failed to ensure sample docs:", message);
+    }
+
+    await ensureSampleTasks({ logActivity, taskSyncLayer });
+  })();
 
   // Start Swarm self-healer - auto-recover stuck jobs
   import("./swarm/healer")
