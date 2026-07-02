@@ -1,13 +1,28 @@
 import { capitalizeColumn } from "./task-helpers";
+import { normalizeTaskOutputLinks } from "../task-output-links";
+import { SAMPLE_DOC_OUTPUT_PATH } from "./sample-docs";
 
 interface EnsureSampleTasksDeps {
   logActivity: (input: any) => unknown;
   taskSyncLayer: any;
 }
 
+interface SampleTaskSeed {
+  name: string;
+  description: string;
+  column: string;
+  assignee: string;
+  output?: string;
+}
+
+export const SAMPLE_DOC_VIEWER_TASK_NAME =
+  "Demo: open a document from task output";
+export const SAMPLE_DOC_VIEWER_TASK_OUTPUT =
+  `Deliverable ready. Open the rendered document: [Entity Doc Viewer Demo](${SAMPLE_DOC_OUTPUT_PATH})`;
+
 export async function ensureSampleTasks(deps: EnsureSampleTasksDeps): Promise<void> {
   const { logActivity, taskSyncLayer } = deps;
-  const sampleTasks = [
+  const sampleTasks: readonly SampleTaskSeed[] = [
     {
       name: "Sample: Product brief review",
       description:
@@ -29,7 +44,15 @@ export async function ensureSampleTasks(deps: EnsureSampleTasksDeps): Promise<vo
       column: "review",
       assignee: "Assistant",
     },
-  ] as const;
+    {
+      name: SAMPLE_DOC_VIEWER_TASK_NAME,
+      description:
+        "Open this card to launch a rendered Markdown document from task Output.",
+      column: "review",
+      assignee: "Assistant",
+      output: SAMPLE_DOC_VIEWER_TASK_OUTPUT,
+    },
+  ];
 
   try {
     const existingTasks = await taskSyncLayer.listTasks();
@@ -48,6 +71,10 @@ export async function ensureSampleTasks(deps: EnsureSampleTasksDeps): Promise<vo
         description: sample.description,
         column: sample.column,
         assignee: sample.assignee,
+        output:
+          sample.output === undefined
+            ? undefined
+            : normalizeTaskOutputLinks(sample.output),
       });
       existingNames.add(normalizedName);
 
