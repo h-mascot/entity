@@ -3495,7 +3495,8 @@ export default function App() {
     [authorshipRanges]
   );
   const manualAttributionEnabled = runtime.agentNativeEditorEnabled;
-  const rightSidebarHasComments = commentThreads.length > 0;
+  const documentsReady = Boolean(runtime.agentNativeEditorEnabled && currentDocId && currentSourceId && documentsAuth);
+  const rightSidebarHasComments = documentsReady || commentThreads.length > 0;
   const rightSidebarHasSuggestions = suggestions.length > 0;
   const rightSidebarHasReview = reviewFindings.length > 0 || Boolean(reviewRun);
   const rightSidebarHasPanels = rightSidebarHasComments || rightSidebarHasSuggestions || rightSidebarHasReview;
@@ -3504,8 +3505,6 @@ export default function App() {
   const onlineAgents = agents.filter((agent) => agent.status === 'online').length;
   const workspaceTab = isMobile ? mobileTab : sidebarTab;
   const enterpriseFrameSrc = ENTERPRISE_ADMIN_URL;
-
-  const documentsReady = Boolean(runtime.agentNativeEditorEnabled && currentDocId && currentSourceId && documentsAuth);
 
   useEffect(() => {
     if (currentDocId && rightSidebarHasPanels) {

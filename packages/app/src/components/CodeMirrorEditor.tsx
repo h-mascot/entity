@@ -232,31 +232,38 @@ function buildNewCommentKeymap(
     return [];
   }
 
+  const runNewCommentShortcut = (view: EditorView) => {
+    const selection = view.state.selection.main;
+    if (selection.empty) {
+      return false;
+    }
+
+    const from = Math.min(selection.from, selection.to);
+    const to = Math.max(selection.from, selection.to);
+    const selectedText = view.state.doc.sliceString(from, to);
+    const coords = view.coordsAtPos(from);
+    const anchor = coords
+      ? { left: coords.left, top: coords.top, bottom: coords.bottom }
+      : { left: 24, top: 24, bottom: 24 };
+
+    onNewComment({
+      selection: { from, to },
+      selectedText,
+      anchor,
+    });
+    return true;
+  };
+
   return keymap.of([
     {
       key: 'Mod-Shift-c',
       preventDefault: true,
-      run: (view) => {
-        const selection = view.state.selection.main;
-        if (selection.empty) {
-          return false;
-        }
-
-        const from = Math.min(selection.from, selection.to);
-        const to = Math.max(selection.from, selection.to);
-        const selectedText = view.state.doc.sliceString(from, to);
-        const coords = view.coordsAtPos(from);
-        const anchor = coords
-          ? { left: coords.left, top: coords.top, bottom: coords.bottom }
-          : { left: 24, top: 24, bottom: 24 };
-
-        onNewComment({
-          selection: { from, to },
-          selectedText,
-          anchor,
-        });
-        return true;
-      },
+      run: runNewCommentShortcut,
+    },
+    {
+      key: 'Mod-Alt-m',
+      preventDefault: true,
+      run: runNewCommentShortcut,
     },
   ]);
 }

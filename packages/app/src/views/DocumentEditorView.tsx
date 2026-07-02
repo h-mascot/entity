@@ -462,7 +462,10 @@ export default function DocumentEditorView(props: any) {
                           return;
                         }
                         if (!editorSelection || editorSelection.to <= editorSelection.from) {
-                          pushToast('Select some text first.', 'warning');
+                          if (!editMode) {
+                            setEditMode(true);
+                          }
+                          pushToast('Select text in the editor, then press + to comment.', 'info');
                           return;
                         }
 
