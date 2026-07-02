@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react';
+import { shouldRenderMarkdownPreview } from '../lib/markdownFile';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
 const CodeMirrorFileViewer = lazy(() => import('../components/CodeMirrorFileViewer'));
@@ -40,36 +41,6 @@ function LazyDocumentReadingView(props: any) {
       <DocumentReadingView {...props} />
     </Suspense>
   );
-}
-
-function normalizeDetectedContentType(contentType: string | null | undefined): string {
-  if (typeof contentType !== 'string') {
-    return '';
-  }
-
-  return contentType
-    .split(';')[0]
-    ?.trim()
-    .toLowerCase() ?? '';
-}
-
-function isMarkdownContentType(contentType: string | null | undefined): boolean {
-  const normalized = normalizeDetectedContentType(contentType);
-  if (!normalized) {
-    return false;
-  }
-
-  return normalized === 'text/markdown' || normalized === 'application/markdown' || normalized.includes('markdown');
-}
-
-function isMarkdownFilePath(filePath: string | null): boolean {
-  if (!filePath) return false;
-  const normalized = filePath.trim().toLowerCase();
-  return normalized.endsWith('.md') || normalized.endsWith('.markdown') || normalized.endsWith('.mdx');
-}
-
-function shouldRenderMarkdownPreview(filePath: string | null, contentType: string | null | undefined): boolean {
-  return isMarkdownFilePath(filePath) || isMarkdownContentType(contentType);
 }
 
 function computeDomSelectionAnchor(): { left: number; top: number; bottom: number } | null {

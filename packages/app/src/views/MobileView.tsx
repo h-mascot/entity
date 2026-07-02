@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import MobileBottomNav from '../components/MobileBottomNav';
 import TaskBoard from '../components/TaskBoard';
+import { shouldRenderMarkdownPreview } from '../lib/markdownFile';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
 const CodeMirrorFileViewer = lazy(() => import('../components/CodeMirrorFileViewer'));
@@ -127,36 +128,6 @@ function defaultFileCacheMeta() {
     cachedAt: null,
     cacheAgeMs: null,
   };
-}
-
-function normalizeDetectedContentType(contentType: string | null | undefined): string {
-  if (typeof contentType !== 'string') {
-    return '';
-  }
-
-  return contentType
-    .split(';')[0]
-    ?.trim()
-    .toLowerCase() ?? '';
-}
-
-function isMarkdownContentType(contentType: string | null | undefined): boolean {
-  const normalized = normalizeDetectedContentType(contentType);
-  if (!normalized) {
-    return false;
-  }
-
-  return normalized === 'text/markdown' || normalized === 'application/markdown' || normalized.includes('markdown');
-}
-
-function isMarkdownFilePath(filePath: string | null): boolean {
-  if (!filePath) return false;
-  const normalized = filePath.trim().toLowerCase();
-  return normalized.endsWith('.md') || normalized.endsWith('.markdown') || normalized.endsWith('.mdx');
-}
-
-function shouldRenderMarkdownPreview(filePath: string | null, contentType: string | null | undefined): boolean {
-  return isMarkdownFilePath(filePath) || isMarkdownContentType(contentType);
 }
 
 export default function MobileView(props: any) {
