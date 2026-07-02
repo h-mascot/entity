@@ -4484,6 +4484,8 @@ export default function App() {
 
     if (shouldShowFilesMarkdownChrome && currentFile) {
       const sourceName = selectedSource?.displayName;
+      const showSourcePill = runtime.fsMultiSourceEnabled && currentSourceId;
+      const showReadOnlyPill = !canEditCurrentFile;
 
       return (
         <div className="w-full">
@@ -4493,14 +4495,24 @@ export default function App() {
             pathHint={filePathHint(currentFile, sourceName)}
             actions={
               <>
-                <button
-                  type="button"
-                  onClick={() => setEditMode((prev) => !prev)}
-                  disabled={!currentFile}
-                  className={`mc-shell-btn px-3 py-1 text-xs ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-                >
-                  Edit
-                </button>
+                {showSourcePill && (
+                  <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+                    Source
+                  </span>
+                )}
+                {showReadOnlyPill ? (
+                  <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+                    Read-only
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditMode((prev) => !prev)}
+                    className="mc-shell-btn px-3 py-1 text-xs"
+                  >
+                    Edit
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
