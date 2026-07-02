@@ -273,7 +273,79 @@ async function deploySha(sha) {
     if (config.prodLaunchdService) {
       await run('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${config.prodLaunchdService}`]);
     }
+    if (!args.skipVerify) {
+      try {
+        await verifyLive(targetSha);
+      } catch (err) {
+        await rollbackRelease(targetSha, err);
+        throw err;
+      }
+    }
   }
+}
+
+async function verifyLive(targetSha) {
+  const port = parseInt(config.prodPort, 10) || 3000;
+  const host = '127.0.0.1';
+  const budgetMs = 60_000;
+  const startedAt = Date.now();
+  let lastErr = null;
+  while (Date.now() - startedAt < budgetMs) {
+    try {
+      const versionUrl = `http://${host}:${port}/api/version`;
+      const healthUrl = `http://${host}:${port}/api/health`;
+      const versionRes = await fetch(versionUrl, { signal: AbortSignal.timeout(3000) });
+      const healthRes = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) });
+      if (versionRes.ok && healthRes.ok) {
+        const body = await versionRes.json();
+        const healthBody = await healthRes.json();
+        if (body?.gitSha === targetSha && healthBody?.status === 'ok') {
+          log(`VERIFY_OK sha=${targetSha} port=${port} elapsedMs=${Date.now() - startedAt}`);
+          return;
+        }
+        lastErr = `sha_mismatch expected=${targetSha} got=${body?.gitSha || '<missing>'} health=${healthBody?.status || '<missing>'}`;
+      } else {
+        lastErr = `http version=${versionRes.status} health=${healthRes.status}`;
+      }
+    } catch (err) {
+      lastErr = err?.message || String(err);
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error(`VERIFY_TIMEOUT sha=${targetSha} port=${port} budgetMs=${budgetMs} lastErr=${lastErr}`);
+}
+
+async function rollbackRelease(failedSha, originalError) {
+  if (!config.previousLink) {
+    log(`ROLLBACK_SKIP no previousLink configured (sha=${failedSha} err=${originalError.message})`);
+    return;
+  }
+  let previousTarget = '';
+  try {
+    previousTarget = readlinkSync(config.previousLink);
+  } catch {}
+  if (!previousTarget || previousTarget === config.currentLink) {
+    log(`ROLLBACK_SKIP previousTarget empty or already current (sha=${failedSha} err=${originalError.message})`);
+    return;
+  }
+  switchSymlink(config.currentLink, previousTarget, config.previousLink);
+  if (config.prodLaunchdService) {
+    try {
+      await run('launchctl', ['kickstart', '-k', `gui/${process.getuid()}/${config.prodLaunchdService}`]);
+    } catch (kickErr) {
+      log(`ROLLBACK_KICK_FAIL ${kickErr.message}`);
+    }
+  }
+  const failurePath = join(stateDir, 'deploy-failures');
+  mkdirSync(failurePath, { recursive: true });
+  const failureFile = join(failurePath, `${Date.now()}-${failedSha.slice(0, 12)}.json`);
+  writeFileSync(failureFile, JSON.stringify({
+    failedSha,
+    error: originalError.message,
+    rolledBackTo: previousTarget,
+    timestamp: new Date().toISOString(),
+  }, null, 2));
+  log(`ROLLBACK_COMPLETE failed=${failedSha} restored=${previousTarget} log=${failureFile}`);
 }
 
 function switchSymlink(currentLink, nextTarget, previousLink) {
