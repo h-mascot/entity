@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
 import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
+import MarkdownPreview from '../MarkdownPreview';
 import {
   TASK_COLUMNS,
   type TaskBoardTask,
@@ -958,6 +959,28 @@ function normalizeTaskOutputHref(rawHref: string): string | null {
   return null;
 }
 
+// Heuristic: does the task output contain markdown worth rendering as a document?
+// Logs / plain URLs stay in the raw linkified view; structured markdown gets the
+// same rich renderer as the DocHub document view.
+const MARKDOWN_SIGNAL_PATTERNS: RegExp[] = [
+  /^\s{0,3}#{1,6}\s+\S/m, // ATX headings
+  /^\s*```/m, // fenced code blocks
+  /^\s*>\s+\S/m, // blockquotes
+  /^\s*(?:[-*+]|\d+\.)\s+\S/m, // bullet or ordered lists
+  /^\s*\|.*\|.*$/m, // table rows
+  /\[[^\]]+\]\([^)]+\)/, // inline links
+  /\*\*[^*\n]+\*\*/, // bold
+  /(?:^|\s)`[^`\n]+`/, // inline code
+];
+
+function looksLikeMarkdown(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+  return MARKDOWN_SIGNAL_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
+
 function renderLinkedText(text: string, onDocsLinkNavigate?: (href: string) => boolean): ReactNode {
   if (!text) {
     return null;
@@ -1851,6 +1874,8 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   const [detailTab, setDetailTab] = useState<DetailTab>('activity');
   const [advancedFieldsOpen, setAdvancedFieldsOpen] = useState(false);
   const [outputSectionOpen, setOutputSectionOpen] = useState(false);
+  const [outputViewOverride, setOutputViewOverride] = useState<'rendered' | 'raw' | null>(null);
+  const [outputCopied, setOutputCopied] = useState(false);
   const [activityView, setActivityView] = useState<'human' | 'technical'>('human');
   const [outputInput, setOutputInput] = useState('');
   const [dependencyInput, setDependencyInput] = useState('');
@@ -2089,6 +2114,8 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     : false;
   const outputIsEmpty = task ? task.output.trim().length === 0 && outputLinks.length === 0 : true;
   const outputExpanded = !outputIsEmpty || outputSectionOpen;
+  const outputIsMarkdown = useMemo(() => looksLikeMarkdown(task?.output ?? ''), [task?.output]);
+  const outputViewMode: 'rendered' | 'raw' = outputViewOverride ?? (outputIsMarkdown ? 'rendered' : 'raw');
   const subtasks = useMemo(() => {
     if (!task) {
       return [];
@@ -2375,6 +2402,20 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
         preserveOutput: false,
       }
     );
+  };
+
+  const copyOutput = async () => {
+    const text = task?.output ?? '';
+    if (!text.trim()) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setOutputCopied(true);
+      window.setTimeout(() => setOutputCopied(false), 1500);
+    } catch {
+      // Clipboard can be unavailable (e.g. insecure context); fail quietly.
+    }
   };
 
   const autoGenerateSubtasks = async () => {
@@ -4049,6 +4090,42 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                    <span className="text-xs text-[var(--text-muted)]">
 	                      {outputLinks.length} link{outputLinks.length === 1 ? '' : 's'}
 	                    </span>
+	                    {outputExpanded && task.output.trim() ? (
+	                      <>
+	                        {outputIsMarkdown ? (
+	                          <div
+	                            className="inline-flex overflow-hidden rounded-md border border-[var(--border-primary)]"
+	                            role="group"
+	                            aria-label="Output view mode"
+	                          >
+	                            <button
+	                              type="button"
+	                              aria-pressed={outputViewMode === 'rendered'}
+	                              className={`px-2 py-1 text-[11px] font-medium transition-colors ${outputViewMode === 'rendered' ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}`}
+	                              onClick={() => setOutputViewOverride('rendered')}
+	                            >
+	                              Rendered
+	                            </button>
+	                            <button
+	                              type="button"
+	                              aria-pressed={outputViewMode === 'raw'}
+	                              className={`px-2 py-1 text-[11px] font-medium transition-colors ${outputViewMode === 'raw' ? 'bg-[var(--bg-tertiary)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}`}
+	                              onClick={() => setOutputViewOverride('raw')}
+	                            >
+	                              Raw
+	                            </button>
+	                          </div>
+	                        ) : null}
+	                        <button
+	                          type="button"
+	                          className="mc-shell-btn px-2.5 py-1.5 text-xs"
+	                          onClick={() => void copyOutput()}
+	                          title="Copy output to clipboard"
+	                        >
+	                          {outputCopied ? 'Copied' : 'Copy'}
+	                        </button>
+	                      </>
+	                    ) : null}
 	                    {outputIsEmpty && !outputExpanded ? (
 	                      <>
 	                        <button
@@ -4072,9 +4149,17 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                </div>
 	                {outputExpanded ? (
 	                  <>
-	                    <div className="mb-2 min-h-[56px] rounded-md bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-secondary)]">
+	                    <div className="mb-2 max-h-[420px] min-h-[56px] overflow-auto rounded-md bg-[var(--bg-primary)] px-3 py-2 text-[13px] text-[var(--text-secondary)]">
 	                      {task.output.trim() ? (
-	                        <pre className="whitespace-pre-wrap break-words font-sans">{renderLinkedText(task.output, onDocsLinkNavigate)}</pre>
+	                        outputViewMode === 'rendered' ? (
+	                          <MarkdownPreview
+	                            content={task.output}
+	                            compact
+	                            onDocsLinkNavigate={onDocsLinkNavigate}
+	                          />
+	                        ) : (
+	                          <pre className="whitespace-pre-wrap break-words font-sans">{renderLinkedText(task.output, onDocsLinkNavigate)}</pre>
+	                        )
 	                      ) : (
 	                        <div className="flex min-h-[36px] items-center text-sm text-[var(--text-muted)]">
 	                          No output yet.
@@ -4099,6 +4184,16 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                              target={link.external ? '_blank' : undefined}
 	                              rel={link.external ? 'noreferrer' : undefined}
 	                              className="mc-shell-btn shrink-0 px-3 py-1.5 text-xs"
+	                              onClick={(event) => {
+	                                if (event.defaultPrevented || link.external || !onDocsLinkNavigate) {
+	                                  return;
+	                                }
+	                                // Client-side nav records the originating task so the
+	                                // shared doc view can show a "Back to task" button.
+	                                if (onDocsLinkNavigate(link.href)) {
+	                                  event.preventDefault();
+	                                }
+	                              }}
 	                            >
 	                              Open
 	                            </a>
@@ -4604,6 +4699,14 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                             target={link.external ? '_blank' : undefined}
                             rel={link.external ? 'noreferrer' : undefined}
                             className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-primary)] px-4 py-3 hover:border-[var(--border-secondary)]"
+                            onClick={(event) => {
+                              if (event.defaultPrevented || link.external || !onDocsLinkNavigate) {
+                                return;
+                              }
+                              if (onDocsLinkNavigate(link.href)) {
+                                event.preventDefault();
+                              }
+                            }}
                           >
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-[var(--text-primary)]">

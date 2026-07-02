@@ -4,8 +4,7 @@ import TaskBoard from '../components/TaskBoard';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
 const CodeMirrorFileViewer = lazy(() => import('../components/CodeMirrorFileViewer'));
-const MarkdownPreview = lazy(() => import('../components/MarkdownPreview'));
-const MarkdownAudioControls = lazy(() => import('../components/MarkdownAudioControls'));
+const DocumentReadingView = lazy(() => import('../components/DocumentReadingView'));
 const AuthorshipStatsPanel = lazy(() => import('../components/editor/AuthorshipStatsPanel'));
 const UnifiedFileDashboard = lazy(() => import('../components/UnifiedFileDashboard'));
 const AgentsSidebarTab = lazy(() => import('../components/AgentsSidebarTab'));
@@ -42,18 +41,10 @@ function LazyCodeMirrorFileViewer(props: any) {
   );
 }
 
-function LazyMarkdownPreview(props: any) {
+function LazyDocumentReadingView(props: any) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading preview" />}>
-      <MarkdownPreview {...props} />
-    </Suspense>
-  );
-}
-
-function LazyMarkdownAudioControls(props: any) {
-  return (
-    <Suspense fallback={null}>
-      <MarkdownAudioControls {...props} />
+      <DocumentReadingView {...props} />
     </Suspense>
   );
 }
@@ -228,6 +219,8 @@ export default function MobileView(props: any) {
     currentFilePreviewMeta,
     currentRawFileUrl,
     handleMarkdownDocsNavigation,
+    docsTtsSettings,
+    handleDocsTtsSettingsChange,
     selectedAgent,
     selectedAgentData,
     activities,
@@ -445,17 +438,17 @@ export default function MobileView(props: any) {
                       </div>
                     ) : (
                       shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
-                        <div className={`mx-auto max-w-3xl p-4 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-                          <LazyMarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-                          <LazyMarkdownAudioControls
-                            docsPath={currentFile ?? ''}
-                            content={fileContent}
-                            settings={props.docsTtsSettings}
-                            onSettingsChange={props.handleDocsTtsSettingsChange}
-                            onToast={(msg: string, type: string) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-                            compact
-                          />
-                        </div>
+                        <LazyDocumentReadingView
+                          content={fileContent}
+                          docsPath={currentFile ?? ''}
+                          ttsSettings={docsTtsSettings}
+                          onTtsSettingsChange={handleDocsTtsSettingsChange}
+                          onToast={pushToast}
+                          onDocsLinkNavigate={handleMarkdownDocsNavigation}
+                          tts="none"
+                          dense
+                          animate={fileTransitionActive}
+                        />
                       ) : (
                         <div className={`h-full w-full overflow-hidden ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
                           <LazyCodeMirrorFileViewer

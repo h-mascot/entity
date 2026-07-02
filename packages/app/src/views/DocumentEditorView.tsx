@@ -2,8 +2,7 @@ import { lazy, Suspense } from 'react';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
 const CodeMirrorFileViewer = lazy(() => import('../components/CodeMirrorFileViewer'));
-const MarkdownPreview = lazy(() => import('../components/MarkdownPreview'));
-const MarkdownAudioControls = lazy(() => import('../components/MarkdownAudioControls'));
+const DocumentReadingView = lazy(() => import('../components/DocumentReadingView'));
 const CommentThreadPanel = lazy(() => import('../components/CommentThread').then((module) => ({ default: module.CommentThreadPanel })));
 const ReviewPanel = lazy(() => import('../components/ReviewPanel').then((module) => ({ default: module.ReviewPanel })));
 const SuggestionPanel = lazy(() => import('../components/SuggestionPanel').then((module) => ({ default: module.SuggestionPanel })));
@@ -35,18 +34,10 @@ function LazyCodeMirrorFileViewer(props: any) {
   );
 }
 
-function LazyMarkdownPreview(props: any) {
+function LazyDocumentReadingView(props: any) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading preview" />}>
-      <MarkdownPreview {...props} />
-    </Suspense>
-  );
-}
-
-function LazyMarkdownAudioControls(props: any) {
-  return (
-    <Suspense fallback={null}>
-      <MarkdownAudioControls {...props} />
+      <DocumentReadingView {...props} />
     </Suspense>
   );
 }
@@ -310,17 +301,15 @@ export default function DocumentEditorView(props: any) {
         </div>
       ) : (
         shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
-          <div className={`mx-auto max-w-4xl p-8 ${props.fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-            <LazyMarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-            <LazyMarkdownAudioControls
-              docsPath={currentFile ?? ''}
-              content={fileContent}
-              settings={docsTtsSettings}
-              onSettingsChange={handleDocsTtsSettingsChange}
-              onToast={(msg: string, type: string) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-              compact
-            />
-          </div>
+          <LazyDocumentReadingView
+            content={fileContent}
+            docsPath={currentFile ?? ''}
+            ttsSettings={docsTtsSettings}
+            onTtsSettingsChange={handleDocsTtsSettingsChange}
+            onToast={pushToast}
+            onDocsLinkNavigate={handleMarkdownDocsNavigation}
+            animate={props.fileTransitionActive}
+          />
         ) : (
           <div className={`h-full w-full overflow-hidden ${props.fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
             <LazyCodeMirrorFileViewer
@@ -416,17 +405,14 @@ export default function DocumentEditorView(props: any) {
                   </div>
                 ) : (
                   shouldRenderMarkdownPreview(rightPaneFile, rightPanePreviewMeta.contentType) ? (
-                    <div className="mx-auto max-w-4xl p-8">
-                      <LazyMarkdownPreview content={rightPaneContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-                      <LazyMarkdownAudioControls
-                        docsPath={rightPaneFile ?? ''}
-                        content={rightPaneContent}
-                        settings={docsTtsSettings}
-                        onSettingsChange={handleDocsTtsSettingsChange}
-                        onToast={(msg: string, type: string) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-                        compact
-                      />
-                    </div>
+                    <LazyDocumentReadingView
+                      content={rightPaneContent}
+                      docsPath={rightPaneFile ?? ''}
+                      ttsSettings={docsTtsSettings}
+                      onTtsSettingsChange={handleDocsTtsSettingsChange}
+                      onToast={pushToast}
+                      onDocsLinkNavigate={handleMarkdownDocsNavigation}
+                    />
                   ) : (
                     <div className="h-full w-full overflow-hidden">
                       <LazyCodeMirrorFileViewer

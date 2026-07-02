@@ -1,8 +1,7 @@
-import { lazy, Suspense, type ComponentProps, type ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import type { DocsTtsSettings } from '../components/MarkdownAudioControls';
 
-const MarkdownPreview = lazy(() => import('../components/MarkdownPreview'));
-const MarkdownAudioControls = lazy(() => import('../components/MarkdownAudioControls'));
+const DocumentReadingView = lazy(() => import('../components/DocumentReadingView'));
 
 interface DocsRouteViewProps {
   docsPath: string;
@@ -32,18 +31,10 @@ function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }
   );
 }
 
-function LazyMarkdownAudioControls(props: ComponentProps<typeof MarkdownAudioControls>) {
-  return (
-    <Suspense fallback={null}>
-      <MarkdownAudioControls {...props} />
-    </Suspense>
-  );
-}
-
-function LazyMarkdownPreview(props: ComponentProps<typeof MarkdownPreview>) {
+function LazyDocumentReadingView(props: any) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading preview" />}>
-      <MarkdownPreview {...props} />
+      <DocumentReadingView {...props} />
     </Suspense>
   );
 }
@@ -91,29 +82,24 @@ export default function DocsRouteView({
         </div>
       </header>
       <main className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8 lg:py-8">
-          {docsError ? (
+        {docsError ? (
+          <div className="mx-auto w-full max-w-4xl px-6 py-8">
             <div className="rounded-xl border border-[var(--error)]/50 bg-[var(--bg-secondary)] p-4">
               <div className="text-sm font-medium text-[var(--error)]">Unable to load document</div>
               <div className="mt-1 text-xs text-[var(--text-muted)]">{docsError}</div>
             </div>
-          ) : (
-            <>
-              <LazyMarkdownAudioControls
-                docsPath={docsPath}
-                content={docsContent}
-                settings={docsTtsSettings}
-                onSettingsChange={onDocsTtsSettingsChange}
-                onToast={onToast}
-              />
-              <LazyMarkdownPreview
-                content={docsContent}
-                loading={docsLoading}
-                onDocsLinkNavigate={onDocsLinkNavigate}
-              />
-            </>
-          )}
-        </div>
+          </div>
+        ) : (
+          <LazyDocumentReadingView
+            content={docsContent}
+            docsPath={docsPath}
+            loading={docsLoading}
+            ttsSettings={docsTtsSettings}
+            onTtsSettingsChange={onDocsTtsSettingsChange}
+            onToast={onToast}
+            onDocsLinkNavigate={onDocsLinkNavigate}
+          />
+        )}
       </main>
       {renderOfflineSyncBar(false)}
     </div>
