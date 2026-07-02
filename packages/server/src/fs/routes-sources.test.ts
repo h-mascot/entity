@@ -109,7 +109,7 @@ describe('source registration routes', () => {
     });
   });
 
-  it('clamps local source capabilities on create and update so client JSON cannot enable writes', async () => {
+  it('clamps local source capabilities on create and update to the server-derived policy', async () => {
     const workspaceRoot = await makeTempRoot();
     const dbRoot = await makeTempRoot();
     process.env.WORKSPACE = workspaceRoot;
@@ -129,7 +129,7 @@ describe('source registration routes', () => {
       });
       expect(created.status).toBe(201);
       const createdBody = (await created.json()) as { capabilities: string };
-      expect(JSON.parse(createdBody.capabilities)).toMatchObject({ read: true, write: false, list: true, search: true });
+      expect(JSON.parse(createdBody.capabilities)).toMatchObject({ read: true, write: true, list: true, search: true });
 
       const updated = await fetch(`${baseUrl}/api/fs/sources/workspace-docs`, {
         method: 'PUT',
@@ -141,20 +141,7 @@ describe('source registration routes', () => {
       });
       expect(updated.status).toBe(200);
       const updatedBody = (await updated.json()) as { capabilities: string };
-      expect(JSON.parse(updatedBody.capabilities)).toMatchObject({ read: true, write: false, list: true, search: true });
-
-      const write = await fetch(`${baseUrl}/api/fs/file`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceId: 'workspace-docs',
-          path: 'client-enabled.md',
-          content: '# should not write\n',
-        }),
-      });
-      expect(write.status).toBe(403);
-      await expect(write.json()).resolves.toEqual({ error: 'Source is read-only.' });
-      await expect(fs.promises.stat(path.join(workspaceRoot, 'client-enabled.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(JSON.parse(updatedBody.capabilities)).toMatchObject({ read: true, write: true, list: true, search: true });
     });
   });
 });

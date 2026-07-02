@@ -21,9 +21,10 @@ type AdminSection =
   | 'taskMaster'
   | 'enterprise';
 type AppTheme = 'dark' | 'light' | 'kitz' | 'nebula' | 'aurora' | 'paper';
+type DocumentsAuthOrigin = 'dev-runtime' | 'user';
 type DocumentsAuth =
-  | { kind: 'bearer'; token: string }
-  | { kind: 'service'; token: string; actorId: string }
+  | { kind: 'bearer'; token: string; origin?: DocumentsAuthOrigin }
+  | { kind: 'service'; token: string; actorId: string; origin?: DocumentsAuthOrigin }
   | null;
 type DocsTtsProvider = DocsTtsSettings['provider'];
 type DocsTtsProviderOption = {
@@ -485,12 +486,12 @@ export default function AdminView({
                       pushToast('Service tokens require an actor id (ada/spock/scotty).', 'warning');
                       return;
                     }
-                    setDocumentsAuth({ kind: 'service', token, actorId });
+                    setDocumentsAuth({ kind: 'service', token, actorId, origin: 'user' });
                     pushToast('Service token saved.', 'success');
                     return;
                   }
 
-                  setDocumentsAuth({ kind: 'bearer', token });
+                  setDocumentsAuth({ kind: 'bearer', token, origin: 'user' });
                   pushToast('Bearer token saved.', 'success');
                 }}
                 className="flex flex-col gap-2"

@@ -94,6 +94,12 @@ export function CommentThreadPanel({
         </button>
       </div>
 
+      {threads.length === 0 && (
+        <div className="px-3 pb-3 text-xs text-[var(--text-muted)]">
+          No comments yet. Select text in the editor and press + to add one.
+        </div>
+      )}
+
       {threads.length > 0 && (
         <div className="px-3 pb-3">
           <div className="flex flex-col gap-3">

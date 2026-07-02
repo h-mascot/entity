@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertAllowedLocalSourceBasePath } from './source-root-guard';
+import { assertAllowedLocalSourceBasePath, isBasePathAllowlisted } from './source-root-guard';
 
 const tempRoots: string[] = [];
 
@@ -43,5 +43,21 @@ describe('assertAllowedLocalSourceBasePath', () => {
         extraAllowedRoots: externalRoot,
       }),
     ).resolves.toBe(externalRoot);
+  });
+
+  it('checks local source allowlist containment synchronously', async () => {
+    const workspaceRoot = await makeTempRoot();
+
+    expect(isBasePathAllowlisted(path.join(workspaceRoot, 'docs'), { workspaceRoot })).toBe(true);
+    expect(isBasePathAllowlisted('/etc', { workspaceRoot })).toBe(false);
+  });
+
+  it('does not derive allowlist access for a symlinked base path outside the real workspace root', async () => {
+    const workspaceRoot = await makeTempRoot();
+    const outsideRoot = await makeTempRoot();
+    const symlinkedBasePath = path.join(workspaceRoot, 'linked-outside');
+    await fs.promises.symlink(outsideRoot, symlinkedBasePath, 'dir');
+
+    expect(isBasePathAllowlisted(symlinkedBasePath, { workspaceRoot })).toBe(false);
   });
 });

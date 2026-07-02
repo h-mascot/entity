@@ -112,9 +112,9 @@ function toSourceResponse(source: FileSourceRecord) {
   };
 }
 
-function capabilitiesForStorage(type: FileSourceType, rawCapabilities: unknown): string | undefined {
+function capabilitiesForStorage(type: FileSourceType, rawCapabilities: unknown, basePath?: string | null): string | undefined {
   if (type === 'local') {
-    return localSourceCapabilitiesJson();
+    return localSourceCapabilitiesJson(basePath);
   }
   return typeof rawCapabilities === 'string' ? rawCapabilities : undefined;
 }
@@ -203,7 +203,7 @@ export function registerSourceRoutes(app: Express): void {
         auth_ref: payload.authRef?.trim() || undefined,
         enabled: typeof payload.enabled === 'undefined' ? true : toBoolean(payload.enabled),
         icon: payload.icon?.trim() || undefined,
-        capabilities: capabilitiesForStorage(type, payload.capabilities),
+        capabilities: capabilitiesForStorage(type, payload.capabilities, basePath),
       });
 
       // Kick off an index run for the created source (async; status is reflected via /api/fs/metrics).
@@ -240,6 +240,7 @@ export function registerSourceRoutes(app: Express): void {
       const basePath = nextType === 'local' && (typeof payload.type !== 'undefined' || typeof payload.basePath !== 'undefined')
         ? await assertAllowedLocalSourceBasePath(payload.basePath ?? existing.base_path)
         : payload.basePath;
+      const storageBasePath = nextType === 'local' ? basePath ?? existing.base_path : basePath;
       const shouldUpdateCapabilities = nextType === 'local' || typeof payload.capabilities === 'string';
       const updated = repo.updateSource(id, {
         display_name: payload.displayName,
@@ -250,7 +251,7 @@ export function registerSourceRoutes(app: Express): void {
         auth_ref: payload.authRef,
         enabled: typeof payload.enabled === 'undefined' ? undefined : toBoolean(payload.enabled),
         icon: payload.icon,
-        capabilities: shouldUpdateCapabilities ? capabilitiesForStorage(nextType, payload.capabilities) : undefined,
+        capabilities: shouldUpdateCapabilities ? capabilitiesForStorage(nextType, payload.capabilities, storageBasePath) : undefined,
         health: payload.health ? parseHealth(payload.health) ?? undefined : undefined,
         last_synced_at: payload.lastSyncedAt,
       });

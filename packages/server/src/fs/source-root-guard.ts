@@ -28,6 +28,18 @@ function isContainedPath(root: string, target: string): boolean {
   );
 }
 
+function realpathIfPresentSync(inputPath: string): string | null {
+  try {
+    return fs.realpathSync(inputPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export function getAllowedLocalSourceRoots(options: LocalSourceRootGuardOptions = {}): string[] {
   const workspaceRoot = options.workspaceRoot ?? process.env.WORKSPACE ?? process.cwd();
   return Array.from(
@@ -36,6 +48,29 @@ export function getAllowedLocalSourceRoots(options: LocalSourceRootGuardOptions 
         .map((entry) => path.resolve(entry)),
     ),
   );
+}
+
+export function isBasePathAllowlisted(basePath: string | undefined | null, options: LocalSourceRootGuardOptions = {}): boolean {
+  const trimmed = basePath?.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const resolvedBasePath = path.resolve(trimmed);
+  const allowedRoots = getAllowedLocalSourceRoots(options);
+  if (!allowedRoots.some((root) => isContainedPath(root, resolvedBasePath))) {
+    return false;
+  }
+
+  const realBasePath = realpathIfPresentSync(resolvedBasePath);
+  if (!realBasePath) {
+    return true;
+  }
+
+  return allowedRoots.some((root) => {
+    const realRoot = realpathIfPresentSync(root) ?? root;
+    return isContainedPath(realRoot, realBasePath);
+  });
 }
 
 export async function assertAllowedLocalSourceBasePath(
@@ -49,8 +84,7 @@ export async function assertAllowedLocalSourceBasePath(
 
   const resolvedBasePath = path.resolve(trimmed);
   const allowedRoots = getAllowedLocalSourceRoots(options);
-  const lexicalAllowed = allowedRoots.some((root) => isContainedPath(root, resolvedBasePath));
-  if (!lexicalAllowed) {
+  if (!isBasePathAllowlisted(resolvedBasePath, options)) {
     throw new Error('Local source basePath must stay inside an allowlisted root.');
   }
 

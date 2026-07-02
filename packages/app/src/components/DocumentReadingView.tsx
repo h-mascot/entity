@@ -42,22 +42,27 @@ export default function DocumentReadingView({
   animate = false,
   className,
 }: DocumentReadingViewProps) {
-  const padding = dense ? 'px-4 py-5' : 'px-8 py-8';
-  const widthClass = dense ? 'max-w-4xl' : 'max-w-5xl';
+  const canvasPadding = dense ? 'px-2 py-3 sm:px-4 sm:py-5' : 'px-4 py-6 sm:px-6 lg:px-8 lg:py-10';
+  const pagePadding = dense ? 'px-5 py-6 sm:px-7 sm:py-8' : 'px-6 py-8 sm:px-10 sm:py-12 lg:px-12 lg:py-14';
+  const pageRadius = dense ? 'rounded-lg sm:rounded-xl' : 'rounded-xl';
+  const pageWidth = dense ? 'max-w-3xl' : 'max-w-[820px]';
+
   return (
     <div
-      className={`mx-auto w-full ${widthClass} ${padding} ${animate ? 'mc-file-switch-anim' : ''} ${className ?? ''}`.trim()}
+      className={`entity-doc-canvas w-full ${canvasPadding} ${animate ? 'mc-file-switch-anim' : ''} ${className ?? ''}`.trim()}
     >
-      {tts === 'full' ? (
-        <MarkdownAudioControls
-          docsPath={docsPath}
-          content={content}
-          settings={ttsSettings}
-          onSettingsChange={onTtsSettingsChange}
-          onToast={onToast}
-        />
-      ) : null}
-      <MarkdownPreview content={content} loading={loading} onDocsLinkNavigate={onDocsLinkNavigate} />
+      <article className={`entity-doc-page mx-auto w-full ${pageWidth} ${pageRadius} ${pagePadding}`}>
+        {tts === 'full' ? (
+          <MarkdownAudioControls
+            docsPath={docsPath}
+            content={content}
+            settings={ttsSettings}
+            onSettingsChange={onTtsSettingsChange}
+            onToast={onToast}
+          />
+        ) : null}
+        <MarkdownPreview content={content} loading={loading} onDocsLinkNavigate={onDocsLinkNavigate} />
+      </article>
     </div>
   );
 }

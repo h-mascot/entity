@@ -109,6 +109,7 @@ import { registerTtsRoutes } from "./routes/tts";
 import { registerLegacyFileRoutes } from "./routes/legacy-files";
 import { registerDocumentRoutes } from "./routes/documents";
 import { closeDocumentsDatabase } from "./documents/db";
+import { ensureDevDocumentsToken, shouldProvisionDevDocumentsToken } from "./editor/dev-token";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
@@ -179,7 +180,8 @@ import {
 const app = express();
 const DEFAULT_PORT = 3000;
 const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
-const HOST = process.env.HOST?.trim() || "0.0.0.0";
+const HOST = process.env.HOST?.trim() || bootstrapConfig.server.host?.trim() || "127.0.0.1";
+process.env.HOST = HOST;
 const phase2Flags = resolvePhase2Flags();
 
 applySecurityHardening(app);
@@ -332,6 +334,7 @@ const commentMentionResponder = createCommentMentionResponder({
   broadcast: (message) => broadcast(message),
 });
 const entityDb = getEntityDatabase();
+const devDocumentsToken = ensureDevDocumentsToken({ logger: console });
 const runtimeConfig = applyRuntimeConfigSeeds({ db: entityDb, fileSourceRepository });
 const runtimeConfigBaseDir = path.dirname(process.env.ENTITY_CONFIG || path.resolve(process.cwd(), 'entity.config.yaml'));
 ensurePluginSettingsTable(entityDb);
@@ -463,10 +466,14 @@ registerDbModeRoutes(app, "/api", { normalizeDbMode, taskSyncLayer });
 registerRuntimeRoutes(app, "", {
   agentNativeEditorEnabled: AGENT_NATIVE_EDITOR_ENABLED,
   fsMultiSourceEnabled: FS_MULTISOURCE_ENABLED,
+  devDocumentsToken,
+  shouldExposeDevDocumentsToken: shouldProvisionDevDocumentsToken,
 });
 registerRuntimeRoutes(app, "/api", {
   agentNativeEditorEnabled: AGENT_NATIVE_EDITOR_ENABLED,
   fsMultiSourceEnabled: FS_MULTISOURCE_ENABLED,
+  devDocumentsToken,
+  shouldExposeDevDocumentsToken: shouldProvisionDevDocumentsToken,
 });
 registerAgentControlRoutes(app, "", { AGENT_CONFIG, parsePositiveId, taskAgent, taskSyncLayer });
 registerAgentControlRoutes(app, "/api", { AGENT_CONFIG, parsePositiveId, taskAgent, taskSyncLayer });

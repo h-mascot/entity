@@ -125,7 +125,7 @@ function parseBearerToken(req: Request): string | null {
   return token ? token : null;
 }
 
-function hashToken(rawToken: string): string {
+export function hashToken(rawToken: string): string {
   return createHash('sha256').update(rawToken, 'utf8').digest('hex');
 }
 

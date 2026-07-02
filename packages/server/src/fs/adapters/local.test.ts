@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { LocalFileSourceAdapter } from './local';
 
@@ -35,6 +35,7 @@ async function makeTempRoot(): Promise<string> {
 
 describe('LocalFileSourceAdapter metadata', () => {
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await Promise.all(
       tempRoots.splice(0).map((root) => fs.promises.rm(root, { recursive: true, force: true }))
     );
@@ -82,10 +83,26 @@ describe('LocalFileSourceAdapter metadata', () => {
     await expect(fs.promises.readFile(outsideFile, 'utf-8')).resolves.toBe('# outside\n');
   });
 
-  it('uses server-derived local source capabilities instead of stored client JSON', () => {
-    const adapter = new LocalFileSourceAdapter(sourceFor('/workspace'));
+  it('rejects writes through an allowlisted symlinked directory that resolves outside the real root', async () => {
+    const root = await makeTempRoot();
+    const outside = await makeTempRoot();
+    vi.stubEnv('WORKSPACE', root);
+    await fs.promises.symlink(outside, path.join(root, 'linked-dir'), 'dir');
+
+    const adapter = new LocalFileSourceAdapter(sourceFor(root));
+
+    expect(adapter.capabilities().write).toBe(true);
+    await expect(adapter.write('linked-dir/pwned.md', '# pwned\n')).rejects.toThrow(
+      'Access outside source root is not allowed.',
+    );
+    await expect(fs.promises.readdir(outside)).resolves.toEqual([]);
+  });
+
+  it('derives write access for allowlisted roots instead of stored client JSON', () => {
+    const workspaceRoot = process.env.WORKSPACE ?? process.cwd();
+    const adapter = new LocalFileSourceAdapter(sourceFor(workspaceRoot));
     const clientWritableAdapter = new LocalFileSourceAdapter(
-      sourceFor('/workspace', {
+      sourceFor('/etc', {
         capabilities: JSON.stringify({
           read: true,
           write: true,
@@ -95,7 +112,7 @@ describe('LocalFileSourceAdapter metadata', () => {
       }),
     );
 
-    expect(adapter.capabilities()).toMatchObject({ read: true, write: false, list: true, search: true });
+    expect(adapter.capabilities()).toMatchObject({ read: true, write: true, list: true, search: true });
     expect(clientWritableAdapter.capabilities().write).toBe(false);
   });
 });
