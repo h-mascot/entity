@@ -8,6 +8,7 @@ import {
   type TaskRecord,
   type UpdateTaskInput,
 } from '../../../db/src';
+import { asyncHandler } from '../middleware/async-handler';
 
 export interface TaskReviewGateRouterDependencies {
   getTask: (taskId: number) => Promise<TaskRecord | undefined> | TaskRecord | undefined;
@@ -94,23 +95,23 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
     return task;
   }
 
-  router.get('/:id/review', async (req, res) => {
+  router.get('/:id/review', asyncHandler(async (req, res) => {
     const task = await getTaskOrRespond(req, res);
     if (!task) return;
     res.json({
       review_required: Boolean(task.review_required),
       review_state: task.review_state ?? 'not_required',
     });
-  });
+  }));
 
-  router.get('/:id/human-gate', async (req, res) => {
+  router.get('/:id/human-gate', asyncHandler(async (req, res) => {
     const task = await getTaskOrRespond(req, res);
     if (!task) return;
     res.json({
       human_gate_required: Boolean(task.human_gate_required),
       human_gate_state: task.human_gate_state ?? 'not_required',
     });
-  });
+  }));
 
   async function applyReviewDecision(req: Request, res: Response, decision: 'accepted' | 'request_fix') {
     const task = await getTaskOrRespond(req, res);
@@ -146,10 +147,10 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
     res.json({ task: updated, review: { decision, reviewer_principal_id: result.reviewer_principal_id } });
   }
 
-  router.post('/:id/review/accept', (req, res) => applyReviewDecision(req, res, 'accepted'));
-  router.post('/:id/review/request-fix', (req, res) => applyReviewDecision(req, res, 'request_fix'));
+  router.post('/:id/review/accept', asyncHandler(async (req, res) => applyReviewDecision(req, res, 'accepted')));
+  router.post('/:id/review/request-fix', asyncHandler(async (req, res) => applyReviewDecision(req, res, 'request_fix')));
 
-  router.post('/:id/human-gate/request', async (req, res) => {
+  router.post('/:id/human-gate/request', asyncHandler(async (req, res) => {
     const task = await getTaskOrRespond(req, res);
     if (!task) return;
     const actor = readActor(req, defaultActor);
@@ -180,7 +181,7 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
       },
     });
     res.json({ task: updated, humanGate: { decision: 'pending', approver_principal_id: result.approver_principal_id } });
-  });
+  }));
 
   async function applyHumanGateDecision(req: Request, res: Response, decision: 'approved' | 'rejected') {
     const task = await getTaskOrRespond(req, res);
@@ -219,8 +220,8 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
     res.json({ task: updated, humanGate: { decision, approver_principal_id: result.approver_principal_id } });
   }
 
-  router.post('/:id/human-gate/approve', (req, res) => applyHumanGateDecision(req, res, 'approved'));
-  router.post('/:id/human-gate/reject', (req, res) => applyHumanGateDecision(req, res, 'rejected'));
+  router.post('/:id/human-gate/approve', asyncHandler(async (req, res) => applyHumanGateDecision(req, res, 'approved')));
+  router.post('/:id/human-gate/reject', asyncHandler(async (req, res) => applyHumanGateDecision(req, res, 'rejected')));
 
   return router;
 }

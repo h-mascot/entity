@@ -1,7 +1,5 @@
-import type { ComponentType } from 'react';
+import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 import type { PluginUIEntry } from '../../stores/pluginStore';
-import EntityServicesBoard from '../EntityServicesBoard';
-import SwarmBoard from '../SwarmBoard';
 
 export interface PluginComponentProps {
   plugin: PluginUIEntry;
@@ -9,12 +7,14 @@ export interface PluginComponentProps {
   entity?: unknown;
 }
 
-const COMPONENT_REGISTRY: Record<string, ComponentType<PluginComponentProps>> = {
-  EntityServicesBoard,
-  SwarmBoard,
+type PluginComponent = ComponentType<PluginComponentProps> | LazyExoticComponent<ComponentType<PluginComponentProps>>;
+
+const COMPONENT_REGISTRY: Record<string, PluginComponent> = {
+  EntityServicesBoard: lazy(() => import('../EntityServicesBoard')),
+  SwarmBoard: lazy(() => import('../SwarmBoard')),
 };
 
-export function resolvePluginComponent(name?: string): ComponentType<PluginComponentProps> | null {
+export function resolvePluginComponent(name?: string): PluginComponent | null {
   if (!name) {
     return null;
   }

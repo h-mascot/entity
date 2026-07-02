@@ -19,6 +19,7 @@ export function createLocalTaskAdapter(options: LocalTaskAdapterOptions = {}): T
   return {
     mode: 'LOCAL',
     listTasks: async (): Promise<TaskRecord[]> => repository.listTasks(),
+    listSubtasks: async (parentTaskId: number): Promise<TaskRecord[]> => repository.listSubtasks(parentTaskId),
     getTask: async (id: number): Promise<TaskRecord | undefined> => repository.getTask(id),
     createTask: async (input: CreateTaskInput): Promise<TaskRecord> => repository.createTask(input),
     updateTask: async (id: number, updates: UpdateTaskInput): Promise<TaskRecord | undefined> =>

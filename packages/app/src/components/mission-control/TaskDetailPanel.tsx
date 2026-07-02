@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
 import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
@@ -9,6 +9,7 @@ import {
   type TaskPriority,
   useTaskBoard,
 } from '../../hooks/useTaskBoard';
+import { useEntityWebSocket } from '../../hooks/useEntityWebSocket';
 import {
   fetchProjectOptions as fetchAllowedProjectOptions,
   normalizeProjectOption,
@@ -16,7 +17,6 @@ import {
 } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
 import { buildRoutingStateView, routingToneClass } from './utils/routingState';
-import TaskChatContextPanel from './TaskChatContextPanel';
 import {
   FALLBACK_WORKTYPE_REGISTRY,
   formatOverlayValue,
@@ -29,6 +29,8 @@ import {
   buildExternalDocumentPreviewView,
   type ExternalDocumentPreviewView,
 } from './utils/externalDocumentPreview';
+
+const TaskChatContextPanel = lazy(() => import('./TaskChatContextPanel'));
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'links';
@@ -2148,72 +2150,21 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 
   // Live-refresh this task's detail + comments when the server broadcasts
   // changes for it (e.g. an @mentioned agent's reply or task pickup).
-  useEffect(() => {
-    if (typeof window === 'undefined') {
+  useEntityWebSocket((message) => {
+    if (Number(message.taskId) !== taskId) {
       return;
     }
-    let active = true;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
-
-    const connect = () => {
-      if (!active) {
-        return;
-      }
-      try {
-        const url = new URL('ws://' + window.location.host);
-        const token = window.localStorage.getItem('entity-api-token');
-        if (token && token.trim()) {
-          url.searchParams.set('token', token.trim());
-        }
-        socket = new WebSocket(url.toString());
-      } catch {
-        socket = new WebSocket('ws://' + window.location.host);
-      }
-
-      socket.onmessage = (event) => {
-        let message: { type?: string; taskId?: unknown };
-        try {
-          message = JSON.parse(String(event.data)) as { type?: string; taskId?: unknown };
-        } catch {
-          return;
-        }
-        if (Number(message.taskId) !== taskId) {
-          return;
-        }
-        if (
-          message.type === 'task:comment' ||
-          message.type === 'task:updated' ||
-          message.type === 'task:moved'
-        ) {
-          void supplementalRef.current(taskId, {
-            preserveOutput: true,
-            preserveDependencyInput: true,
-          });
-        }
-      };
-
-      socket.onclose = () => {
-        socket = null;
-        if (!active) {
-          return;
-        }
-        reconnectTimer = window.setTimeout(connect, 3000);
-      };
-    };
-
-    connect();
-
-    return () => {
-      active = false;
-      if (reconnectTimer !== null) {
-        window.clearTimeout(reconnectTimer);
-      }
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-        socket.close();
-      }
-    };
-  }, [taskId]);
+    if (
+      message.type === 'task:comment' ||
+      message.type === 'task:updated' ||
+      message.type === 'task:moved'
+    ) {
+      void supplementalRef.current(taskId, {
+        preserveOutput: true,
+        preserveDependencyInput: true,
+      });
+    }
+  });
 
   const mentionMatches = useMemo(() => {
     if (mentionQuery === null) {
@@ -3702,13 +3653,15 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                   ) : null}
 	              </section>
 
-                  <TaskChatContextPanel
-                    taskId={task.id}
-                    apiBase={apiBase}
-                    proofAvailable={Boolean(receiptProof)}
-                    documentObjectCount={documentObjectViews.length}
-                    outputLinkCount={outputLinks.length}
-                  />
+                  <Suspense fallback={null}>
+                    <TaskChatContextPanel
+                      taskId={task.id}
+                      apiBase={apiBase}
+                      proofAvailable={Boolean(receiptProof)}
+                      documentObjectCount={documentObjectViews.length}
+                      outputLinkCount={outputLinks.length}
+                    />
+                  </Suspense>
 
                   {receiptProof ? (
                     <section

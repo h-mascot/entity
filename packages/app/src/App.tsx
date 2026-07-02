@@ -1,48 +1,27 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type FormEvent } from 'react';
-import MarkdownPreview from './components/MarkdownPreview';
-import CodeMirrorFileViewer from './components/CodeMirrorFileViewer';
-import FileTree from './components/FileTree';
-import SourceFileTree from './components/SourceFileTree';
-import UnifiedFileDashboard from './components/UnifiedFileDashboard';
-import CodeMirrorEditor, {
-  type EditorAuthorshipRange,
-  type EditorCursorActivity,
-  type EditorNewCommentRequest,
-  type EditorSelectionRange,
-  type EditorSelectionSnapshot,
-  type EditorSuggestingEditRequest,
+import {
+  lazy,
+  Suspense,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  type ComponentProps,
+  type FormEvent,
+} from 'react';
+import type {
+  EditorAuthorshipRange,
+  EditorCursorActivity,
+  EditorSelectionRange,
+  EditorSelectionSnapshot,
+  EditorSuggestingEditRequest,
 } from './components/CodeMirrorEditor';
-import AuthorshipStatsPanel from './components/editor/AuthorshipStatsPanel';
-import { CommentThreadPanel } from './components/CommentThread';
-import { NewCommentPopover, type NewCommentPopoverAnchor } from './components/NewCommentPopover';
-import { PresenceChips } from './components/PresenceChips';
-import { ReviewPanel } from './components/ReviewPanel';
-import { SuggestionPanel } from './components/SuggestionPanel';
-import NotificationHistoryPanel from './components/NotificationHistoryPanel';
-import FileHistoryPanel from './components/FileHistoryPanel';
-import OfflineAwareChat from './components/OfflineAwareChat';
+import type { NewCommentPopoverAnchor } from './components/NewCommentPopover';
 import { ToastViewport } from './components/Toast';
-import QuickSwitcher from './components/QuickSwitcher';
-import ActivityStream from './components/ActivityStream';
-import MarkdownAudioControls, { type DocsTtsSettings } from './components/MarkdownAudioControls';
-import BottomTerminalPanel from './components/BottomTerminalPanel';
+import type { DocsTtsSettings } from './components/MarkdownAudioControls';
 import TaskBoard from './components/TaskBoard';
-import OnboardingFlow from './components/OnboardingFlow';
-import FileSourcesSettings from './components/settings/FileSourcesSettings';
-import EffectiveConfigSettings from './components/settings/EffectiveConfigSettings';
-import VoiceSettings from './components/settings/VoiceSettings';
-import AgentRegistrySettings from './components/settings/AgentRegistrySettings';
-import TaskMasterSettings from './components/TaskMasterSettings';
-import PluginAdminPanel from './components/plugins/PluginAdminPanel';
-import PluginSubViewSlot from './components/plugins/PluginSubViewSlot';
-import PluginTopLevelSlot from './components/plugins/PluginTopLevelSlot';
-import MCCreateTaskModal from './components/mission-control/MCCreateTaskModal';
-import MCStrategicView from './components/mission-control/MCStrategicView';
-import MobileBottomNav, { type MobileTab } from './components/MobileBottomNav';
-import AgentsSidebarTab from './components/AgentsSidebarTab';
-import AgentsMobileDetail from './components/AgentsMobileDetail';
-import AgentDashboardV2 from './components/AgentDashboardV2';
-import ChatView from './components/Chat/ChatView';
+import type { MobileTab } from './components/MobileBottomNav';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useActivityStream } from './hooks/useActivityStream';
@@ -63,7 +42,7 @@ import {
 } from './lib/agentRegistry';
 import { readUserProfile, useUserProfile } from './lib/userProfile';
 import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
-import { createDocumentsApiClient, type DocumentsClientAuth } from './lib/documents-client';
+import type { DocumentsApiClient, DocumentsClientAuth } from './lib/documents-client';
 import { usePluginStore } from './stores/pluginStore';
 import {
   OFFLINE_QUEUE_DRAINED_EVENT,
@@ -85,6 +64,30 @@ import type {
   DocumentSuggestionUiRecord,
 } from './types/collaboration';
 
+const FileTree = lazy(() => import('./components/FileTree'));
+const SourceFileTree = lazy(() => import('./components/SourceFileTree'));
+const NotificationHistoryPanel = lazy(() => import('./components/NotificationHistoryPanel'));
+const FileHistoryPanel = lazy(() => import('./components/FileHistoryPanel'));
+const ActivityStream = lazy(() => import('./components/ActivityStream'));
+const BottomTerminalPanel = lazy(() => import('./components/BottomTerminalPanel'));
+const OnboardingFlow = lazy(() => import('./components/OnboardingFlow'));
+const PluginSubViewSlot = lazy(() => import('./components/plugins/PluginSubViewSlot'));
+const PluginTopLevelSlot = lazy(() => import('./components/plugins/PluginTopLevelSlot'));
+const MCStrategicView = lazy(() => import('./components/mission-control/MCStrategicView'));
+const AgentsSidebarTab = lazy(() => import('./components/AgentsSidebarTab'));
+const AgentsMobileDetail = lazy(() => import('./components/AgentsMobileDetail'));
+const AgentDashboardV2 = lazy(() => import('./components/AgentDashboardV2'));
+const ChatView = lazy(() => import('./components/Chat/ChatView'));
+const NewCommentPopover = lazy(() => import('./components/NewCommentPopover').then((module) => ({ default: module.NewCommentPopover })));
+const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
+const MCCreateTaskModal = lazy(() => import('./components/mission-control/MCCreateTaskModal'));
+const ShowClawFeaturedPage = lazy(() => import('./ShowClawFeaturedPage'));
+const AdminView = lazy(() => import('./views/AdminView'));
+const DocsRouteView = lazy(() => import('./views/DocsRouteView'));
+const MobileView = lazy(() => import('./views/MobileView'));
+const FilesView = lazy(() => import('./views/FilesView'));
+const FilesContextBar = lazy(() => import('./views/FilesContextBar'));
+
 const LOGIN_REQUIRED_KEY = 'entity.auth.login-required.v1';
 const AUTH_SESSION_KEY = 'entity.auth.session.v1';
 const DOCUMENTS_AUTH_KEY = 'entity.documents.auth.v1';
@@ -95,6 +98,129 @@ const THEME_KEY = 'entity.theme.v1';
 const PWA_INSTALL_CTA_DISMISSED_KEY = 'entity.pwa.install-cta-dismissed.v1';
 const DEFAULT_LOGIN_PASSWORD = 'mission';
 const ENTERPRISE_ADMIN_URL = '';
+
+function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
+  return (
+    <div className="flex h-full min-h-[12rem] w-full items-center justify-center text-sm text-[var(--text-muted)]">
+      <div className="flex items-center gap-2 rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]" aria-hidden="true" />
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function LazyFileTree(props: ComponentProps<typeof FileTree>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
+      <FileTree {...props} />
+    </Suspense>
+  );
+}
+
+function LazySourceFileTree(props: ComponentProps<typeof SourceFileTree>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
+      <SourceFileTree {...props} />
+    </Suspense>
+  );
+}
+
+function LazyNotificationHistoryPanel(props: ComponentProps<typeof NotificationHistoryPanel>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading notifications" />}>
+      <NotificationHistoryPanel {...props} />
+    </Suspense>
+  );
+}
+
+function LazyFileHistoryPanel(props: ComponentProps<typeof FileHistoryPanel>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading file history" />}>
+      <FileHistoryPanel {...props} />
+    </Suspense>
+  );
+}
+
+function LazyActivityStream(props: ComponentProps<typeof ActivityStream>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading activity" />}>
+      <ActivityStream {...props} />
+    </Suspense>
+  );
+}
+
+function LazyBottomTerminalPanel(props: ComponentProps<typeof BottomTerminalPanel>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading terminal" />}>
+      <BottomTerminalPanel {...props} />
+    </Suspense>
+  );
+}
+
+function LazyOnboardingFlow(props: ComponentProps<typeof OnboardingFlow>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading onboarding" />}>
+      <OnboardingFlow {...props} />
+    </Suspense>
+  );
+}
+
+function LazyPluginSubViewSlot(props: ComponentProps<typeof PluginSubViewSlot>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading plugin" />}>
+      <PluginSubViewSlot {...props} />
+    </Suspense>
+  );
+}
+
+function LazyPluginTopLevelSlot(props: ComponentProps<typeof PluginTopLevelSlot>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading plugin" />}>
+      <PluginTopLevelSlot {...props} />
+    </Suspense>
+  );
+}
+
+function LazyMCStrategicView() {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading strategy" />}>
+      <MCStrategicView />
+    </Suspense>
+  );
+}
+
+function LazyAgentsSidebarTab(props: ComponentProps<typeof AgentsSidebarTab>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading agents" />}>
+      <AgentsSidebarTab {...props} />
+    </Suspense>
+  );
+}
+
+function LazyAgentsMobileDetail(props: ComponentProps<typeof AgentsMobileDetail>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading agent" />}>
+      <AgentsMobileDetail {...props} />
+    </Suspense>
+  );
+}
+
+function LazyAgentDashboardV2(props: ComponentProps<typeof AgentDashboardV2>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading agents" />}>
+      <AgentDashboardV2 {...props} />
+    </Suspense>
+  );
+}
+
+function LazyChatView() {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading chat" />}>
+      <ChatView />
+    </Suspense>
+  );
+}
 
 interface AgentCapability {
   adapterType?: string;
@@ -740,25 +866,6 @@ function deriveBinaryFlag(contentType: string | null | undefined, explicitFlag: 
   return !isTextualContentType(normalized);
 }
 
-function isMarkdownContentType(contentType: string | null | undefined): boolean {
-  const normalized = normalizeDetectedContentType(contentType);
-  if (!normalized) {
-    return false;
-  }
-
-  return normalized === 'text/markdown' || normalized === 'application/markdown' || normalized.includes('markdown');
-}
-
-function isMarkdownFilePath(filePath: string | null): boolean {
-  if (!filePath) return false;
-  const normalized = filePath.trim().toLowerCase();
-  return normalized.endsWith('.md') || normalized.endsWith('.markdown') || normalized.endsWith('.mdx');
-}
-
-function shouldRenderMarkdownPreview(filePath: string | null, contentType: string | null | undefined): boolean {
-  return isMarkdownFilePath(filePath) || isMarkdownContentType(contentType);
-}
-
 function buildRawFilePreviewUrl(filePath: string | null, sourceId: string | null, apiBase = ''): string | null {
   if (!filePath) {
     return null;
@@ -783,33 +890,6 @@ function extractTaskRouteId(pathname: string): number | null {
   return Number.isInteger(taskId) && taskId > 0 ? taskId : null;
 }
 
-function computeDomSelectionAnchor(): NewCommentPopoverAnchor | null {
-  if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return null;
-  }
-
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) {
-    return null;
-  }
-
-  try {
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-    if (!rect || (!Number.isFinite(rect.left) && !Number.isFinite(rect.top))) {
-      return null;
-    }
-
-    return {
-      left: rect.left,
-      top: rect.top,
-      bottom: rect.bottom,
-    };
-  } catch {
-    return null;
-  }
-}
-
 function normalizeAuthorshipActor(author: string): DocumentAuthorshipActor {
   const normalized = author.trim().toLowerCase();
   if (AUTHORSHIP_ACTOR_SET.has(normalized as DocumentAuthorshipActor)) {
@@ -825,23 +905,6 @@ function toPercent(part: number, whole: number): number {
   }
 
   return Number(((part / whole) * 100).toFixed(2));
-}
-
-function formatAuthorshipBadgePercent(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '0';
-  }
-
-  if (value < 1) {
-    return '<1';
-  }
-
-  const rounded = Math.round(value);
-  if (rounded <= 0) {
-    return '<1';
-  }
-
-  return String(rounded);
 }
 
 function createEmptyAuthorStats(): DocumentAuthorshipAuthorStats {
@@ -1218,6 +1281,34 @@ async function requestWithFallback(urls: string[], init: RequestInit, fallbackMe
   throw lastError ?? new Error(fallbackMessage);
 }
 
+function createLazyDocumentsApiClient(options: { apiBase?: string; auth?: DocumentsClientAuth }): DocumentsApiClient {
+  const loadClient = async () => {
+    const { createDocumentsApiClient } = await import('./lib/documents-client');
+    return createDocumentsApiClient(options);
+  };
+
+  return {
+    getIndex: async (...args) => (await loadClient()).getIndex(...args),
+    getHealth: async (...args) => (await loadClient()).getHealth(...args),
+    getState: async (...args) => (await loadClient()).getState(...args),
+    getComments: async (...args) => (await loadClient()).getComments(...args),
+    postComment: async (...args) => (await loadClient()).postComment(...args),
+    postCommentReply: async (...args) => (await loadClient()).postCommentReply(...args),
+    postCommentResolve: async (...args) => (await loadClient()).postCommentResolve(...args),
+    getSuggestions: async (...args) => (await loadClient()).getSuggestions(...args),
+    postSuggestion: async (...args) => (await loadClient()).postSuggestion(...args),
+    acceptSuggestion: async (...args) => (await loadClient()).acceptSuggestion(...args),
+    rejectSuggestion: async (...args) => (await loadClient()).rejectSuggestion(...args),
+    postReview: async (...args) => (await loadClient()).postReview(...args),
+    getReview: async (...args) => (await loadClient()).getReview(...args),
+    applyReviewFinding: async (...args) => (await loadClient()).applyReviewFinding(...args),
+    ignoreReviewFinding: async (...args) => (await loadClient()).ignoreReviewFinding(...args),
+    postEdit: async (...args) => (await loadClient()).postEdit(...args),
+    postAuthorship: async (...args) => (await loadClient()).postAuthorship(...args),
+    postCursor: async (...args) => (await loadClient()).postCursor(...args),
+  };
+}
+
 interface DocsApiResponse {
   content?: string;
   path?: string;
@@ -1314,76 +1405,13 @@ function resolveDocsPathFromHref(href: string, currentDocsPath: string | null): 
 }
 
 
-function ShowClawFeaturedPage() {
-  const workflow = [
-    'Capture the request as a small contract: one hardcoded page, no CMS, no browse system.',
-    'Freeze the proof order: outcome first, then artifact, then workflow, then reuse notes.',
-    'Build the page directly in Entity so the shipped surface is the proof bundle, not a slide deck.',
-    'Run the production build and deploy from the same repo path to keep the acceptance trail clean.',
-  ];
-
-  const patterns = [
-    'Proof-first page shape: hero → artifact → workflow → reusable patterns → lessons → CTA.',
-    'Hardcoded v0 discipline: remove dynamic data until the first honest page is live.',
-    'Acceptance bundle copy: state request, worker, changed surface, test result, deploy URL, verifier outcome.',
-  ];
-
-  const lessons = [
-    'The trap was taxonomy theater: tags, galleries, and CMS plans before one credible featured page existed.',
-    'The fix was scope brutality: one build, one artifact, one public page, one CTA.',
-    'ProofDesk only becomes real when a skeptical operator can verify work from a single contract surface.',
-  ];
-
-  return (
-    <main className="min-h-screen overflow-auto bg-[#07090d] text-slate-100">
-      <section className="relative isolate overflow-hidden border-b border-white/10">
-        <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_10%,rgba(0,170,255,0.25),transparent_32%),radial-gradient(circle_at_80%_0%,rgba(245,158,11,0.18),transparent_28%),linear-gradient(135deg,#07090d_0%,#0e1726_55%,#050608_100%)]" />
-        <div className="mx-auto grid max-w-6xl gap-10 px-6 py-20 lg:grid-cols-[1.1fr_0.9fr] lg:px-8">
-          <div>
-            <div className="mb-5 inline-flex rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.28em] text-cyan-200">ShowClaw Featured Build · v0</div>
-            <h1 className="max-w-4xl text-5xl font-black tracking-[-0.06em] text-white md:text-7xl">Entity Mission Control, shipped as proof — not lore.</h1>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">ShowClaw’s first featured page documents a real Entity build loop: a requested surface, a worker trail, a proof bundle, and an acceptance outcome a skeptical operator can inspect in under a minute.</p>
-            <p className="mt-5 max-w-2xl rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm font-semibold text-amber-100">Outcome: one hardcoded featured page that explains what changed, what proof exists, how the work moved, and what another builder can steal.</p>
-          </div>
-          <aside className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 shadow-2xl shadow-cyan-950/40 backdrop-blur">
-            <div className="rounded-[1.5rem] border border-cyan-200/20 bg-[#09111c] p-5">
-              <div className="flex items-center justify-between border-b border-white/10 pb-4 text-xs uppercase tracking-[0.22em] text-slate-400"><span>ProofDesk Contract</span><span className="text-emerald-300">Accepted</span></div>
-              <dl className="mt-5 space-y-4 text-sm">
-                {[
-                  ['Request', 'Ship one ShowClaw featured page for Entity.'],
-                  ['Worker', 'Assistant · local · ~/Code/entity'],
-                  ['Changed surface', '/showclaw/entity-featured'],
-                  ['Proof', 'Build output + deployed URL + screenshot-ready page'],
-                  ['Verifier', 'Operator acceptance contract, v0'],
-                ].map(([label, value]) => (
-                  <div key={label} className="grid grid-cols-[104px_minmax(0,1fr)] gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-3"><dt className="text-slate-500">{label}</dt><dd className="font-medium text-slate-100">{value}</dd></div>
-                ))}
-              </dl>
-            </div>
-          </aside>
-        </div>
-      </section>
-      <section className="mx-auto max-w-6xl px-6 py-14 lg:px-8">
-        <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6"><div className="text-xs font-bold uppercase tracking-[0.25em] text-cyan-300">Proof block</div><h2 className="mt-3 text-3xl font-black tracking-[-0.04em] text-white">The artifact is the page.</h2><p className="mt-4 text-slate-300">This public route is the first ProofDesk acceptance test: the work request, changed surface, proof bundle, and verifier outcome are visible without asking an agent to explain itself.</p><p className="mt-5 rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-100">Caption: hardcoded ShowClaw featured page shipped inside Entity, with the proof order preserved on the page itself.</p></div>
-          <div className="rounded-[1.75rem] border border-white/10 bg-[#0b111a] p-6 font-mono text-sm text-slate-300 shadow-xl"><div className="text-emerald-300">$ npm run build</div><div className="mt-3 space-y-1 text-slate-400"><div>✓ packages/app production bundle</div><div>✓ packages/db build</div><div>✓ packages/server build</div><div>✓ deploy.sh published Entity route</div></div></div>
-        </div>
-      </section>
-      <section className="mx-auto grid max-w-6xl gap-6 px-6 pb-14 lg:grid-cols-3 lg:px-8">
-        <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6 lg:col-span-2"><div className="text-xs font-bold uppercase tracking-[0.25em] text-cyan-300">Workflow</div><ol className="mt-5 space-y-4">{workflow.map((item, index) => (<li key={item} className="flex gap-4 rounded-2xl border border-white/10 bg-black/20 p-4"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-300 text-sm font-black text-slate-950">{index + 1}</span><span className="text-slate-200">{item}</span></li>))}</ol></div>
-        <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6"><div className="text-xs font-bold uppercase tracking-[0.25em] text-amber-300">CTA</div><h2 className="mt-3 text-3xl font-black tracking-[-0.04em] text-white">Submit a build.</h2><p className="mt-4 text-sm leading-6 text-slate-300">Bring a shipped artifact, a short proof bundle, and the sharp edge that taught you something. ShowClaw is for work that survives inspection.</p><a href="mailto:showclaw@superada.ai?subject=ShowClaw%20Build%20Submission" className="mt-6 inline-flex rounded-full bg-white px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-cyan-200">Send the proof</a></div>
-      </section>
-      <section className="mx-auto grid max-w-6xl gap-6 px-6 pb-20 lg:grid-cols-2 lg:px-8">
-        <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6"><div className="text-xs font-bold uppercase tracking-[0.25em] text-cyan-300">Reusable patterns</div><ul className="mt-5 space-y-3">{patterns.map((item) => <li key={item} className="rounded-xl border border-white/10 bg-black/20 p-4 text-slate-200">{item}</li>)}</ul></div>
-        <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-6"><div className="text-xs font-bold uppercase tracking-[0.25em] text-rose-300">Lessons / sharp edges</div><ul className="mt-5 space-y-3">{lessons.map((item) => <li key={item} className="rounded-xl border border-white/10 bg-black/20 p-4 text-slate-200">{item}</li>)}</ul></div>
-      </section>
-    </main>
-  );
-}
-
 export default function App() {
   if (typeof window !== 'undefined' && window.location.pathname === '/showclaw/entity-featured') {
-    return <ShowClawFeaturedPage />;
+    return (
+      <Suspense fallback={<LazySurfaceFallback label="Loading page" />}>
+        <ShowClawFeaturedPage />
+      </Suspense>
+    );
   }
   const initialDocumentsAuth = readDocumentsAuth();
   const [docsPath, setDocsPath] = useState<string | null>(() => {
@@ -3236,7 +3264,7 @@ export default function App() {
   );
   const documentsClient = useMemo(
     () =>
-      createDocumentsApiClient({
+      createLazyDocumentsApiClient({
         apiBase: runtime.apiBase,
         auth: documentsAuth ?? undefined,
       }),
@@ -3869,7 +3897,7 @@ export default function App() {
   );
 
   const renderAgentsPanel = () => (
-    <AgentsSidebarTab
+    <LazyAgentsSidebarTab
       agents={agents}
       agentsLoading={agentsLoading}
       agentsError={agentsError}
@@ -3943,566 +3971,75 @@ export default function App() {
     );
   };
 
-  const renderAdminWorkspace = () => {
-    if (adminSection === 'enterprise') {
-      return (
-        <div className="relative min-h-0 flex-1 overflow-hidden">
-          <iframe
-            key={enterpriseFrameNonce}
-            src={enterpriseFrameSrc}
-            title="Openclaw Admin"
-            className="block h-full w-full border-0 bg-[var(--bg-secondary)]"
-            loading="eager"
-            onLoad={() => {
-              setEnterpriseFrameReady(true);
-              setEnterpriseFrameTimedOut(false);
-            }}
-            onError={() => {
-              setEnterpriseFrameReady(false);
-              setEnterpriseFrameTimedOut(true);
-            }}
-          />
-          {!enterpriseFrameReady && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--bg-primary)]/45 p-4">
-              <div className="mc-shell-card w-full max-w-md border border-[var(--border-secondary)] p-4 text-center">
-                <div className="mb-2 text-sm font-medium text-[var(--text-primary)]">
-                  {enterpriseFrameTimedOut ? 'Unable to load Openclaw in this view' : 'Loading Openclaw...'}
-                </div>
-                <div className="mb-3 text-xs text-[var(--text-muted)]">
-                  {enterpriseFrameTimedOut
-                    ? 'Embedding may be blocked by browser or network security. Retry, or open it in a new tab.'
-                    : 'Connecting to the embedded admin dashboard.'}
-                </div>
-                <div className="flex items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEnterpriseFrameNonce((value) => value + 1)}
-                    className="mc-shell-btn px-3 py-1 text-xs"
-                  >
-                    Retry
-                  </button>
-                  {ENTERPRISE_ADMIN_URL && (
-                    <a
-                      href={ENTERPRISE_ADMIN_URL}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="mc-shell-btn px-3 py-1 text-xs"
-                    >
-                      Open in new tab
-                    </a>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-0 flex-1 overflow-auto p-4 lg:p-6">
-        <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
-          {adminSection === 'general' && (
-            <>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                  <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Require login</div>
-                  <div className="mb-3 text-xs text-[var(--text-muted)]">Gate the full app behind the login prompt. Changes apply after refresh.</div>
-                  <button
-                    type="button"
-                    onClick={() => toggleLoginRequirement(!loginRequired)}
-                    className={`mc-shell-btn px-3 py-1 text-xs ${loginRequired ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''}`}
-                  >
-                    {loginRequired ? 'On' : 'Off'}
-                  </button>
-                </div>
-                <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                  <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Session</div>
-                  <div className="mb-3 text-xs text-[var(--text-muted)]">
-                    {authSession ? `Logged in as ${authSession.username}` : 'No active login session'}
-                  </div>
-                  {authSession && (
-                    <button type="button" onClick={handleLogout} className="mc-shell-btn px-3 py-1 text-xs text-[var(--error)]">
-                      Sign out
-                    </button>
-                  )}
-                </div>
-                <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-2">
-                  <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Theme</div>
-                  <div className="mb-3 text-xs text-[var(--text-muted)]">Switch workspace colors and typography.</div>
-                  <div className="grid gap-2 md:grid-cols-3">
-                    {([
-                      { value: 'dark', label: 'Dark', hint: 'Classic black shell' },
-                      { value: 'light', label: 'Light', hint: 'Clean white workspace' },
-	                      { value: 'kitz', label: 'Kitz', hint: 'Dark gradient workspace' },
-	                      { value: 'nebula', label: 'Nebula', hint: 'Glassy blue violet' },
-	                      { value: 'aurora', label: 'Aurora', hint: 'Mint peach glass' },
-	                      { value: 'paper', label: 'Paper', hint: 'Notebook desk board' },
-	                    ] as const).map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setAppTheme(option.value)}
-                        className={`mc-shell-btn flex flex-col items-start gap-1 px-3 py-2 text-left ${
-                          appTheme === option.value
-                            ? 'mc-shell-btn-active border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)]'
-                            : ''
-                        }`}
-                        aria-pressed={appTheme === option.value}
-                      >
-                        <span className="text-sm font-medium">{option.label}</span>
-                        <span className={`text-[11px] ${appTheme === option.value ? 'text-white' : 'text-[var(--text-muted)]'}`}>
-                          {option.hint}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <EffectiveConfigSettings apiBase={runtime.apiBase} />
-              <FileSourcesSettings apiBase={runtime.apiBase} enabled={runtime.fsMultiSourceEnabled} />
-            </>
-          )}
-
-          {adminSection === 'profile' && (
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_18rem]">
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">User profile</div>
-                <div className="mb-4 text-xs text-[var(--text-muted)]">
-                  Used anywhere the app shows your human identity, including chat messages, login defaults, mentions, and task actions.
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="flex flex-col gap-1 text-xs text-[var(--text-muted)]">
-                    <span>Display name</span>
-                    <input
-                      value={profileNameDraft}
-                      onChange={(event) => setProfileNameDraft(event.target.value)}
-                      className="mc-shell-input px-3 py-2 text-sm"
-                      aria-label="User display name"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs text-[var(--text-muted)]">
-                    <span>Handle</span>
-                    <input
-                      value={profileHandleDraft}
-                      onChange={(event) => setProfileHandleDraft(event.target.value)}
-                      className="mc-shell-input px-3 py-2 text-sm"
-                      aria-label="User handle"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs text-[var(--text-muted)] md:col-span-2">
-                    <span>Avatar URL</span>
-                    <input
-                      value={profileAvatarDraft}
-                      onChange={(event) => setProfileAvatarDraft(event.target.value)}
-                      className="mc-shell-input px-3 py-2 text-sm"
-                      aria-label="User avatar URL"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs text-[var(--text-muted)] md:col-span-2">
-                    <span>Email</span>
-                    <input
-                      value={profileEmailDraft}
-                      onChange={(event) => setProfileEmailDraft(event.target.value)}
-                      className="mc-shell-input px-3 py-2 text-sm"
-                      aria-label="User email"
-                    />
-                  </label>
-                </div>
-                <div className="mt-4 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setProfileNameDraft(userProfile.displayName);
-                      setProfileHandleDraft(userProfile.handle);
-                      setProfileAvatarDraft(userProfile.avatarUrl);
-                      setProfileEmailDraft(userProfile.email);
-                    }}
-                    className="mc-shell-btn px-3 py-1.5 text-xs"
-                  >
-                    Reset
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleUserProfileSave}
-                    className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)]"
-                  >
-                    Save profile
-                  </button>
-                </div>
-              </div>
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <div className="mb-3 text-xs uppercase tracking-wider text-[var(--text-muted)]">Preview</div>
-                <div className="flex items-center gap-3">
-                  <img
-                    src={profileAvatarDraft.trim() || userProfile.avatarUrl}
-                    alt={profileNameDraft.trim() || userProfile.displayName}
-                    className="h-14 w-14 rounded-full object-cover"
-                    onError={(event) => {
-                      (event.currentTarget as HTMLImageElement).src = userProfile.avatarUrl;
-                    }}
-                  />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-[var(--text-primary)]">
-                      {profileNameDraft.trim() || userProfile.displayName}
-                    </div>
-                    <div className="truncate text-xs text-[var(--text-muted)]">
-                      @{profileHandleDraft.trim() || userProfile.handle}
-                    </div>
-                    {profileEmailDraft.trim() ? (
-                      <div className="mt-1 truncate text-xs text-[var(--text-muted)]">{profileEmailDraft.trim()}</div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {adminSection === 'missionControl' && (
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Archive column</div>
-                <div className="mb-3 text-xs text-[var(--text-muted)]">Show or hide archive from board/header/counts.</div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !showArchiveColumn;
-                    setShowArchiveColumn(next);
-                    applyArchiveVisibility(next);
-                  }}
-                  className={`mc-shell-btn px-3 py-1 text-xs ${showArchiveColumn ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''}`}
-                >
-                  {showArchiveColumn ? 'Visible' : 'Hidden'}
-                </button>
-              </div>
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Insights row</div>
-                <div className="text-xs text-[var(--text-muted)]">Insights now lives in its own dashboard tab next to Kanban.</div>
-              </div>
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-2">
-                <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Task data health</div>
-                <div className="mb-3 text-xs text-[var(--text-muted)]">
-                  {tasksLoading ? 'Refreshing tasks…' : `${tasks.length} tasks indexed in workspace.`}
-                </div>
-                <button type="button" onClick={() => void reloadTasks()} className="mc-shell-btn px-3 py-1 text-xs">
-                  Refresh task cache
-                </button>
-              </div>
-            </div>
-          )}
-
-          {adminSection === 'integrations' && (
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <div className="text-xs uppercase tracking-wider text-[var(--text-muted)]">WebSocket</div>
-                <div className={`mt-2 text-sm font-medium ${connected ? 'text-[var(--accent)]' : 'text-[var(--error)]'}`}>
-                  {connected ? 'Connected' : 'Disconnected'}
-                </div>
-              </div>
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <div className="text-xs uppercase tracking-wider text-[var(--text-muted)]">Sync</div>
-                <div className="mt-2 text-sm font-medium text-[var(--text-primary)]">{syncStatusLabel}</div>
-              </div>
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <div className="text-xs uppercase tracking-wider text-[var(--text-muted)]">OpenClaw</div>
-                <div className={`mt-2 text-sm font-medium ${agentsError ? 'text-[var(--error)]' : 'text-[var(--accent)]'}`}>
-                  {agentsError ? 'Fallback' : 'Connected'}
-                </div>
-              </div>
-              <OfflineAwareChat isOffline={isOffline} />
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-3">
-                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-sm font-medium text-[var(--text-primary)]">Documents API</div>
-                  <div className="text-xs text-[var(--text-muted)]">
-                    {documentsAuth
-                      ? (documentsAuth.kind === 'service' ? `Service as ${documentsAuth.actorId}` : 'Bearer')
-                      : 'Not connected'}
-                  </div>
-                </div>
-                <div className="mb-3 text-xs text-[var(--text-muted)]">
-                  Used for comments, suggestions, and reviews on source-backed files in the editor.
-                </div>
-
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const token = documentsAuthTokenDraft.trim();
-                    if (!token) {
-                      setDocumentsAuth(null);
-                      pushToast('Cleared Documents token.', 'info');
-                      return;
-                    }
-
-                    if (documentsAuthKindDraft === 'service') {
-                      const actorId = documentsAuthActorDraft.trim().toLowerCase();
-                      if (!actorId) {
-                        pushToast('Service tokens require an actor id (ada/spock/scotty).', 'warning');
-                        return;
-                      }
-                      setDocumentsAuth({ kind: 'service', token, actorId });
-                      pushToast('Service token saved.', 'success');
-                      return;
-                    }
-
-                    setDocumentsAuth({ kind: 'bearer', token });
-                    pushToast('Bearer token saved.', 'success');
-                  }}
-                  className="flex flex-col gap-2"
-                >
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <select
-                      value={documentsAuthKindDraft}
-                      onChange={(event) => setDocumentsAuthKindDraft(event.target.value as 'bearer' | 'service')}
-                      className="mc-shell-input w-full px-3 py-2 text-sm"
-                      aria-label="Token type"
-                    >
-                      <option value="bearer">Bearer token</option>
-                      <option value="service">Service token</option>
-                    </select>
-                    {documentsAuthKindDraft === 'service' ? (
-                      <input
-                        value={documentsAuthActorDraft}
-                        onChange={(event) => setDocumentsAuthActorDraft(event.target.value)}
-                        className="mc-shell-input w-full px-3 py-2 text-sm"
-                        placeholder="X-Entity-Actor (ada/spock/scotty)"
-                        aria-label="Service token actor id"
-                      />
-                    ) : (
-                      <div className="hidden md:block" aria-hidden="true" />
-                    )}
-                  </div>
-
-                  <input
-                    value={documentsAuthTokenDraft}
-                    onChange={(event) => setDocumentsAuthTokenDraft(event.target.value)}
-                    className="mc-shell-input w-full px-3 py-2 text-sm"
-                    placeholder="Paste token (Authorization: Bearer ...)"
-                    aria-label="Documents API token"
-                  />
-
-                  <div className="flex items-center justify-end gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDocumentsAuth(null);
-                        setDocumentsAuthTokenDraft('');
-                        pushToast('Cleared Documents token.', 'info');
-                      }}
-                      className="mc-shell-btn px-3 py-1.5 text-xs"
-                    >
-                      Clear
-                    </button>
-                    <button
-                      type="submit"
-                      className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)]"
-                    >
-                      Save
-                    </button>
-                  </div>
-
-                  <div className="text-[11px] text-[var(--text-muted)]">
-                    Requires scopes: <span className="text-[var(--text-secondary)]">documents:read</span> and{' '}
-                    <span className="text-[var(--text-secondary)]">documents:comment:write</span>/
-                    <span className="text-[var(--text-secondary)]">documents:suggest:write</span>/
-                    <span className="text-[var(--text-secondary)]">documents:review:write</span>.
-                  </div>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {adminSection === 'tts' && (
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-2">
-                <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">TTS Provider</div>
-                <div className="mb-3 text-xs text-[var(--text-muted)]">
-                  Browser TTS runs locally; all others use server endpoints. Kokoro needs a local service running.
-                </div>
-                <div className="grid gap-2 md:grid-cols-3">
-                  {([
-                    { value: 'browser', label: 'Browser TTS', hint: 'Web Speech API - no server needed' },
-                    { value: 'kokoro', label: 'Kokoro', hint: 'Local service at KOKORO_TTS_BASE_URL' },
-                    { value: 'edge', label: 'Edge TTS', hint: 'Microsoft Edge - fast, free voices' },
-                    { value: 'openai', label: 'OpenAI TTS', hint: 'Requires OPENAI_API_KEY on server' },
-                    { value: 'deepgram', label: 'Deepgram', hint: 'Requires DEEPGRAM_API_KEY on server' },
-                    { value: 'elevenlabs', label: 'ElevenLabs', hint: 'Requires ELEVENLABS_API_KEY on server' },
-                  ] satisfies DocsTtsProviderOption[]).map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setDocsTtsSettings((current) => ({ ...current, provider: option.value }))}
-                      className={`mc-shell-btn flex flex-col items-start gap-1 px-3 py-2 text-left ${
-                        docsTtsSettings.provider === option.value
-                          ? 'mc-shell-btn-active border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)]'
-                          : ''
-                      }`}
-                      aria-pressed={docsTtsSettings.provider === option.value}
-                    >
-                      <span className="text-sm font-medium">{option.label}</span>
-                      <span className="text-[11px] text-[var(--text-muted)]">{option.hint}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <label className="mb-1 block text-sm font-medium text-[var(--text-primary)]" htmlFor="kokoro-voice">
-                  Kokoro voice
-                </label>
-                <div className="mb-1 text-xs text-[var(--text-muted)]">
-                  bf_alice, bf_emma, bf_isabelle, bf_nicole, bf_sky, bm_daniel, bm_federico, bm_george, bm_lewis, bm_matilda
-                </div>
-                <input
-                  id="kokoro-voice"
-                  value={docsTtsSettings.kokoroVoice}
-                  onChange={(event) => setDocsTtsSettings((current) => ({ ...current, kokoroVoice: event.target.value }))}
-                  className="mc-shell-input w-full px-3 py-2 text-sm"
-                  placeholder="bf_alice"
-                />
-              </div>
-
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <label className="mb-1 block text-sm font-medium text-[var(--text-primary)]" htmlFor="edge-voice">
-                  Edge TTS voice
-                </label>
-                <div className="mb-1 text-xs text-[var(--text-muted)]">
-                  en-GB-SoniaNeural, en-GB-RyanNeural, en-US-JennyNeural, en-US-GuyNeural, en-US-AriaNeural, en-AU-NatashaNeural, en-NZ-MollyNeural
-                </div>
-                <input
-                  id="edge-voice"
-                  value={docsTtsSettings.edgeVoice}
-                  onChange={(event) => setDocsTtsSettings((current) => ({ ...current, edgeVoice: event.target.value }))}
-                  className="mc-shell-input w-full px-3 py-2 text-sm"
-                  placeholder="en-GB-SoniaNeural"
-                />
-              </div>
-
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <label className="mb-1 block text-sm font-medium text-[var(--text-primary)]" htmlFor="openai-voice">
-                  OpenAI voice
-                </label>
-                <div className="mb-1 text-xs text-[var(--text-muted)]">
-                  alloy, echo, fable, onyx, nova, shimmer
-                </div>
-                <input
-                  id="openai-voice"
-                  value={docsTtsSettings.openaiVoice}
-                  onChange={(event) => setDocsTtsSettings((current) => ({ ...current, openaiVoice: event.target.value }))}
-                  className="mc-shell-input w-full px-3 py-2 text-sm"
-                  placeholder="alloy"
-                />
-              </div>
-
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <label className="mb-1 block text-sm font-medium text-[var(--text-primary)]" htmlFor="deepgram-voice">
-                  Deepgram voice
-                </label>
-                <div className="mb-1 text-xs text-[var(--text-muted)]">
-                  aura-angus-en, aura-asteria-en, aura-asteria-en (see /api/tts/voices?provider=deepgram for full list)
-                </div>
-                <input
-                  id="deepgram-voice"
-                  value={docsTtsSettings.deepgramVoice}
-                  onChange={(event) => setDocsTtsSettings((current) => ({ ...current, deepgramVoice: event.target.value }))}
-                  className="mc-shell-input w-full px-3 py-2 text-sm"
-                  placeholder="aura-angus-en"
-                />
-              </div>
-
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <label className="mb-1 block text-sm font-medium text-[var(--text-primary)]" htmlFor="elevenlabs-voice">
-                  ElevenLabs voice ID
-                </label>
-                <div className="mb-1 text-xs text-[var(--text-muted)]">
-                  Voice ID from ElevenLabs voice library
-                </div>
-                <input
-                  id="elevenlabs-voice"
-                  value={docsTtsSettings.elevenlabsVoice}
-                  onChange={(event) => setDocsTtsSettings((current) => ({ ...current, elevenlabsVoice: event.target.value }))}
-                  className="mc-shell-input w-full px-3 py-2 text-sm"
-                  placeholder="EXAVITc4tvU7xuL82wvV"
-                />
-              </div>
-
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <label className="mb-1 block text-sm font-medium text-[var(--text-primary)]" htmlFor="openai-model">
-                  OpenAI model
-                </label>
-                <div className="mb-1 text-xs text-[var(--text-muted)]">
-                  gpt-4o-mini-tts or gpt-4o-tts
-                </div>
-                <input
-                  id="openai-model"
-                  value={docsTtsSettings.openaiModel}
-                  onChange={(event) => setDocsTtsSettings((current) => ({ ...current, openaiModel: event.target.value }))}
-                  className="mc-shell-input w-full px-3 py-2 text-sm"
-                  placeholder="gpt-4o-mini-tts"
-                />
-              </div>
-
-              <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
-                <label className="mb-1 block text-sm font-medium text-[var(--text-primary)]" htmlFor="playback-rate">
-                  Default playback speed
-                </label>
-                <div className="mb-1 text-xs text-[var(--text-muted)]">
-                  0.5x to 2x - affects audio element playbackRate
-                </div>
-                <select
-                  id="playback-rate"
-                  value={docsTtsSettings.playbackRate}
-                  onChange={(event) => setDocsTtsSettings((current) => ({ ...current, playbackRate: Number(event.target.value) }))}
-                  className="mc-shell-input w-full px-3 py-2 text-sm"
-                >
-                  <option value={0.5}>0.5x (half speed)</option>
-                  <option value={0.75}>0.75x</option>
-                  <option value={1}>1x (normal)</option>
-                  <option value={1.25}>1.25x</option>
-                  <option value={1.5}>1.5x</option>
-                  <option value={2}>2x (double speed)</option>
-                </select>
-              </div>
-            </div>
-          )}
-
-          {adminSection === 'plugins' && (
-            <PluginAdminPanel apiBase={runtime.apiBase} />
-          )}
-
-          {adminSection === 'agents' && (
-            <AgentRegistrySettings
-              apiBase={runtime.apiBase}
-              onRegistryChanged={() => {
-                fetch('/api/agents')
-                  .then((res) => res.json())
-                  .then(async (data) => {
-                    const agentList = data.list || data.agents || [];
-                    const normalizedAgents = agentList
-                      .map((entry: any) => normalizeAgentFromApi(entry, userProfile.displayName))
-                      .filter((agent: Agent | null): agent is Agent => Boolean(agent));
-                    const modelLabels = await loadAgentDefaultModelLabels(normalizedAgents);
-                    setAgents(normalizedAgents.map((agent: Agent) => ({
-                      ...agent,
-                      model: modelLabels[modelRegistryAgentKey(agent)] || agent.model,
-                    })));
-                  })
-                  .catch(() => undefined);
-              }}
-            />
-          )}
-
-          {adminSection === 'voice' && (
-            <VoiceSettings apiBase={runtime.apiBase} />
-          )}
-
-          {adminSection === 'taskMaster' && (
-            <TaskMasterSettings apiBase={runtime.apiBase} />
-          )}
-
-        </div>
-      </div>
-    );
-  };
+  const renderAdminWorkspace = () => (
+    <Suspense fallback={<LazySurfaceFallback label="Loading admin" />}>
+      <AdminView
+        adminSection={adminSection}
+        enterpriseFrameNonce={enterpriseFrameNonce}
+        enterpriseFrameSrc={enterpriseFrameSrc}
+        enterpriseFrameReady={enterpriseFrameReady}
+        enterpriseFrameTimedOut={enterpriseFrameTimedOut}
+        setEnterpriseFrameReady={setEnterpriseFrameReady}
+        setEnterpriseFrameTimedOut={setEnterpriseFrameTimedOut}
+        setEnterpriseFrameNonce={setEnterpriseFrameNonce}
+        loginRequired={loginRequired}
+        toggleLoginRequirement={toggleLoginRequirement}
+        authSession={authSession}
+        handleLogout={handleLogout}
+        appTheme={appTheme}
+        setAppTheme={setAppTheme}
+        apiBase={runtime.apiBase}
+        fsMultiSourceEnabled={runtime.fsMultiSourceEnabled}
+        profileNameDraft={profileNameDraft}
+        setProfileNameDraft={setProfileNameDraft}
+        profileHandleDraft={profileHandleDraft}
+        setProfileHandleDraft={setProfileHandleDraft}
+        profileAvatarDraft={profileAvatarDraft}
+        setProfileAvatarDraft={setProfileAvatarDraft}
+        profileEmailDraft={profileEmailDraft}
+        setProfileEmailDraft={setProfileEmailDraft}
+        userProfile={userProfile}
+        handleUserProfileSave={handleUserProfileSave}
+        showArchiveColumn={showArchiveColumn}
+        setShowArchiveColumn={setShowArchiveColumn}
+        applyArchiveVisibility={applyArchiveVisibility}
+        tasksLoading={tasksLoading}
+        taskCount={tasks.length}
+        reloadTasks={reloadTasks}
+        connected={connected}
+        syncStatusLabel={syncStatusLabel}
+        agentsError={agentsError}
+        isOffline={isOffline}
+        documentsAuth={documentsAuth}
+        documentsAuthTokenDraft={documentsAuthTokenDraft}
+        setDocumentsAuthTokenDraft={setDocumentsAuthTokenDraft}
+        documentsAuthKindDraft={documentsAuthKindDraft}
+        setDocumentsAuthKindDraft={setDocumentsAuthKindDraft}
+        documentsAuthActorDraft={documentsAuthActorDraft}
+        setDocumentsAuthActorDraft={setDocumentsAuthActorDraft}
+        setDocumentsAuth={setDocumentsAuth}
+        pushToast={pushToast}
+        docsTtsSettings={docsTtsSettings}
+        setDocsTtsSettings={setDocsTtsSettings}
+        onAgentRegistryChanged={() => {
+          fetch('/api/agents')
+            .then((res) => res.json())
+            .then(async (data) => {
+              const agentList = data.list || data.agents || [];
+              const normalizedAgents = agentList
+                .map((entry: any) => normalizeAgentFromApi(entry, userProfile.displayName))
+                .filter((agent: Agent | null): agent is Agent => Boolean(agent));
+              const modelLabels = await loadAgentDefaultModelLabels(normalizedAgents);
+              setAgents(normalizedAgents.map((agent: Agent) => ({
+                ...agent,
+                model: modelLabels[modelRegistryAgentKey(agent)] || agent.model,
+              })));
+            })
+            .catch(() => undefined);
+        }}
+      />
+    </Suspense>
+  );
 
   const renderSidebarContent = () => {
     if (sidebarTab === 'files') {
@@ -4562,7 +4099,7 @@ export default function App() {
   const renderFileSidebarTree = () => {
     if (!runtime.fsMultiSourceEnabled) {
       return (
-        <FileTree
+        <LazyFileTree
           onSelect={(path) => {
             if (watchMode) {
               setFollowDetached(true);
@@ -4575,7 +4112,7 @@ export default function App() {
     }
 
     return (
-      <SourceFileTree
+      <LazySourceFileTree
         apiBase={runtime.apiBase}
         selectedSourceId={currentSourceId}
         selectedPath={currentFile}
@@ -4586,23 +4123,6 @@ export default function App() {
           handleSourceFileSelect(sourceId, path);
         }}
       />
-    );
-  };
-
-  const renderFileHome = () => {
-    if (runtime.fsMultiSourceEnabled) {
-      return <UnifiedFileDashboard apiBase={runtime.apiBase} enabled onOpen={handleSourceFileSelect} />;
-    }
-
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 text-[var(--text-muted)]">
-        <span className="text-6xl">⚡</span>
-        <span className="text-xl">Select a file to preview</span>
-        <div className="flex gap-4 text-sm">
-          <span className="mc-shell-card px-2 py-1">⌘P quick switch</span>
-          <span className="mc-shell-card px-2 py-1">⌘E edit/preview</span>
-        </div>
-      </div>
     );
   };
 
@@ -4937,197 +4457,51 @@ export default function App() {
     }
 
     return (
-      <div className="flex w-full flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-[220px] flex-1 items-center gap-2">
-          {runtime.fsMultiSourceEnabled && currentFile && (
-            <button
-              type="button"
-              onClick={handleBackToDashboard}
-              className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-              title="Back to Dashboard"
-              aria-label="Back to Dashboard"
-            >
-              ←
-            </button>
-          )}
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <div className="min-w-0 flex-1 truncate text-xs text-[var(--text-muted)]">
-              {currentFile ? `${selectedSource ? `${selectedSource.displayName} • ` : ''}${currentFile}` : 'No file selected'}
-            </div>
-            {runtime.fsMultiSourceEnabled && currentSourceId && (
-              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                Source
-              </span>
-            )}
-            {runtime.fsMultiSourceEnabled && currentSourceId && currentFileReadOnly && (
-              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                Read-only
-              </span>
-            )}
-            {currentFileCacheMeta.cached && (
-              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                cached ({currentFileCachedAgeLabel ?? 'just now'})
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={editorCollabMode}
-            onChange={(event) => setEditorCollabMode(event.target.value as EditorCollaborationMode)}
-            className={`rounded border border-[var(--border-secondary)] bg-[var(--bg-tertiary)] px-2 py-1 text-xs text-[var(--text-secondary)] focus:border-[var(--accent)] focus:outline-none ${
-              currentFile ? '' : 'cursor-not-allowed opacity-40'
-            }`}
-            aria-label="Editor mode"
-            disabled={!currentFile}
-            title="Editor mode"
-          >
-            <option value="editing">Editing</option>
-            <option value="suggesting" disabled={!documentsReady}>
-              Suggesting
-            </option>
-            <option value="viewing">Viewing</option>
-          </select>
-          {runtime.agentNativeEditorEnabled && currentFile && authorshipStats.totalRanges > 0 && (
-            <div
-              className="flex items-center gap-1 text-xs text-[var(--text-muted)]"
-              aria-label="Authorship breakdown"
-              title={`Reviewed ${authorshipStats.reviewedPercent}%`}
-            >
-              {authorshipStats.human > 0 && <span>👤 {formatAuthorshipBadgePercent(authorshipStats.human)}%</span>}
-              {authorshipStats.ada > 0 && (
-                <span className="text-purple-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>
-              )}
-              {authorshipStats.spock > 0 && (
-                <span className="text-blue-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>
-              )}
-              {authorshipStats.scotty > 0 && (
-                <span className="text-green-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>
-              )}
-            </div>
-          )}
-          {runtime.agentNativeEditorEnabled && currentDocId && remotePresence.length > 0 && (
-            <PresenceChips
-              presence={remotePresence}
-              selectedActorId={followEnabled ? followedActorId : null}
-              onSelectActor={(actorId) => {
-                const agentId = resolveAgentIdForActor(actorId);
-                if (!agentId) {
-                  pushToast('Follow mode is only available for agent cursors.', 'warning');
-                  return;
-                }
-
-                setEditMode(true);
-                setWatchMode(true);
-
-                setFollowingAgent((current) => {
-                  const normalized = current?.trim?.().toLowerCase?.() ?? '';
-                  const nextNormalized = agentId.trim().toLowerCase();
-                  if (followEnabled && normalized === nextNormalized) {
-                    setFollowDetached(true);
-                    return current;
-                  }
-                  setFollowDetached(false);
-                  return agentId;
-                });
-              }}
-            />
-          )}
-          <button
-            type="button"
-            onClick={toggleWatchMode}
-            disabled={!currentFile}
-            className={`mc-shell-btn px-3 py-1 text-xs font-medium ${
-              watchMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-            } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-          >
-            {watchMode ? 'Watch Mode' : 'Interact Mode'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setEditMode((prev) => !prev)}
-            disabled={!currentFile}
-            className={`mc-shell-btn px-3 py-1 text-xs ${
-              editMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-            } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-          >
-            {editMode ? 'Preview' : 'Edit'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (splitMode) {
-                exitSplitMode();
-                return;
-              }
-              setSplitMode('horizontal');
-              setSplitRatio(0.5);
-              setRightPaneSourceId(null);
-              setRightPaneFile(null);
-              setRightPaneReadOnly(false);
-              setRightPaneUpdatedAt(null);
-              setRightPaneContent('');
-              rightLastContentRef.current = '';
-              if (rightSaveTimeoutRef.current) {
-                clearTimeout(rightSaveTimeoutRef.current);
-                rightSaveTimeoutRef.current = undefined;
-              }
-            }}
-            disabled={!currentFile}
-            className={`mc-shell-btn px-3 py-1 text-xs ${
-              splitMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-            } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-            aria-label={splitMode ? 'Exit split view' : 'Split editor'}
-            title={splitMode ? 'Exit split view' : 'Split editor'}
-          >
-            Split
-          </button>
-          <button
-            type="button"
-            onClick={() => setFileHistoryPanelOpen((prev) => !prev)}
-            disabled={!currentFile || Boolean(currentSourceId)}
-            className={`mc-shell-btn px-3 py-1 text-xs ${
-              fileHistoryPanelOpen ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-            } ${currentFile && !currentSourceId ? '' : 'cursor-not-allowed opacity-40'}`}
-            aria-label="File history"
-            title={currentSourceId ? 'History is only available for local files' : 'File history'}
-          >
-            History
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard
-                .writeText(window.location.href)
-                .then(() => {
-                  pushToast('Link copied to clipboard!', 'success');
-                })
-                .catch(() => {
-                  pushToast('Failed to copy link', 'error');
-                });
-            }}
-            disabled={!currentFile}
-            className={`mc-shell-btn px-3 py-1 text-xs ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-            aria-label="Copy link to this file"
-            title="Copy link to this file"
-          >
-            🔗 Share
-          </button>
-          {editMode && editorCollabMode !== 'viewing' && !watchMode && currentFile && canEditCurrentFile && (
-            <button
-              type="button"
-              onClick={handleSave}
-              className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--text-primary)]"
-            >
-              Save
-            </button>
-          )}
-          {/* Read-only is already shown as a pill next to the filename. */}
-          {savedAgoLabel && (
-            <span className="text-xs text-[var(--accent)]">Saved {savedAgoLabel} ago</span>
-          )}
-        </div>
-      </div>
+      <Suspense fallback={null}>
+        <FilesContextBar
+          runtime={runtime}
+          currentFile={currentFile}
+          handleBackToDashboard={handleBackToDashboard}
+          selectedSource={selectedSource}
+          currentSourceId={currentSourceId}
+          currentFileReadOnly={currentFileReadOnly}
+          currentFileCacheMeta={currentFileCacheMeta}
+          currentFileCachedAgeLabel={currentFileCachedAgeLabel}
+          editorCollabMode={editorCollabMode}
+          setEditorCollabMode={setEditorCollabMode}
+          documentsReady={documentsReady}
+          authorshipStats={authorshipStats}
+          currentDocId={currentDocId}
+          remotePresence={remotePresence}
+          followEnabled={followEnabled}
+          followedActorId={followedActorId}
+          resolveAgentIdForActor={resolveAgentIdForActor}
+          pushToast={pushToast}
+          setEditMode={setEditMode}
+          setWatchMode={setWatchMode}
+          setFollowingAgent={setFollowingAgent}
+          setFollowDetached={setFollowDetached}
+          toggleWatchMode={toggleWatchMode}
+          watchMode={watchMode}
+          editMode={editMode}
+          splitMode={splitMode}
+          exitSplitMode={exitSplitMode}
+          setSplitMode={setSplitMode}
+          setSplitRatio={setSplitRatio}
+          setRightPaneSourceId={setRightPaneSourceId}
+          setRightPaneFile={setRightPaneFile}
+          setRightPaneReadOnly={setRightPaneReadOnly}
+          setRightPaneUpdatedAt={setRightPaneUpdatedAt}
+          setRightPaneContent={setRightPaneContent}
+          rightLastContentRef={rightLastContentRef}
+          rightSaveTimeoutRef={rightSaveTimeoutRef}
+          setFileHistoryPanelOpen={setFileHistoryPanelOpen}
+          fileHistoryPanelOpen={fileHistoryPanelOpen}
+          canEditCurrentFile={canEditCurrentFile}
+          handleSave={handleSave}
+          savedAgoLabel={savedAgoLabel}
+        />
+      </Suspense>
     );
   };
 
@@ -5359,158 +4733,14 @@ export default function App() {
     </div>
   );
 
-  const renderPrimaryEditorContent = () => (
-    <div className="min-h-0 flex-1 overflow-auto">
-      {editMode ? (
-        <div
-          className={`h-full w-full ${followGlowClassName} ${followTypingPulseActive ? 'agent-typing' : ''} ${
-            fileTransitionActive ? 'mc-file-switch-anim' : ''
-          }`}
-        >
-          <CodeMirrorEditor
-            content={fileContent}
-            onChange={handleContentChange}
-            onSave={handleSave}
-            readOnly={editorCollabMode === 'viewing' || watchMode || (editorCollabMode === 'editing' && currentFileReadOnly)}
-            shortcutsEnabled={runtime.agentNativeEditorEnabled}
-            collabMode={editorCollabMode}
-            onSuggestingEdit={documentsReady ? handleSuggestingEdit : undefined}
-            onToggleSuggestingMode={handleToggleSuggestingMode}
-            onExitSuggestingMode={handleExitSuggestingMode}
-            authorshipRanges={manualAttributionEnabled ? editorAuthorshipRanges : undefined}
-            onManualAttribution={manualAttributionEnabled ? handleManualAttribution : undefined}
-            onSelectionChange={setEditorSelection}
-            onCursorActivity={documentsReady ? handleEditorCursorActivity : undefined}
-            onNewComment={(request: EditorNewCommentRequest) => {
-              if (!documentsReady || !currentDocId) {
-                pushToast('Connect a Documents token to use comments.', 'warning');
-                return;
-              }
-
-              setEditMode(true);
-              setCommentPopover({
-                anchor: request.anchor,
-                selection: request.selection,
-                selectedText: request.selectedText,
-              });
-            }}
-            commentThreads={commentThreads}
-            onSelectComment={(commentId) => {
-              const thread = commentThreads.find((entry) => entry.id === commentId) ?? null;
-              if (!thread) return;
-
-              setEditMode(true);
-              setRightSidebarCollapsed(false);
-              setSelectedCommentId(commentId);
-              setFocusRange({ from: thread.range.from, to: thread.range.to });
-
-              window.requestAnimationFrame(() => {
-                document.getElementById(`comment-thread-${commentId}`)?.scrollIntoView({ block: 'nearest' });
-              });
-            }}
-            suggestions={suggestions}
-            onSelectSuggestion={(suggestionId) => {
-              const suggestion = suggestions.find((entry) => entry.id === suggestionId) ?? null;
-              if (!suggestion) return;
-
-              setEditMode(true);
-              setRightSidebarCollapsed(false);
-              setSelectedSuggestionId(suggestionId);
-              setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
-            }}
-            onAcceptSuggestion={(suggestionId) => {
-              void (async () => {
-                if (currentFileReadOnly) {
-                  pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
-                  return;
-                }
-                if (!documentsReady || !currentDocId) {
-                  pushToast('Connect a Documents token to accept suggestions.', 'warning');
-                  return;
-                }
-                try {
-                  const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
-                  setSuggestions(response.suggestions);
-                  pushToast('Suggestion accepted.', 'success');
-                  if (currentSourceId && currentFile) {
-                    const updated = await fetchSourceFile(currentSourceId, currentFile);
-                    setFileContent(updated.content || '');
-                  }
-                } catch (error) {
-                  pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'error');
-                }
-              })();
-            }}
-            onRejectSuggestion={(suggestionId) => {
-              void (async () => {
-                if (!documentsReady || !currentDocId) {
-                  pushToast('Connect a Documents token to reject suggestions.', 'warning');
-                  return;
-                }
-                try {
-                  const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
-                  setSuggestions(response.suggestions);
-                  pushToast('Suggestion rejected.', 'info');
-                } catch (error) {
-                  pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'error');
-                }
-              })();
-            }}
-            reviewFindings={reviewFindings.filter((finding) => finding.status !== 'ignored')}
-            onSelectFinding={(findingId) => {
-              const finding = reviewFindings.find((entry) => entry.id === findingId) ?? null;
-              if (!finding || !finding.range) return;
-
-              setEditMode(true);
-              setSelectedFindingId(findingId);
-              setFocusRange({ from: finding.range.from, to: finding.range.to });
-            }}
-            onApplyFindingFix={handleApplyReviewFindingFix}
-            onIgnoreFinding={handleIgnoreReviewFinding}
-            remotePresence={editorPresence}
-            focusRange={focusRange}
-            followEnabled={followEnabled}
-            followCursor={debouncedFollowCursor}
-            onDetachFollow={() => setFollowDetached(true)}
-          />
-        </div>
-      ) : (
-        shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
-          <div className={`mx-auto max-w-4xl p-8 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-            <MarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-            <MarkdownAudioControls
-              docsPath={currentFile ?? ''}
-              content={fileContent}
-              settings={docsTtsSettings}
-              onSettingsChange={handleDocsTtsSettingsChange}
-              onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-              compact
-            />
-          </div>
-        ) : (
-          <div className={`h-full w-full overflow-hidden ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-            <CodeMirrorFileViewer
-              content={fileContent}
-              filePath={currentFile ?? ''}
-              contentType={currentFilePreviewMeta.contentType}
-              fileSize={currentFilePreviewMeta.size}
-              isBinary={currentFilePreviewMeta.isBinary}
-              rawFileUrl={currentRawFileUrl}
-            />
-          </div>
-        )
-      )}
-    </div>
-  );
-
   const renderDesktopWorkspace = (viewport: 'desktop' | 'tablet') => (
     <>
       {sidebarTab === 'tasks' ? (
         <div className="flex-1 min-h-0">
           {activeTaskSubViewPlugin ? (
-            <PluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
+            <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
           ) : mcBoardTab === 'strategic' ? (
-            <MCStrategicView />
+            <LazyMCStrategicView />
           ) : (
             <TaskBoard
               viewport={viewport}
@@ -5533,7 +4763,7 @@ export default function App() {
         </div>
       ) : sidebarTab === 'agents' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <AgentDashboardV2
+          <LazyAgentDashboardV2
             agents={agents}
             selectedAgentId={selectedAgent}
             onSelectAgent={setSelectedAgent}
@@ -5544,355 +4774,107 @@ export default function App() {
         </div>
       ) : sidebarTab === 'services' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <PluginTopLevelSlot apiBase={runtime.apiBase} pluginId="entity-services" />
+          <LazyPluginTopLevelSlot apiBase={runtime.apiBase} pluginId="entity-services" />
         </div>
       ) : sidebarTab === 'chat' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <ChatView />
+          <LazyChatView />
         </div>
       ) : sidebarTab === 'admin' ? (
         <div className="flex min-h-0 flex-1 flex-col">{renderAdminWorkspace()}</div>
       ) : (
-        <>
-          <div className="flex min-h-0 flex-1 flex-col">
-	            {currentFile ? (
-	              <div className="flex min-h-0 flex-1">
-	                {splitMode ? (
-	                  <div ref={splitContainerRef} className="flex min-h-0 flex-1 overflow-hidden">
-	                    <div
-	                      className={`flex min-h-0 flex-col min-w-0 ${
-	                        splitResizing ? '' : 'transition-[width] duration-150 ease-out'
-	                      }`}
-	                      style={{ width: `${splitRatio * 100}%` }}
-	                    >
-	                      {/* Avoid a second header row: file identity + actions live in the shell context bar above. */}
-	                      {renderPrimaryEditorContent()}
-	                    </div>
-	
-	                    <div
-	                      className="relative w-3 shrink-0 cursor-col-resize touch-none"
-	                      onPointerDown={(event) => {
-	                        event.preventDefault();
-	                        setSplitResizing(true);
-	                        updateSplitRatioFromClientX(event.clientX);
-	                      }}
-	                      role="separator"
-	                      aria-orientation="vertical"
-	                      aria-label="Resize editor panes"
-	                      title="Drag to resize"
-	                    >
-	                      <div className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-[var(--border-secondary)]" />
-	                    </div>
-	
-	                    <div className="flex min-h-0 flex-1 flex-col min-w-0">
-	                      <div className="flex items-center gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-2 py-1 text-xs">
-	                        <span className="flex-1 min-w-0 truncate text-[var(--text-muted)]">
-	                          {rightPaneFile
-	                            ? `${rightPaneSource ? `${rightPaneSource.displayName} • ` : ''}${rightPaneFile}`
-	                            : 'Right pane: no file'}
-	                        </span>
-                        {(rightPaneReadOnly || Boolean(rightPaneSourceId)) && (
-                          <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                            Read-only
-                          </span>
-                        )}
-                        {rightPaneCacheMeta.cached && (
-                          <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                            cached ({rightPaneCachedAgeLabel ?? 'just now'})
-                          </span>
-                        )}
-	                        <button
-	                          type="button"
-	                          onClick={() => {
-	                            setQuickSwitcherTargetPane('right');
-	                            setQuickSwitcherOpen(true);
-	                          }}
-	                          className="mc-shell-btn px-2 py-1 text-[11px]"
-	                        >
-	                          Open
-	                        </button>
-	                        <button
-	                          type="button"
-	                          onClick={exitSplitMode}
-	                          className="mc-shell-btn px-2 py-1 text-[11px]"
-	                          aria-label="Close split view"
-	                          title="Close split view"
-	                        >
-	                          Close
-	                        </button>
-	                      </div>
-	
-	                      <div className="min-h-0 flex-1 overflow-auto">
-	                        {rightPaneFile ? (
-	                          editMode ? (
-	                            <div className="h-full w-full">
-	                              <CodeMirrorEditor
-	                                content={rightPaneContent}
-	                                onChange={handleRightPaneContentChange}
-	                                readOnly={rightPaneReadOnly || Boolean(rightPaneSourceId)}
-	                              />
-	                            </div>
-                          ) : (
-                            shouldRenderMarkdownPreview(rightPaneFile, rightPanePreviewMeta.contentType) ? (
-                              <div className="mx-auto max-w-4xl p-8">
-                                <MarkdownPreview content={rightPaneContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-                                <MarkdownAudioControls
-                                  docsPath={rightPaneFile ?? ''}
-                                  content={rightPaneContent}
-                                  settings={docsTtsSettings}
-                                  onSettingsChange={handleDocsTtsSettingsChange}
-                                  onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-                                  compact
-                                />
-                              </div>
-	                            ) : (
-	                              <div className="h-full w-full overflow-hidden">
-	                                <CodeMirrorFileViewer
-                                    content={rightPaneContent}
-                                    filePath={rightPaneFile ?? ''}
-                                    contentType={rightPanePreviewMeta.contentType}
-                                    fileSize={rightPanePreviewMeta.size}
-                                    isBinary={rightPanePreviewMeta.isBinary}
-                                    rawFileUrl={rightPaneRawFileUrl}
-                                  />
-	                              </div>
-	                            )
-	                          )
-	                        ) : (
-	                          <div className="flex h-full flex-col items-center justify-center gap-3 text-[var(--text-muted)]">
-	                            <div className="text-sm">Open a file to show it in the right pane.</div>
-	                            <button
-	                              type="button"
-	                              onClick={() => {
-	                                setQuickSwitcherTargetPane('right');
-	                                setQuickSwitcherOpen(true);
-	                              }}
-	                              className="mc-shell-btn px-3 py-1 text-xs"
-	                            >
-	                              Open File
-	                            </button>
-	                          </div>
-	                        )}
-	                      </div>
-	                    </div>
-	                  </div>
-	                ) : (
-	                  <div className="flex min-h-0 flex-1 flex-col">
-	                    {/* Avoid a second header row: file identity + actions live in the shell context bar above. */}
-	                    {renderPrimaryEditorContent()}
-	                  </div>
-	                )}
-	
-	                {runtime.agentNativeEditorEnabled && (
-	                  <aside
-	                    className={`flex shrink-0 flex-col border-l border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 ${
-                      rightSidebarIsCollapsed ? 'w-8' : 'w-[280px]'
-                    }`}
-                  >
-                    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
-                      <div className={`flex shrink-0 ${rightSidebarIsCollapsed ? 'justify-center' : 'justify-start'} px-1 py-2`}>
-                        <button
-                          type="button"
-                          onClick={() => setRightSidebarCollapsed((prev) => !prev)}
-                          disabled={!rightSidebarHasPanels}
-                          className={`mc-shell-btn flex h-7 w-7 items-center justify-center px-0 py-0 text-xs ${
-                            !rightSidebarHasPanels ? 'cursor-not-allowed opacity-40' : ''
-                          }`}
-                          aria-label={rightSidebarIsCollapsed ? 'Expand right sidebar' : 'Collapse right sidebar'}
-                          title={
-                            !rightSidebarHasPanels
-                              ? 'No comments/suggestions/reviews'
-                              : rightSidebarIsCollapsed
-                                ? 'Expand sidebar'
-                                : 'Collapse sidebar'
-                          }
-                        >
-                          <span>{rightSidebarIsCollapsed ? '«' : '»'}</span>
-                        </button>
-                      </div>
-
-                      {!rightSidebarIsCollapsed && (
-                        <div className="min-h-0 flex-1 overflow-auto">
-                          {rightSidebarHasComments && (
-                            <CommentThreadPanel
-                              threads={commentThreads}
-                              onNewFromSelection={() => {
-                                if (!documentsReady || !currentDocId) {
-                                  pushToast('Connect a Documents token to use comments.', 'warning');
-                                  return;
-                                }
-                                if (!editorSelection || editorSelection.to <= editorSelection.from) {
-                                  pushToast('Select some text first.', 'warning');
-                                  return;
-                                }
-
-                                setEditMode(true);
-                                const anchor = computeDomSelectionAnchor() ?? { left: 24, top: 24, bottom: 24 };
-                                setCommentPopover({
-                                  anchor,
-                                  selection: { from: editorSelection.from, to: editorSelection.to },
-                                  selectedText: editorSelection.text,
-                                });
-                              }}
-                              onSelectThread={(threadId) => {
-                                const thread = commentThreads.find((entry) => entry.id === threadId) ?? null;
-                                if (!thread) return;
-                                setEditMode(true);
-                                setSelectedCommentId(threadId);
-                                setFocusRange({ from: thread.range.from, to: thread.range.to });
-                                window.requestAnimationFrame(() => {
-                                  document.getElementById(`comment-thread-${threadId}`)?.scrollIntoView({ block: 'nearest' });
-                                });
-                              }}
-                              onReply={(threadId, text) => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to reply.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.postCommentReply(currentDocId, threadId, { text });
-                                    setCommentThreads(response.threads);
-                                    pushToast('Reply posted.', 'success');
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to post reply.', 'error');
-                                  }
-                                })();
-                              }}
-                              onResolve={(threadId, resolved) => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to resolve comments.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.postCommentResolve(currentDocId, threadId, { resolved });
-                                    setCommentThreads(response.threads);
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to update comment.', 'error');
-                                  }
-                                })();
-                              }}
-                              selectedThreadId={selectedCommentId}
-                            />
-                          )}
-
-                          {rightSidebarHasSuggestions && (
-                            <SuggestionPanel
-                              suggestions={suggestions}
-                              selectedSuggestionId={selectedSuggestionId}
-                              onSelectSuggestion={(suggestionId) => {
-                                const suggestion = suggestions.find((entry) => entry.id === suggestionId) ?? null;
-                                if (!suggestion) return;
-                                setEditMode(true);
-                                setSelectedSuggestionId(suggestionId);
-                                setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
-                              }}
-                              onAccept={(suggestionId) => {
-                                void (async () => {
-                                  if (currentFileReadOnly) {
-                                    pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
-                                    return;
-                                  }
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to accept suggestions.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
-                                    setSuggestions(response.suggestions);
-                                    pushToast('Suggestion accepted.', 'success');
-                                    if (currentSourceId && currentFile) {
-                                      const updated = await fetchSourceFile(currentSourceId, currentFile);
-                                      setFileContent(updated.content || '');
-                                    }
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'error');
-                                  }
-                                })();
-                              }}
-                              onReject={(suggestionId) => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to reject suggestions.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
-                                    setSuggestions(response.suggestions);
-                                    pushToast('Suggestion rejected.', 'info');
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'error');
-                                  }
-                                })();
-                              }}
-                              selection={editorSelection}
-                              onCreateSuggestion={(input) => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to create suggestions.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.postSuggestion(currentDocId, input);
-                                    setSuggestions(response.suggestions);
-                                    pushToast('Suggestion created.', 'success');
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to create suggestion.', 'error');
-                                  }
-                                })();
-                              }}
-                            />
-                          )}
-
-                          {rightSidebarHasReview && (
-                            <ReviewPanel
-                              mode={reviewMode}
-                              onChangeMode={setReviewMode}
-                              onRunReview={() => {
-                                void (async () => {
-                                  if (!documentsReady || !currentDocId) {
-                                    pushToast('Connect a Documents token to run reviews.', 'warning');
-                                    return;
-                                  }
-                                  try {
-                                    const response = await documentsClient.postReview(currentDocId, { mode: reviewMode });
-                                    setReviewRun(response.run);
-                                    setReviewFindings(response.findings);
-                                    pushToast('Review started.', 'info');
-                                  } catch (error) {
-                                    pushToast(error instanceof Error ? error.message : 'Failed to start review.', 'error');
-                                  }
-                                })();
-                              }}
-                              run={reviewRun}
-                              findings={reviewFindings}
-                              selectedFindingId={selectedFindingId}
-                              onSelectFinding={(findingId) => {
-                                const finding = reviewFindings.find((entry) => entry.id === findingId) ?? null;
-                                if (!finding || !finding.range) return;
-                                setEditMode(true);
-                                setSelectedFindingId(findingId);
-                                setFocusRange({ from: finding.range.from, to: finding.range.to });
-                              }}
-                              onApplyFix={handleApplyReviewFindingFix}
-                              onIgnoreFinding={handleIgnoreReviewFinding}
-                              content={fileContent}
-                            />
-                          )}
-
-                        </div>
-                      )}
-                    </div>
-                  </aside>
-                )}
-              </div>
-            ) : renderFileHome()}
-          </div>
-        </>
+        <Suspense fallback={<LazySurfaceFallback label="Loading files" />}>
+          <FilesView
+            runtime={runtime}
+            currentFile={currentFile}
+            handleSourceFileSelect={handleSourceFileSelect}
+            currentSourceId={currentSourceId}
+            fileContent={fileContent}
+            setFileContent={setFileContent}
+            editMode={editMode}
+            setEditMode={setEditMode}
+            splitMode={splitMode}
+            splitContainerRef={splitContainerRef}
+            splitResizing={splitResizing}
+            splitRatio={splitRatio}
+            setSplitResizing={setSplitResizing}
+            updateSplitRatioFromClientX={updateSplitRatioFromClientX}
+            rightPaneFile={rightPaneFile}
+            rightPaneSource={rightPaneSource}
+            rightPaneSourceId={rightPaneSourceId}
+            rightPaneReadOnly={rightPaneReadOnly}
+            rightPaneCacheMeta={rightPaneCacheMeta}
+            rightPaneCachedAgeLabel={rightPaneCachedAgeLabel}
+            setQuickSwitcherTargetPane={setQuickSwitcherTargetPane}
+            setQuickSwitcherOpen={setQuickSwitcherOpen}
+            exitSplitMode={exitSplitMode}
+            rightPaneContent={rightPaneContent}
+            handleRightPaneContentChange={handleRightPaneContentChange}
+            rightPanePreviewMeta={rightPanePreviewMeta}
+            rightPaneRawFileUrl={rightPaneRawFileUrl}
+            handleContentChange={handleContentChange}
+            handleSave={handleSave}
+            editorCollabMode={editorCollabMode}
+            watchMode={watchMode}
+            currentFileReadOnly={currentFileReadOnly}
+            documentsReady={documentsReady}
+            currentDocId={currentDocId}
+            handleSuggestingEdit={handleSuggestingEdit}
+            handleToggleSuggestingMode={handleToggleSuggestingMode}
+            handleExitSuggestingMode={handleExitSuggestingMode}
+            manualAttributionEnabled={manualAttributionEnabled}
+            editorAuthorshipRanges={editorAuthorshipRanges}
+            handleManualAttribution={handleManualAttribution}
+            setEditorSelection={setEditorSelection}
+            handleEditorCursorActivity={handleEditorCursorActivity}
+            commentThreads={commentThreads}
+            setRightSidebarCollapsed={setRightSidebarCollapsed}
+            setSelectedCommentId={setSelectedCommentId}
+            setFocusRange={setFocusRange}
+            suggestions={suggestions}
+            setSelectedSuggestionId={setSelectedSuggestionId}
+            documentsClient={documentsClient}
+            setSuggestions={setSuggestions}
+            pushToast={pushToast}
+            fetchSourceFile={fetchSourceFile}
+            reviewFindings={reviewFindings}
+            setSelectedFindingId={setSelectedFindingId}
+            handleApplyReviewFindingFix={handleApplyReviewFindingFix}
+            handleIgnoreReviewFinding={handleIgnoreReviewFinding}
+            editorPresence={editorPresence}
+            focusRange={focusRange}
+            followEnabled={followEnabled}
+            debouncedFollowCursor={debouncedFollowCursor}
+            setFollowDetached={setFollowDetached}
+            currentFilePreviewMeta={currentFilePreviewMeta}
+            currentRawFileUrl={currentRawFileUrl}
+            handleMarkdownDocsNavigation={handleMarkdownDocsNavigation}
+            docsTtsSettings={docsTtsSettings}
+            handleDocsTtsSettingsChange={handleDocsTtsSettingsChange}
+            rightSidebarHasPanels={rightSidebarHasPanels}
+            rightSidebarIsCollapsed={rightSidebarIsCollapsed}
+            rightSidebarHasComments={rightSidebarHasComments}
+            rightSidebarHasSuggestions={rightSidebarHasSuggestions}
+            rightSidebarHasReview={rightSidebarHasReview}
+            editorSelection={editorSelection}
+            setCommentPopover={setCommentPopover}
+            setCommentThreads={setCommentThreads}
+            selectedCommentId={selectedCommentId}
+            selectedSuggestionId={selectedSuggestionId}
+            reviewMode={reviewMode}
+            setReviewMode={setReviewMode}
+            reviewRun={reviewRun}
+            setReviewRun={setReviewRun}
+            setReviewFindings={setReviewFindings}
+            selectedFindingId={selectedFindingId}
+            followGlowClassName={followGlowClassName}
+            followTypingPulseActive={followTypingPulseActive}
+            fileTransitionActive={fileTransitionActive}
+          />
+        </Suspense>
       )}
       {sidebarTab !== 'admin' && (
-        <BottomTerminalPanel
+        <LazyBottomTerminalPanel
           isOpen={activityPanelOpen}
           onToggleOpen={() => setActivityPanelOpen((prev) => !prev)}
         />
@@ -6002,55 +4984,24 @@ export default function App() {
     const docsBackTaskId =
       docsBackState && typeof docsBackState.returnTaskId === 'number' ? docsBackState.returnTaskId : null;
     return (
-      <div className="entity-shell flex h-screen flex-col bg-[var(--bg-primary)] text-[var(--text-secondary)]">
-        {renderInstallCta('bottom-10')}
-        <header className="flex flex-wrap items-center gap-3 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
-          <button
-            type="button"
-            onClick={handleDocsBackToHome}
-            className="mc-shell-btn px-3 py-1 text-xs font-medium"
-          >
-            {docsBackTaskId !== null ? `← Back to task #${docsBackTaskId}` : '← Entity Home'}
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-[var(--text-primary)]">
-              {docsFilename || docsFilenameFromPath(docsPath)}
-            </div>
-            <div className="truncate text-xs text-[var(--text-muted)]">
-              {docsBreadcrumbSegments.length > 0 ? docsBreadcrumbSegments.join(' / ') : docsPath}
-            </div>
-          </div>
-          <div className="hidden max-w-[45%] truncate text-right text-xs text-[var(--text-muted)] sm:block">
-            /docs/{docsPath}
-          </div>
-        </header>
-        <main className="min-h-0 flex-1 overflow-auto">
-          <div className="mx-auto w-full max-w-6xl px-4 py-6 lg:px-8 lg:py-8">
-            {docsError ? (
-              <div className="rounded-xl border border-[var(--error)]/50 bg-[var(--bg-secondary)] p-4">
-                <div className="text-sm font-medium text-[var(--error)]">Unable to load document</div>
-                <div className="mt-1 text-xs text-[var(--text-muted)]">{docsError}</div>
-              </div>
-            ) : (
-              <>
-                <MarkdownAudioControls
-                  docsPath={docsPath}
-                  content={docsContent}
-                  settings={docsTtsSettings}
-                  onSettingsChange={handleDocsTtsSettingsChange}
-                  onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-                />
-                <MarkdownPreview
-                  content={docsContent}
-                  loading={docsLoading}
-                  onDocsLinkNavigate={handleMarkdownDocsNavigation}
-                />
-              </>
-            )}
-          </div>
-        </main>
-        {renderOfflineSyncBar(false)}
-      </div>
+      <Suspense fallback={<LazySurfaceFallback label="Loading document" />}>
+        <DocsRouteView
+          docsPath={docsPath}
+          docsFilename={docsFilename || docsFilenameFromPath(docsPath)}
+          docsBreadcrumbSegments={docsBreadcrumbSegments}
+          docsError={docsError}
+          docsContent={docsContent}
+          docsLoading={docsLoading}
+          docsTtsSettings={docsTtsSettings}
+          docsBackTaskId={docsBackTaskId}
+          onBackToHome={handleDocsBackToHome}
+          onDocsLinkNavigate={handleMarkdownDocsNavigation}
+          onDocsTtsSettingsChange={handleDocsTtsSettingsChange}
+          onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
+          renderInstallCta={renderInstallCta}
+          renderOfflineSyncBar={renderOfflineSyncBar}
+        />
+      </Suspense>
     );
   }
 
@@ -6060,7 +5011,7 @@ export default function App() {
 
   if (shouldShowOnboarding) {
     return (
-      <OnboardingFlow
+      <LazyOnboardingFlow
         apiBase={runtime.apiBase}
         routeToken={onboardingToken}
         userProfile={userProfile}
@@ -6086,61 +5037,69 @@ export default function App() {
       data-workspace-tab={sidebarTab}
     >
       {renderInstallCta('bottom-24 md:bottom-8')}
-      <QuickSwitcher
-        isOpen={quickSwitcherOpen}
-        onClose={() => {
-          setQuickSwitcherOpen(false);
-          setQuickSwitcherTargetPane('left');
-        }}
-        onSelect={(path, sourceId) => {
-          if (quickSwitcherTargetPane === 'right') {
-            if (!splitMode) {
-              setSplitMode('horizontal');
-              setSplitRatio(0.5);
-            }
+      {quickSwitcherOpen ? (
+        <Suspense fallback={null}>
+          <QuickSwitcher
+            isOpen={quickSwitcherOpen}
+            onClose={() => {
+              setQuickSwitcherOpen(false);
+              setQuickSwitcherTargetPane('left');
+            }}
+            onSelect={(path, sourceId) => {
+              if (quickSwitcherTargetPane === 'right') {
+                if (!splitMode) {
+                  setSplitMode('horizontal');
+                  setSplitRatio(0.5);
+                }
 
-            if (sourceId) {
-              handleRightPaneSourceFileSelect(sourceId, path);
-              return;
-            }
+                if (sourceId) {
+                  handleRightPaneSourceFileSelect(sourceId, path);
+                  return;
+                }
 
-            handleRightPaneFileSelect(path);
-            return;
-          }
+                handleRightPaneFileSelect(path);
+                return;
+              }
 
-          if (sourceId) {
-            handleSourceFileSelect(sourceId, path);
-            return;
-          }
+              if (sourceId) {
+                handleSourceFileSelect(sourceId, path);
+                return;
+              }
 
-          handleFileSelect(path);
-        }}
-        apiBase={runtime.apiBase}
-        useUnifiedSearch={runtime.fsMultiSourceEnabled}
-      />
+              handleFileSelect(path);
+            }}
+            apiBase={runtime.apiBase}
+            useUnifiedSearch={runtime.fsMultiSourceEnabled}
+          />
+        </Suspense>
+      ) : null}
 
-      <NotificationHistoryPanel
-        isOpen={notificationsPanelOpen}
-        notifications={notifications}
-        selectedId={selectedNotificationId}
-        onClose={closeNotificationsPanel}
-        onSelect={selectNotificationInPanel}
-        onMarkAllRead={markAllNotificationsRead}
-        onClearAll={clearAllNotifications}
-        entityNotifications={entityNotifications.notifications}
-        entityNotificationsLoading={entityNotifications.loading}
-        entityNotificationsError={entityNotifications.error}
-        onEntityNotificationRead={(id) => void entityNotifications.markState(id, 'read')}
-      />
+      {notificationsPanelOpen ? (
+        <LazyNotificationHistoryPanel
+          isOpen={notificationsPanelOpen}
+          notifications={notifications}
+          selectedId={selectedNotificationId}
+          onClose={closeNotificationsPanel}
+          onSelect={selectNotificationInPanel}
+          onMarkAllRead={markAllNotificationsRead}
+          onClearAll={clearAllNotifications}
+          entityNotifications={entityNotifications.notifications}
+          entityNotificationsLoading={entityNotifications.loading}
+          entityNotificationsError={entityNotifications.error}
+          onEntityNotificationRead={(id) => void entityNotifications.markState(id, 'read')}
+        />
+      ) : null}
 
-      <FileHistoryPanel
-        apiBase={runtime.apiBase}
-        filePath={currentSourceId ? null : currentFile}
-        latestSavedContent={fileContent}
-        currentContent={fileContent}
-        isOpen={fileHistoryPanelOpen}
-        onClose={() => setFileHistoryPanelOpen(false)}
-      />
+      {fileHistoryPanelOpen ? (
+        <LazyFileHistoryPanel
+          apiBase={runtime.apiBase}
+          filePath={currentSourceId ? null : currentFile}
+          latestSavedContent={fileContent}
+          currentContent={fileContent}
+          isOpen={fileHistoryPanelOpen}
+          onClose={() => setFileHistoryPanelOpen(false)}
+        />
+      ) : null}
 
       {reloadPrompt && (
         <div className="fixed left-0 right-0 top-0 z-50 flex items-center justify-between border-b border-[var(--border-secondary)] bg-[var(--bg-secondary)] px-4 py-2 text-[var(--text-primary)]">
@@ -6190,305 +5149,117 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col bg-[var(--bg-primary)] pb-14 md:hidden">
-        <div className="flex items-center justify-between border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
-          <div>
-            <div className="text-sm font-semibold">Entity Mission Control</div>
-            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-              {workspaceTab} · {onlineAgents}/{agents.length} agents online
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className="mc-shell-btn inline-flex items-center px-2 py-1 text-[11px]"
-              aria-label={connected ? 'Online' : 'Offline'}
-              title={connected ? 'Online' : 'Offline'}
-            >
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${connected ? 'bg-[var(--accent)]' : 'bg-orange-400'}`}
-                aria-hidden="true"
-              />
-            </span>
-            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{mobileTab}</div>
-          </div>
-        </div>
+      {isMobile ? (
+        <Suspense fallback={<LazySurfaceFallback label="Loading mobile workspace" />}>
+          <MobileView
+            mobileTab={mobileTab}
+            workspaceTab={workspaceTab}
+            onlineAgents={onlineAgents}
+            agents={agents}
+            connected={connected}
+            currentFile={currentFile}
+            setCurrentFile={setCurrentFile}
+            setFileContent={setFileContent}
+            setCurrentFilePreviewMeta={setCurrentFilePreviewMeta}
+            setCurrentFileCacheMeta={setCurrentFileCacheMeta}
+            selectedSource={selectedSource}
+            currentFileCacheMeta={currentFileCacheMeta}
+            currentFileCachedAgeLabel={currentFileCachedAgeLabel}
+            runtime={runtime}
+            handleBackToDashboard={handleBackToDashboard}
+            editMode={editMode}
+            setEditMode={setEditMode}
+            editorCollabMode={editorCollabMode}
+            watchMode={watchMode}
+            canEditCurrentFile={canEditCurrentFile}
+            handleSave={handleSave}
+            manualAttributionEnabled={manualAttributionEnabled}
+            authorshipStats={authorshipStats}
+            manualAuthorshipAuthor={manualAuthorshipAuthor}
+            setManualAuthorshipAuthor={setManualAuthorshipAuthor}
+            followGlowClassName={followGlowClassName}
+            followTypingPulseActive={followTypingPulseActive}
+            fileTransitionActive={fileTransitionActive}
+            fileContent={fileContent}
+            handleContentChange={handleContentChange}
+            currentFileReadOnly={currentFileReadOnly}
+            documentsReady={documentsReady}
+            handleSuggestingEdit={handleSuggestingEdit}
+            handleToggleSuggestingMode={handleToggleSuggestingMode}
+            handleExitSuggestingMode={handleExitSuggestingMode}
+            editorAuthorshipRanges={editorAuthorshipRanges}
+            handleManualAttribution={handleManualAttribution}
+            handleEditorCursorActivity={handleEditorCursorActivity}
+            suggestions={suggestions}
+            setSelectedSuggestionId={setSelectedSuggestionId}
+            setSelectedFindingId={setSelectedFindingId}
+            setFocusRange={setFocusRange}
+            documentsClient={documentsClient}
+            currentDocId={currentDocId}
+            setSuggestions={setSuggestions}
+            pushToast={pushToast}
+            currentSourceId={currentSourceId}
+            fetchSourceFile={fetchSourceFile}
+            reviewFindings={reviewFindings}
+            handleApplyReviewFindingFix={handleApplyReviewFindingFix}
+            handleIgnoreReviewFinding={handleIgnoreReviewFinding}
+            editorPresence={editorPresence}
+            followEnabled={followEnabled}
+            debouncedFollowCursor={debouncedFollowCursor}
+            setFollowDetached={setFollowDetached}
+            currentFilePreviewMeta={currentFilePreviewMeta}
+            currentRawFileUrl={currentRawFileUrl}
+            handleMarkdownDocsNavigation={handleMarkdownDocsNavigation}
+            docsTtsSettings={docsTtsSettings}
+            handleDocsTtsSettingsChange={handleDocsTtsSettingsChange}
+            selectedAgent={selectedAgent}
+            selectedAgentData={selectedAgentData}
+            activities={activities}
+            tasks={tasks}
+            setSelectedAgent={setSelectedAgent}
+            activeTaskSubViewPlugin={activeTaskSubViewPlugin}
+            mcBoardTab={mcBoardTab}
+            highlightTaskId={highlightTaskId}
+            handleTaskSelect={handleTaskSelect}
+            handleCloseTaskDetail={handleCloseTaskDetail}
+            handleTaskOutputDocsNavigation={handleTaskOutputDocsNavigation}
+            taskSearchQuery={taskSearchQuery}
+            showArchiveColumn={showArchiveColumn}
+            setShowArchiveColumn={setShowArchiveColumn}
+            filteredBoardTasks={filteredBoardTasks}
+            tasksLoading={tasksLoading}
+            tasksError={tasksError}
+            mobileActivityPanelOpen={mobileActivityPanelOpen}
+            setMobileActivityPanelOpen={setMobileActivityPanelOpen}
+            activityLoading={activityLoading}
+            activityError={activityError}
+            handleFileSelect={handleFileSelect}
+            handleSourceFileSelect={handleSourceFileSelect}
+            setTabletSidebarOpen={setTabletSidebarOpen}
+            setMobileTab={setMobileTab}
+            setSidebarTab={setSidebarTab}
+            renderOfflineSyncBar={renderOfflineSyncBar}
+            agentsLoading={agentsLoading}
+            agentsError={agentsError}
+            followingAgent={followingAgent}
+            setFollowingAgent={setFollowingAgent}
+          />
+        </Suspense>
+      ) : null}
 
-        <div className="min-h-0 flex-1">
-          {mobileTab === 'files' && (
-            <div className="flex h-full min-h-0 flex-col">
-              {currentFile ? (
-                <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="flex items-center gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCurrentFile(null);
-                        setFileContent('');
-                        setCurrentFilePreviewMeta(defaultFilePreviewMeta());
-                        setCurrentFileCacheMeta(defaultFileCacheMeta());
-                      }}
-                      className="mc-shell-btn px-2 py-1 text-[11px]"
-                      aria-label="Back to files"
-                    >
-                      ←
-                    </button>
-                    <span className="flex-1 truncate text-[var(--text-muted)]">
-                      {selectedSource ? `${selectedSource.displayName} • ` : ''}{currentFile}
-                    </span>
-                    {currentFileCacheMeta.cached && (
-                      <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                        cached ({currentFileCachedAgeLabel ?? 'just now'})
-                      </span>
-                    )}
-                    {runtime.fsMultiSourceEnabled && (
-                      <button
-                        type="button"
-                        onClick={handleBackToDashboard}
-                        className="mc-shell-btn px-2 py-1 text-[11px]"
-                      >
-                        Back
-                      </button>
-                    )}
-                    <button
-                      disabled={!currentFile}
-                      onClick={() => setEditMode(!editMode)}
-                      className={`mc-shell-btn px-2 py-1 text-[11px] ${
-                        editMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-                      } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-                    >
-                      {editMode ? 'Preview' : 'Edit'}
-                    </button>
-                    {editMode && editorCollabMode !== 'viewing' && !watchMode && canEditCurrentFile && (
-                      <button
-                        onClick={handleSave}
-                        className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-2 py-1 text-[11px] font-medium text-[var(--text-primary)]"
-                      >
-                        Save
-                      </button>
-                    )}
-                  </div>
-                  {manualAttributionEnabled && (
-                    <div className="hidden border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 md:block">
-                      <AuthorshipStatsPanel
-                        stats={authorshipStats}
-                        selectedAuthor={manualAuthorshipAuthor}
-                        onSelectAuthor={setManualAuthorshipAuthor}
-                      />
-                    </div>
-                  )}
-                  <div className="min-h-0 flex-1 overflow-auto">
-                    {editMode ? (
-                      <div
-                        className={`h-full w-full ${followGlowClassName} ${followTypingPulseActive ? 'agent-typing' : ''} ${
-                          fileTransitionActive ? 'mc-file-switch-anim' : ''
-                        }`}
-                      >
-                        <CodeMirrorEditor
-	                          content={fileContent}
-	                          onChange={handleContentChange}
-	                          onSave={handleSave}
-	                          readOnly={editorCollabMode === 'viewing' || watchMode || (editorCollabMode === 'editing' && currentFileReadOnly)}
-	                          shortcutsEnabled={runtime.agentNativeEditorEnabled}
-	                          collabMode={editorCollabMode}
-	                          onSuggestingEdit={documentsReady ? handleSuggestingEdit : undefined}
-	                          onToggleSuggestingMode={handleToggleSuggestingMode}
-	                          onExitSuggestingMode={handleExitSuggestingMode}
-	                          authorshipRanges={manualAttributionEnabled ? editorAuthorshipRanges : undefined}
-	                          onManualAttribution={manualAttributionEnabled ? handleManualAttribution : undefined}
-                          onCursorActivity={documentsReady ? handleEditorCursorActivity : undefined}
-	                          suggestions={suggestions}
-                          onSelectSuggestion={(suggestionId) => {
-                            const suggestion = suggestions.find((entry) => entry.id === suggestionId) ?? null;
-                            if (!suggestion) return;
-                            setEditMode(true);
-                            setSelectedSuggestionId(suggestionId);
-                            setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
-                          }}
-	                          onAcceptSuggestion={(suggestionId) => {
-	                            void (async () => {
-	                              if (currentFileReadOnly) {
-	                                pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
-	                                return;
-	                              }
-	                              if (!documentsReady || !currentDocId) {
-	                                pushToast('Connect a Documents token to accept suggestions.', 'warning');
-	                                return;
-	                              }
-	                              try {
-                                const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
-                                setSuggestions(response.suggestions);
-                                pushToast('Suggestion accepted.', 'success');
-                                if (currentSourceId && currentFile) {
-                                  const updated = await fetchSourceFile(currentSourceId, currentFile);
-                                  setFileContent(updated.content || '');
-                                }
-                              } catch (error) {
-                                pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'error');
-                              }
-                            })();
-                          }}
-                          onRejectSuggestion={(suggestionId) => {
-                            void (async () => {
-                              if (!documentsReady || !currentDocId) {
-                                pushToast('Connect a Documents token to reject suggestions.', 'warning');
-                                return;
-                              }
-                              try {
-                                const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
-                                setSuggestions(response.suggestions);
-                                pushToast('Suggestion rejected.', 'info');
-                              } catch (error) {
-                                pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'error');
-                              }
-                            })();
-                          }}
-                          reviewFindings={reviewFindings.filter((finding) => finding.status !== 'ignored')}
-                          onSelectFinding={(findingId) => {
-                            const finding = reviewFindings.find((entry) => entry.id === findingId) ?? null;
-                            if (!finding || !finding.range) return;
-                            setEditMode(true);
-                            setSelectedFindingId(findingId);
-                            setFocusRange({ from: finding.range.from, to: finding.range.to });
-                          }}
-                          onApplyFindingFix={handleApplyReviewFindingFix}
-                          onIgnoreFinding={handleIgnoreReviewFinding}
-                          remotePresence={editorPresence}
-                          followEnabled={followEnabled}
-                          followCursor={debouncedFollowCursor}
-                          onDetachFollow={() => setFollowDetached(true)}
-                        />
-                      </div>
-                    ) : (
-                      shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) ? (
-                        <div className={`mx-auto max-w-3xl p-4 ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-                          <MarkdownPreview content={fileContent} onDocsLinkNavigate={handleMarkdownDocsNavigation} />
-                        </div>
-                      ) : (
-                        <div className={`h-full w-full overflow-hidden ${fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
-                          <CodeMirrorFileViewer
-                            content={fileContent}
-                            filePath={currentFile ?? ''}
-                            contentType={currentFilePreviewMeta.contentType}
-                            fileSize={currentFilePreviewMeta.size}
-                            isBinary={currentFilePreviewMeta.isBinary}
-                            rawFileUrl={currentRawFileUrl}
-                          />
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="min-h-0 flex-1">{renderFileHome()}</div>
-              )}
-            </div>
-          )}
-
-          {mobileTab === 'agents' && (
-            <div className="h-full overflow-auto">
-              {selectedAgent !== null ? (
-                <AgentsMobileDetail
-                  agent={
-                    selectedAgentData ?? {
-                      id: selectedAgent,
-                      name: selectedAgent,
-                      emoji: '🤖',
-                      model: '',
-                      runtime: '',
-                      status: 'offline',
-                    }
-                  }
-                  activities={activities}
-                  tasks={tasks}
-                  onBack={() => setSelectedAgent(null)}
-                />
-              ) : (
-                renderAgentsPanel()
-              )}
-            </div>
-          )}
-
-          {mobileTab === 'tasks' && (
-            activeTaskSubViewPlugin ? (
-              <PluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
-            ) : (
-              <TaskBoard
-                viewport="mobile"
-                apiBase={runtime.mcOrigin}
-                showInsights={mcBoardTab === 'insights'}
-                activeTab={mcBoardTab === 'insights' ? 'insights' : 'kanban'}
-                highlightTaskId={highlightTaskId}
-                onOpenTask={handleTaskSelect}
-                onCloseTask={handleCloseTaskDetail}
-                onDocsLinkNavigate={handleTaskOutputDocsNavigation}
-                searchQuery={taskSearchQuery}
-                showArchiveColumn={showArchiveColumn}
-                onArchiveColumnVisibilityChange={setShowArchiveColumn}
-                tasks={filteredBoardTasks}
-                loading={tasksLoading}
-                error={tasksError}
-              />
-            )
-          )}
-
-          {mobileTab === 'services' && (
-            <PluginTopLevelSlot apiBase={runtime.apiBase} pluginId="entity-services" />
-          )}
-
-          {mobileTab === 'chat' && (
-            <div className="h-full min-h-0">
-              <ChatView />
-            </div>
-          )}
-
-          {mobileTab === 'activity' && (
-            <ActivityStream
-              activities={activities}
-              loading={activityLoading}
-              error={activityError}
-              isOpen={mobileActivityPanelOpen}
-              onToggleOpen={() => setMobileActivityPanelOpen((prev) => !prev)}
-              onOpenFile={handleFileSelect}
-              onOpenTask={handleTaskSelect}
-            />
-          )}
-        </div>
-      </div>
-
-      <MobileBottomNav
-        activeTab={mobileTab}
-        onChange={(tab) => {
-          setTabletSidebarOpen(false);
-          setMobileTab(tab);
-          if (tab === 'tasks') {
-            setSidebarTab('tasks');
-            return;
-          }
-          if (tab === 'services') {
-            setSidebarTab('services');
-            return;
-          }
-          if (tab === 'chat') {
-            setSidebarTab('chat');
-            return;
-          }
-          if (tab === 'files' || tab === 'agents') {
-            setSidebarTab(tab);
-          }
-        }}
-      />
-
-      {renderOfflineSyncBar(true)}
-
-      <MCCreateTaskModal
-        open={createTaskModalOpen}
-        apiBase={runtime.apiBase}
-        onClose={() => setCreateTaskModalOpen(false)}
-        onCreateTask={createTask}
-        onCreated={(task) => {
-          handleTaskSelect(task.id);
-        }}
-      />
+      {createTaskModalOpen ? (
+        <Suspense fallback={null}>
+          <MCCreateTaskModal
+            open
+            apiBase={runtime.apiBase}
+            onClose={() => setCreateTaskModalOpen(false)}
+            onCreateTask={createTask}
+            onCreated={(task) => {
+              handleTaskSelect(task.id);
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       <div
         id="loginOverlay"
@@ -6551,35 +5322,37 @@ export default function App() {
       )}
 
       {commentPopover && (
-        <NewCommentPopover
-          anchor={commentPopover.anchor}
-          selectedText={commentPopover.selectedText}
-          onCancel={() => setCommentPopover(null)}
-          onSubmit={(text) => {
-            void (async () => {
-              const value = text.trim();
-              if (!value) return;
-              if (!documentsReady || !currentDocId) {
-                pushToast('Connect a Documents token to create comments.', 'warning');
-                return;
-              }
+        <Suspense fallback={null}>
+          <NewCommentPopover
+            anchor={commentPopover.anchor}
+            selectedText={commentPopover.selectedText}
+            onCancel={() => setCommentPopover(null)}
+            onSubmit={(text) => {
+              void (async () => {
+                const value = text.trim();
+                if (!value) return;
+                if (!documentsReady || !currentDocId) {
+                  pushToast('Connect a Documents token to create comments.', 'warning');
+                  return;
+                }
 
-              try {
-                const response = await documentsClient.postComment(currentDocId, {
-                  from: commentPopover.selection.from,
-                  to: commentPopover.selection.to,
-                  text: value,
-                  selectedText: commentPopover.selectedText,
-                });
-                setCommentThreads(response.threads);
-                setCommentPopover(null);
-                pushToast('Comment created.', 'success');
-              } catch (error) {
-                pushToast(error instanceof Error ? error.message : 'Failed to create comment.', 'error');
-              }
-            })();
-          }}
-        />
+                try {
+                  const response = await documentsClient.postComment(currentDocId, {
+                    from: commentPopover.selection.from,
+                    to: commentPopover.selection.to,
+                    text: value,
+                    selectedText: commentPopover.selectedText,
+                  });
+                  setCommentThreads(response.threads);
+                  setCommentPopover(null);
+                  pushToast('Comment created.', 'success');
+                } catch (error) {
+                  pushToast(error instanceof Error ? error.message : 'Failed to create comment.', 'error');
+                }
+              })();
+            }}
+          />
+        </Suspense>
       )}
 
       <ToastViewport

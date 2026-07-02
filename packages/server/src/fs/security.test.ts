@@ -1,5 +1,28 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { normalizeSourceRelativePath, resolveLocalPath, assertAllowedRemoteUrl, redactSensitive, assertSourceEnabled } from './security';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { describe, it, expect, afterEach } from 'vitest';
+import {
+  normalizeSourceRelativePath,
+  resolveLocalPath,
+  assertAllowedRemoteUrl,
+  redactSensitive,
+  assertSourceEnabled,
+  assertRealpathContained,
+  assertWriteTargetRealpathContained,
+} from './security';
+
+const tempRoots: string[] = [];
+
+async function makeTempRoot(): Promise<string> {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'entity-fs-security-'));
+  tempRoots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  await Promise.all(tempRoots.splice(0).map((root) => fs.promises.rm(root, { recursive: true, force: true })));
+});
 
 describe('normalizeSourceRelativePath', () => {
   it('should normalize a simple path', () => {
@@ -72,6 +95,35 @@ describe('resolveLocalPath', () => {
   it('should allow paths within base even with dots', () => {
     const result = resolveLocalPath('/home/user/data', 'subdir/../other/file.md');
     expect(result).toBe('/home/user/data/other/file.md');
+  });
+});
+
+describe('realpath containment helpers', () => {
+  it('rejects symlink targets outside the real root', async () => {
+    const root = await makeTempRoot();
+    const outside = await makeTempRoot();
+    await fs.promises.writeFile(path.join(outside, 'secret.txt'), 'secret', 'utf-8');
+    await fs.promises.symlink(path.join(outside, 'secret.txt'), path.join(root, 'link.txt'));
+
+    await expect(assertRealpathContained(root, path.join(root, 'link.txt'))).rejects.toThrow(
+      'Access outside source root is not allowed.',
+    );
+  });
+
+  it('allows write targets whose nearest existing parent remains inside the real root', async () => {
+    const root = await makeTempRoot();
+
+    await expect(assertWriteTargetRealpathContained(root, path.join(root, 'nested', 'file.txt'))).resolves.toBeUndefined();
+  });
+
+  it('rejects write targets through symlinked parents outside the real root', async () => {
+    const root = await makeTempRoot();
+    const outside = await makeTempRoot();
+    await fs.promises.symlink(outside, path.join(root, 'linked-dir'), 'dir');
+
+    await expect(assertWriteTargetRealpathContained(root, path.join(root, 'linked-dir', 'pwned.txt'))).rejects.toThrow(
+      'Access outside source root is not allowed.',
+    );
   });
 });
 

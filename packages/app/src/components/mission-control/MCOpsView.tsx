@@ -1,8 +1,5 @@
-import { useEffect, useState } from 'react';
-import MCInsightsDashboard from './MCInsightsDashboard';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import KanbanColumn from './KanbanColumn';
-import TaskDetailPanel from './TaskDetailPanel';
-import ReviewActionModal from './ReviewActionModal';
 import { useTaskBoard, type TaskBoardTask, type TaskColumn } from '../../hooks/useTaskBoard';
 import type { MCTab } from './MCHeader';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
@@ -20,6 +17,10 @@ import {
   type WorktypeFieldDefinition,
   type WorktypeRegistryEntry,
 } from './utils/worktypeRegistry';
+
+const LazyMCInsightsDashboard = lazy(() => import('./MCInsightsDashboard'));
+const LazyTaskDetailPanel = lazy(() => import('./TaskDetailPanel'));
+const LazyReviewActionModal = lazy(() => import('./ReviewActionModal'));
 
 interface MCOpsViewProps {
   apiBase?: string;
@@ -264,7 +265,7 @@ export default function MCOpsView({
 
   const selectedCount = selectedTaskIds.size;
 
-  const toggleTaskSelection = (taskId: number) => {
+  const toggleTaskSelection = useCallback((taskId: number) => {
     setBulkError(null);
     setSelectedTaskIds((current) => {
       const next = new Set(current);
@@ -275,18 +276,18 @@ export default function MCOpsView({
       }
       return next;
     });
-  };
+  }, []);
 
-  const clearSelection = () => {
+  const clearSelection = useCallback(() => {
     setSelectedTaskIds(new Set());
     setBulkError(null);
-  };
+  }, []);
 
   const handleStatusFilterClick = (next: BoardStatusFilter) => {
     setStatusFilter((current) => (current === next ? 'all' : next));
   };
 
-  const handleToggleBookmark = async (taskId: number) => {
+  const handleToggleBookmark = useCallback(async (taskId: number) => {
     const task = tasks.find((candidate) => candidate.id === taskId);
     if (!task) {
       return;
@@ -297,7 +298,7 @@ export default function MCOpsView({
     } catch (error) {
       console.error('Failed to toggle task bookmark:', error);
     }
-  };
+  }, [tasks, updateTask]);
 
   const handleBulkMove = async () => {
     if (selectedCount === 0 || bulkBusy) {
@@ -390,7 +391,7 @@ export default function MCOpsView({
     setSelectedTaskId(highlightTaskId);
   }, [highlightTaskId]);
 
-  const handleMoveTask = async (taskId: number, column: BoardColumn) => {
+  const handleMoveTask = useCallback(async (taskId: number, column: BoardColumn) => {
     if (column === 'archive') {
       setDraggedTaskId(null);
       return;
@@ -416,7 +417,7 @@ export default function MCOpsView({
       setMovingTaskId(null);
       setDraggedTaskId(null);
     }
-  };
+  }, [onMoveTask, tasks]);
 
   const handleReviewSubmit = async (
     action: 'accept' | 'accept_done' | 'needs_fix' | 'reject',
@@ -469,17 +470,17 @@ export default function MCOpsView({
     }
   };
 
-  const handleOpenTask = (taskId: number) => {
+  const handleOpenTask = useCallback((taskId: number) => {
     setSelectedTaskId(taskId);
     onOpenTask?.(taskId);
-  };
+  }, [onOpenTask]);
 
-  const handleCloseTask = () => {
+  const handleCloseTask = useCallback(() => {
     setSelectedTaskId(null);
     onCloseTask?.();
-  };
+  }, [onCloseTask]);
 
-  const handleUpdateTaskProjects = async (taskId: number, projectIds: number[]) => {
+  const handleUpdateTaskProjects = useCallback(async (taskId: number, projectIds: number[]) => {
     const selectedProjectNames = projectOptions
       .filter((project) => projectIds.includes(project.id))
       .map((project) => project.name);
@@ -488,16 +489,24 @@ export default function MCOpsView({
       projectIds,
       project: selectedProjectNames.length > 0 ? selectedProjectNames.join(', ') : 'General',
     });
-  };
+  }, [projectOptions, updateTask]);
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedTaskId(null);
+  }, []);
 
   return (
     <div>
       {error ? (
         <div className="entity-state-notice entity-state-error mx-4 mt-5 text-sm md:mx-5">{error}</div>
       ) : null}
-      <div className={activeTab === 'insights' && shouldShowInsights ? 'entity-insights-body' : 'hidden'}>
-        <MCInsightsDashboard tasks={filteredTasks} onOpenTask={handleOpenTask} />
-      </div>
+      {activeTab === 'insights' && shouldShowInsights ? (
+        <div className="entity-insights-body">
+          <Suspense fallback={null}>
+            <LazyMCInsightsDashboard tasks={filteredTasks} onOpenTask={handleOpenTask} />
+          </Suspense>
+        </div>
+      ) : null}
       <div className={activeTab === 'insights' && shouldShowInsights ? 'hidden' : ''}>
         <div className="px-4 pb-3 pt-4 md:px-5">
 	          <div className={`entity-state-bar ${summaryStateClass} flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)]/80 p-2 shadow-[0_10px_28px_rgba(0,0,0,0.22)]`}>
@@ -703,7 +712,7 @@ export default function MCOpsView({
               draggedTaskId={draggedTaskId}
               highlightTaskId={highlightTaskId}
               movingTaskId={movingTaskId}
-              onDragEnd={() => setDraggedTaskId(null)}
+              onDragEnd={handleDragEnd}
               onDragStart={setDraggedTaskId}
               onMoveTask={handleMoveTask}
               onOpenTask={handleOpenTask}
@@ -724,25 +733,31 @@ export default function MCOpsView({
         ) : null}
       </div>
       {activeTaskDetailId !== null ? (
-        <TaskDetailPanel
-          key={activeTaskDetailId}
-          apiBase={apiBase}
-          taskId={activeTaskDetailId}
-          onClose={handleCloseTask}
-          onDocsLinkNavigate={onDocsLinkNavigate}
-        />
+        <Suspense fallback={null}>
+          <LazyTaskDetailPanel
+            key={activeTaskDetailId}
+            apiBase={apiBase}
+            taskId={activeTaskDetailId}
+            onClose={handleCloseTask}
+            onDocsLinkNavigate={onDocsLinkNavigate}
+          />
+        </Suspense>
       ) : null}
-      <ReviewActionModal
-        open={reviewModalTask !== null}
-        task={reviewModalTask}
-        busy={reviewBusy}
-        error={reviewError}
-        onClose={() => {
-          setReviewModalTask(null);
-          setReviewError(null);
-        }}
-        onSubmit={handleReviewSubmit}
-      />
+      {reviewModalTask !== null ? (
+        <Suspense fallback={null}>
+          <LazyReviewActionModal
+            open
+            task={reviewModalTask}
+            busy={reviewBusy}
+            error={reviewError}
+            onClose={() => {
+              setReviewModalTask(null);
+              setReviewError(null);
+            }}
+            onSubmit={handleReviewSubmit}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { runtime } from '../config/runtime';
+import { useEffect, useRef, useState } from 'react';
+import { useSharedWebSocket, type EntityWsMessage } from './useSharedWebSocket';
 
-interface WebSocketMessage {
+interface WebSocketMessage extends EntityWsMessage {
   type: string;
   path?: string;
   content?: string;
@@ -22,143 +22,43 @@ interface UseWebSocketOptions {
   onEditorEvent?: (event: { event: string; docId: string; payload: unknown; emittedAt?: string }) => void;
 }
 
-
-/**
- * Append API token to WebSocket URL if configured.
- */
-function getAuthenticatedWsUrl(baseUrl: string): string {
-  try {
-    if (typeof window === 'undefined') return baseUrl;
-    const token = window.localStorage.getItem('entity-api-token');
-    if (!token || !token.trim()) return baseUrl;
-    const url = new URL(baseUrl);
-    url.searchParams.set('token', token.trim());
-    return url.toString();
-  } catch {
-    return baseUrl;
-  }
-}
-
 export function useWebSocket(options: UseWebSocketOptions = {}) {
-  const [connected, setConnected] = useState(false);
-  const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<number | null>(null);
-  const reconnectAttemptRef = useRef(0);
   const optionsRef = useRef<UseWebSocketOptions>(options);
 
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
 
-  useEffect(() => {
-    let active = true;
-
-    const clearReconnectTimer = () => {
-      if (reconnectTimerRef.current !== null) {
-        window.clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-    };
-
-    const scheduleReconnect = () => {
-      if (!active) {
-        return;
-      }
-
-      clearReconnectTimer();
-      reconnectAttemptRef.current = Math.min(reconnectAttemptRef.current + 1, 6);
-      const delay = Math.min(30_000, 500 * 2 ** reconnectAttemptRef.current);
-      reconnectTimerRef.current = window.setTimeout(() => {
-        reconnectTimerRef.current = null;
-        connect();
-      }, delay);
-    };
-
-    const connect = () => {
-      if (!active) {
-        return;
-      }
-
-      const ws = new WebSocket(getAuthenticatedWsUrl(runtime.wsUrl));
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        reconnectAttemptRef.current = 0;
-        console.log('[WS] Connected');
-        setConnected(true);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data) as WebSocketMessage;
-          setLastMessage(msg);
-
-          switch (msg.type) {
-            case 'file:changed':
-              optionsRef.current.onFileChange?.(msg.path!, msg.content!);
-              break;
-            case 'file:created':
-              optionsRef.current.onFileCreate?.(msg.path!);
-              break;
-            case 'file:deleted':
-              optionsRef.current.onFileDelete?.(msg.path!);
-              break;
-            case 'mention:triggered':
-              optionsRef.current.onMention?.(msg.agent!, msg.document!, msg.instruction!);
-              break;
-            case 'editor:event': {
-              if (typeof msg.event === 'string' && typeof msg.docId === 'string') {
-                optionsRef.current.onEditorEvent?.({
-                  event: msg.event,
-                  docId: msg.docId,
-                  payload: msg.payload,
-                  emittedAt: typeof msg.emittedAt === 'string' ? msg.emittedAt : undefined,
-                });
-              }
-              break;
-            }
-          }
-        } catch (e) {
-          console.error('[WS] Parse error:', e);
+  const { connected, lastMessage, send } = useSharedWebSocket((msg) => {
+    const message = msg as WebSocketMessage;
+    switch (message.type) {
+      case 'file:changed':
+        optionsRef.current.onFileChange?.(message.path!, message.content!);
+        break;
+      case 'file:created':
+        optionsRef.current.onFileCreate?.(message.path!);
+        break;
+      case 'file:deleted':
+        optionsRef.current.onFileDelete?.(message.path!);
+        break;
+      case 'mention:triggered':
+        optionsRef.current.onMention?.(message.agent!, message.document!, message.instruction!);
+        break;
+      case 'editor:event': {
+        if (typeof message.event === 'string' && typeof message.docId === 'string') {
+          optionsRef.current.onEditorEvent?.({
+            event: message.event,
+            docId: message.docId,
+            payload: message.payload,
+            emittedAt: typeof message.emittedAt === 'string' ? message.emittedAt : undefined,
+          });
         }
-    };
-
-      ws.onclose = () => {
-        if (wsRef.current === ws) {
-          wsRef.current = null;
-        }
-        console.log('[WS] Disconnected');
-        setConnected(false);
-        scheduleReconnect();
-      };
-
-      ws.onerror = (e) => {
-        console.error('[WS] Error:', e);
-      };
-    };
-
-    connect();
-
-    return () => {
-      active = false;
-      clearReconnectTimer();
-      setConnected(false);
-      const current = wsRef.current;
-      wsRef.current = null;
-      if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) {
-        current.close();
+        break;
       }
-    };
-  }, []);
-
-  const send = useCallback((data: any) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
     }
-  }, []);
+  });
 
-  return { connected, lastMessage, send };
+  return { connected, lastMessage: lastMessage as WebSocketMessage | null, send };
 }
 
 // Hook for agent typing indicator
@@ -179,32 +79,27 @@ export function useAgentTyping(agentId: string | null) {
       return;
     }
 
-    const ws = new WebSocket(runtime.wsUrl);
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'agent:typing' && msg.agent === agentId) {
-          setTyping(true);
-          setTypingAgent(msg.agent);
-          if (clearTimerRef.current !== null) {
-            window.clearTimeout(clearTimerRef.current);
-          }
-          clearTimerRef.current = window.setTimeout(() => {
-            setTyping(false);
-            setTypingAgent(null);
-          }, 5000);
-        }
-      } catch {}
-    };
-
     return () => {
-      ws.close();
       if (clearTimerRef.current !== null) {
         window.clearTimeout(clearTimerRef.current);
         clearTimerRef.current = null;
       }
     };
   }, [agentId]);
+
+  useSharedWebSocket((msg) => {
+    if (msg.type === 'agent:typing' && msg.agent === agentId) {
+      setTyping(true);
+      setTypingAgent(typeof msg.agent === 'string' ? msg.agent : null);
+      if (clearTimerRef.current !== null) {
+        window.clearTimeout(clearTimerRef.current);
+      }
+      clearTimerRef.current = window.setTimeout(() => {
+        setTyping(false);
+        setTypingAgent(null);
+      }, 5000);
+    }
+  }, { enabled: Boolean(agentId) });
 
   return { typing, typingAgent };
 }

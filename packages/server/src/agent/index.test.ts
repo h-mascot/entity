@@ -119,6 +119,7 @@ function makeTaskSyncLayer(task: TaskRecord): TaskSyncLayer {
     setMode: vi.fn(),
     hasCloudAdapter: () => false,
     listTasks: vi.fn().mockResolvedValue([task]),
+    listSubtasks: vi.fn().mockResolvedValue([]),
     getTask: vi.fn().mockResolvedValue(task),
     createTask: vi.fn().mockResolvedValue(task),
     updateTask: vi.fn().mockResolvedValue(task),

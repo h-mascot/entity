@@ -1547,6 +1547,34 @@ describe('TaskRepository', () => {
     expect(names).toContain('Task B');
   });
 
+  it('lists only subtasks linked to a parent without loading all tasks', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const repo = dbMod.createTaskRepository();
+
+    const parent = repo.createTask({ name: 'Parent task' });
+    const firstChild = repo.createTask({
+      name: 'First child',
+      metadata: JSON.stringify({ parent_task_id: parent.id }),
+    });
+    const secondChild = repo.createTask({
+      name: 'Second child',
+      metadata: JSON.stringify({ parentTaskId: parent.id }),
+    });
+    repo.createTask({
+      name: 'Other parent child',
+      metadata: JSON.stringify({ parent_id: parent.id + 1000 }),
+    });
+    repo.createTask({ name: 'Unrelated task' });
+
+    const subtasks = repo.listSubtasks(parent.id);
+
+    expect(subtasks.map((task) => task.id).sort((left, right) => left - right)).toEqual([
+      firstChild.id,
+      secondChild.id,
+    ]);
+    expect(repo.listSubtasks(0)).toEqual([]);
+  });
+
   it('should update a task', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createTaskRepository();
@@ -3140,6 +3168,26 @@ describe('TaskCommentRepository', () => {
     const reply = commentRepo.createComment({ task_id: task.id, body: 'Reply', parent_id: parent.id });
 
     expect(reply.parent_id).toBe(parent.id);
+  });
+
+  it('paginates task comments by limit and before_id with a hard cap', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const commentRepo = dbMod.createTaskCommentRepository();
+    const taskRepo = dbMod.createTaskRepository();
+    const task = taskRepo.createTask({ name: 'Paged Thread Task' });
+
+    Array.from({ length: 505 }, (_, index) =>
+      commentRepo.createComment({ task_id: task.id, body: `Comment ${index + 1}` })
+    );
+
+    const latestTwo = commentRepo.listComments(task.id, { limit: 2 });
+    expect(latestTwo.map((comment) => comment.body)).toEqual(['Comment 504', 'Comment 505']);
+
+    const previousTwo = commentRepo.listComments(task.id, { limit: 2, before_id: latestTwo[0].id });
+    expect(previousTwo.map((comment) => comment.body)).toEqual(['Comment 502', 'Comment 503']);
+
+    expect(commentRepo.listComments(task.id, { limit: 9999 })).toHaveLength(500);
+    expect(commentRepo.listComments(task.id, { limit: 0 })).toHaveLength(500);
   });
 
   it('should throw on empty body', async () => {

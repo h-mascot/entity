@@ -13,6 +13,7 @@ export interface TaskPaginationError {
   error: string;
 }
 
+export const MAX_TASK_LIMIT = 2000;
 const DEFAULT_LIMIT = null;
 const DEFAULT_OFFSET = 0;
 
@@ -66,16 +67,14 @@ export function parseTaskPaginationQuery(query: Record<string, unknown>): TaskPa
   }
 
   return {
-    limit: parsedLimit,
+    limit: parsedLimit === null ? null : Math.min(parsedLimit, MAX_TASK_LIMIT),
     offset: parsedOffset,
   };
 }
 
 export function paginateTasks<T>(tasks: T[], pagination: TaskPagination): T[] {
-  if (pagination.limit === null) {
-    return tasks.slice(pagination.offset);
-  }
-  return tasks.slice(pagination.offset, pagination.offset + pagination.limit);
+  const effectiveLimit = pagination.limit === null ? MAX_TASK_LIMIT : Math.min(pagination.limit, MAX_TASK_LIMIT);
+  return tasks.slice(pagination.offset, pagination.offset + effectiveLimit);
 }
 
 export function buildTaskPaginationMeta(total: number, pagination: TaskPagination, count: number): TaskPaginationMeta {

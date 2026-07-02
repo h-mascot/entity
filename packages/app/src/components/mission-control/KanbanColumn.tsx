@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
 import type { TaskBoardTask, TaskColumn } from '../../hooks/useTaskBoard';
 import MCTaskCard from './MCTaskCard';
 import type { ProjectOption } from './projectOptions';
@@ -78,29 +78,29 @@ export default function KanbanColumn({
     });
   }, [column, highlightTaskId, tasks]);
 
-  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
     if (!isDropTarget) {
       setIsDropTarget(true);
     }
-  };
+  }, [isDropTarget]);
 
-  const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
+  const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDropTarget(true);
-  };
+  }, []);
 
-  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+  const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
       return;
     }
 
     setIsDropTarget(false);
-  };
+  }, []);
 
-  const handleDrop = async (event: DragEvent<HTMLDivElement>) => {
+  const handleDrop = useCallback(async (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDropTarget(false);
 
@@ -114,10 +114,16 @@ export default function KanbanColumn({
     } catch (error) {
       console.error('Failed to move task:', error);
     }
-  };
+  }, [column, onMoveTask]);
 
-  const visibleTasks = column === 'backlog' ? tasks.slice(0, visibleCount) : tasks;
+  const visibleTasks = useMemo(
+    () => (column === 'backlog' ? tasks.slice(0, visibleCount) : tasks),
+    [column, tasks, visibleCount]
+  );
   const hasMoreTasks = column === 'backlog' && visibleTasks.length < tasks.length;
+  const handleShowMore = useCallback(() => {
+    setVisibleCount((current) => Math.min(tasks.length, current + BACKLOG_PAGE_SIZE));
+  }, [tasks.length]);
 
   return (
 	    <div
@@ -175,7 +181,7 @@ export default function KanbanColumn({
         {hasMoreTasks ? (
           <button
             type="button"
-            onClick={() => setVisibleCount((current) => Math.min(tasks.length, current + BACKLOG_PAGE_SIZE))}
+            onClick={handleShowMore}
             className="mt-2 w-full rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2 text-sm text-[var(--text-secondary)] transition hover:border-[var(--border-secondary)] hover:text-[var(--text-primary)]"
           >
             Show more ({tasks.length - visibleTasks.length} remaining)

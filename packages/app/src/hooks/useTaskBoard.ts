@@ -15,6 +15,7 @@ const DEFAULT_API_BASE = '';
 const TASK_RELOAD_POLL_INTERVAL_MS = 30_000;
 const TASK_WS_RECENT_UPDATE_WINDOW_MS = 25_000;
 const TASK_WS_RECONNECT_DELAY_MS = 3_000;
+const TASK_RELOAD_PAGE_LIMIT = 2_000;
 
 export const TASK_COLUMNS = ['backlog', 'todo', 'doing', 'review', 'done'] as const;
 
@@ -549,6 +550,53 @@ function extractTasks(payload: unknown): TaskBoardTask[] {
   return [];
 }
 
+function extractTaskPageMeta(payload: unknown): { hasMore: boolean; count: number } | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (!Array.isArray(record.tasks) || typeof record.hasMore !== 'boolean') {
+    return null;
+  }
+
+  const count = typeof record.count === 'number' && Number.isFinite(record.count) && record.count >= 0
+    ? Math.trunc(record.count)
+    : record.tasks.length;
+
+  return { hasMore: record.hasMore, count };
+}
+
+function appendTaskPageQuery(url: string, offset: number): string {
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}limit=${TASK_RELOAD_PAGE_LIMIT}&offset=${offset}`;
+}
+
+async function requestAllTasksWithFallback(taskUrls: string[]): Promise<TaskBoardTask[]> {
+  const tasks: TaskBoardTask[] = [];
+  let offset = 0;
+
+  for (;;) {
+    const payload = await requestJsonWithFallback({
+      urls: taskUrls.map((url) => appendTaskPageQuery(url, offset)),
+      fallbackError: 'Unable to reach task endpoints.',
+    });
+    const pageTasks = extractTasks(payload);
+    tasks.push(...pageTasks);
+
+    const pageMeta = extractTaskPageMeta(payload);
+    if (!pageMeta?.hasMore) {
+      return tasks;
+    }
+
+    const nextOffset = offset + (pageMeta.count > 0 ? pageMeta.count : pageTasks.length);
+    if (nextOffset <= offset) {
+      return tasks;
+    }
+    offset = nextOffset;
+  }
+}
+
 function toTaskTimestamp(task: TaskBoardTask): number {
   const parsed = new Date(task.updated_at).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
@@ -688,13 +736,8 @@ export function useTaskBoard({ apiBase = DEFAULT_API_BASE, autoLoad = true }: Us
     const taskUrls = buildApiCandidates('/tasks', apiBase);
 
     try {
-      const payload = await requestJsonWithFallback({
-        urls: taskUrls,
-        fallbackError: 'Unable to reach task endpoints.',
-      });
-      void cacheApiPayload(taskUrls[0] ?? '/api/tasks', payload);
-
-      const normalized = extractTasks(payload);
+      const normalized = await requestAllTasksWithFallback(taskUrls);
+      void cacheApiPayload(taskUrls[0] ?? '/api/tasks', normalized);
       const queueItems = await readOfflineWriteQueueSnapshot().catch(() => []);
       const pendingTaskQueue = queueItems.filter((item) => {
         try {

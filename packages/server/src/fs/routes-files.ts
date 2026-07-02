@@ -39,7 +39,8 @@ function mapSourceError(message: string, res: Response): Response {
     message.includes('Path') ||
     message.includes('Invalid') ||
     message.includes('allowlisted') ||
-    message.includes('traversal')
+    message.includes('traversal') ||
+    message.includes('outside source root')
   ) {
     return res.status(400).json({ error: message });
   }

@@ -36,6 +36,7 @@ interface TerminalTargetsResponse {
 
 interface CreateSessionResponse {
   session?: TerminalSessionSummary;
+  ownerToken?: string;
   error?: string;
 }
 
@@ -126,6 +127,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
   const reconnectTimerRef = useRef<number | null>(null);
   const attachWatchdogRef = useRef<number | null>(null);
   const sessionRef = useRef<TerminalSessionSummary | null>(null);
+  const ownerTokensRef = useRef<Map<string, string>>(new Map());
   const sessionStartAttemptedRef = useRef(false);
 
   const [targets, setTargets] = useState<TerminalTarget[]>(FALLBACK_TARGETS);
@@ -374,6 +376,7 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
           setStatus('closed');
           setStatusDetail(`Session ended for ${currentSession.targetLabel}.`);
           sessionStartAttemptedRef.current = false;
+          ownerTokensRef.current.delete(currentSession.id);
           const exitCode = typeof payload?.code === 'number' ? String(payload.code) : 'closed';
           writeBanner(`[session ended: ${exitCode}]`);
           return;
@@ -441,11 +444,15 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
     }
 
     try {
+      const ownerToken = ownerTokensRef.current.get(sessionId);
       await fetch(buildApiUrl(`/api/terminal/sessions/${sessionId}`), withApiToken({
         method: 'DELETE',
+        headers: ownerToken ? { 'x-terminal-owner-token': ownerToken } : undefined,
       }));
     } catch {
       // Best effort. Socket ownership cleanup will still close it on disconnect.
+    } finally {
+      ownerTokensRef.current.delete(sessionId);
     }
   }, []);
 
@@ -484,6 +491,9 @@ export default function BottomTerminalPanel({ isOpen, onToggleOpen }: TerminalPa
         throw new Error(data.error ?? `Unable to start ${target} session.`);
       }
 
+      if (typeof data.ownerToken === 'string' && data.ownerToken.trim()) {
+        ownerTokensRef.current.set(data.session.id, data.ownerToken.trim());
+      }
       setSession(data.session);
       if (previousSession && previousSession.id !== data.session.id) {
         void closeSessionById(previousSession.id);

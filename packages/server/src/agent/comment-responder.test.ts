@@ -1,13 +1,26 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { generateText } from 'ai';
 import type { AgentRegistryRecord, TaskCommentRecord, TaskRecord } from '../../../db/src';
 import {
   buildMentionPrompt,
+  createCommentMentionResponder,
   parseColumnMoveIntent,
   parseMentionTokens,
   planAction,
   resolveMentionedAgents,
   wantsPickup,
 } from './comment-responder';
+
+const settingsMocks = vi.hoisted(() => ({
+  getTaskAgentLanguageModel: vi.fn((): unknown => null),
+  getTaskAgentSettings: vi.fn((): { provider: 'google' | 'anthropic' } => ({ provider: 'google' })),
+}));
+
+vi.mock('ai', () => ({
+  generateText: vi.fn(),
+}));
+
+vi.mock('./settings', () => settingsMocks);
 
 function makeAgent(overrides: Partial<AgentRegistryRecord> = {}): AgentRegistryRecord {
   const now = new Date().toISOString();
@@ -73,6 +86,12 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  settingsMocks.getTaskAgentLanguageModel.mockReturnValue(null);
+  settingsMocks.getTaskAgentSettings.mockReturnValue({ provider: 'google' });
+});
 
 describe('parseMentionTokens', () => {
   it('extracts unique lowercased mention tokens', () => {
@@ -219,5 +238,91 @@ describe('buildMentionPrompt', () => {
     expect(prompt).toContain('Ada: Started a draft.');
     expect(prompt).toContain('Henry: @assistant please move this to review');
     expect(prompt).toContain('review');
+  });
+});
+
+describe('createCommentMentionResponder', () => {
+  it('dispatches multiple mentioned agent generations concurrently and persists replies in agent order', async () => {
+    const model = { provider: 'test-model' };
+    settingsMocks.getTaskAgentLanguageModel.mockReturnValue(model);
+    settingsMocks.getTaskAgentSettings.mockReturnValue({ provider: 'anthropic' });
+
+    let resolveAllStarted: () => void = () => {};
+    let releaseGenerations: () => void = () => {};
+    const allStarted = new Promise<void>((resolve) => {
+      resolveAllStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseGenerations = resolve;
+    });
+    const startedCalls: unknown[] = [];
+    vi.mocked(generateText).mockImplementation(async (input) => {
+      startedCalls.push(input);
+      const callNumber = startedCalls.length;
+      if (startedCalls.length === 2) {
+        resolveAllStarted();
+      }
+      await release;
+      return { text: `reply-${callNumber}` } as Awaited<ReturnType<typeof generateText>>;
+    });
+
+    const createdComments: TaskCommentRecord[] = [];
+    const createComment = vi.fn((input: {
+      task_id: number;
+      body: string;
+      author?: string;
+      parent_id?: number | null;
+    }) => {
+      const comment = makeComment({
+        id: createdComments.length + 10,
+        task_id: input.task_id,
+        body: input.body,
+        author: input.author ?? 'Human',
+        parent_id: input.parent_id ?? null,
+      });
+      createdComments.push(comment);
+      return comment;
+    });
+    const responder = createCommentMentionResponder({
+      getTask: () => makeTask(),
+      listComments: () => [],
+      createComment,
+      updateTask: vi.fn().mockResolvedValue(makeTask()),
+      listAgents: () => [
+        makeAgent({ id: 'assistant', slug: 'assistant', name: 'Assistant' }),
+        makeAgent({ id: 'geordi', slug: 'geordi', name: 'Geordi' }),
+      ],
+      logActivity: vi.fn(),
+      broadcast: vi.fn(),
+    });
+
+    const run = responder(1, makeComment({ id: 5, body: '@assistant @geordi please weigh in' }));
+    await allStarted;
+
+    expect(startedCalls).toHaveLength(2);
+    expect(createComment).not.toHaveBeenCalled();
+    expect(startedCalls[0]).toMatchObject({
+      model,
+      messages: [
+        {
+          role: 'system',
+          providerOptions: {
+            anthropic: {
+              cacheControl: { type: 'ephemeral', ttl: '5m' },
+            },
+          },
+        },
+        { role: 'user' },
+      ],
+    });
+
+    releaseGenerations();
+    await run;
+
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+    expect(createComment.mock.calls.map(([input]) => [input.author, input.body])).toEqual([
+      ['Assistant', 'reply-1'],
+      ['Geordi', 'reply-2'],
+    ]);
   });
 });

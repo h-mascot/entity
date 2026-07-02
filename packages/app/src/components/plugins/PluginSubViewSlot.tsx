@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { Suspense, useEffect, useMemo } from 'react';
 import { usePluginStore } from '../../stores/pluginStore';
 import { resolvePluginComponent } from './componentRegistry';
 
@@ -65,7 +65,9 @@ export default function PluginSubViewSlot({ apiBase = '', module, pluginId }: Pl
 
   return (
     <div className="h-full min-h-0 overflow-auto">
-      <Component plugin={plugin} apiBase={apiBase} />
+      <Suspense fallback={null}>
+        <Component plugin={plugin} apiBase={apiBase} />
+      </Suspense>
     </div>
   );
 }

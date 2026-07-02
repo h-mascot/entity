@@ -47,6 +47,23 @@ Monorepo with npm workspaces:
 cd packages/server && npm run build && npx vitest run
 ```
 
+## Review Gates (required before marking work done)
+
+For any non-trivial PR, after `npm run ctrl:gate` passes:
+
+1. **Codex autoreview** — AI correctness/quality pass over the full diff (regressions, behavior changes, broken wiring, missed edge cases). Where the `codex` CLI is unavailable (e.g. Cursor Cloud), run an equivalent adversarial review over `git diff <base>...HEAD` and fix findings to closure.
+2. **Thermo-nuclear review** — deep adversarial security/high-risk pass. REQUIRED for high-risk PRs:
+   - runtime/provider contracts
+   - authority/receipt logic
+   - secret/private-default handling
+   - command-exec / live-delivery / dangerous-action paths
+   - source→gate→service promotion or drift detection
+   - release/proof gates
+   - broad diffs spanning multiple parent areas
+   - any PR where Codex autoreview flags meaningful concerns
+
+Fix every BLOCKER (with a **Prove-It** failing-test-first regression test) and **re-review to closure (APPROVED, 0 blockers)** before reporting done. Canonical definitions and receipt paths live in `docs/execution-packs/entity-phase-2-cursor-20260621/cursor-goal-prompt.md` and `.project-gate.json` (`bookReview`, `highRiskScopes`, `uiProofRequiredFor`, `proofCommands`).
+
 ## Test Conventions
 
 - **Colocated:** `utils.test.ts` lives next to `utils.ts`

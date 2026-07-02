@@ -9,6 +9,7 @@ import {
   type TaskRecord,
 } from '../../db/src';
 import type { TaskSyncLayer } from '../../db/src/task-sync';
+import { asyncHandler } from './middleware/async-handler';
 
 export interface TaskMasterClaimResponse {
   status: TaskMasterClaimResult['status'];
@@ -161,7 +162,7 @@ export function createTaskMasterClaimService(
 export function createTaskMasterClaimRouter(service: TaskMasterClaimService): Router {
   const router = Router();
 
-  router.post('/tasks/:id/claim', async (req, res) => {
+  router.post('/tasks/:id/claim', asyncHandler(async (req, res) => {
     const taskId = Number(req.params.id);
     const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
     const result = await service.claimTask(taskId, {
@@ -192,7 +193,7 @@ export function createTaskMasterClaimRouter(service: TaskMasterClaimService): Ro
     });
 
     return res.status(statusCodeForClaim(result.status)).json(result);
-  });
+  }));
 
   return router;
 }

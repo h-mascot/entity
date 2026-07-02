@@ -7,6 +7,7 @@ export type DbMode = 'LOCAL' | 'CLOUD';
 export interface TaskAdapter {
   mode: DbMode;
   listTasks: () => Promise<TaskRecord[]>;
+  listSubtasks: (parentTaskId: number) => Promise<TaskRecord[]>;
   getTask: (id: number) => Promise<TaskRecord | undefined>;
   createTask: (input: CreateTaskInput) => Promise<TaskRecord>;
   updateTask: (id: number, updates: UpdateTaskInput) => Promise<TaskRecord | undefined>;
@@ -20,6 +21,7 @@ export interface TaskSyncLayer {
   setMode: (mode: DbMode | null) => void;
   hasCloudAdapter: () => boolean;
   listTasks: () => Promise<TaskRecord[]>;
+  listSubtasks: (parentTaskId: number) => Promise<TaskRecord[]>;
   getTask: (id: number) => Promise<TaskRecord | undefined>;
   createTask: (input: CreateTaskInput) => Promise<TaskRecord>;
   updateTask: (id: number, updates: UpdateTaskInput) => Promise<TaskRecord | undefined>;
@@ -150,6 +152,7 @@ export function createTaskSyncLayer(options: TaskSyncLayerOptions = {}): TaskSyn
     },
     hasCloudAdapter: () => Boolean(cloudAdapter),
     listTasks: () => getAdapter().listTasks(),
+    listSubtasks: (parentTaskId: number) => getAdapter().listSubtasks(parentTaskId),
     getTask: (id: number) => getAdapter().getTask(id),
     createTask: (input: CreateTaskInput) => getAdapter().createTask(input),
     updateTask: (id: number, updates: UpdateTaskInput) => getAdapter().updateTask(id, updates),

@@ -10,9 +10,11 @@ import {
   type FileSourceType,
 } from '../../../db/src/file-sources';
 import { createFileIndexRepository } from '../../../db/src/file-index';
+import { localSourceCapabilitiesJson } from './adapters/local';
 import { createFileSourceAdapter } from './adapters/registry';
 import { FileIndexRunner } from './index-runner';
 import { recordFsOperation } from './metrics';
+import { assertAllowedLocalSourceBasePath } from './source-root-guard';
 
 interface SourcePayload {
   id?: string;
@@ -110,6 +112,13 @@ function toSourceResponse(source: FileSourceRecord) {
   };
 }
 
+function capabilitiesForStorage(type: FileSourceType, rawCapabilities: unknown): string | undefined {
+  if (type === 'local') {
+    return localSourceCapabilitiesJson();
+  }
+  return typeof rawCapabilities === 'string' ? rawCapabilities : undefined;
+}
+
 function parsePayload(body: SourcePayload): { ok: true; value: SourcePayload } | { ok: false; error: string } {
   const id = body.id?.trim();
   if (typeof body.id !== 'undefined') {
@@ -167,7 +176,7 @@ export function registerSourceRoutes(app: Express): void {
     }
   });
 
-  router.post('/', (req: Request, res: Response) => {
+  router.post('/', async (req: Request, res: Response) => {
     const parsed = parsePayload(req.body as SourcePayload);
     if (!parsed.ok) {
       return res.status(400).json({ error: parsed.error });
@@ -181,17 +190,20 @@ export function registerSourceRoutes(app: Express): void {
     }
 
     try {
+      const basePath = type === 'local'
+        ? await assertAllowedLocalSourceBasePath(payload.basePath)
+        : payload.basePath?.trim() || undefined;
       const created = repo.createSource({
         id: payload.id?.trim() || undefined,
         display_name: displayName,
         type,
         base_url: payload.baseUrl?.trim() || undefined,
-        base_path: payload.basePath?.trim() || undefined,
+        base_path: basePath,
         auth_type: parseAuthType(payload.authType) ?? undefined,
         auth_ref: payload.authRef?.trim() || undefined,
         enabled: typeof payload.enabled === 'undefined' ? true : toBoolean(payload.enabled),
         icon: payload.icon?.trim() || undefined,
-        capabilities: typeof payload.capabilities === 'string' ? payload.capabilities : undefined,
+        capabilities: capabilitiesForStorage(type, payload.capabilities),
       });
 
       // Kick off an index run for the created source (async; status is reflected via /api/fs/metrics).
@@ -202,11 +214,11 @@ export function registerSourceRoutes(app: Express): void {
       return res.status(201).json(toSourceResponse(created));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      return res.status(500).json({ error: message });
+      return res.status(message.includes('allowlisted') || message.includes('basePath') ? 400 : 500).json({ error: message });
     }
   });
 
-  router.put('/:id', (req: Request, res: Response) => {
+  router.put('/:id', async (req: Request, res: Response) => {
     const id = req.params.id?.trim();
     if (!id) {
       return res.status(400).json({ error: 'id is required.' });
@@ -220,16 +232,25 @@ export function registerSourceRoutes(app: Express): void {
     const payload = parsed.value;
 
     try {
+      const existing = repo.getSource(id);
+      if (!existing) {
+        return res.status(404).json({ error: 'source not found.' });
+      }
+      const nextType = payload.type ? parseSourceType(payload.type) ?? existing.type : existing.type;
+      const basePath = nextType === 'local' && (typeof payload.type !== 'undefined' || typeof payload.basePath !== 'undefined')
+        ? await assertAllowedLocalSourceBasePath(payload.basePath ?? existing.base_path)
+        : payload.basePath;
+      const shouldUpdateCapabilities = nextType === 'local' || typeof payload.capabilities === 'string';
       const updated = repo.updateSource(id, {
         display_name: payload.displayName,
-        type: payload.type ? parseSourceType(payload.type) ?? undefined : undefined,
+        type: payload.type ? nextType : undefined,
         base_url: payload.baseUrl,
-        base_path: payload.basePath,
+        base_path: basePath,
         auth_type: payload.authType ? parseAuthType(payload.authType) ?? undefined : undefined,
         auth_ref: payload.authRef,
         enabled: typeof payload.enabled === 'undefined' ? undefined : toBoolean(payload.enabled),
         icon: payload.icon,
-        capabilities: typeof payload.capabilities === 'string' ? payload.capabilities : undefined,
+        capabilities: shouldUpdateCapabilities ? capabilitiesForStorage(nextType, payload.capabilities) : undefined,
         health: payload.health ? parseHealth(payload.health) ?? undefined : undefined,
         last_synced_at: payload.lastSyncedAt,
       });
@@ -241,7 +262,7 @@ export function registerSourceRoutes(app: Express): void {
       return res.json(toSourceResponse(updated));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      return res.status(500).json({ error: message });
+      return res.status(message.includes('allowlisted') || message.includes('basePath') ? 400 : 500).json({ error: message });
     }
   });
 

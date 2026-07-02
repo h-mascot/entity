@@ -121,6 +121,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 1000;
 const SERVICE_REGISTRY_CACHE_TTL_MS = 15_000;
 const SERVICE_REGISTRY_CACHE_STALE_MS = 5 * 60_000;
 const SERVICE_PROBE_CONCURRENCY = 16;
+const SSH_TARGET_PATTERN = /^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])$/;
 
 let cachedRegistry: { key: string; payload: ServiceRegistryPayload; createdAt: number } | null = null;
 let refreshInFlight: Promise<ServiceRegistryPayload> | null = null;
@@ -149,6 +150,24 @@ function readBooleanSetting(settings: PluginSettingsRecord, key: string, fallbac
 function readNumberSetting(settings: PluginSettingsRecord, key: string, fallback: number): number {
   const value = settings[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+export function validateSshTarget(rawTarget: string): string {
+  const target = rawTarget.trim();
+  if (!target) {
+    throw new Error('SSH target is required.');
+  }
+  if (target.startsWith('-')) {
+    throw new Error('SSH target must not start with "-".');
+  }
+  if (!SSH_TARGET_PATTERN.test(target)) {
+    throw new Error('SSH target must be a hostname, host alias, or user@host value.');
+  }
+  return target;
+}
+
+export function buildSshExecArgs(sshTarget: string, command: string): string[] {
+  return ['-o', 'ConnectTimeout=10', '--', validateSshTarget(sshTarget), command];
 }
 
 function readConfiguredServices(settings: PluginSettingsRecord): ExternalServiceDefinition[] {
@@ -792,7 +811,7 @@ async function discoverHostListeners(config: HostDiscoveryConfig, fetchImpl: Fet
 
   try {
     const result = config.sshTarget
-      ? await execFileAsync('ssh', ['-o', 'ConnectTimeout=10', config.sshTarget, command], { timeout: 20000, maxBuffer: 1024 * 1024 })
+      ? await execFileAsync('ssh', buildSshExecArgs(config.sshTarget, command), { timeout: 20000, maxBuffer: 1024 * 1024 })
       : await execFileAsync('bash', ['-lc', command], { timeout: 20000, maxBuffer: 1024 * 1024 });
 
     return parseListenerSnapshot(result.stdout, config, fetchImpl);

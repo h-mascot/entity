@@ -11,6 +11,7 @@ import {
   type ActivityType,
   type TaskRecord,
 } from '../../db/src';
+import { asyncHandler } from './middleware/async-handler';
 
 const ACTIVITY_EVENT_TYPE_SET = new Set<string>(ACTIVITY_EVENT_TYPES);
 
@@ -614,7 +615,7 @@ export function createActivityEventService(dependencies: ActivityEventServiceDep
 export function createActivityEventRouter(service: ActivityEventService): Router {
   const router = Router();
 
-  router.get('/tasks/:id/activity-events', async (req, res) => {
+  router.get('/tasks/:id/activity-events', asyncHandler(async (req, res) => {
     const taskId = Number(req.params.id);
     const limitRaw = Number(req.query.limit ?? 50);
     const result = await service.queryTaskEvents(taskId, {
@@ -631,9 +632,9 @@ export function createActivityEventRouter(service: ActivityEventService): Router
     }
 
     return res.json({ events: result.value });
-  });
+  }));
 
-  router.post('/tasks/:id/activity-events', async (req, res) => {
+  router.post('/tasks/:id/activity-events', asyncHandler(async (req, res) => {
     const taskId = Number(req.params.id);
     const body = req.body ?? {};
     const result = await service.appendTaskEvent(
@@ -659,7 +660,7 @@ export function createActivityEventRouter(service: ActivityEventService): Router
     }
 
     return res.status(201).json({ event: result.value });
-  });
+  }));
 
   return router;
 }

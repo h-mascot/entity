@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { chmodSync, statSync } from 'fs';
 import { dirname, join } from 'path';
 import type { Express, Request, Response } from 'express';
@@ -41,6 +41,13 @@ export interface CreateTerminalSessionInput {
   rows?: number | null;
 }
 
+export interface CreateTerminalSessionResult {
+  session: TerminalSessionSummary;
+  ownerToken: string;
+}
+
+export type TerminalCloseSessionResult = 'closed' | 'not-found' | 'forbidden';
+
 export interface TerminalEventEnvelope<TPayload = unknown> {
   type: 'terminal:event';
   event: 'session' | 'output' | 'exit' | 'error';
@@ -52,8 +59,8 @@ export interface TerminalEventEnvelope<TPayload = unknown> {
 
 export interface TerminalBridge {
   listTargets: () => TerminalTarget[];
-  createSession: (input?: CreateTerminalSessionInput) => TerminalSessionSummary;
-  closeSession: (sessionId: string) => boolean;
+  createSession: (input?: CreateTerminalSessionInput) => CreateTerminalSessionResult;
+  closeSession: (sessionId: string, ownerToken: string | null) => TerminalCloseSessionResult;
   handleSocketConnection: (socket: WebSocket) => void;
 }
 
@@ -86,6 +93,7 @@ interface TerminalProcess {
 
 interface TerminalSession {
   summary: TerminalSessionSummary;
+  ownerToken: string;
   process: TerminalProcess;
   history: string[];
   subscribers: Set<WebSocket>;
@@ -145,6 +153,41 @@ function toDimension(value: unknown, fallback: number): number {
   }
 
   return Math.min(normalized, MAX_DIMENSION);
+}
+
+function createTerminalOwnerToken(): string {
+  return randomBytes(24).toString('hex');
+}
+
+export function isTerminalOwnerTokenValid(expectedOwnerToken: string, presentedOwnerToken: string | null): boolean {
+  if (!presentedOwnerToken) {
+    return false;
+  }
+
+  const expected = Buffer.from(expectedOwnerToken);
+  const presented = Buffer.from(presentedOwnerToken);
+  return expected.length === presented.length && timingSafeEqual(expected, presented);
+}
+
+function normalizeOwnerToken(value: unknown): string | null {
+  if (Array.isArray(value)) {
+    return normalizeOwnerToken(value[0]);
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function readOwnerToken(req: Request): string | null {
+  const headerToken = normalizeOwnerToken(
+    typeof req.get === 'function'
+      ? req.get('x-terminal-owner-token')
+      : req.headers?.['x-terminal-owner-token'],
+  );
+  return headerToken ?? normalizeOwnerToken(req.query.ownerToken);
 }
 
 function shellQuote(value: string): string {
@@ -299,7 +342,7 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
     session.subscribers.forEach((socket) => safeSend(socket, session.summary, event, payload));
   };
 
-  const closeSession = (sessionId: string): boolean => {
+  const closeSessionInternal = (sessionId: string): boolean => {
     const session = sessions.get(sessionId);
     if (!session) {
       return false;
@@ -317,6 +360,19 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
     return true;
   };
 
+  const closeSession = (sessionId: string, ownerToken: string | null): TerminalCloseSessionResult => {
+    const session = sessions.get(sessionId);
+    if (!session) {
+      return 'not-found';
+    }
+    if (!isTerminalOwnerTokenValid(session.ownerToken, ownerToken)) {
+      return 'forbidden';
+    }
+
+    closeSessionInternal(sessionId);
+    return 'closed';
+  };
+
   const bindSocketToSession = (socket: WebSocket, session: TerminalSession): void => {
     session.subscribers.add(socket);
     if (!session.owner) {
@@ -327,7 +383,17 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
     socketSessions.set(socket, owned);
   };
 
-  const createSession = (input: CreateTerminalSessionInput = {}): TerminalSessionSummary => {
+  const rejectNonOwnerControl = (socket: WebSocket, session: TerminalSession, action: string): boolean => {
+    if (session.owner === socket) {
+      return false;
+    }
+    safeSend(socket, session.summary, 'error', {
+      message: `Terminal ${action} is only allowed from the owning socket.`,
+    });
+    return true;
+  };
+
+  const createSession = (input: CreateTerminalSessionInput = {}): CreateTerminalSessionResult => {
     const targetId = normalizeTargetId(input.target, targets) ?? targets[0]?.id;
     if (!targetId) {
       throw new Error('No terminal targets are configured.');
@@ -343,6 +409,7 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
       status: 'starting',
       createdAt: now().toISOString(),
     };
+    const ownerToken = createTerminalOwnerToken();
 
     const child = spawnProcess(launch.command, launch.args, {
       cwd: launch.cwd,
@@ -353,6 +420,7 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
 
     const session: TerminalSession = {
       summary,
+      ownerToken,
       process: child,
       history: [],
       subscribers: new Set<WebSocket>(),
@@ -392,7 +460,7 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
       fanout(session, 'exit', { code: exitCode, signal: signal ?? null });
     });
 
-    return summary;
+    return { session: summary, ownerToken };
   };
 
   const handleSocketConnection = (socket: WebSocket): void => {
@@ -425,6 +493,10 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
           return;
         }
 
+        if (session.owner && rejectNonOwnerControl(socket, session, 'subscribe')) {
+          return;
+        }
+
         bindSocketToSession(socket, session);
         safeSend(socket, session.summary, 'session', session.summary);
         if (session.history.length > 0) {
@@ -441,6 +513,9 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
         const data = typeof message.data === 'string' ? message.data : '';
         const session = sessions.get(sessionId);
         if (!session || !data) {
+          return;
+        }
+        if (rejectNonOwnerControl(socket, session, 'input')) {
           return;
         }
 
@@ -460,6 +535,9 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
         if (!session) {
           return;
         }
+        if (rejectNonOwnerControl(socket, session, 'resize')) {
+          return;
+        }
 
         session.cols = toDimension(message.cols, session.cols);
         session.rows = toDimension(message.rows, session.rows);
@@ -475,7 +553,14 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
 
       if (message.type === 'terminal:close') {
         const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
-        closeSession(sessionId);
+        const session = sessions.get(sessionId);
+        if (!session) {
+          return;
+        }
+        if (rejectNonOwnerControl(socket, session, 'close')) {
+          return;
+        }
+        closeSessionInternal(sessionId);
       }
     });
 
@@ -493,7 +578,7 @@ export function createTerminalBridge(options: CreateTerminalBridgeOptions): Term
         }
         session.subscribers.delete(socket);
         if (session.owner === socket) {
-          closeSession(sessionId);
+          closeSessionInternal(sessionId);
         }
       });
     });
@@ -529,12 +614,12 @@ export function registerTerminalRoutes(app: Express, bridge: TerminalBridge): vo
     }
 
     try {
-      const session = bridge.createSession({
+      const result = bridge.createSession({
         target: typeof target === 'string' ? target : undefined,
         cols: toDimension(body.cols, DEFAULT_COLS),
         rows: toDimension(body.rows, DEFAULT_ROWS),
       });
-      res.status(201).json({ session });
+      res.status(201).json(result);
     } catch (error) {
       res.status(500).json({
         error: error instanceof Error ? error.message : 'Unable to create terminal session.',
@@ -549,8 +634,13 @@ export function registerTerminalRoutes(app: Express, bridge: TerminalBridge): vo
       return;
     }
 
-    if (!bridge.closeSession(sessionId)) {
+    const closeResult = bridge.closeSession(sessionId, readOwnerToken(req));
+    if (closeResult === 'not-found') {
       res.status(404).json({ error: 'session not found' });
+      return;
+    }
+    if (closeResult === 'forbidden') {
+      res.status(403).json({ error: 'terminal owner token required' });
       return;
     }
 
