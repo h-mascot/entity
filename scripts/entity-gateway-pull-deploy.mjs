@@ -275,9 +275,9 @@ async function deploySha(sha) {
     }
     if (!args.skipVerify) {
       try {
-        await verifyLive(targetSha);
+        await verifyLive(sha);
       } catch (err) {
-        await rollbackRelease(targetSha, err);
+        await rollbackRelease(sha, err);
         throw err;
       }
     }
