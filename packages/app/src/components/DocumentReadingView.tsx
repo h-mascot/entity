@@ -42,10 +42,11 @@ export default function DocumentReadingView({
   animate = false,
   className,
 }: DocumentReadingViewProps) {
-  const padding = dense ? 'px-4 py-5' : 'px-6 py-8';
+  const padding = dense ? 'px-4 py-5' : 'px-8 py-8';
+  const widthClass = dense ? 'max-w-4xl' : 'max-w-5xl';
   return (
     <div
-      className={`mx-auto w-full max-w-4xl ${padding} ${animate ? 'mc-file-switch-anim' : ''} ${className ?? ''}`.trim()}
+      className={`mx-auto w-full ${widthClass} ${padding} ${animate ? 'mc-file-switch-anim' : ''} ${className ?? ''}`.trim()}
     >
       {tts === 'full' ? (
         <MarkdownAudioControls

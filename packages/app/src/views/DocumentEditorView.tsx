@@ -422,7 +422,7 @@ export default function DocumentEditorView(props: any) {
         </div>
       )}
 
-      {runtime.agentNativeEditorEnabled && (
+      {runtime.agentNativeEditorEnabled && documentsReady && (
         <aside
           className={`flex shrink-0 flex-col border-l border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 ${
             rightSidebarIsCollapsed ? 'w-8' : 'w-[280px]'
