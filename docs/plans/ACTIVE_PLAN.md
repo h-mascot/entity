@@ -63,3 +63,9 @@ User requested minimal diffs on branch `cursor/entity-10x-implementation-1879`, 
 - [x] All steps complete
 - [x] Tests pass
 - [x] No commit/push performed
+
+## Review passes (repo Phase-2 gates)
+Ran the repo's two required review gates as adversarial subagents over the full diff (the `codex`/`gitnexus`/`project-test-gate` binaries are not installed in this cloud VM, so the passes were performed by review subagents).
+- **Codex autoreview:** 1 BLOCKER (registerTaskRoutes missing 13 deps -> POST /api/tasks 500, runtime-confirmed) + 3 should-fix (async wrappers, >2000-task pagination page-through, file:moved refresh). All fixed. Closure: APPROVED, 0 blockers.
+- **Thermo-nuclear review:** 6 BLOCKERs total (symlink escape on read+write+source paths; client-re-enableable local write capability; geordi sshCodexHost option injection; terminal subscribe/close ownership; HTTP DELETE terminal close bypass). All fixed with regression tests. Closure: APPROVED, 0 blockers.
+- Gate after fixes: build + 648 tests green. Runtime re-verified: task create 201 / delete 204; /etc/passwd + workspace symlink reads 403; terminal DELETE 403/403/204/404.
