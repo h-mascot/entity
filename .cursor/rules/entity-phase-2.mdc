@@ -27,6 +27,7 @@ Do not mark an issue done until:
 3. `npm run build` passes when app/server/db packages are affected.
 4. UI-facing work has browser/DOM/screenshot proof.
 5. The Linear issue has a proof comment with commands and results.
+6. Review gates pass for non-trivial PRs: **Codex autoreview** (all PRs) and **thermo-nuclear review** (high-risk PRs — auth, command-exec/dangerous-action, secrets/private-defaults, broad multi-area diffs), each fixed to closure with Prove-It regression tests. See the "Review Gates" section in `AGENTS.md`.
 
 ## Product boundaries
 
