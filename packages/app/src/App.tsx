@@ -1058,6 +1058,11 @@ function readDocumentsAuth(): DocumentsAuth | null {
       return null;
     }
 
+    if (origin === 'dev-runtime') {
+      window.localStorage.removeItem(DOCUMENTS_AUTH_KEY);
+      return null;
+    }
+
     if (kind === 'service') {
       const actorId = typeof record.actorId === 'string' ? record.actorId.trim() : '';
       if (!actorId) {
@@ -1077,7 +1082,7 @@ function persistDocumentsAuth(auth: DocumentsAuth | null) {
     return;
   }
 
-  if (!auth) {
+  if (!auth || auth.origin === 'dev-runtime') {
     window.localStorage.removeItem(DOCUMENTS_AUTH_KEY);
     return;
   }
@@ -1109,6 +1114,34 @@ function toDocumentsClientAuth(auth: DocumentsAuth | null): DocumentsClientAuth 
   }
 
   return { kind: 'bearer', token: auth.token };
+}
+
+function isSameDocumentsAuth(left: DocumentsAuth | null, right: DocumentsAuth | null): boolean {
+  if (!left || !right || left.kind !== right.kind || left.token !== right.token) {
+    return false;
+  }
+
+  if (left.kind === 'service' || right.kind === 'service') {
+    return left.kind === 'service' && right.kind === 'service' && left.actorId === right.actorId;
+  }
+
+  return true;
+}
+
+function isDocumentsAuthError(error: unknown): boolean {
+  const status =
+    error && typeof error === 'object' && 'status' in error ? (error as { status?: unknown }).status : undefined;
+  if (status === 401) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes('authorization') ||
+    normalizedMessage.includes('invalid or disabled') ||
+    normalizedMessage.includes('token')
+  );
 }
 
 function readArchivePreference(): boolean {
@@ -1574,6 +1607,7 @@ export default function App() {
   const [followDetached, setFollowDetached] = useState(false);
   const [docPresenceByDocId, setDocPresenceByDocId] = useState<Record<string, Record<string, any>>>({});
   const [documentsAuth, setDocumentsAuth] = useState<DocumentsAuth | null>(() => initialDocumentsAuth);
+  const [documentsAuthHydrated, setDocumentsAuthHydrated] = useState(false);
   const [documentsAuthTokenDraft, setDocumentsAuthTokenDraft] = useState<string>(() => initialDocumentsAuth?.token ?? '');
   const [documentsAuthKindDraft, setDocumentsAuthKindDraft] = useState<'bearer' | 'service'>(() =>
     initialDocumentsAuth?.kind === 'service' ? 'service' : 'bearer'
@@ -2180,40 +2214,41 @@ export default function App() {
     let cancelled = false;
     readRuntimeDocumentsAuth()
       .then((auth) => {
-        if (cancelled) {
-          return;
-        }
-
-        const currentAuth = documentsAuthRef.current;
-        if (!auth) {
-          if (currentAuth?.origin === 'dev-runtime') {
-            setDocumentsAuth(null);
-            setDocumentsAuthTokenDraft('');
-            setDocumentsAuthKindDraft('bearer');
-            setDocumentsAuthActorDraft('ada');
+        try {
+          if (cancelled) {
+            return;
           }
-          return;
-        }
 
-        if (currentAuth && currentAuth.origin !== 'dev-runtime') {
-          return;
-        }
+          const currentAuth = documentsAuthRef.current;
+          if (!auth) {
+            if (currentAuth?.origin === 'dev-runtime') {
+              setDocumentsAuth(null);
+              setDocumentsAuthTokenDraft('');
+              setDocumentsAuthKindDraft('bearer');
+              setDocumentsAuthActorDraft('ada');
+            }
+            return;
+          }
 
-        if (
-          currentAuth?.origin === 'dev-runtime' &&
-          currentAuth.kind === auth.kind &&
-          currentAuth.token === auth.token
-        ) {
-          return;
-        }
+          if (currentAuth?.origin === 'user') {
+            return;
+          }
 
-        setDocumentsAuth(auth);
-        setDocumentsAuthTokenDraft(auth.token);
-        setDocumentsAuthKindDraft('bearer');
-        setDocumentsAuthActorDraft('ada');
+          if (currentAuth?.origin === 'dev-runtime' && isSameDocumentsAuth(currentAuth, auth)) {
+            return;
+          }
+
+          setDocumentsAuth(auth);
+          setDocumentsAuthTokenDraft(auth.token);
+          setDocumentsAuthKindDraft('bearer');
+          setDocumentsAuthActorDraft('ada');
+        } finally {
+          setDocumentsAuthHydrated(true);
+        }
       })
       .catch(() => {
         // Runtime dev auth is optional; Admin-provided tokens still work.
+        setDocumentsAuthHydrated(true);
       });
 
     return () => {
@@ -3218,7 +3253,16 @@ export default function App() {
         return;
       }
 
-      if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+      const target = e.target instanceof HTMLElement
+        ? e.target
+        : document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      if (target?.closest('input, textarea, select') || target?.isContentEditable) {
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'k')) {
         e.preventDefault();
         setQuickSwitcherTargetPane('left');
         setQuickSwitcherOpen(true);
@@ -3824,7 +3868,7 @@ export default function App() {
   }, [currentDocId, documentsReady, pendingOverlayRefresh, refreshComments, refreshReviewLatest, refreshSuggestions]);
 
   useEffect(() => {
-    if (!documentsReady || !currentDocId) {
+    if (!documentsReady || !documentsAuthHydrated || !currentDocId) {
       setCommentThreads([]);
       setSuggestions([]);
       setReviewRun(null);
@@ -3836,6 +3880,7 @@ export default function App() {
     }
 
     let cancelled = false;
+    const requestAuth = documentsAuthRef.current;
     (async () => {
       try {
         const [state, comments, suggestionsResponse] = await Promise.all([
@@ -3863,6 +3908,16 @@ export default function App() {
         setReviewFindings(review.findings);
       } catch (error) {
         if (cancelled) return;
+        if (isDocumentsAuthError(error)) {
+          const currentAuth = documentsAuthRef.current;
+          if (requestAuth?.origin !== 'user' && isSameDocumentsAuth(currentAuth, requestAuth)) {
+            setDocumentsAuth(null);
+            setDocumentsAuthTokenDraft('');
+            setDocumentsAuthKindDraft('bearer');
+            setDocumentsAuthActorDraft('ada');
+          }
+          return;
+        }
         pushToast(error instanceof Error ? error.message : 'Failed to load collaboration overlays.', 'error');
       }
     })();
@@ -3870,7 +3925,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyPresenceSeed, currentDocId, documentsClient, documentsReady, pushToast]);
+  }, [applyPresenceSeed, currentDocId, documentsAuthHydrated, documentsClient, documentsReady, pushToast]);
 
   useEffect(() => {
     if (!documentsReady || !currentDocId || !reviewRun || reviewRun.status !== 'running') {
@@ -4573,6 +4628,8 @@ export default function App() {
             filename={filenameFromFilePath(currentFile)}
             breadcrumbSegments={fileBreadcrumbSegments(currentFile, sourceName)}
             pathHint={filePathHint(currentFile, sourceName)}
+            onBack={handleBackToDashboard}
+            backLabel="← Back"
             actions={
               <>
                 {showSourcePill && (
@@ -4698,7 +4755,23 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setQuickSwitcherTargetPane('left');
+              setQuickSwitcherOpen(true);
+            }}
+            className="mc-shell-btn hidden h-8 w-56 max-w-[14rem] items-center gap-2 px-2.5 py-1 text-left text-xs text-[var(--text-muted)] sm:inline-flex"
+            aria-label="Search across Entity"
+            title="Search across Entity"
+          >
+            <span className="text-[var(--text-secondary)]" aria-hidden="true">🔍</span>
+            <span className="min-w-0 flex-1 truncate">Search across Entity</span>
+            <span className="rounded border border-[var(--border-secondary)] px-1 py-0.5 text-[10px] leading-none text-[var(--text-muted)]">
+              ⌘K
+            </span>
+          </button>
           <button
               type="button"
               onClick={() => {
@@ -5016,6 +5089,11 @@ export default function App() {
             debouncedFollowCursor={debouncedFollowCursor}
             setFollowDetached={setFollowDetached}
             currentFilePreviewMeta={currentFilePreviewMeta}
+            filename={currentFile ? filenameFromFilePath(currentFile) : null}
+            sourceName={selectedSource?.displayName ?? null}
+            currentFileUpdatedAt={currentFileUpdatedAt}
+            setFileHistoryPanelOpen={setFileHistoryPanelOpen}
+            fileHistoryPanelOpen={fileHistoryPanelOpen}
             currentRawFileUrl={currentRawFileUrl}
             handleMarkdownDocsNavigation={handleMarkdownDocsNavigation}
             docsTtsSettings={docsTtsSettings}

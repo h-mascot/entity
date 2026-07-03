@@ -1,14 +1,94 @@
 import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
-import type { Express, Response } from "express";
+import type { Express, Request, Response } from "express";
 import type { ActivityType } from "../../../db/src";
 import type { FileSourceRepository } from "../../../db/src/file-sources";
 import { createFileSourceAdapter } from "../fs/adapters/registry";
 import { assertSourceEnabled, assertWriteTargetRealpathContained, normalizeSourceRelativePath } from "../fs/security";
-import { detectContentType } from "../file-types";
+import { detectContentType, normalizeContentType } from "../file-types";
 import { asyncHandler } from "../middleware/async-handler";
 import { resolveWorkspaceReadPath } from "../workspace-paths";
+
+export interface ByteRange {
+  start: number;
+  end: number;
+}
+
+export type ByteRangeParseResult = ByteRange | null | "unsatisfiable";
+
+export function parseByteRange(
+  rangeHeader: string | null | undefined,
+  size: number,
+): ByteRangeParseResult {
+  if (!rangeHeader) {
+    return null;
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match) {
+    return null;
+  }
+
+  const [, rawStart, rawEnd] = match;
+  if (!rawStart && !rawEnd) {
+    return null;
+  }
+
+  if (!Number.isSafeInteger(size) || size <= 0) {
+    return "unsatisfiable";
+  }
+
+  if (!rawStart) {
+    const suffixLength = Number(rawEnd);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+      return "unsatisfiable";
+    }
+
+    return {
+      start: Math.max(size - suffixLength, 0),
+      end: size - 1,
+    };
+  }
+
+  const start = Number(rawStart);
+  if (!Number.isSafeInteger(start) || start >= size) {
+    return "unsatisfiable";
+  }
+
+  const end = rawEnd ? Number(rawEnd) : size - 1;
+  if (!Number.isSafeInteger(end) || end < start) {
+    return "unsatisfiable";
+  }
+
+  return {
+    start,
+    end: Math.min(end, size - 1),
+  };
+}
+
+export function isInlineSafeContentType(contentType: string): boolean {
+  const normalized = normalizeContentType(contentType);
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized.startsWith("image/")) {
+    return normalized !== "image/svg+xml";
+  }
+
+  if (normalized.startsWith("audio/") || normalized.startsWith("video/")) {
+    return true;
+  }
+
+  return (
+    normalized === "application/pdf" ||
+    normalized === "text/plain" ||
+    normalized === "text/markdown" ||
+    normalized === "application/json" ||
+    normalized === "text/csv"
+  );
+}
 
 interface RegisterLegacyFileRoutesDeps {
   workspaceRoot: string;
@@ -259,12 +339,14 @@ export function registerLegacyFileRoutes(
     return 500;
   }
 
-  function sendRawFileResponse(res: Response, payload: RawFilePayload): Response {
+  function sendRawFileResponse(req: Request, res: Response, payload: RawFilePayload): Response {
     const fileName = sanitizeContentDispositionFilename(payload.fileName);
     const contentType = payload.contentType || "application/octet-stream";
+    const disposition = isInlineSafeContentType(contentType) ? "inline" : "attachment";
     res.setHeader("Content-Type", contentType);
-    res.setHeader("Content-Length", String(payload.size));
-    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    res.setHeader("Content-Disposition", `${disposition}; filename="${fileName}"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Accept-Ranges", "bytes");
 
     if (payload.updatedAt) {
       const updatedAt = new Date(payload.updatedAt);
@@ -273,6 +355,26 @@ export function registerLegacyFileRoutes(
       }
     }
 
+    if (Buffer.isBuffer(payload.content)) {
+      const totalSize = payload.content.length;
+      const range = parseByteRange(req.headers.range, totalSize);
+      if (range === "unsatisfiable") {
+        res.status(416);
+        res.setHeader("Content-Range", `bytes */${totalSize}`);
+        res.setHeader("Content-Length", "0");
+        return res.end();
+      }
+
+      if (range) {
+        const chunk = payload.content.subarray(range.start, range.end + 1);
+        res.status(206);
+        res.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${totalSize}`);
+        res.setHeader("Content-Length", String(chunk.length));
+        return res.send(chunk);
+      }
+    }
+
+    res.setHeader("Content-Length", String(payload.size));
     return res.send(payload.content);
   }
 
@@ -386,7 +488,7 @@ export function registerLegacyFileRoutes(
         ? await readRawSourceFile(sourceId, requestedPath)
         : await readRawLocalFile(await resolveWorkspaceReadPath(requestedPath, WORKSPACE));
 
-      return sendRawFileResponse(res, payload);
+      return sendRawFileResponse(req, res, payload);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return res
