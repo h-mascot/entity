@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'crypto';
-import { chmodSync, statSync } from 'fs';
-import { dirname, join } from 'path';
+import { accessSync, chmodSync, constants as fsConstants, statSync } from 'fs';
+import { basename, dirname, join } from 'path';
 import type { Express, Request, Response } from 'express';
 import { spawn as spawnPty, type IPty } from 'node-pty';
 import { WebSocket } from 'ws';
@@ -194,6 +194,33 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+const SHELL_CANDIDATES = ['/bin/zsh', '/usr/bin/zsh', '/bin/bash', '/usr/bin/bash', '/bin/sh'] as const;
+
+function isExecutable(path: string, canExecute: (path: string) => void): boolean {
+  try {
+    canExecute(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The terminal was originally hardcoded to /bin/zsh, which does not exist on
+ * many Linux hosts (pty exec then fails with "ioctl(2) failed, EBADF" and no
+ * prompt ever appears). Prefer $SHELL, then well-known shells.
+ */
+export function resolveTerminalShell(
+  envShell: string | undefined = process.env.SHELL,
+  canExecute: (path: string) => void = (path) => accessSync(path, fsConstants.X_OK),
+): { command: string; args: string[] } {
+  const candidates = [envShell?.trim(), ...SHELL_CANDIDATES].filter((entry): entry is string => Boolean(entry));
+  const command = candidates.find((candidate) => isExecutable(candidate, canExecute)) ?? '/bin/sh';
+  // zsh: -f skips rc files for a predictable prompt. Other shells run with defaults.
+  const args = basename(command) === 'zsh' ? ['-f'] : [];
+  return { command, args };
+}
+
 function buildBootstrapCommand(target: TerminalTarget): string {
   const directory = target.defaultDirectory;
   return `cd ${shellQuote(directory)} 2>/dev/null || cd ~; export TERM=xterm-256color COLORTERM=truecolor; exec /bin/zsh -f`;
@@ -219,11 +246,13 @@ export function buildTerminalLaunchSpec(
     LINES: String(toDimension(rows, DEFAULT_ROWS)),
   };
 
+  const shell = resolveTerminalShell();
+
   if (target.transport === 'local') {
     return {
       target,
-      command: '/bin/zsh',
-      args: ['-f'],
+      command: shell.command,
+      args: shell.args,
       env,
       cwd: workspaceRoot,
     };
@@ -232,8 +261,8 @@ export function buildTerminalLaunchSpec(
   const bootstrap = buildBootstrapCommand(target);
   return {
     target,
-    command: '/bin/zsh',
-    args: ['-f'],
+    command: shell.command,
+    args: shell.args,
     env,
     cwd: workspaceRoot,
     initialInput: `exec /usr/bin/ssh -tt ${shellQuote(target.host ?? target.id)} ${shellQuote(bootstrap)}\r`,
