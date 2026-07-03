@@ -1453,15 +1453,6 @@ function filenameFromFilePath(filePath: string | null): string {
   return segments[segments.length - 1] ?? 'Document';
 }
 
-function fileBreadcrumbSegments(filePath: string | null, sourceName?: string): string[] {
-  const segments = filePathSegments(filePath);
-  return sourceName ? [sourceName, ...segments] : segments;
-}
-
-function filePathHint(filePath: string, sourceName?: string): string {
-  return sourceName ? `${sourceName} • ${filePath}` : filePath;
-}
-
 function buildDocsApiUrls(docPath: string): string[] {
   const encodedDocPath = encodeDocsRoutePath(docPath);
   return buildApiCandidates(`/docs/${encodedDocPath}`, runtime.apiBase).filter((url) => url.includes('/api/'));
