@@ -459,7 +459,8 @@ type AdminSection =
   | 'plugins'
   | 'voice'
   | 'enterprise'
-  | 'taskMaster';
+  | 'taskMaster'
+  | 'docs';
 const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   general: 'General',
   profile: 'User Profile',
@@ -471,6 +472,7 @@ const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   voice: 'Voice',
   enterprise: 'Openclaw',
   taskMaster: 'Task Master',
+  docs: 'Docs',
 };
 type AppTheme = 'dark' | 'light' | 'kitz' | 'nebula' | 'aurora' | 'paper';
 type EditorCollaborationMode = 'editing' | 'suggesting' | 'viewing';
@@ -4184,6 +4186,7 @@ export default function App() {
       { key: 'plugins', title: 'Plugins', hint: 'Registry + runtime toggles' },
       { key: 'voice', title: 'Voice / TTS', hint: 'TTS provider + settings' },
       { key: 'taskMaster', title: 'Task Master', hint: 'AI agent settings + logs' },
+      { key: 'docs', title: 'Docs', hint: 'Doc Hub + Intelligence' },
       { key: 'enterprise', title: 'Openclaw', hint: 'Embedded crew admin' },
     ];
 
@@ -4212,6 +4215,7 @@ export default function App() {
     <Suspense fallback={<LazySurfaceFallback label="Loading admin" />}>
       <AdminView
         adminSection={adminSection}
+        onOpenTaskMasterSettings={() => setAdminSection('taskMaster')}
         enterpriseFrameNonce={enterpriseFrameNonce}
         enterpriseFrameSrc={enterpriseFrameSrc}
         enterpriseFrameReady={enterpriseFrameReady}
@@ -4410,6 +4414,9 @@ export default function App() {
             </button>
             <button type="button" onClick={() => setAdminSection('taskMaster')} className="mc-shell-btn px-2 py-1 text-xs">
               Task Master
+            </button>
+            <button type="button" onClick={() => setAdminSection('docs')} className="mc-shell-btn px-2 py-1 text-xs">
+              Docs
             </button>
             <button type="button" onClick={() => setAdminSection('enterprise')} className="mc-shell-btn px-2 py-1 text-xs">
               Openclaw
@@ -4874,6 +4881,7 @@ export default function App() {
         { key: 'plugins', icon: '🧠', label: 'Plugins' },
         { key: 'voice', icon: '🎙️', label: 'Voice / TTS' },
         { key: 'taskMaster', icon: '🤖', label: 'Task Master' },
+        { key: 'docs', icon: '📄', label: 'Docs' },
         { key: 'enterprise', icon: '🧭', label: 'Openclaw' },
       ];
       return (
@@ -5146,6 +5154,9 @@ export default function App() {
             docIntelligenceFocus={docIntelligenceFocus}
             onDocIntelligenceFocusApplied={() => setDocIntelligenceFocus(null)}
             onFocusCommentsRail={handleFocusCommentsRail}
+            tasks={tasks}
+            onOpenTask={handleTaskSelect}
+            onOpenRelatedDoc={handleSourceFileSelect}
           />
         </Suspense>
       )}

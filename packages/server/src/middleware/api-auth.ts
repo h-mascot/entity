@@ -106,6 +106,7 @@ const PROTECTED_UNPREFIXED_ROOTS: readonly string[] = [
   "/agent",
   "/crews",
   "/db-mode",
+  "/doc-intelligence",
   "/documents",
   "/projects",
   "/roadmaps",

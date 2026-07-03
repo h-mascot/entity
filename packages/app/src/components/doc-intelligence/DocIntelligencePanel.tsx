@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   DocumentCommentThread,
   DocumentReviewFinding,
@@ -7,13 +7,38 @@ import type {
   DocumentSuggestionUiRecord,
 } from '../../types/collaboration';
 import type { EditorSelectionSnapshot } from '../SuggestionPanel';
+import { buildApiCandidates, requestJsonWithFallback } from '../../lib/http';
+import {
+  docFilenameStem,
+  filterRelatedDocResults,
+  findTasksReferencingDoc,
+  type RelatedDocResult,
+} from '../../lib/docIntelligenceData';
 
 const CommentThreadPanel = lazy(() => import('../CommentThread').then((module) => ({ default: module.CommentThreadPanel })));
 const ReviewPanel = lazy(() => import('../ReviewPanel').then((module) => ({ default: module.ReviewPanel })));
 const SuggestionPanel = lazy(() => import('../SuggestionPanel').then((module) => ({ default: module.SuggestionPanel })));
 
-type RailPanel = 'intelligence' | 'comments' | 'ask' | 'notes' | 'versions';
-type IntelligenceTab = 'summary' | 'related' | 'tasks' | 'metadata';
+type RailPanel = 'intelligence' | 'comments' | 'notes' | 'versions';
+type FocusRailTarget = RailPanel | 'ask';
+type IntelligenceTab = 'summary' | 'ask' | 'grammar' | 'related' | 'tasks' | 'metadata';
+
+interface DocIntelligenceSettingsView {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  ready: boolean;
+}
+
+interface PanelTask {
+  id: number;
+  name: string;
+  description?: string | null;
+  output?: string | null;
+  column?: string;
+  assignee?: string;
+}
 
 interface DocMetadata {
   filename: string | null;
@@ -72,8 +97,12 @@ interface DocIntelligencePanelProps {
   handleIgnoreReviewFinding: (findingId: string) => void;
   rightSidebarHasComments: boolean;
   rightSidebarHasSuggestions: boolean;
-  focusedRail?: RailPanel | null;
+  focusedRail?: FocusRailTarget | null;
   onFocusedRailApplied?: () => void;
+  apiBase?: string;
+  tasks?: readonly PanelTask[];
+  onOpenTask?: (taskId: number) => void;
+  onOpenRelatedDoc?: (sourceId: string, path: string) => void;
 }
 
 interface LocalOutline {
@@ -232,25 +261,151 @@ export default function DocIntelligencePanel({
   rightSidebarHasSuggestions,
   focusedRail = null,
   onFocusedRailApplied,
+  apiBase = '',
+  tasks = [],
+  onOpenTask,
+  onOpenRelatedDoc,
 }: DocIntelligencePanelProps) {
   const [activeRail, setActiveRail] = useState<RailPanel>('intelligence');
   const [activeTab, setActiveTab] = useState<IntelligenceTab>('summary');
+  const [intelligenceSettings, setIntelligenceSettings] = useState<DocIntelligenceSettingsView | null>(null);
+  const [askQuestion, setAskQuestion] = useState('');
+  const [askAnswer, setAskAnswer] = useState<string | null>(null);
+  const [askLoading, setAskLoading] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
+  const [relatedDocs, setRelatedDocs] = useState<RelatedDocResult[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
+  const [relatedError, setRelatedError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!focusedRail) {
       return;
     }
 
-    setActiveRail(focusedRail);
+    if (focusedRail === 'ask') {
+      setActiveRail('intelligence');
+      setActiveTab('ask');
+    } else {
+      setActiveRail(focusedRail);
+    }
     setCollapsed(false);
     onFocusedRailApplied?.();
   }, [focusedRail, onFocusedRailApplied, setCollapsed]);
+
+  // Load Doc Intelligence settings once so the Ask tab can reflect enable/provider state.
+  useEffect(() => {
+    let cancelled = false;
+    requestJsonWithFallback<{ settings?: DocIntelligenceSettingsView }>({
+      urls: buildApiCandidates('/doc-intelligence/settings', apiBase),
+      fallbackError: 'Failed to load Doc Intelligence settings.',
+    })
+      .then((data) => {
+        if (!cancelled && data?.settings) {
+          setIntelligenceSettings(data.settings);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIntelligenceSettings(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase]);
+
+  // Reset per-document ask/related state when the file changes.
+  useEffect(() => {
+    setAskAnswer(null);
+    setAskError(null);
+    setAskQuestion('');
+    setRelatedDocs([]);
+    setRelatedError(null);
+  }, [currentFile, currentSourceId]);
+
+  const loadRelatedDocs = useCallback(() => {
+    if (!currentFile) {
+      return;
+    }
+
+    const stem = docFilenameStem(currentFile);
+    setRelatedLoading(true);
+    setRelatedError(null);
+    requestJsonWithFallback<{ results?: Array<{ sourceId?: string; path?: string; sourceName?: string }> }>({
+      urls: buildApiCandidates(`/fs/search?q=${encodeURIComponent(stem)}&limit=20`, apiBase),
+      fallbackError: 'Related document search failed.',
+    })
+      .then((data) => {
+        const raw = (data?.results ?? [])
+          .filter((entry): entry is { sourceId: string; path: string; sourceName?: string } =>
+            Boolean(entry && typeof entry.sourceId === 'string' && typeof entry.path === 'string'),
+          );
+        setRelatedDocs(filterRelatedDocResults(raw, currentFile));
+      })
+      .catch((error) => {
+        setRelatedError(error instanceof Error ? error.message : 'Related document search failed.');
+        setRelatedDocs([]);
+      })
+      .finally(() => {
+        setRelatedLoading(false);
+      });
+  }, [apiBase, currentFile]);
+
+  useEffect(() => {
+    if (activeTab === 'related' && activeRail === 'intelligence' && currentFile) {
+      loadRelatedDocs();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, activeRail, currentFile]);
+
+  const handleAskSubmit = useCallback(() => {
+    const question = askQuestion.trim();
+    if (!question || askLoading) {
+      return;
+    }
+
+    setAskLoading(true);
+    setAskError(null);
+    setAskAnswer(null);
+    requestJsonWithFallback<{ answer?: string }>({
+      urls: buildApiCandidates('/doc-intelligence/ask', apiBase),
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          content: docText,
+          path: metadata.path ?? undefined,
+          filename: metadata.filename ?? undefined,
+        }),
+      },
+      fallbackError: 'Ask request failed.',
+    })
+      .then((data) => {
+        if (typeof data?.answer === 'string' && data.answer.trim()) {
+          setAskAnswer(data.answer.trim());
+        } else {
+          setAskError('The model did not return an answer.');
+        }
+      })
+      .catch((error) => {
+        setAskError(error instanceof Error ? error.message : 'Ask request failed.');
+      })
+      .finally(() => {
+        setAskLoading(false);
+      });
+  }, [apiBase, askLoading, askQuestion, docText, metadata.filename, metadata.path]);
+
+  const linkedTasks = useMemo(
+    () => findTasksReferencingDoc(tasks, metadata.path ?? currentFile),
+    [tasks, metadata.path, currentFile],
+  );
+
   const outline = useMemo(() => extractLocalOutline(docText, metadata.isBinary), [docText, metadata.isBinary]);
 
   const railItems: Array<{ id: RailPanel; icon: string; label: string }> = [
     { id: 'intelligence', icon: '✦', label: 'Intelligence' },
     { id: 'comments', icon: '💬', label: 'Comments' },
-    { id: 'ask', icon: 'Ask', label: 'Ask' },
     { id: 'notes', icon: '✎', label: 'Notes' },
     { id: 'versions', icon: '↻', label: 'Versions' },
   ];
@@ -471,7 +626,21 @@ export default function DocIntelligencePanel({
         </Suspense>
       ) : null}
 
-      {documentsReady ? (
+    </div>
+  );
+
+  const renderGrammar = () => {
+    if (!documentsReady) {
+      return (
+        <EmptyState
+          title="Grammar review unavailable."
+          body="Connect a Documents token to run grammar and style reviews on this document."
+        />
+      );
+    }
+
+    return (
+      <div className="overflow-hidden rounded-xl border border-[var(--border-primary)]">
         <Suspense fallback={null}>
           <ReviewPanel
             mode={reviewMode}
@@ -507,15 +676,151 @@ export default function DocIntelligencePanel({
             content={docText}
           />
         </Suspense>
-      ) : null}
-    </div>
-  );
+      </div>
+    );
+  };
+
+  const renderAsk = () => {
+    if (intelligenceSettings && !intelligenceSettings.enabled) {
+      return (
+        <EmptyState
+          title="Doc Intelligence is disabled."
+          body="Enable it in Admin → Docs to ask questions about this document using your configured model provider."
+        />
+      );
+    }
+
+    if (intelligenceSettings && !intelligenceSettings.apiKeyConfigured) {
+      return (
+        <EmptyState
+          title="No model configured."
+          body="Doc Intelligence reuses the Task Master model provider. Add an API key in Admin → Task Master."
+        />
+      );
+    }
+
+    return (
+      <div className="space-y-3">
+        <div>
+          <div className="text-sm font-semibold text-[var(--text-primary)]">Ask about this document</div>
+          {intelligenceSettings ? (
+            <div className="mt-1 text-[11px] text-[var(--text-muted)]">
+              Using {intelligenceSettings.provider} · {intelligenceSettings.model}
+            </div>
+          ) : null}
+        </div>
+        <textarea
+          value={askQuestion}
+          onChange={(event) => setAskQuestion(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              handleAskSubmit();
+            }
+          }}
+          placeholder="e.g. What are the key points of this document?"
+          rows={3}
+          className="mc-shell-input w-full resize-y px-3 py-2 text-xs"
+          aria-label="Question about this document"
+        />
+        <button
+          type="button"
+          onClick={handleAskSubmit}
+          disabled={askLoading || !askQuestion.trim()}
+          className={`mc-shell-btn w-full justify-center px-3 py-2 text-xs font-medium ${
+            askLoading || !askQuestion.trim() ? 'cursor-not-allowed opacity-50' : 'mc-shell-btn-active text-[var(--text-primary)]'
+          }`}
+        >
+          {askLoading ? 'Asking…' : 'Ask'}
+        </button>
+        {askError ? (
+          <div className="rounded-lg border border-[var(--error)]/40 bg-[var(--bg-secondary)] px-3 py-2 text-xs text-[var(--error)]">
+            {askError}
+          </div>
+        ) : null}
+        {askAnswer ? (
+          <div className="rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Answer</div>
+            <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-[var(--text-secondary)]">{askAnswer}</p>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderRelated = () => {
+    if (relatedLoading) {
+      return <div className="text-xs text-[var(--text-muted)]">Searching for related documents…</div>;
+    }
+
+    if (relatedError) {
+      return <EmptyState title="Related search failed." body={relatedError} />;
+    }
+
+    if (relatedDocs.length === 0) {
+      return (
+        <EmptyState
+          title="No related documents found."
+          body="Related documents are matched by filename across your sources."
+        />
+      );
+    }
+
+    return (
+      <div className="space-y-2">
+        {relatedDocs.map((doc) => (
+          <button
+            key={`${doc.sourceId}::${doc.path}`}
+            type="button"
+            onClick={() => onOpenRelatedDoc?.(doc.sourceId, doc.path)}
+            className="block w-full rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-left transition hover:border-[var(--border-secondary)] hover:bg-[var(--bg-tertiary)]"
+          >
+            <div className="truncate text-xs font-medium text-[var(--text-primary)]">📄 {doc.path}</div>
+            {doc.sourceName ? (
+              <div className="mt-0.5 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{doc.sourceName}</div>
+            ) : null}
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  const renderTasks = () => {
+    if (linkedTasks.length === 0) {
+      return (
+        <EmptyState
+          title="No linked tasks."
+          body="Tasks are linked when their name, description, or output references this document."
+        />
+      );
+    }
+
+    return (
+      <div className="space-y-2">
+        {linkedTasks.map((task) => (
+          <button
+            key={task.id}
+            type="button"
+            onClick={() => onOpenTask?.(task.id)}
+            className="block w-full rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-left transition hover:border-[var(--border-secondary)] hover:bg-[var(--bg-tertiary)]"
+          >
+            <div className="truncate text-xs font-medium text-[var(--text-primary)]">#{task.id} · {task.name}</div>
+            <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+              {[task.column, task.assignee].filter(Boolean).join(' · ')}
+            </div>
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   const renderIntelligence = () => {
     const tabs: Array<{ id: IntelligenceTab; label: string }> = [
       { id: 'summary', label: 'Summary' },
+      { id: 'ask', label: 'Ask' },
+      { id: 'grammar', label: 'Grammar' },
       { id: 'related', label: 'Related' },
-      { id: 'tasks', label: 'Tasks' },
+      { id: 'tasks', label: `Tasks${linkedTasks.length > 0 ? ` (${linkedTasks.length})` : ''}` },
       { id: 'metadata', label: 'Metadata' },
     ];
 
@@ -545,8 +850,10 @@ export default function DocIntelligencePanel({
         </div>
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {activeTab === 'summary' ? renderSummary() : null}
-          {activeTab === 'related' ? <EmptyState title="No related documents yet." body="Related document discovery is not wired yet." /> : null}
-          {activeTab === 'tasks' ? <EmptyState title="No linked tasks." body="A document-to-task lookup is not available yet." /> : null}
+          {activeTab === 'ask' ? renderAsk() : null}
+          {activeTab === 'grammar' ? renderGrammar() : null}
+          {activeTab === 'related' ? renderRelated() : null}
+          {activeTab === 'tasks' ? renderTasks() : null}
           {activeTab === 'metadata' ? renderMetadata() : null}
         </div>
       </>
@@ -572,14 +879,6 @@ export default function DocIntelligencePanel({
   const renderPanelBody = () => {
     if (activeRail === 'intelligence') return renderIntelligence();
     if (activeRail === 'comments') return renderCommentsPanel();
-    if (activeRail === 'ask') {
-      return (
-        <div className="flex min-h-0 flex-1 flex-col p-4">
-          <div className="text-sm font-semibold text-[var(--text-primary)]">Ask about this document</div>
-          <EmptyState title="Ask is coming soon." body="Document-aware Q&A is not connected to a backend yet." />
-        </div>
-      );
-    }
     if (activeRail === 'notes') {
       return (
         <div className="flex min-h-0 flex-1 flex-col p-4">

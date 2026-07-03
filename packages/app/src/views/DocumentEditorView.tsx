@@ -461,6 +461,10 @@ export default function DocumentEditorView(props: any) {
           rightSidebarHasSuggestions={rightSidebarHasSuggestions}
           focusedRail={props.docIntelligenceFocus}
           onFocusedRailApplied={props.onDocIntelligenceFocusApplied}
+          apiBase={runtime.apiBase}
+          tasks={props.tasks}
+          onOpenTask={props.onOpenTask}
+          onOpenRelatedDoc={props.onOpenRelatedDoc}
         />
       )}
     </div>
