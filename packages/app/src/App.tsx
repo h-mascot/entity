@@ -1058,6 +1058,11 @@ function readDocumentsAuth(): DocumentsAuth | null {
       return null;
     }
 
+    if (origin === 'dev-runtime') {
+      window.localStorage.removeItem(DOCUMENTS_AUTH_KEY);
+      return null;
+    }
+
     if (kind === 'service') {
       const actorId = typeof record.actorId === 'string' ? record.actorId.trim() : '';
       if (!actorId) {
@@ -1077,7 +1082,7 @@ function persistDocumentsAuth(auth: DocumentsAuth | null) {
     return;
   }
 
-  if (!auth) {
+  if (!auth || auth.origin === 'dev-runtime') {
     window.localStorage.removeItem(DOCUMENTS_AUTH_KEY);
     return;
   }
