@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileSourceRecord, FileSourceRepository } from "../../../db/src/file-sources";
-import { registerLegacyFileRoutes } from "./legacy-files";
+import { parseByteRange, registerLegacyFileRoutes } from "./legacy-files";
 
 const tempRoots: string[] = [];
 
@@ -70,6 +70,29 @@ afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => fs.promises.rm(root, { recursive: true, force: true })));
 });
 
+describe("parseByteRange", () => {
+  it("returns null when no Range header is supplied", () => {
+    expect(parseByteRange(undefined, 1000)).toBeNull();
+    expect(parseByteRange(null, 1000)).toBeNull();
+  });
+
+  it("parses explicit byte ranges", () => {
+    expect(parseByteRange("bytes=0-99", 1000)).toEqual({ start: 0, end: 99 });
+  });
+
+  it("parses open-ended byte ranges", () => {
+    expect(parseByteRange("bytes=100-", 1000)).toEqual({ start: 100, end: 999 });
+  });
+
+  it("parses suffix byte ranges", () => {
+    expect(parseByteRange("bytes=-100", 1000)).toEqual({ start: 900, end: 999 });
+  });
+
+  it("marks ranges outside the content size as unsatisfiable", () => {
+    expect(parseByteRange("bytes=99999-", 1000)).toBe("unsatisfiable");
+  });
+});
+
 describe("legacy file routes", () => {
   it("rejects symlink escapes on source reads and workspace writes while allowing normal files", async () => {
     const workspaceRoot = await makeTempRoot();
@@ -109,6 +132,66 @@ describe("legacy file routes", () => {
         error: "File mutation path must stay inside the workspace.",
       });
       await expect(fs.promises.readFile(outsideFile, "utf-8")).resolves.toBe("# outside\n");
+    });
+  });
+
+  it("serves byte ranges for raw media files", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const content = Buffer.from("0123456789abcdefghijklmnopqrstuvwxyz");
+    await fs.promises.writeFile(path.join(workspaceRoot, "clip.mp4"), content);
+
+    await withLegacyFileServer(workspaceRoot, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/file/raw?source=workspace&path=clip.mp4`, {
+        headers: { Range: "bytes=10-15" },
+      });
+
+      expect(response.status).toBe(206);
+      expect(response.headers.get("accept-ranges")).toBe("bytes");
+      expect(response.headers.get("content-type")).toBe("video/mp4");
+      expect(response.headers.get("content-range")).toBe(`bytes 10-15/${content.length}`);
+      expect(response.headers.get("content-length")).toBe("6");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(content.subarray(10, 16));
+    });
+  });
+
+  it("returns 416 for unsatisfiable raw byte ranges", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const content = Buffer.from("small file");
+    await fs.promises.writeFile(path.join(workspaceRoot, "track.mp3"), content);
+
+    await withLegacyFileServer(workspaceRoot, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/file/raw?source=workspace&path=track.mp3`, {
+        headers: { Range: "bytes=99999-" },
+      });
+
+      expect(response.status).toBe(416);
+      expect(response.headers.get("accept-ranges")).toBe("bytes");
+      expect(response.headers.get("content-range")).toBe(`bytes */${content.length}`);
+      expect(await response.text()).toBe("");
+    });
+  });
+
+  it("keeps raw PDF and image responses inline while advertising range support", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const pdfContent = Buffer.from("%PDF-1.7\n");
+    const pngContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await fs.promises.writeFile(path.join(workspaceRoot, "doc.pdf"), pdfContent);
+    await fs.promises.writeFile(path.join(workspaceRoot, "image.png"), pngContent);
+
+    await withLegacyFileServer(workspaceRoot, async (baseUrl) => {
+      const pdfResponse = await fetch(`${baseUrl}/api/file/raw?source=workspace&path=doc.pdf`);
+      expect(pdfResponse.status).toBe(200);
+      expect(pdfResponse.headers.get("accept-ranges")).toBe("bytes");
+      expect(pdfResponse.headers.get("content-type")).toBe("application/pdf");
+      expect(pdfResponse.headers.get("content-disposition")).toBe('inline; filename="doc.pdf"');
+      expect(Buffer.from(await pdfResponse.arrayBuffer())).toEqual(pdfContent);
+
+      const pngResponse = await fetch(`${baseUrl}/api/file/raw?source=workspace&path=image.png`);
+      expect(pngResponse.status).toBe(200);
+      expect(pngResponse.headers.get("accept-ranges")).toBe("bytes");
+      expect(pngResponse.headers.get("content-type")).toBe("image/png");
+      expect(pngResponse.headers.get("content-disposition")).toBe('inline; filename="image.png"');
+      expect(Buffer.from(await pngResponse.arrayBuffer())).toEqual(pngContent);
     });
   });
 });

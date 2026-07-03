@@ -45,6 +45,22 @@ const EXTENSION_CONTENT_TYPES: Record<string, string> = {
   tiff: 'image/tiff',
   tif: 'image/tiff',
 
+  // audio/video formats
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  weba: 'audio/webm',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  ogv: 'video/ogg',
+  mkv: 'video/x-matroska',
+
   // common binary files
   zip: 'application/zip',
   gz: 'application/gzip',

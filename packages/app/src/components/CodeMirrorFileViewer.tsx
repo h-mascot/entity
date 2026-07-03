@@ -17,7 +17,7 @@ interface CodeMirrorFileViewerProps {
   rawFileUrl?: string | null;
 }
 
-type PreviewKind = 'text' | 'image' | 'pdf' | 'table' | 'binary';
+type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'table' | 'binary';
 
 type LanguageKey =
   | 'markdown'
@@ -349,6 +349,8 @@ const envLanguage = StreamLanguage.define<{ inString: '"' | "'" | null }>({
 });
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif', 'tiff', 'tif']);
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'weba']);
+const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv']);
 const TABLE_EXTENSIONS = new Set(['csv', 'tsv']);
 const TABLE_CONTENT_TYPES = new Set(['text/csv', 'text/tab-separated-values', 'text/tsv']);
 const MAX_TABLE_ROWS = 1000;
@@ -501,6 +503,14 @@ function resolvePreviewKind(filePath: string, contentType: string | null | undef
 
   if (TABLE_CONTENT_TYPES.has(normalizedType) || TABLE_EXTENSIONS.has(extension)) {
     return 'table';
+  }
+
+  if (normalizedType.startsWith('audio/') || AUDIO_EXTENSIONS.has(extension)) {
+    return 'audio';
+  }
+
+  if (normalizedType.startsWith('video/') || VIDEO_EXTENSIONS.has(extension)) {
+    return 'video';
   }
 
   const binaryFlag = typeof isBinary === 'boolean'
@@ -728,6 +738,22 @@ export default function CodeMirrorFileViewer({
     });
   }, [languageExtension, previewKind]);
 
+  const binaryUnavailablePreview = (
+    <div className="flex h-full w-full items-center justify-center p-6">
+      <div className="w-full max-w-lg rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-5">
+        <div className="text-sm font-semibold text-[var(--text-primary)]">Binary file preview unavailable</div>
+        <div className="mt-2 text-xs text-[var(--text-muted)]">
+          This file cannot be rendered as plain text.
+        </div>
+        <div className="mt-4 space-y-1 text-xs text-[var(--text-secondary)]">
+          <div>File: {fileName}</div>
+          <div>Type: {fileTypeLabel}</div>
+          {formattedSize ? <div>Size: {formattedSize}</div> : null}
+        </div>
+      </div>
+    </div>
+  );
+
   if (previewKind === 'image') {
     return (
       <div className="flex h-full w-full flex-col items-center gap-4 overflow-auto p-4">
@@ -746,6 +772,60 @@ export default function CodeMirrorFileViewer({
               Download
             </a>
           ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (previewKind === 'audio') {
+    if (!rawFileUrl) {
+      return binaryUnavailablePreview;
+    }
+
+    return (
+      <div className="flex h-full w-full items-center justify-center overflow-auto p-6">
+        <div className="w-full max-w-2xl rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-5">
+          <div className="text-sm font-semibold text-[var(--text-primary)]">{fileName}</div>
+          <audio
+            aria-label={`Audio preview for ${fileName}`}
+            controls
+            preload="metadata"
+            src={rawFileUrl}
+            className="mt-4 w-full"
+          />
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[var(--text-muted)]">
+            <span>Type: {fileTypeLabel}</span>
+            {formattedSize ? <span>Size: {formattedSize}</span> : null}
+            <a href={rawFileUrl} download={fileName} className="mc-shell-btn px-3 py-1 text-xs">
+              Download
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (previewKind === 'video') {
+    if (!rawFileUrl) {
+      return binaryUnavailablePreview;
+    }
+
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-4 overflow-auto p-6">
+        <div className="text-sm font-semibold text-[var(--text-primary)]">{fileName}</div>
+        <video
+          aria-label={`Video preview for ${fileName}`}
+          controls
+          preload="metadata"
+          src={rawFileUrl}
+          className="max-h-[70vh] w-full max-w-5xl rounded-xl bg-[var(--bg-secondary)]"
+        />
+        <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-[var(--text-muted)]">
+          <span>Type: {fileTypeLabel}</span>
+          {formattedSize ? <span>Size: {formattedSize}</span> : null}
+          <a href={rawFileUrl} download={fileName} className="mc-shell-btn px-3 py-1 text-xs">
+            Download
+          </a>
         </div>
       </div>
     );
