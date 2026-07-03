@@ -5,8 +5,11 @@ import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../confi
 import { getTaskAgentLanguageModel, getTaskAgentSettings } from '../agent/settings';
 
 const SETTINGS_KEY = 'docIntelligence.settings';
+const NOTES_KEY_PREFIX = 'docNotes.';
 const MAX_DOC_CHARS = 24_000;
 const MAX_QUESTION_CHARS = 2_000;
+const MAX_NOTE_CHARS = 4_000;
+const MAX_NOTES_PER_DOC = 200;
 
 export interface StoredDocIntelligenceSettings {
   enabled?: boolean;
@@ -62,6 +65,41 @@ export function updateDocIntelligenceSettings(input: { enabled?: unknown }): Doc
   const db = getEntityDatabase(ensureAppSettingsTable);
   setSettingJson(db, SETTINGS_KEY, next, 'admin-ui');
   return getDocIntelligenceSettings();
+}
+
+export interface DocNoteRecord {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+export function buildDocNotesKey(sourceId: string | null | undefined, path: string): string | null {
+  const trimmedPath = path?.trim();
+  if (!trimmedPath || trimmedPath.length > 600 || trimmedPath.includes('\n')) {
+    return null;
+  }
+  const source = typeof sourceId === 'string' && sourceId.trim() ? sourceId.trim() : 'local';
+  return `${NOTES_KEY_PREFIX}${source}::${trimmedPath}`;
+}
+
+function readDocNotes(key: string): DocNoteRecord[] {
+  const db = getEntityDatabase(ensureAppSettingsTable);
+  const stored = getSettingJson(db, key);
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+  return stored.filter(
+    (entry): entry is DocNoteRecord =>
+      Boolean(entry) &&
+      typeof entry === 'object' &&
+      typeof (entry as DocNoteRecord).id === 'string' &&
+      typeof (entry as DocNoteRecord).text === 'string',
+  );
+}
+
+function writeDocNotes(key: string, notes: DocNoteRecord[]): void {
+  const db = getEntityDatabase(ensureAppSettingsTable);
+  setSettingJson(db, key, notes, 'doc-intelligence');
 }
 
 export interface DocAskInput {
@@ -167,6 +205,89 @@ export function registerDocIntelligenceRoutes(
       res.json({ settings });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to update settings';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.get(`${base}/notes`, (req, res) => {
+    const key = buildDocNotesKey(
+      typeof req.query.sourceId === 'string' ? req.query.sourceId : null,
+      typeof req.query.path === 'string' ? req.query.path : '',
+    );
+    if (!key) {
+      res.status(400).json({ error: 'path query parameter is required.' });
+      return;
+    }
+
+    try {
+      res.json({ notes: readDocNotes(key) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to read notes';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post(`${base}/notes`, (req, res) => {
+    const key = buildDocNotesKey(
+      typeof req.body?.sourceId === 'string' ? req.body.sourceId : null,
+      typeof req.body?.path === 'string' ? req.body.path : '',
+    );
+    if (!key) {
+      res.status(400).json({ error: 'path is required.' });
+      return;
+    }
+
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!text) {
+      res.status(400).json({ error: 'text is required.' });
+      return;
+    }
+    if (text.length > MAX_NOTE_CHARS) {
+      res.status(400).json({ error: `text must be at most ${MAX_NOTE_CHARS} characters.` });
+      return;
+    }
+
+    try {
+      const notes = readDocNotes(key);
+      if (notes.length >= MAX_NOTES_PER_DOC) {
+        res.status(400).json({ error: `A document can have at most ${MAX_NOTES_PER_DOC} notes.` });
+        return;
+      }
+      const note: DocNoteRecord = {
+        id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        text,
+        createdAt: new Date().toISOString(),
+      };
+      const next = [...notes, note];
+      writeDocNotes(key, next);
+      res.status(201).json({ note, notes: next });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save note';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.delete(`${base}/notes/:noteId`, (req, res) => {
+    const key = buildDocNotesKey(
+      typeof req.query.sourceId === 'string' ? req.query.sourceId : null,
+      typeof req.query.path === 'string' ? req.query.path : '',
+    );
+    if (!key) {
+      res.status(400).json({ error: 'path query parameter is required.' });
+      return;
+    }
+
+    try {
+      const notes = readDocNotes(key);
+      const next = notes.filter((note) => note.id !== req.params.noteId);
+      if (next.length === notes.length) {
+        res.status(404).json({ error: 'Note not found.' });
+        return;
+      }
+      writeDocNotes(key, next);
+      res.json({ notes: next });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete note';
       res.status(500).json({ error: message });
     }
   });

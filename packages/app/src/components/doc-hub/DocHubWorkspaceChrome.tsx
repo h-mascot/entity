@@ -16,7 +16,7 @@ interface DocHubWorkspaceChromeProps {
   onSelectTab: (tab: OpenFileTab) => void;
   onCloseTab: (tabKey: string) => void;
   onAddTab: () => void;
-  onAskDoc?: () => void;
+  onGoHome?: () => void;
   showTts: boolean;
   docsPath: string;
   fileContent: string;
@@ -42,7 +42,7 @@ export default function DocHubWorkspaceChrome({
   onSelectTab,
   onCloseTab,
   onAddTab,
-  onAskDoc,
+  onGoHome,
   showTts,
   docsPath,
   fileContent,
@@ -55,12 +55,16 @@ export default function DocHubWorkspaceChrome({
     <div className="shrink-0 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4" data-testid="doc-hub-workspace-chrome">
       <div className="flex min-h-[2.75rem] flex-wrap items-center gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="hidden text-sm text-[var(--text-muted)] sm:inline" aria-hidden="true">
-            📄
-          </span>
-          <span className="hidden shrink-0 text-xs font-medium text-[var(--text-muted)] sm:inline">
-            Doc Hub /
-          </span>
+          <button
+            type="button"
+            onClick={onGoHome}
+            className="hidden shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-xs font-medium text-[var(--text-muted)] transition hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] sm:inline-flex"
+            title="Back to Doc Hub home"
+            aria-label="Back to Doc Hub home"
+          >
+            <span aria-hidden="true">📄</span>
+            <span>Doc Hub /</span>
+          </button>
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
             {openFileTabs.length === 0 ? (
               <span className="truncate px-2 py-1 text-xs text-[var(--text-muted)]">No files open</span>
@@ -116,16 +120,25 @@ export default function DocHubWorkspaceChrome({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {onAskDoc ? (
-            <button
-              type="button"
-              onClick={onAskDoc}
-              className="mc-shell-btn hidden px-2.5 py-1 text-xs sm:inline-flex"
-              title="Ask about this document"
-            >
-              💬 Ask this doc
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              if (!fileContent) {
+                pushToast('Nothing to copy.', 'warning');
+                return;
+              }
+              navigator.clipboard
+                .writeText(fileContent)
+                .then(() => pushToast('Document copied to clipboard.', 'success'))
+                .catch(() => pushToast('Failed to copy document.', 'error'));
+            }}
+            disabled={!fileContent}
+            className={`mc-shell-btn px-2 py-1 text-xs ${fileContent ? '' : 'cursor-not-allowed opacity-40'}`}
+            title="Copy whole document"
+            aria-label="Copy whole document"
+          >
+            ⧉
+          </button>
           {showTts ? (
             <Suspense fallback={null}>
               <MarkdownAudioControls

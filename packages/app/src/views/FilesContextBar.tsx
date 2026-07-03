@@ -185,18 +185,7 @@ export default function FilesContextBar(props: any) {
       >
         Split
       </button>
-      <button
-        type="button"
-        onClick={() => setFileHistoryPanelOpen((prev: boolean) => !prev)}
-        disabled={!currentFile || Boolean(currentSourceId)}
-        className={`mc-shell-btn px-3 py-1 text-xs ${
-          fileHistoryPanelOpen ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-        } ${currentFile && !currentSourceId ? '' : 'cursor-not-allowed opacity-40'}`}
-        aria-label="File history"
-        title={currentSourceId ? 'History is only available for local files' : 'File history'}
-      >
-        History
-      </button>
+      {/* History intentionally omitted: version history lives in the right sidebar as "Versions". */}
       <button
         type="button"
         onClick={() => {
