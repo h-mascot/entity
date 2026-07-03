@@ -3223,7 +3223,7 @@ export default function App() {
         return;
       }
 
-      if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'k')) {
         e.preventDefault();
         setQuickSwitcherTargetPane('left');
         setQuickSwitcherOpen(true);
