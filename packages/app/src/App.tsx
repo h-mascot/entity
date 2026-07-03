@@ -1116,6 +1116,34 @@ function toDocumentsClientAuth(auth: DocumentsAuth | null): DocumentsClientAuth 
   return { kind: 'bearer', token: auth.token };
 }
 
+function isSameDocumentsAuth(left: DocumentsAuth | null, right: DocumentsAuth | null): boolean {
+  if (!left || !right || left.kind !== right.kind || left.token !== right.token) {
+    return false;
+  }
+
+  if (left.kind === 'service' || right.kind === 'service') {
+    return left.kind === 'service' && right.kind === 'service' && left.actorId === right.actorId;
+  }
+
+  return true;
+}
+
+function isDocumentsAuthError(error: unknown): boolean {
+  const status =
+    error && typeof error === 'object' && 'status' in error ? (error as { status?: unknown }).status : undefined;
+  if (status === 401) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes('authorization') ||
+    normalizedMessage.includes('invalid or disabled') ||
+    normalizedMessage.includes('token')
+  );
+}
+
 function readArchivePreference(): boolean {
   if (typeof window === 'undefined') {
     return true;
@@ -1579,6 +1607,7 @@ export default function App() {
   const [followDetached, setFollowDetached] = useState(false);
   const [docPresenceByDocId, setDocPresenceByDocId] = useState<Record<string, Record<string, any>>>({});
   const [documentsAuth, setDocumentsAuth] = useState<DocumentsAuth | null>(() => initialDocumentsAuth);
+  const [documentsAuthHydrated, setDocumentsAuthHydrated] = useState(false);
   const [documentsAuthTokenDraft, setDocumentsAuthTokenDraft] = useState<string>(() => initialDocumentsAuth?.token ?? '');
   const [documentsAuthKindDraft, setDocumentsAuthKindDraft] = useState<'bearer' | 'service'>(() =>
     initialDocumentsAuth?.kind === 'service' ? 'service' : 'bearer'
@@ -2185,40 +2214,41 @@ export default function App() {
     let cancelled = false;
     readRuntimeDocumentsAuth()
       .then((auth) => {
-        if (cancelled) {
-          return;
-        }
-
-        const currentAuth = documentsAuthRef.current;
-        if (!auth) {
-          if (currentAuth?.origin === 'dev-runtime') {
-            setDocumentsAuth(null);
-            setDocumentsAuthTokenDraft('');
-            setDocumentsAuthKindDraft('bearer');
-            setDocumentsAuthActorDraft('ada');
+        try {
+          if (cancelled) {
+            return;
           }
-          return;
-        }
 
-        if (currentAuth && currentAuth.origin !== 'dev-runtime') {
-          return;
-        }
+          const currentAuth = documentsAuthRef.current;
+          if (!auth) {
+            if (currentAuth?.origin === 'dev-runtime') {
+              setDocumentsAuth(null);
+              setDocumentsAuthTokenDraft('');
+              setDocumentsAuthKindDraft('bearer');
+              setDocumentsAuthActorDraft('ada');
+            }
+            return;
+          }
 
-        if (
-          currentAuth?.origin === 'dev-runtime' &&
-          currentAuth.kind === auth.kind &&
-          currentAuth.token === auth.token
-        ) {
-          return;
-        }
+          if (currentAuth?.origin === 'user') {
+            return;
+          }
 
-        setDocumentsAuth(auth);
-        setDocumentsAuthTokenDraft(auth.token);
-        setDocumentsAuthKindDraft('bearer');
-        setDocumentsAuthActorDraft('ada');
+          if (currentAuth?.origin === 'dev-runtime' && isSameDocumentsAuth(currentAuth, auth)) {
+            return;
+          }
+
+          setDocumentsAuth(auth);
+          setDocumentsAuthTokenDraft(auth.token);
+          setDocumentsAuthKindDraft('bearer');
+          setDocumentsAuthActorDraft('ada');
+        } finally {
+          setDocumentsAuthHydrated(true);
+        }
       })
       .catch(() => {
         // Runtime dev auth is optional; Admin-provided tokens still work.
+        setDocumentsAuthHydrated(true);
       });
 
     return () => {
@@ -3829,7 +3859,7 @@ export default function App() {
   }, [currentDocId, documentsReady, pendingOverlayRefresh, refreshComments, refreshReviewLatest, refreshSuggestions]);
 
   useEffect(() => {
-    if (!documentsReady || !currentDocId) {
+    if (!documentsReady || !documentsAuthHydrated || !currentDocId) {
       setCommentThreads([]);
       setSuggestions([]);
       setReviewRun(null);
@@ -3841,6 +3871,7 @@ export default function App() {
     }
 
     let cancelled = false;
+    const requestAuth = documentsAuthRef.current;
     (async () => {
       try {
         const [state, comments, suggestionsResponse] = await Promise.all([
@@ -3868,6 +3899,16 @@ export default function App() {
         setReviewFindings(review.findings);
       } catch (error) {
         if (cancelled) return;
+        if (isDocumentsAuthError(error)) {
+          const currentAuth = documentsAuthRef.current;
+          if (requestAuth?.origin !== 'user' && isSameDocumentsAuth(currentAuth, requestAuth)) {
+            setDocumentsAuth(null);
+            setDocumentsAuthTokenDraft('');
+            setDocumentsAuthKindDraft('bearer');
+            setDocumentsAuthActorDraft('ada');
+          }
+          return;
+        }
         pushToast(error instanceof Error ? error.message : 'Failed to load collaboration overlays.', 'error');
       }
     })();
@@ -3875,7 +3916,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyPresenceSeed, currentDocId, documentsClient, documentsReady, pushToast]);
+  }, [applyPresenceSeed, currentDocId, documentsAuthHydrated, documentsClient, documentsReady, pushToast]);
 
   useEffect(() => {
     if (!documentsReady || !currentDocId || !reviewRun || reviewRun.status !== 'running') {
