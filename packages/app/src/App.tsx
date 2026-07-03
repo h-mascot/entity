@@ -20,7 +20,6 @@ import type {
 import type { NewCommentPopoverAnchor } from './components/NewCommentPopover';
 import { ToastViewport } from './components/Toast';
 import type { DocsTtsSettings } from './components/MarkdownAudioControls';
-import DocumentViewerChrome from './components/DocumentViewerChrome';
 import TaskBoard from './components/TaskBoard';
 import type { MobileTab } from './components/MobileBottomNav';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
@@ -44,6 +43,13 @@ import {
 import { readUserProfile, useUserProfile } from './lib/userProfile';
 import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
+import {
+  buildOpenFileTab,
+  buildOpenFileTabKey,
+  removeOpenFileTab,
+  upsertOpenFileTab,
+  type OpenFileTab,
+} from './lib/openFileTabs';
 import type { DocumentsApiClient, DocumentsClientAuth } from './lib/documents-client';
 import { usePluginStore } from './stores/pluginStore';
 import {
@@ -88,7 +94,6 @@ const AdminView = lazy(() => import('./views/AdminView'));
 const DocsRouteView = lazy(() => import('./views/DocsRouteView'));
 const MobileView = lazy(() => import('./views/MobileView'));
 const FilesView = lazy(() => import('./views/FilesView'));
-const FilesContextBar = lazy(() => import('./views/FilesContextBar'));
 
 const LOGIN_REQUIRED_KEY = 'entity.auth.login-required.v1';
 const AUTH_SESSION_KEY = 'entity.auth.session.v1';
@@ -454,7 +459,8 @@ type AdminSection =
   | 'plugins'
   | 'voice'
   | 'enterprise'
-  | 'taskMaster';
+  | 'taskMaster'
+  | 'docs';
 const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   general: 'General',
   profile: 'User Profile',
@@ -466,6 +472,7 @@ const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   voice: 'Voice',
   enterprise: 'Openclaw',
   taskMaster: 'Task Master',
+  docs: 'Docs',
 };
 type AppTheme = 'dark' | 'light' | 'kitz' | 'nebula' | 'aurora' | 'paper';
 type EditorCollaborationMode = 'editing' | 'suggesting' | 'viewing';
@@ -1448,15 +1455,6 @@ function filenameFromFilePath(filePath: string | null): string {
   return segments[segments.length - 1] ?? 'Document';
 }
 
-function fileBreadcrumbSegments(filePath: string | null, sourceName?: string): string[] {
-  const segments = filePathSegments(filePath);
-  return sourceName ? [sourceName, ...segments] : segments;
-}
-
-function filePathHint(filePath: string, sourceName?: string): string {
-  return sourceName ? `${sourceName} • ${filePath}` : filePath;
-}
-
 function buildDocsApiUrls(docPath: string): string[] {
   const encodedDocPath = encodeDocsRoutePath(docPath);
   return buildApiCandidates(`/docs/${encodedDocPath}`, runtime.apiBase).filter((url) => url.includes('/api/'));
@@ -1541,6 +1539,19 @@ export default function App() {
   const [currentFileUpdatedAt, setCurrentFileUpdatedAt] = useState<string | null>(null);
   const [currentFilePreviewMeta, setCurrentFilePreviewMeta] = useState<FilePreviewMeta>(() => defaultFilePreviewMeta());
   const [currentFileCacheMeta, setCurrentFileCacheMeta] = useState<FileCacheMeta>(() => defaultFileCacheMeta());
+  const [openFileTabs, setOpenFileTabs] = useState<OpenFileTab[]>(() => {
+    if (typeof window === 'undefined') {
+      return [];
+    }
+    const params = new URLSearchParams(window.location.search);
+    const file = params.get('file') || window.localStorage.getItem('entity.last.file');
+    const source = params.get('source') || window.localStorage.getItem('entity.last.source');
+    if (!file) {
+      return [];
+    }
+    return [buildOpenFileTab(source, file)];
+  });
+  const [docIntelligenceFocus, setDocIntelligenceFocus] = useState<'intelligence' | 'comments' | 'ask' | 'notes' | 'versions' | null>(null);
   const [fileContent, setFileContent] = useState('');
   const [authorshipRanges, setAuthorshipRanges] = useState<DocumentAuthorshipRangeRecord[]>([]);
   const [manualAuthorshipAuthor, setManualAuthorshipAuthor] = useState<DocumentAuthorshipActor>('human');
@@ -2993,6 +3004,7 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
+    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(null, path)));
   };
 
   const handleSourceFileSelect = (sourceId: string, path: string) => {
@@ -3007,6 +3019,7 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
+    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(sourceId, path)));
   };
 
   const handleRightPaneFileSelect = useCallback((path: string) => {
@@ -3087,6 +3100,77 @@ export default function App() {
     setReloadPrompt(null);
     setHighlightTaskId(null);
   };
+
+  const activeFileTabKey = useMemo(() => {
+    if (!currentFile) {
+      return null;
+    }
+    return buildOpenFileTabKey(currentSourceId, currentFile);
+  }, [currentFile, currentSourceId]);
+
+  const handleSelectOpenFileTab = useCallback((tab: OpenFileTab) => {
+    if (tab.sourceId) {
+      setSidebarTab('files');
+      setMobileTab('files');
+      setTabletSidebarOpen(false);
+      setCurrentSourceId(tab.sourceId);
+      setCurrentFile(tab.path);
+      setCurrentFilePreviewMeta(defaultFilePreviewMeta());
+      setCurrentFileCacheMeta(defaultFileCacheMeta());
+      setEditMode(watchMode ? true : false);
+      setEditorCollabMode('editing');
+      setReloadPrompt(null);
+      setHighlightTaskId(null);
+      return;
+    }
+
+    setSidebarTab('files');
+    setMobileTab('files');
+    setTabletSidebarOpen(false);
+    setCurrentSourceId(null);
+    setCurrentFile(tab.path);
+    setCurrentFileReadOnly(false);
+    setCurrentFileUpdatedAt(null);
+    setCurrentFilePreviewMeta(defaultFilePreviewMeta());
+    setCurrentFileCacheMeta(defaultFileCacheMeta());
+    setEditMode(watchMode ? true : false);
+    setEditorCollabMode('editing');
+    setReloadPrompt(null);
+    setHighlightTaskId(null);
+  }, [watchMode]);
+
+  const handleCloseOpenFileTab = useCallback((tabKey: string) => {
+    setOpenFileTabs((prev) => {
+      const next = removeOpenFileTab(prev, tabKey);
+      const activeKey = buildOpenFileTabKey(currentSourceId, currentFile ?? '');
+      if (activeKey !== tabKey) {
+        return next;
+      }
+
+      const fallback = next[next.length - 1];
+      if (fallback) {
+        queueMicrotask(() => handleSelectOpenFileTab(fallback));
+      } else {
+        queueMicrotask(() => handleBackToDashboard());
+      }
+      return next;
+    });
+  }, [currentFile, currentSourceId, handleSelectOpenFileTab]);
+
+  const handleAddOpenFileTab = useCallback(() => {
+    setQuickSwitcherTargetPane('left');
+    setQuickSwitcherOpen(true);
+  }, []);
+
+  const handleAskDoc = useCallback(() => {
+    setRightSidebarCollapsed(false);
+    setDocIntelligenceFocus('ask');
+  }, []);
+
+  const handleFocusCommentsRail = useCallback(() => {
+    setRightSidebarCollapsed(false);
+    setDocIntelligenceFocus('comments');
+  }, []);
 
   const handleTaskSelect = (taskId: number) => {
     if (typeof window !== 'undefined') {
@@ -4102,6 +4186,7 @@ export default function App() {
       { key: 'plugins', title: 'Plugins', hint: 'Registry + runtime toggles' },
       { key: 'voice', title: 'Voice / TTS', hint: 'TTS provider + settings' },
       { key: 'taskMaster', title: 'Task Master', hint: 'AI agent settings + logs' },
+      { key: 'docs', title: 'Docs', hint: 'Doc Hub + Intelligence' },
       { key: 'enterprise', title: 'Openclaw', hint: 'Embedded crew admin' },
     ];
 
@@ -4130,6 +4215,7 @@ export default function App() {
     <Suspense fallback={<LazySurfaceFallback label="Loading admin" />}>
       <AdminView
         adminSection={adminSection}
+        onOpenTaskMasterSettings={() => setAdminSection('taskMaster')}
         enterpriseFrameNonce={enterpriseFrameNonce}
         enterpriseFrameSrc={enterpriseFrameSrc}
         enterpriseFrameReady={enterpriseFrameReady}
@@ -4298,13 +4384,11 @@ export default function App() {
     </>
   );
 
-  const shouldShowFilesMarkdownChrome =
-    sidebarTab === 'files' &&
-    Boolean(currentFile) &&
-    !editMode &&
-    shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType);
-
   const renderContextBar = () => {
+    if (sidebarTab === 'files') {
+      return null;
+    }
+
     if (sidebarTab === 'admin') {
       return (
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
@@ -4330,6 +4414,9 @@ export default function App() {
             </button>
             <button type="button" onClick={() => setAdminSection('taskMaster')} className="mc-shell-btn px-2 py-1 text-xs">
               Task Master
+            </button>
+            <button type="button" onClick={() => setAdminSection('docs')} className="mc-shell-btn px-2 py-1 text-xs">
+              Docs
             </button>
             <button type="button" onClick={() => setAdminSection('enterprise')} className="mc-shell-btn px-2 py-1 text-xs">
               Openclaw
@@ -4617,117 +4704,23 @@ export default function App() {
       return null;
     }
 
-    if (shouldShowFilesMarkdownChrome && currentFile) {
-      const sourceName = selectedSource?.displayName;
-      const showSourcePill = runtime.fsMultiSourceEnabled && currentSourceId;
-      const showReadOnlyPill = !canEditCurrentFile;
+    return null;
+  };
 
-      return (
-        <div className="w-full">
-          <DocumentViewerChrome
-            filename={filenameFromFilePath(currentFile)}
-            breadcrumbSegments={fileBreadcrumbSegments(currentFile, sourceName)}
-            pathHint={filePathHint(currentFile, sourceName)}
-            onBack={handleBackToDashboard}
-            backLabel="← Back"
-            actions={
-              <>
-                {showSourcePill && (
-                  <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                    Source
-                  </span>
-                )}
-                {showReadOnlyPill ? (
-                  <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                    Read-only
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setEditMode((prev) => !prev)}
-                    className="mc-shell-btn px-3 py-1 text-xs"
-                  >
-                    Edit
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard
-                      .writeText(window.location.href)
-                      .then(() => {
-                        pushToast('Link copied to clipboard!', 'success');
-                      })
-                      .catch(() => {
-                        pushToast('Failed to copy link', 'error');
-                      });
-                  }}
-                  disabled={!currentFile}
-                  className={`mc-shell-btn px-3 py-1 text-xs ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-                  aria-label="Copy link to this file"
-                  title="Copy link to this file"
-                >
-                  🔗 Share
-                </button>
-              </>
-            }
-          />
-        </div>
-      );
+  const renderShellContextRow = () => {
+    if (sidebarTab === 'files') {
+      return null;
     }
 
     return (
-      <Suspense fallback={null}>
-        <FilesContextBar
-          runtime={runtime}
-          currentFile={currentFile}
-          handleBackToDashboard={handleBackToDashboard}
-          selectedSource={selectedSource}
-          currentSourceId={currentSourceId}
-          currentFileReadOnly={currentFileReadOnly}
-          currentFileCacheMeta={currentFileCacheMeta}
-          currentFileCachedAgeLabel={currentFileCachedAgeLabel}
-          editorCollabMode={editorCollabMode}
-          setEditorCollabMode={setEditorCollabMode}
-          documentsReady={documentsReady}
-          authorshipStats={authorshipStats}
-          currentDocId={currentDocId}
-          remotePresence={remotePresence}
-          followEnabled={followEnabled}
-          followedActorId={followedActorId}
-          resolveAgentIdForActor={resolveAgentIdForActor}
-          pushToast={pushToast}
-          setEditMode={setEditMode}
-          setWatchMode={setWatchMode}
-          setFollowingAgent={setFollowingAgent}
-          setFollowDetached={setFollowDetached}
-          toggleWatchMode={toggleWatchMode}
-          watchMode={watchMode}
-          editMode={editMode}
-          splitMode={splitMode}
-          exitSplitMode={exitSplitMode}
-          setSplitMode={setSplitMode}
-          setSplitRatio={setSplitRatio}
-          setRightPaneSourceId={setRightPaneSourceId}
-          setRightPaneFile={setRightPaneFile}
-          setRightPaneReadOnly={setRightPaneReadOnly}
-          setRightPaneUpdatedAt={setRightPaneUpdatedAt}
-          setRightPaneContent={setRightPaneContent}
-          rightLastContentRef={rightLastContentRef}
-          rightSaveTimeoutRef={rightSaveTimeoutRef}
-          setFileHistoryPanelOpen={setFileHistoryPanelOpen}
-          fileHistoryPanelOpen={fileHistoryPanelOpen}
-          canEditCurrentFile={canEditCurrentFile}
-          handleSave={handleSave}
-          savedAgoLabel={savedAgoLabel}
-        />
-      </Suspense>
+      <div className="entity-context-row flex items-center border-b border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2 lg:px-4">
+        {renderContextBar()}
+      </div>
     );
   };
 
   const renderShellTopRows = () => (
-    <>
-      <div className="entity-top-row flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4">
+    <div className="entity-top-row flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4">
         <div className="flex min-w-[320px] flex-1 items-center gap-2">
           {sidebarTab !== 'chat' && (
             <button
@@ -4814,16 +4807,6 @@ export default function App() {
           </span>
         </div>
       </div>
-      <div
-        className={`entity-context-row flex items-center ${
-          shouldShowFilesMarkdownChrome
-            ? 'bg-transparent p-0'
-            : 'border-b border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2 lg:px-4'
-        }`}
-      >
-        {renderContextBar()}
-      </div>
-    </>
   );
 
   const openExpandedSidebarTab = (tab: WorkspaceTab) => {
@@ -4898,6 +4881,7 @@ export default function App() {
         { key: 'plugins', icon: '🧠', label: 'Plugins' },
         { key: 'voice', icon: '🎙️', label: 'Voice / TTS' },
         { key: 'taskMaster', icon: '🤖', label: 'Task Master' },
+        { key: 'docs', icon: '📄', label: 'Docs' },
         { key: 'enterprise', icon: '🧭', label: 'Openclaw' },
       ];
       return (
@@ -5030,6 +5014,56 @@ export default function App() {
             runtime={runtime}
             currentFile={currentFile}
             handleSourceFileSelect={handleSourceFileSelect}
+            openFileTabs={openFileTabs}
+            activeFileTabKey={activeFileTabKey}
+            onSelectOpenFileTab={handleSelectOpenFileTab}
+            onCloseOpenFileTab={handleCloseOpenFileTab}
+            onAddOpenFileTab={handleAddOpenFileTab}
+            onAskDoc={handleAskDoc}
+            showDocHubTts={shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) && !currentFilePreviewMeta.isBinary}
+            filesContextBarProps={{
+              runtime,
+              currentFile,
+              handleBackToDashboard,
+              selectedSource,
+              currentSourceId,
+              currentFileReadOnly,
+              currentFileCacheMeta,
+              currentFileCachedAgeLabel,
+              editorCollabMode,
+              setEditorCollabMode,
+              documentsReady,
+              authorshipStats,
+              currentDocId,
+              remotePresence,
+              followEnabled,
+              followedActorId,
+              resolveAgentIdForActor,
+              pushToast,
+              setEditMode,
+              setWatchMode,
+              setFollowingAgent,
+              setFollowDetached,
+              toggleWatchMode,
+              watchMode,
+              editMode,
+              splitMode,
+              exitSplitMode,
+              setSplitMode,
+              setSplitRatio,
+              setRightPaneSourceId,
+              setRightPaneFile,
+              setRightPaneReadOnly,
+              setRightPaneUpdatedAt,
+              setRightPaneContent,
+              rightLastContentRef,
+              rightSaveTimeoutRef,
+              setFileHistoryPanelOpen,
+              fileHistoryPanelOpen,
+              canEditCurrentFile,
+              handleSave,
+              savedAgoLabel,
+            }}
             currentSourceId={currentSourceId}
             fileContent={fileContent}
             setFileContent={setFileContent}
@@ -5117,6 +5151,12 @@ export default function App() {
             followGlowClassName={followGlowClassName}
             followTypingPulseActive={followTypingPulseActive}
             fileTransitionActive={fileTransitionActive}
+            docIntelligenceFocus={docIntelligenceFocus}
+            onDocIntelligenceFocusApplied={() => setDocIntelligenceFocus(null)}
+            onFocusCommentsRail={handleFocusCommentsRail}
+            tasks={tasks}
+            onOpenTask={handleTaskSelect}
+            onOpenRelatedDoc={handleSourceFileSelect}
           />
         </Suspense>
       )}
@@ -5377,8 +5417,14 @@ export default function App() {
               {renderSidebar(false, true, paperTaskRail)}
             </aside>
           )}
-          <div className="hidden min-w-0 flex-1 flex-col lg:flex">{renderDesktopWorkspace('desktop')}</div>
-          <div className="flex min-w-0 flex-1 flex-col lg:hidden">{renderDesktopWorkspace('tablet')}</div>
+          <div className="hidden min-w-0 flex-1 flex-col lg:flex">
+            {renderShellContextRow()}
+            {renderDesktopWorkspace('desktop')}
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col lg:hidden">
+            {renderShellContextRow()}
+            {renderDesktopWorkspace('tablet')}
+          </div>
         </div>
       </div>
 

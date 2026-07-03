@@ -135,6 +135,7 @@ import {
 } from "./routes/task-helpers";
 import { registerAgentControlRoutes, registerAgentRegistryRoutes } from "./routes/agents";
 import { registerActivityRoutes, registerDbModeRoutes, registerRuntimeRoutes } from "./routes/runtime";
+import { registerDocIntelligenceRoutes } from "./routes/doc-intelligence";
 import { registerOperationalStatusRoutes } from "./routes/operational-status";
 import { registerSetupClawLeadRoutes } from "./routes/setupclaw";
 import { createActivityLogger } from "./routes/activity-log";
@@ -477,6 +478,8 @@ registerRuntimeRoutes(app, "/api", {
 });
 registerAgentControlRoutes(app, "", { AGENT_CONFIG, parsePositiveId, taskAgent, taskSyncLayer });
 registerAgentControlRoutes(app, "/api", { AGENT_CONFIG, parsePositiveId, taskAgent, taskSyncLayer });
+registerDocIntelligenceRoutes(app, "");
+registerDocIntelligenceRoutes(app, "/api");
 app.use(createActivityEventRouter(activityEventService));
 app.use("/api", createActivityEventRouter(activityEventService));
 app.use(createTaskMasterClaimRouter(taskMasterClaimService));

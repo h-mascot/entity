@@ -6,6 +6,7 @@ const EffectiveConfigSettings = lazy(() => import('../components/settings/Effect
 const VoiceSettings = lazy(() => import('../components/settings/VoiceSettings'));
 const AgentRegistrySettings = lazy(() => import('../components/settings/AgentRegistrySettings'));
 const TaskMasterSettings = lazy(() => import('../components/TaskMasterSettings'));
+const DocsSettings = lazy(() => import('../components/settings/DocsSettings'));
 const PluginAdminPanel = lazy(() => import('../components/plugins/PluginAdminPanel'));
 const OfflineAwareChat = lazy(() => import('../components/OfflineAwareChat'));
 
@@ -19,7 +20,8 @@ type AdminSection =
   | 'agents'
   | 'voice'
   | 'taskMaster'
-  | 'enterprise';
+  | 'enterprise'
+  | 'docs';
 type AppTheme = 'dark' | 'light' | 'kitz' | 'nebula' | 'aurora' | 'paper';
 type DocumentsAuthOrigin = 'dev-runtime' | 'user';
 type DocumentsAuth =
@@ -82,6 +84,7 @@ interface AdminViewProps {
   docsTtsSettings: DocsTtsSettings;
   setDocsTtsSettings: Dispatch<SetStateAction<DocsTtsSettings>>;
   onAgentRegistryChanged: () => void;
+  onOpenTaskMasterSettings?: () => void;
 }
 
 function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
@@ -200,6 +203,7 @@ export default function AdminView({
   docsTtsSettings,
   setDocsTtsSettings,
   onAgentRegistryChanged,
+  onOpenTaskMasterSettings,
 }: AdminViewProps) {
   if (adminSection === 'enterprise') {
     return (
@@ -729,6 +733,12 @@ export default function AdminView({
 
         {adminSection === 'taskMaster' && (
           <LazyTaskMasterSettings apiBase={apiBase} />
+        )}
+
+        {adminSection === 'docs' && (
+          <Suspense fallback={<LazySurfaceFallback label="Loading Docs settings" />}>
+            <DocsSettings apiBase={apiBase} onOpenTaskMasterSettings={onOpenTaskMasterSettings} />
+          </Suspense>
         )}
 
       </div>

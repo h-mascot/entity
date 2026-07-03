@@ -849,7 +849,7 @@ export default function SourceFileTree({
               setExpandedSources(new Set(enabledSources.map((s) => s.id)));
             }
           }}
-          placeholder="Search files..."
+          placeholder="Search files and folders"
           className="w-full rounded border border-[var(--border-secondary)] bg-transparent px-2 py-1 text-xs text-[var(--text-secondary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
           aria-label="Search all sources"
         />

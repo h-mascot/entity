@@ -70,7 +70,170 @@ export default function FilesContextBar(props: any) {
     canEditCurrentFile,
     handleSave,
     savedAgoLabel,
+    actionsOnly = false,
   } = props;
+
+  const actionControls = (
+    <div className="flex flex-wrap items-center gap-2">
+      <select
+        value={editorCollabMode}
+        onChange={(event) => setEditorCollabMode(event.target.value)}
+        className={`rounded border border-[var(--border-secondary)] bg-[var(--bg-tertiary)] px-2 py-1 text-xs text-[var(--text-secondary)] focus:border-[var(--accent)] focus:outline-none ${
+          currentFile ? '' : 'cursor-not-allowed opacity-40'
+        }`}
+        aria-label="Editor mode"
+        disabled={!currentFile}
+        title="Editor mode"
+      >
+        <option value="editing">Editing</option>
+        <option value="suggesting" disabled={!documentsReady}>
+          Suggesting
+        </option>
+        <option value="viewing">Viewing</option>
+      </select>
+      {runtime.agentNativeEditorEnabled && currentFile && authorshipStats.totalRanges > 0 && (
+        <div
+          className="flex items-center gap-1 text-xs text-[var(--text-muted)]"
+          aria-label="Authorship breakdown"
+          title={`Reviewed ${authorshipStats.reviewedPercent}%`}
+        >
+          {authorshipStats.human > 0 && <span>👤 {formatAuthorshipBadgePercent(authorshipStats.human)}%</span>}
+          {authorshipStats.ada > 0 && (
+            <span className="text-purple-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>
+          )}
+          {authorshipStats.spock > 0 && (
+            <span className="text-blue-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>
+          )}
+          {authorshipStats.scotty > 0 && (
+            <span className="text-green-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>
+          )}
+        </div>
+      )}
+      {runtime.agentNativeEditorEnabled && currentDocId && remotePresence.length > 0 && (
+        <LazyPresenceChips
+          presence={remotePresence}
+          selectedActorId={followEnabled ? followedActorId : null}
+          onSelectActor={(actorId: string) => {
+            const agentId = resolveAgentIdForActor(actorId);
+            if (!agentId) {
+              pushToast('Follow mode is only available for agent cursors.', 'warning');
+              return;
+            }
+
+            setEditMode(true);
+            setWatchMode(true);
+
+            setFollowingAgent((current: any) => {
+              const normalized = current?.trim?.().toLowerCase?.() ?? '';
+              const nextNormalized = agentId.trim().toLowerCase();
+              if (followEnabled && normalized === nextNormalized) {
+                setFollowDetached(true);
+                return current;
+              }
+              setFollowDetached(false);
+              return agentId;
+            });
+          }}
+        />
+      )}
+      <button
+        type="button"
+        onClick={toggleWatchMode}
+        disabled={!currentFile}
+        className={`mc-shell-btn px-3 py-1 text-xs font-medium ${
+          watchMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
+        } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
+      >
+        {watchMode ? 'Watch Mode' : 'Interact Mode'}
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditMode((prev: boolean) => !prev)}
+        disabled={!currentFile}
+        className={`mc-shell-btn px-3 py-1 text-xs ${
+          editMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
+        } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
+      >
+        {editMode ? 'Preview' : 'Edit'}
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (splitMode) {
+            exitSplitMode();
+            return;
+          }
+          setSplitMode('horizontal');
+          setSplitRatio(0.5);
+          setRightPaneSourceId(null);
+          setRightPaneFile(null);
+          setRightPaneReadOnly(false);
+          setRightPaneUpdatedAt(null);
+          setRightPaneContent('');
+          rightLastContentRef.current = '';
+          if (rightSaveTimeoutRef.current) {
+            clearTimeout(rightSaveTimeoutRef.current);
+            rightSaveTimeoutRef.current = undefined;
+          }
+        }}
+        disabled={!currentFile}
+        className={`mc-shell-btn px-3 py-1 text-xs ${
+          splitMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
+        } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
+        aria-label={splitMode ? 'Exit split view' : 'Split editor'}
+        title={splitMode ? 'Exit split view' : 'Split editor'}
+      >
+        Split
+      </button>
+      <button
+        type="button"
+        onClick={() => setFileHistoryPanelOpen((prev: boolean) => !prev)}
+        disabled={!currentFile || Boolean(currentSourceId)}
+        className={`mc-shell-btn px-3 py-1 text-xs ${
+          fileHistoryPanelOpen ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
+        } ${currentFile && !currentSourceId ? '' : 'cursor-not-allowed opacity-40'}`}
+        aria-label="File history"
+        title={currentSourceId ? 'History is only available for local files' : 'File history'}
+      >
+        History
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard
+            .writeText(window.location.href)
+            .then(() => {
+              pushToast('Link copied to clipboard!', 'success');
+            })
+            .catch(() => {
+              pushToast('Failed to copy link', 'error');
+            });
+        }}
+        disabled={!currentFile}
+        className={`mc-shell-btn px-3 py-1 text-xs ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
+        aria-label="Copy link to this file"
+        title="Copy link to this file"
+      >
+        🔗 Share
+      </button>
+      {editMode && editorCollabMode !== 'viewing' && !watchMode && currentFile && canEditCurrentFile && (
+        <button
+          type="button"
+          onClick={handleSave}
+          className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--text-primary)]"
+        >
+          Save
+        </button>
+      )}
+      {savedAgoLabel && (
+        <span className="text-xs text-[var(--accent)]">Saved {savedAgoLabel} ago</span>
+      )}
+    </div>
+  );
+
+  if (actionsOnly) {
+    return actionControls;
+  }
 
   return (
     <div className="flex w-full flex-wrap items-center justify-between gap-2">
@@ -107,162 +270,7 @@ export default function FilesContextBar(props: any) {
           )}
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          value={editorCollabMode}
-          onChange={(event) => setEditorCollabMode(event.target.value)}
-          className={`rounded border border-[var(--border-secondary)] bg-[var(--bg-tertiary)] px-2 py-1 text-xs text-[var(--text-secondary)] focus:border-[var(--accent)] focus:outline-none ${
-            currentFile ? '' : 'cursor-not-allowed opacity-40'
-          }`}
-          aria-label="Editor mode"
-          disabled={!currentFile}
-          title="Editor mode"
-        >
-          <option value="editing">Editing</option>
-          <option value="suggesting" disabled={!documentsReady}>
-            Suggesting
-          </option>
-          <option value="viewing">Viewing</option>
-        </select>
-        {runtime.agentNativeEditorEnabled && currentFile && authorshipStats.totalRanges > 0 && (
-          <div
-            className="flex items-center gap-1 text-xs text-[var(--text-muted)]"
-            aria-label="Authorship breakdown"
-            title={`Reviewed ${authorshipStats.reviewedPercent}%`}
-          >
-            {authorshipStats.human > 0 && <span>👤 {formatAuthorshipBadgePercent(authorshipStats.human)}%</span>}
-            {authorshipStats.ada > 0 && (
-              <span className="text-purple-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.ada)}%</span>
-            )}
-            {authorshipStats.spock > 0 && (
-              <span className="text-blue-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.spock)}%</span>
-            )}
-            {authorshipStats.scotty > 0 && (
-              <span className="text-green-400">Assistant {formatAuthorshipBadgePercent(authorshipStats.scotty)}%</span>
-            )}
-          </div>
-        )}
-        {runtime.agentNativeEditorEnabled && currentDocId && remotePresence.length > 0 && (
-          <LazyPresenceChips
-            presence={remotePresence}
-            selectedActorId={followEnabled ? followedActorId : null}
-            onSelectActor={(actorId: string) => {
-              const agentId = resolveAgentIdForActor(actorId);
-              if (!agentId) {
-                pushToast('Follow mode is only available for agent cursors.', 'warning');
-                return;
-              }
-
-              setEditMode(true);
-              setWatchMode(true);
-
-              setFollowingAgent((current: any) => {
-                const normalized = current?.trim?.().toLowerCase?.() ?? '';
-                const nextNormalized = agentId.trim().toLowerCase();
-                if (followEnabled && normalized === nextNormalized) {
-                  setFollowDetached(true);
-                  return current;
-                }
-                setFollowDetached(false);
-                return agentId;
-              });
-            }}
-          />
-        )}
-        <button
-          type="button"
-          onClick={toggleWatchMode}
-          disabled={!currentFile}
-          className={`mc-shell-btn px-3 py-1 text-xs font-medium ${
-            watchMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-          } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-        >
-          {watchMode ? 'Watch Mode' : 'Interact Mode'}
-        </button>
-        <button
-          type="button"
-          onClick={() => setEditMode((prev: boolean) => !prev)}
-          disabled={!currentFile}
-          className={`mc-shell-btn px-3 py-1 text-xs ${
-            editMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-          } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-        >
-          {editMode ? 'Preview' : 'Edit'}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            if (splitMode) {
-              exitSplitMode();
-              return;
-            }
-            setSplitMode('horizontal');
-            setSplitRatio(0.5);
-            setRightPaneSourceId(null);
-            setRightPaneFile(null);
-            setRightPaneReadOnly(false);
-            setRightPaneUpdatedAt(null);
-            setRightPaneContent('');
-            rightLastContentRef.current = '';
-            if (rightSaveTimeoutRef.current) {
-              clearTimeout(rightSaveTimeoutRef.current);
-              rightSaveTimeoutRef.current = undefined;
-            }
-          }}
-          disabled={!currentFile}
-          className={`mc-shell-btn px-3 py-1 text-xs ${
-            splitMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-          } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-          aria-label={splitMode ? 'Exit split view' : 'Split editor'}
-          title={splitMode ? 'Exit split view' : 'Split editor'}
-        >
-          Split
-        </button>
-        <button
-          type="button"
-          onClick={() => setFileHistoryPanelOpen((prev: boolean) => !prev)}
-          disabled={!currentFile || Boolean(currentSourceId)}
-          className={`mc-shell-btn px-3 py-1 text-xs ${
-            fileHistoryPanelOpen ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-          } ${currentFile && !currentSourceId ? '' : 'cursor-not-allowed opacity-40'}`}
-          aria-label="File history"
-          title={currentSourceId ? 'History is only available for local files' : 'File history'}
-        >
-          History
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            navigator.clipboard
-              .writeText(window.location.href)
-              .then(() => {
-                pushToast('Link copied to clipboard!', 'success');
-              })
-              .catch(() => {
-                pushToast('Failed to copy link', 'error');
-              });
-          }}
-          disabled={!currentFile}
-          className={`mc-shell-btn px-3 py-1 text-xs ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-          aria-label="Copy link to this file"
-          title="Copy link to this file"
-        >
-          🔗 Share
-        </button>
-        {editMode && editorCollabMode !== 'viewing' && !watchMode && currentFile && canEditCurrentFile && (
-          <button
-            type="button"
-            onClick={handleSave}
-            className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-3 py-1 text-xs font-medium text-[var(--text-primary)]"
-          >
-            Save
-          </button>
-        )}
-        {/* Read-only is already shown as a pill next to the filename. */}
-        {savedAgoLabel && (
-          <span className="text-xs text-[var(--accent)]">Saved {savedAgoLabel} ago</span>
-        )}
-      </div>
+      {actionControls}
     </div>
   );
 }
