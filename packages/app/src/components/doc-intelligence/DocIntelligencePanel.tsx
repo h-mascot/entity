@@ -103,6 +103,14 @@ interface DocIntelligencePanelProps {
   tasks?: readonly PanelTask[];
   onOpenTask?: (taskId: number) => void;
   onOpenRelatedDoc?: (sourceId: string, path: string) => void;
+  /** When true (split view), the panel header shows which file it describes. */
+  splitMode?: boolean;
+}
+
+interface DocNoteRecord {
+  id: string;
+  text: string;
+  createdAt: string;
 }
 
 interface LocalOutline {
@@ -265,6 +273,7 @@ export default function DocIntelligencePanel({
   tasks = [],
   onOpenTask,
   onOpenRelatedDoc,
+  splitMode = false,
 }: DocIntelligencePanelProps) {
   const [activeRail, setActiveRail] = useState<RailPanel>('intelligence');
   const [activeTab, setActiveTab] = useState<IntelligenceTab>('summary');
@@ -276,6 +285,10 @@ export default function DocIntelligencePanel({
   const [relatedDocs, setRelatedDocs] = useState<RelatedDocResult[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [relatedError, setRelatedError] = useState<string | null>(null);
+  const [notes, setNotes] = useState<DocNoteRecord[]>([]);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [notesBusy, setNotesBusy] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!focusedRail) {
@@ -321,7 +334,99 @@ export default function DocIntelligencePanel({
     setAskQuestion('');
     setRelatedDocs([]);
     setRelatedError(null);
+    setNotes([]);
+    setNoteDraft('');
+    setNotesError(null);
   }, [currentFile, currentSourceId]);
+
+  const notesQuery = useCallback(() => {
+    const params = new URLSearchParams({ path: currentFile ?? '' });
+    if (currentSourceId) {
+      params.set('sourceId', currentSourceId);
+    }
+    return params.toString();
+  }, [currentFile, currentSourceId]);
+
+  // Load notes when the Notes rail is opened for the current doc.
+  useEffect(() => {
+    if (activeRail !== 'notes' || !currentFile) {
+      return;
+    }
+
+    let cancelled = false;
+    requestJsonWithFallback<{ notes?: DocNoteRecord[] }>({
+      urls: buildApiCandidates(`/doc-intelligence/notes?${notesQuery()}`, apiBase),
+      fallbackError: 'Failed to load notes.',
+    })
+      .then((data) => {
+        if (!cancelled) {
+          setNotes(Array.isArray(data?.notes) ? data.notes : []);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setNotesError(error instanceof Error ? error.message : 'Failed to load notes.');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRail, apiBase, currentFile, notesQuery]);
+
+  const handleAddNote = useCallback(() => {
+    const text = noteDraft.trim();
+    if (!text || notesBusy || !currentFile) {
+      return;
+    }
+
+    setNotesBusy(true);
+    setNotesError(null);
+    requestJsonWithFallback<{ notes?: DocNoteRecord[] }>({
+      urls: buildApiCandidates('/doc-intelligence/notes', apiBase),
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: currentFile, sourceId: currentSourceId ?? undefined, text }),
+      },
+      fallbackError: 'Failed to save note.',
+    })
+      .then((data) => {
+        setNotes(Array.isArray(data?.notes) ? data.notes : []);
+        setNoteDraft('');
+      })
+      .catch((error) => {
+        setNotesError(error instanceof Error ? error.message : 'Failed to save note.');
+      })
+      .finally(() => {
+        setNotesBusy(false);
+      });
+  }, [apiBase, currentFile, currentSourceId, noteDraft, notesBusy]);
+
+  const handleDeleteNote = useCallback(
+    (noteId: string) => {
+      if (notesBusy || !currentFile) {
+        return;
+      }
+
+      setNotesBusy(true);
+      setNotesError(null);
+      requestJsonWithFallback<{ notes?: DocNoteRecord[] }>({
+        urls: buildApiCandidates(`/doc-intelligence/notes/${encodeURIComponent(noteId)}?${notesQuery()}`, apiBase),
+        init: { method: 'DELETE' },
+        fallbackError: 'Failed to delete note.',
+      })
+        .then((data) => {
+          setNotes(Array.isArray(data?.notes) ? data.notes : []);
+        })
+        .catch((error) => {
+          setNotesError(error instanceof Error ? error.message : 'Failed to delete note.');
+        })
+        .finally(() => {
+          setNotesBusy(false);
+        });
+    },
+    [apiBase, currentFile, notesBusy, notesQuery],
+  );
 
   const loadRelatedDocs = useCallback(() => {
     if (!currentFile) {
@@ -829,8 +934,11 @@ export default function DocIntelligencePanel({
         <div className="border-b border-[var(--border-primary)] px-4 py-3">
           <div className="flex items-center justify-between gap-2">
             <div className="text-sm font-semibold text-[var(--text-primary)]">✦ Intelligence</div>
-            <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-              Doc context
+            <span
+              className="mc-shell-pill max-w-[9.5rem] truncate px-2 py-0.5 text-[10px] tracking-wide text-[var(--text-secondary)]"
+              title={splitMode && metadata.filename ? metadata.filename : undefined}
+            >
+              {splitMode && metadata.filename ? metadata.filename : 'DOC CONTEXT'}
             </span>
           </div>
           <div className="mt-3 flex flex-wrap gap-1">
@@ -908,10 +1016,80 @@ export default function DocIntelligencePanel({
     if (activeRail === 'metadata') return renderMetadataPanel();
     if (activeRail === 'notes') {
       return (
-        <div className="flex min-h-0 flex-1 flex-col p-4">
-          <div className="text-sm font-semibold text-[var(--text-primary)]">Notes</div>
-          <EmptyState title="No notes yet." body="Document notes are not persisted in Entity yet." />
-        </div>
+        <>
+          <div className="border-b border-[var(--border-primary)] px-4 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold text-[var(--text-primary)]">✎ Notes</div>
+              {notes.length > 0 ? (
+                <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+                  {notes.length}
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-1 text-[11px] text-[var(--text-muted)]">Private notes attached to this document.</div>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4">
+            <div className="space-y-2">
+              <textarea
+                value={noteDraft}
+                onChange={(event) => setNoteDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    handleAddNote();
+                  }
+                }}
+                placeholder="Write a note about this document…"
+                rows={3}
+                className="mc-shell-input w-full resize-y px-3 py-2 text-xs"
+                aria-label="New note"
+              />
+              <button
+                type="button"
+                onClick={handleAddNote}
+                disabled={notesBusy || !noteDraft.trim()}
+                className={`mc-shell-btn w-full justify-center px-3 py-2 text-xs font-medium ${
+                  notesBusy || !noteDraft.trim()
+                    ? 'cursor-not-allowed opacity-50'
+                    : 'mc-shell-btn-active text-[var(--text-primary)]'
+                }`}
+              >
+                {notesBusy ? 'Saving…' : '+ Add note'}
+              </button>
+              {notesError ? <div className="text-xs text-[var(--error)]">{notesError}</div> : null}
+            </div>
+
+            {notes.length === 0 ? (
+              <EmptyState title="No notes yet." body="Notes are saved per document and persist across sessions." />
+            ) : (
+              <div className="space-y-2">
+                {[...notes].reverse().map((note) => (
+                  <div
+                    key={note.id}
+                    className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 whitespace-pre-wrap text-xs leading-5 text-[var(--text-secondary)]">
+                        {note.text}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteNote(note.id)}
+                        disabled={notesBusy}
+                        className="mc-shell-btn shrink-0 px-1.5 py-0.5 text-[10px]"
+                        aria-label="Delete note"
+                        title="Delete note"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="mt-1 text-[10px] text-[var(--text-muted)]">{formatDate(note.createdAt)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
       );
     }
 

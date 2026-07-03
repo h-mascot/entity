@@ -33,7 +33,7 @@ export default function FilesView(props: any) {
     onSelectOpenFileTab,
     onCloseOpenFileTab,
     onAddOpenFileTab,
-    onAskDoc,
+    onGoHome,
     showDocHubTts,
     filesContextBarProps,
   } = props;
@@ -59,7 +59,7 @@ export default function FilesView(props: any) {
           onSelectTab={onSelectOpenFileTab}
           onCloseTab={onCloseOpenFileTab}
           onAddTab={onAddOpenFileTab}
-          onAskDoc={onAskDoc}
+          onGoHome={onGoHome}
           showTts={Boolean(showDocHubTts && currentFile)}
           docsPath={currentFile ?? ''}
           fileContent={props.fileContent}

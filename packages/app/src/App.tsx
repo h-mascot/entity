@@ -3162,11 +3162,6 @@ export default function App() {
     setQuickSwitcherOpen(true);
   }, []);
 
-  const handleAskDoc = useCallback(() => {
-    setRightSidebarCollapsed(false);
-    setDocIntelligenceFocus('ask');
-  }, []);
-
   const handleFocusCommentsRail = useCallback(() => {
     setRightSidebarCollapsed(false);
     setDocIntelligenceFocus('comments');
@@ -5019,7 +5014,7 @@ export default function App() {
             onSelectOpenFileTab={handleSelectOpenFileTab}
             onCloseOpenFileTab={handleCloseOpenFileTab}
             onAddOpenFileTab={handleAddOpenFileTab}
-            onAskDoc={handleAskDoc}
+            onGoHome={handleBackToDashboard}
             showDocHubTts={shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) && !currentFilePreviewMeta.isBinary}
             filesContextBarProps={{
               runtime,

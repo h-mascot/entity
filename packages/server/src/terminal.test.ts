@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import {
   buildTerminalLaunchSpec,
+  resolveTerminalShell,
   createTerminalBridge,
   getNodePtySpawnHelperPaths,
   registerTerminalRoutes,
@@ -75,11 +76,46 @@ function registerRouteHandlers(bridge: TerminalBridge): Record<string, (req: any
 describe('buildTerminalLaunchSpec', () => {
   it('creates a local script-backed launch for the default local target', () => {
     const spec = buildTerminalLaunchSpec('local', '/tmp/entity', 160, 48);
-    expect(spec.command).toBe('/bin/zsh');
-    expect(spec.args).toEqual(['-f']);
+    const resolved = resolveTerminalShell();
+    expect(spec.command).toBe(resolved.command);
+    expect(spec.args).toEqual(resolved.args);
     expect(spec.cwd).toBe('/tmp/entity');
     expect(spec.env.COLUMNS).toBe('160');
     expect(spec.env.LINES).toBe('48');
+  });
+});
+
+describe('resolveTerminalShell', () => {
+  const executableSet = (paths: string[]) => (path: string) => {
+    if (!paths.includes(path)) {
+      throw new Error('not executable');
+    }
+  };
+
+  it('prefers $SHELL when it is executable', () => {
+    const shell = resolveTerminalShell('/usr/local/bin/fish', executableSet(['/usr/local/bin/fish']));
+    expect(shell).toEqual({ command: '/usr/local/bin/fish', args: [] });
+  });
+
+  it('uses -f only for zsh', () => {
+    expect(resolveTerminalShell('/bin/zsh', executableSet(['/bin/zsh']))).toEqual({
+      command: '/bin/zsh',
+      args: ['-f'],
+    });
+    expect(resolveTerminalShell('/bin/bash', executableSet(['/bin/bash']))).toEqual({
+      command: '/bin/bash',
+      args: [],
+    });
+  });
+
+  it('falls back through known shells when $SHELL is missing (the /bin/zsh-on-Linux bug)', () => {
+    const shell = resolveTerminalShell(undefined, executableSet(['/bin/bash', '/bin/sh']));
+    expect(shell).toEqual({ command: '/bin/bash', args: [] });
+  });
+
+  it('degrades to /bin/sh when nothing is executable', () => {
+    const shell = resolveTerminalShell('/nope', executableSet([]));
+    expect(shell).toEqual({ command: '/bin/sh', args: [] });
   });
 });
 
@@ -108,7 +144,7 @@ describe('createTerminalBridge', () => {
     });
 
     const { session } = bridge.createSession({ target: 'local', cols: 120, rows: 40 });
-    expect(spawnProcess).toHaveBeenCalledWith('/bin/zsh', ['-f'], expect.objectContaining({
+    expect(spawnProcess).toHaveBeenCalledWith(resolveTerminalShell().command, resolveTerminalShell().args, expect.objectContaining({
       cols: 120,
       rows: 40,
       cwd: '/tmp/entity',

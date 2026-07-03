@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { buildDocAskPrompt, validateDocAskInput } from './doc-intelligence';
+import { buildDocAskPrompt, buildDocNotesKey, validateDocAskInput } from './doc-intelligence';
+
+describe('buildDocNotesKey', () => {
+  it('builds keys scoped by source and path', () => {
+    expect(buildDocNotesKey('workspace', 'output/a.md')).toBe('docNotes.workspace::output/a.md');
+    expect(buildDocNotesKey(null, 'output/a.md')).toBe('docNotes.local::output/a.md');
+    expect(buildDocNotesKey('  ', 'output/a.md')).toBe('docNotes.local::output/a.md');
+  });
+
+  it('rejects empty, oversized, or multi-line paths', () => {
+    expect(buildDocNotesKey('s', '')).toBeNull();
+    expect(buildDocNotesKey('s', '   ')).toBeNull();
+    expect(buildDocNotesKey('s', 'a'.repeat(601))).toBeNull();
+    expect(buildDocNotesKey('s', 'a\nb')).toBeNull();
+  });
+});
 
 describe('validateDocAskInput', () => {
   it('rejects non-object bodies', () => {

@@ -83,6 +83,8 @@ interface EditorProps {
   onToggleSuggestingMode?: () => void;
   onExitSuggestingMode?: () => void;
   onSuggestingEdit?: (request: EditorSuggestingEditRequest) => void;
+  hideGutter?: boolean;
+  onViewReady?: (getView: () => EditorView | null) => void;
 }
 
 const agents = ['Assistant', 'Human'] as const;
@@ -401,6 +403,13 @@ function smoothScrollToPos(view: EditorView, pos: number) {
   });
 }
 
+function buildGutterVisibilityTheme(hideGutter: boolean) {
+  if (!hideGutter) {
+    return [];
+  }
+  return EditorView.theme({ '.cm-gutters': { display: 'none' } });
+}
+
 const ACTIVE_PRESENCE_WINDOW_MS = 60_000;
 const DISCONNECT_PRESENCE_WINDOW_MS = 5 * 60_000;
 
@@ -455,6 +464,8 @@ export default function CodeMirrorEditor({
   onToggleSuggestingMode,
   onExitSuggestingMode,
   onSuggestingEdit,
+  hideGutter = false,
+  onViewReady,
 }: EditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | undefined>(undefined);
@@ -470,6 +481,7 @@ export default function CodeMirrorEditor({
   const findingsCompartmentRef = useRef(new Compartment());
   const cursorsCompartmentRef = useRef(new Compartment());
   const escapeKeymapCompartmentRef = useRef(new Compartment());
+  const gutterCompartmentRef = useRef(new Compartment());
   const followScrollTimeoutRef = useRef<number | null>(null);
   const [presenceAgeTick, setPresenceAgeTick] = useState(0);
   const activeReviewFindings = useMemo(
@@ -518,6 +530,7 @@ export default function CodeMirrorEditor({
         escapeKeymapCompartmentRef.current.of(
           buildEscapeKeymap(shortcutsEnabled, collabMode, onExitSuggestingMode, followEnabled, onDetachFollow)
         ),
+        gutterCompartmentRef.current.of(buildGutterVisibilityTheme(hideGutter)),
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...lintKeymap]),
         history(),
         autocompletion({ override: [mentionCompleter] }),
@@ -557,11 +570,22 @@ export default function CodeMirrorEditor({
           '.cm-content': { padding: '16px', fontFamily: 'var(--font-sans)', lineHeight: '1.6' },
           '.cm-line': { position: 'relative', paddingRight: '28px' },
           '.cm-gutters': { backgroundColor: 'var(--bg-secondary)', borderRight: '1px solid var(--border-primary)', color: 'var(--text-muted)' },
-          '.cm-activeLine': { backgroundColor: 'rgb(26 26 26 / 0.7)' },
-          '.cm-activeLineGutter': { backgroundColor: 'var(--bg-tertiary)' },
+          '.cm-activeLine': { backgroundColor: 'transparent' },
+          '.cm-activeLineGutter': { backgroundColor: 'transparent' },
           '.cm-cursor': { borderLeftColor: 'var(--accent)' },
-          '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': {
-              backgroundColor: 'rgb(0 170 255 / 0.2)',
+          // High-opacity neutral blue: distinct from authorship tints (0.22-0.24 alpha)
+          // and from finding underline / amber comment-marker hues.
+          '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
+              backgroundColor: 'rgba(120, 170, 255, 0.45)',
+            },
+            '.cm-content ::selection': {
+              backgroundColor: 'rgba(120, 170, 255, 0.45)',
+            },
+            '.cm-comment-marker': {
+              color: 'rgb(251 191 36)',
+            },
+            '.cm-comment-marker-resolved': {
+              color: 'rgb(148 163 184)',
             },
             '.cm-authorship-range.cm-authorship-human': {
               backgroundColor: 'transparent',
@@ -588,6 +612,7 @@ export default function CodeMirrorEditor({
     });
 
     viewRef.current = view;
+    onViewReady?.(() => viewRef.current ?? null);
 
     return () => {
       view.destroy();
@@ -649,6 +674,13 @@ export default function CodeMirrorEditor({
       ),
     });
   }, [collabMode, followEnabled, onDetachFollow, onExitSuggestingMode, shortcutsEnabled]);
+
+  useEffect(() => {
+    if (!viewRef.current) return;
+    viewRef.current.dispatch({
+      effects: gutterCompartmentRef.current.reconfigure(buildGutterVisibilityTheme(hideGutter)),
+    });
+  }, [hideGutter]);
 
   useEffect(() => {
     if (!viewRef.current) return;

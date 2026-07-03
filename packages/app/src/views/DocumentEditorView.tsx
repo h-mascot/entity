@@ -1,10 +1,11 @@
-import { lazy, Suspense } from 'react';
-import { shouldRenderMarkdownPreview } from '../lib/markdownFile';
+import { lazy, Suspense, useState } from 'react';
+import { isMarkdownFilePath, shouldRenderMarkdownPreview } from '../lib/markdownFile';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
 const CodeMirrorFileViewer = lazy(() => import('../components/CodeMirrorFileViewer'));
 const DocIntelligencePanel = lazy(() => import('../components/doc-intelligence/DocIntelligencePanel'));
 const DocumentReadingView = lazy(() => import('../components/DocumentReadingView'));
+const EditorFormattingToolbar = lazy(() => import('../components/EditorFormattingToolbar'));
 
 function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
   return (
@@ -136,8 +137,19 @@ export default function DocumentEditorView(props: any) {
     fileHistoryPanelOpen,
   } = props;
 
+  const [editorViewGetter, setEditorViewGetter] = useState<{ getView: () => any } | null>(null);
+  const isMarkdownDoc = isMarkdownFilePath(currentFile);
+  const editorIsWritable =
+    editMode && editorCollabMode !== 'viewing' && !watchMode && !(editorCollabMode === 'editing' && currentFileReadOnly);
+
   const renderPrimaryEditorContent = () => (
-    <div className="min-h-0 flex-1 overflow-auto">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {editorIsWritable && editorViewGetter ? (
+        <Suspense fallback={null}>
+          <EditorFormattingToolbar getView={editorViewGetter.getView} />
+        </Suspense>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-auto">
       {editMode ? (
         <div
           className={`h-full w-full ${props.followGlowClassName} ${props.followTypingPulseActive ? 'agent-typing' : ''} ${
@@ -149,6 +161,8 @@ export default function DocumentEditorView(props: any) {
             onChange={handleContentChange}
             onSave={handleSave}
             readOnly={editorCollabMode === 'viewing' || watchMode || (editorCollabMode === 'editing' && currentFileReadOnly)}
+            hideGutter={isMarkdownDoc}
+            onViewReady={(getView: () => any) => setEditorViewGetter({ getView })}
             shortcutsEnabled={runtime.agentNativeEditorEnabled}
             collabMode={editorCollabMode}
             onSuggestingEdit={documentsReady ? handleSuggestingEdit : undefined}
@@ -278,6 +292,7 @@ export default function DocumentEditorView(props: any) {
           </div>
         )
       )}
+      </div>
     </div>
   );
 
@@ -465,6 +480,7 @@ export default function DocumentEditorView(props: any) {
           tasks={props.tasks}
           onOpenTask={props.onOpenTask}
           onOpenRelatedDoc={props.onOpenRelatedDoc}
+          splitMode={Boolean(splitMode)}
         />
       )}
     </div>

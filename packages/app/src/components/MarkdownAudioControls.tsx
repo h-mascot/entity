@@ -108,6 +108,7 @@ export default function MarkdownAudioControls({
   const [showProviderMenu, setShowProviderMenu] = useState(false);
   const [showVoiceMenu, setShowVoiceMenu] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
 
@@ -128,6 +129,7 @@ export default function MarkdownAudioControls({
     setShowProviderMenu(false);
     setShowVoiceMenu(false);
     setShowSpeedMenu(false);
+    setShowSettingsMenu(false);
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
@@ -355,57 +357,87 @@ export default function MarkdownAudioControls({
           {loading ? '...' : browserSpeaking ? '■ Stop' : '🔊 Listen'}
         </button>
 
-        {/* Provider selector */}
+        {/* Listen settings */}
         {onSettingsChange && (
           <div className="relative">
             <button
               type="button"
-              onClick={() => { setShowProviderMenu(!showProviderMenu); setShowVoiceMenu(false); setShowSpeedMenu(false); }}
+              onClick={() => setShowSettingsMenu(!showSettingsMenu)}
               className="mc-shell-btn px-1.5 py-1 text-xs"
-              title="Change TTS provider"
+              title="Listen settings"
             >
-              {providerLabel} ▾
+              ⚙
             </button>
-            {showProviderMenu && (
-              <div className="absolute right-0 top-full z-30 mt-1 w-36 rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-lg">
-                {Object.entries(PROVIDER_LABELS).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => void handleProviderChange(key as DocsTtsProvider)}
-                    className={`w-full px-3 py-1.5 text-left text-xs hover:bg-[var(--bg-primary)] ${settings.provider === key ? 'text-[var(--accent)] font-medium' : 'text-[var(--text-primary)]'}`}
+            {showSettingsMenu && (
+              <div className="absolute right-0 top-full z-30 mt-1 w-56 space-y-3 rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-3 shadow-lg">
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-[var(--text-muted)]">Provider</label>
+                  <select
+                    className="mc-shell-input w-full px-2 py-1 text-xs"
+                    value={settings.provider}
+                    onChange={(e) => {
+                      updateSetting('provider', e.target.value as DocsTtsProvider);
+                    }}
                   >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Speed selector */}
-        {onSettingsChange && (
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => { setShowSpeedMenu(!showSpeedMenu); setShowProviderMenu(false); setShowVoiceMenu(false); }}
-              className="mc-shell-btn px-1.5 py-1 text-xs"
-              title="Playback speed"
-            >
-              {settings.playbackRate}x ▾
-            </button>
-            {showSpeedMenu && (
-              <div className="absolute right-0 top-full z-30 mt-1 w-20 rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-lg">
-                {SPEED_OPTIONS.map((speed) => (
-                  <button
-                    key={speed}
-                    type="button"
-                    onClick={() => void handleSpeedChange(speed)}
-                    className={`w-full px-3 py-1.5 text-center text-xs hover:bg-[var(--bg-primary)] ${settings.playbackRate === speed ? 'text-[var(--accent)] font-medium' : 'text-[var(--text-primary)]'}`}
+                    {Object.entries(PROVIDER_LABELS).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                {availableVoices.length > 0 || loadingVoices ? (
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-[var(--text-muted)]">Voice</label>
+                    <select
+                      className="mc-shell-input w-full px-2 py-1 text-xs"
+                      value={currentVoice}
+                      disabled={loadingVoices}
+                      onChange={(e) => {
+                        switch (settings.provider) {
+                          case 'kokoro': updateSetting('kokoroVoice', e.target.value); break;
+                          case 'edge': updateSetting('edgeVoice', e.target.value); break;
+                          case 'openai': updateSetting('openaiVoice', e.target.value); break;
+                          case 'deepgram': updateSetting('deepgramVoice', e.target.value); break;
+                          case 'elevenlabs': updateSetting('elevenlabsVoice', e.target.value); break;
+                        }
+                      }}
+                    >
+                      {loadingVoices ? (
+                        <option disabled>Loading voices…</option>
+                      ) : (
+                        availableVoices.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name}{v.language ? ` (${v.language})` : ''}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                ) : null}
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-[var(--text-muted)]">Speed</label>
+                  <select
+                    className="mc-shell-input w-full px-2 py-1 text-xs"
+                    value={String(settings.playbackRate)}
+                    onChange={(e) => {
+                      const speed = Number(e.target.value);
+                      updateSetting('playbackRate', speed);
+                      if (audioRef.current) {
+                        audioRef.current.playbackRate = speed;
+                      }
+                    }}
                   >
-                    {speed}x
-                  </button>
-                ))}
+                    {SPEED_OPTIONS.map((speed) => (
+                      <option key={speed} value={String(speed)}>{speed}x</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsMenu(false)}
+                  className="mc-shell-btn w-full justify-center px-2 py-1 text-xs"
+                >
+                  Done
+                </button>
               </div>
             )}
           </div>
