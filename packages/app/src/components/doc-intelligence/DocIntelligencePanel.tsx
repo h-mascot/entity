@@ -19,9 +19,9 @@ const CommentThreadPanel = lazy(() => import('../CommentThread').then((module) =
 const ReviewPanel = lazy(() => import('../ReviewPanel').then((module) => ({ default: module.ReviewPanel })));
 const SuggestionPanel = lazy(() => import('../SuggestionPanel').then((module) => ({ default: module.SuggestionPanel })));
 
-type RailPanel = 'intelligence' | 'comments' | 'notes' | 'versions';
+type RailPanel = 'intelligence' | 'comments' | 'tasks' | 'metadata' | 'notes' | 'versions';
 type FocusRailTarget = RailPanel | 'ask';
-type IntelligenceTab = 'summary' | 'ask' | 'grammar' | 'related' | 'tasks' | 'metadata';
+type IntelligenceTab = 'summary' | 'ask' | 'grammar' | 'related';
 
 interface DocIntelligenceSettingsView {
   enabled: boolean;
@@ -406,6 +406,8 @@ export default function DocIntelligencePanel({
   const railItems: Array<{ id: RailPanel; icon: string; label: string }> = [
     { id: 'intelligence', icon: '✦', label: 'Intelligence' },
     { id: 'comments', icon: '💬', label: 'Comments' },
+    { id: 'tasks', icon: '☑', label: 'Tasks' },
+    { id: 'metadata', icon: 'ⓘ', label: 'Metadata' },
     { id: 'notes', icon: '✎', label: 'Notes' },
     { id: 'versions', icon: '↻', label: 'Versions' },
   ];
@@ -820,8 +822,6 @@ export default function DocIntelligencePanel({
       { id: 'ask', label: 'Ask' },
       { id: 'grammar', label: 'Grammar' },
       { id: 'related', label: 'Related' },
-      { id: 'tasks', label: `Tasks${linkedTasks.length > 0 ? ` (${linkedTasks.length})` : ''}` },
-      { id: 'metadata', label: 'Metadata' },
     ];
 
     return (
@@ -853,8 +853,6 @@ export default function DocIntelligencePanel({
           {activeTab === 'ask' ? renderAsk() : null}
           {activeTab === 'grammar' ? renderGrammar() : null}
           {activeTab === 'related' ? renderRelated() : null}
-          {activeTab === 'tasks' ? renderTasks() : null}
-          {activeTab === 'metadata' ? renderMetadata() : null}
         </div>
       </>
     );
@@ -876,9 +874,38 @@ export default function DocIntelligencePanel({
     </>
   );
 
+  const renderTasksPanel = () => (
+    <>
+      <div className="border-b border-[var(--border-primary)] px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-[var(--text-primary)]">☑ Tasks</div>
+          {linkedTasks.length > 0 ? (
+            <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+              {linkedTasks.length} linked
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-1 text-[11px] text-[var(--text-muted)]">Tasks that reference this document.</div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-4">{renderTasks()}</div>
+    </>
+  );
+
+  const renderMetadataPanel = () => (
+    <>
+      <div className="border-b border-[var(--border-primary)] px-4 py-3">
+        <div className="text-sm font-semibold text-[var(--text-primary)]">ⓘ Metadata</div>
+        <div className="mt-1 text-[11px] text-[var(--text-muted)]">File details and provenance.</div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-4">{renderMetadata()}</div>
+    </>
+  );
+
   const renderPanelBody = () => {
     if (activeRail === 'intelligence') return renderIntelligence();
     if (activeRail === 'comments') return renderCommentsPanel();
+    if (activeRail === 'tasks') return renderTasksPanel();
+    if (activeRail === 'metadata') return renderMetadataPanel();
     if (activeRail === 'notes') {
       return (
         <div className="flex min-h-0 flex-1 flex-col p-4">
