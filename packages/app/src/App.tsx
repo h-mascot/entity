@@ -3253,6 +3253,15 @@ export default function App() {
         return;
       }
 
+      const target = e.target instanceof HTMLElement
+        ? e.target
+        : document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      if (target?.closest('input, textarea, select') || target?.isContentEditable) {
+        return;
+      }
+
       if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'k')) {
         e.preventDefault();
         setQuickSwitcherTargetPane('left');

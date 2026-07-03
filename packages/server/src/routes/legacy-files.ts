@@ -6,7 +6,7 @@ import type { ActivityType } from "../../../db/src";
 import type { FileSourceRepository } from "../../../db/src/file-sources";
 import { createFileSourceAdapter } from "../fs/adapters/registry";
 import { assertSourceEnabled, assertWriteTargetRealpathContained, normalizeSourceRelativePath } from "../fs/security";
-import { detectContentType } from "../file-types";
+import { detectContentType, normalizeContentType } from "../file-types";
 import { asyncHandler } from "../middleware/async-handler";
 import { resolveWorkspaceReadPath } from "../workspace-paths";
 
@@ -65,6 +65,29 @@ export function parseByteRange(
     start,
     end: Math.min(end, size - 1),
   };
+}
+
+export function isInlineSafeContentType(contentType: string): boolean {
+  const normalized = normalizeContentType(contentType);
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized.startsWith("image/")) {
+    return normalized !== "image/svg+xml";
+  }
+
+  if (normalized.startsWith("audio/") || normalized.startsWith("video/")) {
+    return true;
+  }
+
+  return (
+    normalized === "application/pdf" ||
+    normalized === "text/plain" ||
+    normalized === "text/markdown" ||
+    normalized === "application/json" ||
+    normalized === "text/csv"
+  );
 }
 
 interface RegisterLegacyFileRoutesDeps {
@@ -319,8 +342,10 @@ export function registerLegacyFileRoutes(
   function sendRawFileResponse(req: Request, res: Response, payload: RawFilePayload): Response {
     const fileName = sanitizeContentDispositionFilename(payload.fileName);
     const contentType = payload.contentType || "application/octet-stream";
+    const disposition = isInlineSafeContentType(contentType) ? "inline" : "attachment";
     res.setHeader("Content-Type", contentType);
-    res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+    res.setHeader("Content-Disposition", `${disposition}; filename="${fileName}"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Accept-Ranges", "bytes");
 
     if (payload.updatedAt) {

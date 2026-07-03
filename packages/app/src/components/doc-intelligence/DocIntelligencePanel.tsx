@@ -72,7 +72,6 @@ interface DocIntelligencePanelProps {
   handleIgnoreReviewFinding: (findingId: string) => void;
   rightSidebarHasComments: boolean;
   rightSidebarHasSuggestions: boolean;
-  rightSidebarHasReview: boolean;
 }
 
 interface LocalOutline {
@@ -229,7 +228,6 @@ export default function DocIntelligencePanel({
   handleIgnoreReviewFinding,
   rightSidebarHasComments,
   rightSidebarHasSuggestions,
-  rightSidebarHasReview,
 }: DocIntelligencePanelProps) {
   const [activeRail, setActiveRail] = useState<RailPanel>('intelligence');
   const [activeTab, setActiveTab] = useState<IntelligenceTab>('summary');
@@ -458,7 +456,7 @@ export default function DocIntelligencePanel({
         </Suspense>
       ) : null}
 
-      {rightSidebarHasReview ? (
+      {documentsReady ? (
         <Suspense fallback={null}>
           <ReviewPanel
             mode={reviewMode}

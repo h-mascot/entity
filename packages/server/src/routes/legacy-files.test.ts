@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileSourceRecord, FileSourceRepository } from "../../../db/src/file-sources";
-import { parseByteRange, registerLegacyFileRoutes } from "./legacy-files";
+import { isInlineSafeContentType, parseByteRange, registerLegacyFileRoutes } from "./legacy-files";
 
 const tempRoots: string[] = [];
 
@@ -93,6 +93,25 @@ describe("parseByteRange", () => {
   });
 });
 
+describe("isInlineSafeContentType", () => {
+  it("allows preview-safe media and document content types inline", () => {
+    expect(isInlineSafeContentType("image/png")).toBe(true);
+    expect(isInlineSafeContentType("application/pdf")).toBe(true);
+    expect(isInlineSafeContentType("video/mp4")).toBe(true);
+    expect(isInlineSafeContentType("audio/mpeg")).toBe(true);
+    expect(isInlineSafeContentType("text/plain; charset=utf-8")).toBe(true);
+  });
+
+  it("rejects active or browser-executable content types", () => {
+    expect(isInlineSafeContentType("text/html")).toBe(false);
+    expect(isInlineSafeContentType("image/svg+xml")).toBe(false);
+    expect(isInlineSafeContentType("application/javascript")).toBe(false);
+    expect(isInlineSafeContentType("text/javascript")).toBe(false);
+    expect(isInlineSafeContentType("application/xml")).toBe(false);
+    expect(isInlineSafeContentType("text/xml")).toBe(false);
+  });
+});
+
 describe("legacy file routes", () => {
   it("rejects symlink escapes on source reads and workspace writes while allowing normal files", async () => {
     const workspaceRoot = await makeTempRoot();
@@ -148,6 +167,8 @@ describe("legacy file routes", () => {
       expect(response.status).toBe(206);
       expect(response.headers.get("accept-ranges")).toBe("bytes");
       expect(response.headers.get("content-type")).toBe("video/mp4");
+      expect(response.headers.get("content-disposition")).toBe('inline; filename="clip.mp4"');
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
       expect(response.headers.get("content-range")).toBe(`bytes 10-15/${content.length}`);
       expect(response.headers.get("content-length")).toBe("6");
       expect(Buffer.from(await response.arrayBuffer())).toEqual(content.subarray(10, 16));
@@ -166,6 +187,7 @@ describe("legacy file routes", () => {
 
       expect(response.status).toBe(416);
       expect(response.headers.get("accept-ranges")).toBe("bytes");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
       expect(response.headers.get("content-range")).toBe(`bytes */${content.length}`);
       expect(await response.text()).toBe("");
     });
@@ -184,6 +206,7 @@ describe("legacy file routes", () => {
       expect(pdfResponse.headers.get("accept-ranges")).toBe("bytes");
       expect(pdfResponse.headers.get("content-type")).toBe("application/pdf");
       expect(pdfResponse.headers.get("content-disposition")).toBe('inline; filename="doc.pdf"');
+      expect(pdfResponse.headers.get("x-content-type-options")).toBe("nosniff");
       expect(Buffer.from(await pdfResponse.arrayBuffer())).toEqual(pdfContent);
 
       const pngResponse = await fetch(`${baseUrl}/api/file/raw?source=workspace&path=image.png`);
@@ -191,7 +214,24 @@ describe("legacy file routes", () => {
       expect(pngResponse.headers.get("accept-ranges")).toBe("bytes");
       expect(pngResponse.headers.get("content-type")).toBe("image/png");
       expect(pngResponse.headers.get("content-disposition")).toBe('inline; filename="image.png"');
+      expect(pngResponse.headers.get("x-content-type-options")).toBe("nosniff");
       expect(Buffer.from(await pngResponse.arrayBuffer())).toEqual(pngContent);
+    });
+  });
+
+  it("forces active raw file types to download", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const htmlContent = Buffer.from("<script>window.__pwned = true</script>");
+    await fs.promises.writeFile(path.join(workspaceRoot, "evil.html"), htmlContent);
+
+    await withLegacyFileServer(workspaceRoot, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/file/raw?source=workspace&path=evil.html`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("text/html");
+      expect(response.headers.get("content-disposition")).toBe('attachment; filename="evil.html"');
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(htmlContent);
     });
   });
 });

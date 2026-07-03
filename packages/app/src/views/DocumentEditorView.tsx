@@ -119,7 +119,6 @@ export default function DocumentEditorView(props: any) {
     rightSidebarIsCollapsed,
     rightSidebarHasComments,
     rightSidebarHasSuggestions,
-    rightSidebarHasReview,
     editorSelection,
     setCommentPopover,
     setCommentThreads,
@@ -456,7 +455,6 @@ export default function DocumentEditorView(props: any) {
           handleIgnoreReviewFinding={handleIgnoreReviewFinding}
           rightSidebarHasComments={rightSidebarHasComments}
           rightSidebarHasSuggestions={rightSidebarHasSuggestions}
-          rightSidebarHasReview={rightSidebarHasReview}
         />
       )}
     </div>
