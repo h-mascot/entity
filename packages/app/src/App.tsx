@@ -1549,7 +1549,7 @@ export default function App() {
     }
     return [buildOpenFileTab(source, file)];
   });
-  const [docIntelligenceFocus, setDocIntelligenceFocus] = useState<'intelligence' | 'ask' | 'notes' | 'versions' | null>(null);
+  const [docIntelligenceFocus, setDocIntelligenceFocus] = useState<'intelligence' | 'comments' | 'ask' | 'notes' | 'versions' | null>(null);
   const [fileContent, setFileContent] = useState('');
   const [authorshipRanges, setAuthorshipRanges] = useState<DocumentAuthorshipRangeRecord[]>([]);
   const [manualAuthorshipAuthor, setManualAuthorshipAuthor] = useState<DocumentAuthorshipActor>('human');
@@ -3163,6 +3163,11 @@ export default function App() {
   const handleAskDoc = useCallback(() => {
     setRightSidebarCollapsed(false);
     setDocIntelligenceFocus('ask');
+  }, []);
+
+  const handleFocusCommentsRail = useCallback(() => {
+    setRightSidebarCollapsed(false);
+    setDocIntelligenceFocus('comments');
   }, []);
 
   const handleTaskSelect = (taskId: number) => {
@@ -5140,6 +5145,7 @@ export default function App() {
             fileTransitionActive={fileTransitionActive}
             docIntelligenceFocus={docIntelligenceFocus}
             onDocIntelligenceFocusApplied={() => setDocIntelligenceFocus(null)}
+            onFocusCommentsRail={handleFocusCommentsRail}
           />
         </Suspense>
       )}

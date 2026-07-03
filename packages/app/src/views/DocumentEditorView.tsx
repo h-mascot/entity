@@ -165,6 +165,7 @@ export default function DocumentEditorView(props: any) {
               }
 
               setEditMode(true);
+              props.onFocusCommentsRail?.();
               setCommentPopover({
                 anchor: request.anchor,
                 selection: request.selection,
@@ -178,6 +179,7 @@ export default function DocumentEditorView(props: any) {
 
               setEditMode(true);
               setRightSidebarCollapsed(false);
+              props.onFocusCommentsRail?.();
               setSelectedCommentId(commentId);
               setFocusRange({ from: thread.range.from, to: thread.range.to });
 

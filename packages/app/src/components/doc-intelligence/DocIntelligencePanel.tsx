@@ -12,7 +12,7 @@ const CommentThreadPanel = lazy(() => import('../CommentThread').then((module) =
 const ReviewPanel = lazy(() => import('../ReviewPanel').then((module) => ({ default: module.ReviewPanel })));
 const SuggestionPanel = lazy(() => import('../SuggestionPanel').then((module) => ({ default: module.SuggestionPanel })));
 
-type RailPanel = 'intelligence' | 'ask' | 'notes' | 'versions';
+type RailPanel = 'intelligence' | 'comments' | 'ask' | 'notes' | 'versions';
 type IntelligenceTab = 'summary' | 'related' | 'tasks' | 'metadata';
 
 interface DocMetadata {
@@ -249,6 +249,7 @@ export default function DocIntelligencePanel({
 
   const railItems: Array<{ id: RailPanel; icon: string; label: string }> = [
     { id: 'intelligence', icon: '✦', label: 'Intelligence' },
+    { id: 'comments', icon: '💬', label: 'Comments' },
     { id: 'ask', icon: 'Ask', label: 'Ask' },
     { id: 'notes', icon: '✎', label: 'Notes' },
     { id: 'versions', icon: '↻', label: 'Versions' },
@@ -522,18 +523,6 @@ export default function DocIntelligencePanel({
       <>
         <div className="border-b border-[var(--border-primary)] px-4 py-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-semibold text-[var(--text-primary)]">Comments</div>
-            {commentThreads.length > 0 ? (
-              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                {commentThreads.length} thread{commentThreads.length === 1 ? '' : 's'}
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-3">{renderComments()}</div>
-        </div>
-
-        <div className="border-b border-[var(--border-primary)] px-4 py-3">
-          <div className="flex items-center justify-between gap-2">
             <div className="text-sm font-semibold text-[var(--text-primary)]">✦ Intelligence</div>
             <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
               Doc context
@@ -564,8 +553,25 @@ export default function DocIntelligencePanel({
     );
   };
 
+  const renderCommentsPanel = () => (
+    <>
+      <div className="border-b border-[var(--border-primary)] px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-[var(--text-primary)]">💬 Comments</div>
+          {commentThreads.length > 0 ? (
+            <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+              {commentThreads.length} thread{commentThreads.length === 1 ? '' : 's'}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-4">{renderComments()}</div>
+    </>
+  );
+
   const renderPanelBody = () => {
     if (activeRail === 'intelligence') return renderIntelligence();
+    if (activeRail === 'comments') return renderCommentsPanel();
     if (activeRail === 'ask') {
       return (
         <div className="flex min-h-0 flex-1 flex-col p-4">
