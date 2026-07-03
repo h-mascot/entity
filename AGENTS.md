@@ -27,6 +27,14 @@ Monorepo with npm workspaces:
 - Run specific test: `cd packages/server && npx vitest run src/fs/classify.test.ts`
 - Dev server: `cd packages/server && npm run dev`
 
+## Git Delivery: Always Land on Main
+
+**Do not leave work stranded on a feature branch or an open PR.**
+- Every change must end up merged into `main` before the task is considered done.
+- If you work on a feature branch and/or open a PR, then after tests + verification pass: **merge it into `main`, push `main`, and delete the feature branch** (local and remote). The PR should end in the "Merged" state, never left open.
+- Run the full gate (`cd packages/server && npm run build && npx vitest run`, plus `npm --prefix packages/app run build` when the app is affected) on the merged result before pushing `main`.
+- Only leave a PR open without merging if the user explicitly asks for review-before-merge on that task.
+
 ## Close the Loop Protocol
 
 **Browser verification is mandatory for anything user-facing.**
