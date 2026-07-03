@@ -261,6 +261,7 @@ export default function DocumentEditorView(props: any) {
             onToast={pushToast}
             onDocsLinkNavigate={handleMarkdownDocsNavigation}
             animate={props.fileTransitionActive}
+            tts="none"
           />
         ) : (
           <div className={`h-full w-full overflow-hidden ${props.fileTransitionActive ? 'mc-file-switch-anim' : ''}`}>
@@ -364,6 +365,7 @@ export default function DocumentEditorView(props: any) {
                       onTtsSettingsChange={handleDocsTtsSettingsChange}
                       onToast={pushToast}
                       onDocsLinkNavigate={handleMarkdownDocsNavigation}
+                      tts="none"
                     />
                   ) : (
                     <div className="h-full w-full overflow-hidden">
@@ -455,6 +457,8 @@ export default function DocumentEditorView(props: any) {
           handleIgnoreReviewFinding={handleIgnoreReviewFinding}
           rightSidebarHasComments={rightSidebarHasComments}
           rightSidebarHasSuggestions={rightSidebarHasSuggestions}
+          focusedRail={props.docIntelligenceFocus}
+          onFocusedRailApplied={props.onDocIntelligenceFocusApplied}
         />
       )}
     </div>

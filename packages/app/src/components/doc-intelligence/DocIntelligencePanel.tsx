@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type {
   DocumentCommentThread,
   DocumentReviewFinding,
@@ -13,7 +13,7 @@ const ReviewPanel = lazy(() => import('../ReviewPanel').then((module) => ({ defa
 const SuggestionPanel = lazy(() => import('../SuggestionPanel').then((module) => ({ default: module.SuggestionPanel })));
 
 type RailPanel = 'intelligence' | 'ask' | 'notes' | 'versions';
-type IntelligenceTab = 'summary' | 'related' | 'tasks' | 'metadata' | 'comments';
+type IntelligenceTab = 'summary' | 'related' | 'tasks' | 'metadata';
 
 interface DocMetadata {
   filename: string | null;
@@ -72,6 +72,8 @@ interface DocIntelligencePanelProps {
   handleIgnoreReviewFinding: (findingId: string) => void;
   rightSidebarHasComments: boolean;
   rightSidebarHasSuggestions: boolean;
+  focusedRail?: RailPanel | null;
+  onFocusedRailApplied?: () => void;
 }
 
 interface LocalOutline {
@@ -228,9 +230,21 @@ export default function DocIntelligencePanel({
   handleIgnoreReviewFinding,
   rightSidebarHasComments,
   rightSidebarHasSuggestions,
+  focusedRail = null,
+  onFocusedRailApplied,
 }: DocIntelligencePanelProps) {
   const [activeRail, setActiveRail] = useState<RailPanel>('intelligence');
   const [activeTab, setActiveTab] = useState<IntelligenceTab>('summary');
+
+  useEffect(() => {
+    if (!focusedRail) {
+      return;
+    }
+
+    setActiveRail(focusedRail);
+    setCollapsed(false);
+    onFocusedRailApplied?.();
+  }, [focusedRail, onFocusedRailApplied, setCollapsed]);
   const outline = useMemo(() => extractLocalOutline(docText, metadata.isBinary), [docText, metadata.isBinary]);
 
   const railItems: Array<{ id: RailPanel; icon: string; label: string }> = [
@@ -502,11 +516,22 @@ export default function DocIntelligencePanel({
       { id: 'related', label: 'Related' },
       { id: 'tasks', label: 'Tasks' },
       { id: 'metadata', label: 'Metadata' },
-      { id: 'comments', label: 'Comments' },
     ];
 
     return (
       <>
+        <div className="border-b border-[var(--border-primary)] px-4 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-[var(--text-primary)]">Comments</div>
+            {commentThreads.length > 0 ? (
+              <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
+                {commentThreads.length} thread{commentThreads.length === 1 ? '' : 's'}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-3">{renderComments()}</div>
+        </div>
+
         <div className="border-b border-[var(--border-primary)] px-4 py-3">
           <div className="flex items-center justify-between gap-2">
             <div className="text-sm font-semibold text-[var(--text-primary)]">✦ Intelligence</div>
@@ -534,7 +559,6 @@ export default function DocIntelligencePanel({
           {activeTab === 'related' ? <EmptyState title="No related documents yet." body="Related document discovery is not wired yet." /> : null}
           {activeTab === 'tasks' ? <EmptyState title="No linked tasks." body="A document-to-task lookup is not available yet." /> : null}
           {activeTab === 'metadata' ? renderMetadata() : null}
-          {activeTab === 'comments' ? renderComments() : null}
         </div>
       </>
     );
