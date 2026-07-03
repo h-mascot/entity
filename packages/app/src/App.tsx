@@ -4573,6 +4573,8 @@ export default function App() {
             filename={filenameFromFilePath(currentFile)}
             breadcrumbSegments={fileBreadcrumbSegments(currentFile, sourceName)}
             pathHint={filePathHint(currentFile, sourceName)}
+            onBack={handleBackToDashboard}
+            backLabel="← Back"
             actions={
               <>
                 {showSourcePill && (
@@ -4698,7 +4700,23 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setQuickSwitcherTargetPane('left');
+              setQuickSwitcherOpen(true);
+            }}
+            className="mc-shell-btn hidden h-8 w-56 max-w-[14rem] items-center gap-2 px-2.5 py-1 text-left text-xs text-[var(--text-muted)] sm:inline-flex"
+            aria-label="Search across Entity"
+            title="Search across Entity"
+          >
+            <span className="text-[var(--text-secondary)]" aria-hidden="true">🔍</span>
+            <span className="min-w-0 flex-1 truncate">Search across Entity</span>
+            <span className="rounded border border-[var(--border-secondary)] px-1 py-0.5 text-[10px] leading-none text-[var(--text-muted)]">
+              ⌘K
+            </span>
+          </button>
           <button
               type="button"
               onClick={() => {
@@ -5016,6 +5034,11 @@ export default function App() {
             debouncedFollowCursor={debouncedFollowCursor}
             setFollowDetached={setFollowDetached}
             currentFilePreviewMeta={currentFilePreviewMeta}
+            filename={currentFile ? filenameFromFilePath(currentFile) : null}
+            sourceName={selectedSource?.displayName ?? null}
+            currentFileUpdatedAt={currentFileUpdatedAt}
+            setFileHistoryPanelOpen={setFileHistoryPanelOpen}
+            fileHistoryPanelOpen={fileHistoryPanelOpen}
             currentRawFileUrl={currentRawFileUrl}
             handleMarkdownDocsNavigation={handleMarkdownDocsNavigation}
             docsTtsSettings={docsTtsSettings}

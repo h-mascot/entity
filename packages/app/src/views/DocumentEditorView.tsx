@@ -3,10 +3,8 @@ import { shouldRenderMarkdownPreview } from '../lib/markdownFile';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
 const CodeMirrorFileViewer = lazy(() => import('../components/CodeMirrorFileViewer'));
+const DocIntelligencePanel = lazy(() => import('../components/doc-intelligence/DocIntelligencePanel'));
 const DocumentReadingView = lazy(() => import('../components/DocumentReadingView'));
-const CommentThreadPanel = lazy(() => import('../components/CommentThread').then((module) => ({ default: module.CommentThreadPanel })));
-const ReviewPanel = lazy(() => import('../components/ReviewPanel').then((module) => ({ default: module.ReviewPanel })));
-const SuggestionPanel = lazy(() => import('../components/SuggestionPanel').then((module) => ({ default: module.SuggestionPanel })));
 
 function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
   return (
@@ -43,31 +41,12 @@ function LazyDocumentReadingView(props: any) {
   );
 }
 
-function computeDomSelectionAnchor(): { left: number; top: number; bottom: number } | null {
-  if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return null;
-  }
-
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) {
-    return null;
-  }
-
-  try {
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-    if (!rect || (!Number.isFinite(rect.left) && !Number.isFinite(rect.top))) {
-      return null;
-    }
-
-    return {
-      left: rect.left,
-      top: rect.top,
-      bottom: rect.bottom,
-    };
-  } catch {
-    return null;
-  }
+function LazyDocIntelligencePanel(props: any) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading document intelligence" />}>
+      <DocIntelligencePanel {...props} />
+    </Suspense>
+  );
 }
 
 export default function DocumentEditorView(props: any) {
@@ -137,7 +116,6 @@ export default function DocumentEditorView(props: any) {
     handleMarkdownDocsNavigation,
     docsTtsSettings,
     handleDocsTtsSettingsChange,
-    rightSidebarHasPanels,
     rightSidebarIsCollapsed,
     rightSidebarHasComments,
     rightSidebarHasSuggestions,
@@ -153,6 +131,10 @@ export default function DocumentEditorView(props: any) {
     setReviewRun,
     setReviewFindings,
     selectedFindingId,
+    sourceName,
+    currentFileUpdatedAt,
+    setFileHistoryPanelOpen,
+    fileHistoryPanelOpen,
   } = props;
 
   const renderPrimaryEditorContent = () => (
@@ -423,216 +405,59 @@ export default function DocumentEditorView(props: any) {
       )}
 
       {runtime.agentNativeEditorEnabled && documentsReady && (
-        <aside
-          className={`flex shrink-0 flex-col border-l border-[var(--border-primary)] bg-[var(--bg-primary)] transition-[width] duration-200 ${
-            rightSidebarIsCollapsed ? 'w-8' : 'w-[280px]'
-          }`}
-        >
-          <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
-            <div className={`flex shrink-0 ${rightSidebarIsCollapsed ? 'justify-center' : 'justify-start'} px-1 py-2`}>
-              <button
-                type="button"
-                onClick={() => setRightSidebarCollapsed((prev: boolean) => !prev)}
-                disabled={!rightSidebarHasPanels}
-                className={`mc-shell-btn flex h-7 w-7 items-center justify-center px-0 py-0 text-xs ${
-                  !rightSidebarHasPanels ? 'cursor-not-allowed opacity-40' : ''
-                }`}
-                aria-label={rightSidebarIsCollapsed ? 'Expand right sidebar' : 'Collapse right sidebar'}
-                title={
-                  !rightSidebarHasPanels
-                    ? 'No comments/suggestions/reviews'
-                    : rightSidebarIsCollapsed
-                      ? 'Expand sidebar'
-                      : 'Collapse sidebar'
-                }
-              >
-                <span>{rightSidebarIsCollapsed ? '«' : '»'}</span>
-              </button>
-            </div>
-
-            {!rightSidebarIsCollapsed && (
-              <div className="min-h-0 flex-1 overflow-auto">
-                {rightSidebarHasComments && (
-                  <Suspense fallback={null}>
-                    <CommentThreadPanel
-                      threads={commentThreads}
-                      onNewFromSelection={() => {
-                        if (!documentsReady || !currentDocId) {
-                          pushToast('Connect a Documents token to use comments.', 'warning');
-                          return;
-                        }
-                        if (!editorSelection || editorSelection.to <= editorSelection.from) {
-                          if (!editMode) {
-                            setEditMode(true);
-                          }
-                          pushToast('Select text in the editor, then press + to comment.', 'info');
-                          return;
-                        }
-
-                        setEditMode(true);
-                        const anchor = computeDomSelectionAnchor() ?? { left: 24, top: 24, bottom: 24 };
-                        setCommentPopover({
-                          anchor,
-                          selection: { from: editorSelection.from, to: editorSelection.to },
-                          selectedText: editorSelection.text,
-                        });
-                      }}
-                      onSelectThread={(threadId: string) => {
-                        const thread = commentThreads.find((entry: any) => entry.id === threadId) ?? null;
-                        if (!thread) return;
-                        setEditMode(true);
-                        setSelectedCommentId(threadId);
-                        setFocusRange({ from: thread.range.from, to: thread.range.to });
-                        window.requestAnimationFrame(() => {
-                          document.getElementById(`comment-thread-${threadId}`)?.scrollIntoView({ block: 'nearest' });
-                        });
-                      }}
-                      onReply={(threadId: string, text: string) => {
-                        void (async () => {
-                          if (!documentsReady || !currentDocId) {
-                            pushToast('Connect a Documents token to reply.', 'warning');
-                            return;
-                          }
-                          try {
-                            const response = await documentsClient.postCommentReply(currentDocId, threadId, { text });
-                            setCommentThreads(response.threads);
-                            pushToast('Reply posted.', 'success');
-                          } catch (error) {
-                            pushToast(error instanceof Error ? error.message : 'Failed to post reply.', 'error');
-                          }
-                        })();
-                      }}
-                      onResolve={(threadId: string, resolved: boolean) => {
-                        void (async () => {
-                          if (!documentsReady || !currentDocId) {
-                            pushToast('Connect a Documents token to resolve comments.', 'warning');
-                            return;
-                          }
-                          try {
-                            const response = await documentsClient.postCommentResolve(currentDocId, threadId, { resolved });
-                            setCommentThreads(response.threads);
-                          } catch (error) {
-                            pushToast(error instanceof Error ? error.message : 'Failed to update comment.', 'error');
-                          }
-                        })();
-                      }}
-                      selectedThreadId={selectedCommentId}
-                    />
-                  </Suspense>
-                )}
-
-                {rightSidebarHasSuggestions && (
-                  <Suspense fallback={null}>
-                    <SuggestionPanel
-                      suggestions={suggestions}
-                      selectedSuggestionId={selectedSuggestionId}
-                      onSelectSuggestion={(suggestionId: string) => {
-                        const suggestion = suggestions.find((entry: any) => entry.id === suggestionId) ?? null;
-                        if (!suggestion) return;
-                        setEditMode(true);
-                        setSelectedSuggestionId(suggestionId);
-                        setFocusRange({ from: suggestion.range.from, to: suggestion.range.to });
-                      }}
-                      onAccept={(suggestionId: string) => {
-                        void (async () => {
-                          if (currentFileReadOnly) {
-                            pushToast('This source is read-only. Suggestions cannot be accepted.', 'warning');
-                            return;
-                          }
-                          if (!documentsReady || !currentDocId) {
-                            pushToast('Connect a Documents token to accept suggestions.', 'warning');
-                            return;
-                          }
-                          try {
-                            const response = await documentsClient.acceptSuggestion(currentDocId, suggestionId);
-                            setSuggestions(response.suggestions);
-                            pushToast('Suggestion accepted.', 'success');
-                            if (currentSourceId && currentFile) {
-                              const updated = await fetchSourceFile(currentSourceId, currentFile);
-                              setFileContent(updated.content || '');
-                            }
-                          } catch (error) {
-                            pushToast(error instanceof Error ? error.message : 'Failed to accept suggestion.', 'error');
-                          }
-                        })();
-                      }}
-                      onReject={(suggestionId: string) => {
-                        void (async () => {
-                          if (!documentsReady || !currentDocId) {
-                            pushToast('Connect a Documents token to reject suggestions.', 'warning');
-                            return;
-                          }
-                          try {
-                            const response = await documentsClient.rejectSuggestion(currentDocId, suggestionId);
-                            setSuggestions(response.suggestions);
-                            pushToast('Suggestion rejected.', 'info');
-                          } catch (error) {
-                            pushToast(error instanceof Error ? error.message : 'Failed to reject suggestion.', 'error');
-                          }
-                        })();
-                      }}
-                      selection={editorSelection}
-                      onCreateSuggestion={(input: any) => {
-                        void (async () => {
-                          if (!documentsReady || !currentDocId) {
-                            pushToast('Connect a Documents token to create suggestions.', 'warning');
-                            return;
-                          }
-                          try {
-                            const response = await documentsClient.postSuggestion(currentDocId, input);
-                            setSuggestions(response.suggestions);
-                            pushToast('Suggestion created.', 'success');
-                          } catch (error) {
-                            pushToast(error instanceof Error ? error.message : 'Failed to create suggestion.', 'error');
-                          }
-                        })();
-                      }}
-                    />
-                  </Suspense>
-                )}
-
-                {rightSidebarHasReview && (
-                  <Suspense fallback={null}>
-                    <ReviewPanel
-                      mode={reviewMode}
-                      onChangeMode={setReviewMode}
-                      onRunReview={() => {
-                        void (async () => {
-                          if (!documentsReady || !currentDocId) {
-                            pushToast('Connect a Documents token to run reviews.', 'warning');
-                            return;
-                          }
-                          try {
-                            const response = await documentsClient.postReview(currentDocId, { mode: reviewMode });
-                            setReviewRun(response.run);
-                            setReviewFindings(response.findings);
-                            pushToast('Review started.', 'info');
-                          } catch (error) {
-                            pushToast(error instanceof Error ? error.message : 'Failed to start review.', 'error');
-                          }
-                        })();
-                      }}
-                      run={reviewRun}
-                      findings={reviewFindings}
-                      selectedFindingId={selectedFindingId}
-                      onSelectFinding={(findingId: string) => {
-                        const finding = reviewFindings.find((entry: any) => entry.id === findingId) ?? null;
-                        if (!finding || !finding.range) return;
-                        setEditMode(true);
-                        setSelectedFindingId(findingId);
-                        setFocusRange({ from: finding.range.from, to: finding.range.to });
-                      }}
-                      onApplyFix={handleApplyReviewFindingFix}
-                      onIgnoreFinding={handleIgnoreReviewFinding}
-                      content={fileContent}
-                    />
-                  </Suspense>
-                )}
-
-              </div>
-            )}
-          </div>
-        </aside>
+        <LazyDocIntelligencePanel
+          collapsed={rightSidebarIsCollapsed}
+          setCollapsed={setRightSidebarCollapsed}
+          docText={fileContent}
+          metadata={{
+            filename: props.filename ?? null,
+            path: currentFile ?? null,
+            sourceName: sourceName ?? null,
+            contentType: currentFilePreviewMeta.contentType ?? null,
+            size: currentFilePreviewMeta.size ?? null,
+            updatedAt: currentFileUpdatedAt ?? null,
+            readOnly: Boolean(currentFileReadOnly),
+            isBinary: Boolean(currentFilePreviewMeta.isBinary),
+          }}
+          canOpenVersionHistory={Boolean(currentFile && !currentSourceId)}
+          versionHistoryOpen={Boolean(fileHistoryPanelOpen)}
+          onOpenVersionHistory={() => setFileHistoryPanelOpen(true)}
+          documentsReady={documentsReady}
+          currentDocId={currentDocId}
+          currentFile={currentFile}
+          currentSourceId={currentSourceId}
+          currentFileReadOnly={currentFileReadOnly}
+          editMode={editMode}
+          setEditMode={setEditMode}
+          setFileContent={setFileContent}
+          editorSelection={editorSelection}
+          commentThreads={commentThreads}
+          setCommentThreads={setCommentThreads}
+          selectedCommentId={selectedCommentId}
+          setSelectedCommentId={setSelectedCommentId}
+          setCommentPopover={setCommentPopover}
+          suggestions={suggestions}
+          setSuggestions={setSuggestions}
+          selectedSuggestionId={selectedSuggestionId}
+          setSelectedSuggestionId={setSelectedSuggestionId}
+          reviewFindings={reviewFindings}
+          reviewMode={reviewMode}
+          setReviewMode={setReviewMode}
+          reviewRun={reviewRun}
+          setReviewRun={setReviewRun}
+          setReviewFindings={setReviewFindings}
+          selectedFindingId={selectedFindingId}
+          setSelectedFindingId={setSelectedFindingId}
+          setFocusRange={setFocusRange}
+          documentsClient={documentsClient}
+          fetchSourceFile={fetchSourceFile}
+          pushToast={pushToast}
+          handleApplyReviewFindingFix={handleApplyReviewFindingFix}
+          handleIgnoreReviewFinding={handleIgnoreReviewFinding}
+          rightSidebarHasComments={rightSidebarHasComments}
+          rightSidebarHasSuggestions={rightSidebarHasSuggestions}
+          rightSidebarHasReview={rightSidebarHasReview}
+        />
       )}
     </div>
   );
