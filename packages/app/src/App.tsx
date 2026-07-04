@@ -1985,6 +1985,11 @@ export default function App() {
 
       const target = resolveTaskOutputDocTarget(resolved, fileSources, runtime.fsMultiSourceEnabled);
       if (target.kind === 'source') {
+        // Leave the /task/<id> route before opening the doc so the URL (and a
+        // later reload) reflects the files workspace rather than the task.
+        if (typeof window !== 'undefined' && extractTaskRouteId(window.location.pathname) !== null) {
+          window.history.pushState({ mode: 'app' }, '', '/');
+        }
         handleSourceFileSelect(target.sourceId, target.path);
         return true;
       }
