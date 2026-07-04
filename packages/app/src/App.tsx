@@ -43,6 +43,7 @@ import {
 import { readUserProfile, useUserProfile } from './lib/userProfile';
 import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
+import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
 import {
   buildOpenFileTab,
   buildOpenFileTabKey,
@@ -1971,8 +1972,10 @@ export default function App() {
     [docsPath, navigateToDocsPath]
   );
 
-  // Opening an output doc from a task records that task so the docs back
-  // button returns to the task detail instead of the bare board.
+  // Opening an output doc from a task: prefer the Doc Hub (files tab) so the
+  // document opens as a workspace tab with the full Doc Hub chrome. Docs paths
+  // look like "<root>/<path>"; when the root matches a configured file source
+  // we open it there, otherwise fall back to the standalone /docs route.
   const handleTaskOutputDocsNavigation = useCallback(
     (href: string): boolean => {
       const resolved = resolveDocsPathFromHref(href, docsPath);
@@ -1980,9 +1983,16 @@ export default function App() {
         return false;
       }
 
+      const target = resolveTaskOutputDocTarget(resolved, fileSources, runtime.fsMultiSourceEnabled);
+      if (target.kind === 'source') {
+        handleSourceFileSelect(target.sourceId, target.path);
+        return true;
+      }
+
       return navigateToDocsPath(resolved, false, highlightTaskId);
     },
-    [docsPath, highlightTaskId, navigateToDocsPath]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSourceFileSelect is re-created per render
+    [docsPath, fileSources, highlightTaskId, navigateToDocsPath, watchMode]
   );
 
   useEffect(() => {
