@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
 import { EditorView, highlightActiveLineGutter, lineNumbers } from '@codemirror/view';
@@ -17,7 +17,7 @@ interface CodeMirrorFileViewerProps {
   rawFileUrl?: string | null;
 }
 
-type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'table' | 'binary';
+type PreviewKind = 'text' | 'html' | 'image' | 'audio' | 'video' | 'pdf' | 'table' | 'binary';
 
 type LanguageKey =
   | 'markdown'
@@ -348,6 +348,7 @@ const envLanguage = StreamLanguage.define<{ inString: '"' | "'" | null }>({
   },
 });
 
+const HTML_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'avif', 'tiff', 'tif']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'weba']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'm4v', 'webm', 'mov', 'ogv', 'mkv']);
@@ -492,6 +493,10 @@ function isTextualContentType(contentType: string): boolean {
 function resolvePreviewKind(filePath: string, contentType: string | null | undefined, isBinary: boolean | undefined): PreviewKind {
   const normalizedType = normalizeDetectedContentType(contentType);
   const extension = extensionFromPath(filePath);
+
+  if (normalizedType === 'text/html' || normalizedType === 'application/xhtml+xml' || HTML_EXTENSIONS.has(extension)) {
+    return 'html';
+  }
 
   if (normalizedType.startsWith('image/') || IMAGE_EXTENSIONS.has(extension)) {
     return 'image';
@@ -662,6 +667,8 @@ export default function CodeMirrorFileViewer({
   const viewRef = useRef<EditorView | null>(null);
   const languageCompartmentRef = useRef(new Compartment());
   const previewKind = useMemo(() => resolvePreviewKind(filePath, contentType, isBinary), [contentType, filePath, isBinary]);
+  const [htmlView, setHtmlView] = useState<'preview' | 'source'>('preview');
+  const wantsTextEditor = previewKind === 'text' || (previewKind === 'html' && htmlView === 'source');
   const languageKey = useMemo(() => resolveLanguageKey(filePath), [filePath]);
   const languageExtension = useMemo(() => languageExtensionFor(languageKey), [languageKey]);
   const normalizedContentType = useMemo(() => normalizeDetectedContentType(contentType), [contentType]);
@@ -682,8 +689,13 @@ export default function CodeMirrorFileViewer({
     return parseDelimitedTable(content, delimiterFor(filePath, normalizedContentType));
   }, [content, filePath, normalizedContentType, previewKind]);
 
+  // Reset the HTML sub-view when switching files.
   useEffect(() => {
-    if (previewKind !== 'text' || !containerRef.current) {
+    setHtmlView('preview');
+  }, [filePath]);
+
+  useEffect(() => {
+    if (!wantsTextEditor || !containerRef.current) {
       if (viewRef.current) {
         viewRef.current.destroy();
         viewRef.current = null;
@@ -719,24 +731,24 @@ export default function CodeMirrorFileViewer({
       view.destroy();
       viewRef.current = null;
     };
-  }, [previewKind]);
+  }, [wantsTextEditor]);
 
   useEffect(() => {
-    if (previewKind !== 'text' || !viewRef.current) return;
+    if (!wantsTextEditor || !viewRef.current) return;
     const current = viewRef.current.state.doc.toString();
     if (current === content) return;
 
     viewRef.current.dispatch({
       changes: { from: 0, to: viewRef.current.state.doc.length, insert: content },
     });
-  }, [content, previewKind]);
+  }, [content, wantsTextEditor]);
 
   useEffect(() => {
-    if (previewKind !== 'text' || !viewRef.current) return;
+    if (!wantsTextEditor || !viewRef.current) return;
     viewRef.current.dispatch({
       effects: languageCompartmentRef.current.reconfigure(languageExtension),
     });
-  }, [languageExtension, previewKind]);
+  }, [languageExtension, wantsTextEditor]);
 
   const binaryUnavailablePreview = (
     <div className="flex h-full w-full items-center justify-center p-6">
@@ -753,6 +765,58 @@ export default function CodeMirrorFileViewer({
       </div>
     </div>
   );
+
+  if (previewKind === 'html') {
+    return (
+      <div className="flex h-full w-full flex-col">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-1.5">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setHtmlView('preview')}
+              className={`mc-shell-btn px-2.5 py-1 text-xs ${
+                htmlView === 'preview' ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
+              }`}
+            >
+              Preview
+            </button>
+            <button
+              type="button"
+              onClick={() => setHtmlView('source')}
+              className={`mc-shell-btn px-2.5 py-1 text-xs ${
+                htmlView === 'source' ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
+              }`}
+            >
+              Source
+            </button>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
+            {htmlView === 'preview' ? <span title="Rendered in a sandboxed frame: no scripts, no app access.">Sandboxed · scripts off</span> : null}
+            {formattedSize ? <span>{formattedSize}</span> : null}
+            {rawFileUrl ? (
+              <a href={rawFileUrl} download={fileName} className="mc-shell-btn px-2 py-0.5 text-[11px]">
+                Download
+              </a>
+            ) : null}
+          </div>
+        </div>
+        {htmlView === 'preview' ? (
+          <div className="min-h-0 flex-1 overflow-hidden bg-white">
+            {/* srcDoc + empty sandbox: renders markup/styles with no scripts and a null
+                origin, so workspace HTML can't touch the app session (XSS-safe). */}
+            <iframe
+              srcDoc={content}
+              sandbox=""
+              title={`HTML preview for ${fileName}`}
+              className="h-full w-full border-0"
+            />
+          </div>
+        ) : (
+          <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden" />
+        )}
+      </div>
+    );
+  }
 
   if (previewKind === 'image') {
     return (
