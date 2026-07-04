@@ -1306,19 +1306,6 @@ function buildTaskSearchSnippet(task: TaskBoardTask, query: string): string {
   return `${prefix}${excerpt}${suffix}`;
 }
 
-function isKnownTaskPrincipal(value: string | null | undefined): boolean {
-  if (!value) {
-    return false;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  return Boolean(normalized) && normalized !== 'unknown' && !normalized.startsWith('legacy-');
-}
-
-function isExecutableTaskColumn(task: TaskBoardTask): boolean {
-  return task.column === 'todo' || task.column === 'doing' || task.column === 'review';
-}
-
 function normalizePath(path: string): string {
   return path.startsWith('/') ? path : `/${path}`;
 }
@@ -3462,34 +3449,6 @@ export default function App() {
       return true;
     });
   }, [tasks, mcAssigneeFilter, mcPriorityFilter, mcProjectFilter]);
-  const workPlaneSummary = useMemo(() => {
-    const projectKeys = new Set<string>();
-    for (const task of tasks) {
-      for (const project of task.projects) {
-        projectKeys.add(project.id ? `id:${project.id}` : `name:${project.name.toLowerCase()}`);
-      }
-      if (task.project_id) {
-        projectKeys.add(`id:${task.project_id}`);
-      }
-    }
-
-    const executableTasks = tasks.filter(isExecutableTaskColumn);
-    return {
-      projects: projectKeys.size,
-      ownedTasks: tasks.filter((task) => isKnownTaskPrincipal(task.owner_principal_id)).length,
-      unknownAccountability: tasks.filter(
-        (task) => !isKnownTaskPrincipal(task.initiator_principal_id) || !isKnownTaskPrincipal(task.owner_principal_id),
-      ).length,
-      executableTasks: executableTasks.length,
-      executableWithAssigneeOrExecutor: executableTasks.filter(
-        (task) =>
-          isKnownTaskPrincipal(task.executor_principal_id) ||
-          (task.assignee.trim() !== '' && task.assignee.toLowerCase() !== 'unassigned') ||
-          task.taskmaster_drivable,
-      ).length,
-    };
-  }, [tasks]);
-
   const selectedAgentData = selectedAgent ? agents.find((agent) => agent.id === selectedAgent) : null;
   const selectedSource = currentSourceId ? fileSources.find((source) => source.id === currentSourceId) : null;
   const rightPaneSource = rightPaneSourceId ? fileSources.find((source) => source.id === rightPaneSourceId) : null;
@@ -4480,14 +4439,6 @@ export default function App() {
       return (
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="mr-1 min-w-[12rem]" data-testid="app-work-plane-heading">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">
-                Entity work plane
-              </div>
-              <div className="text-xs text-[var(--text-secondary)]">
-                Workspace tasks, proof, and review
-              </div>
-            </div>
             {BUILTIN_MC_BOARD_TABS.map((board) => (
               <button
                 key={board}
@@ -4520,28 +4471,6 @@ export default function App() {
               </span>
             ) : (
               <>
-                <div
-                  data-testid="app-work-plane-summary"
-                  className="flex flex-wrap items-center gap-1 text-[11px] text-[var(--text-secondary)]"
-                  aria-label="Entity work plane summary"
-                >
-                  <span className="mc-shell-pill px-2 py-1">
-                    {workPlaneSummary.projects} projects
-                  </span>
-                  <span className="mc-shell-pill px-2 py-1">
-                    {workPlaneSummary.ownedTasks}/{tasks.length} owners
-                  </span>
-                  <span
-                    className={`mc-shell-pill px-2 py-1 ${
-                      workPlaneSummary.unknownAccountability > 0 ? 'text-amber-200' : 'text-[var(--accent)]'
-                    }`}
-                  >
-                    {workPlaneSummary.unknownAccountability} unknown accountability
-                  </span>
-                  <span className="mc-shell-pill px-2 py-1">
-                    {workPlaneSummary.executableWithAssigneeOrExecutor}/{workPlaneSummary.executableTasks} active executable
-                  </span>
-                </div>
                 <select
                   value={mcAssigneeFilter}
                   onChange={(event) => setMcAssigneeFilter(event.target.value as MCAssigneeFilter)}
