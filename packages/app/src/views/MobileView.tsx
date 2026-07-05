@@ -737,7 +737,7 @@ export default function MobileView(props: any) {
               type="button"
               onClick={handleCloseTaskDetail}
               aria-label="Close task"
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-opacity active:opacity-70"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--bg-tertiary)] text-[var(--text-primary)] transition-opacity active:opacity-70"
             >
               <ChevronLeftIcon />
             </button>
