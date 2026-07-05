@@ -1,6 +1,5 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import MobileBottomNav from '../components/MobileBottomNav';
-import TaskBoard from '../components/TaskBoard';
 import { shouldRenderMarkdownPreview } from '../lib/markdownFile';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
@@ -14,6 +13,7 @@ const PluginSubViewSlot = lazy(() => import('../components/plugins/PluginSubView
 const PluginTopLevelSlot = lazy(() => import('../components/plugins/PluginTopLevelSlot'));
 const ChatView = lazy(() => import('../components/Chat/ChatView'));
 const ActivityStream = lazy(() => import('../components/ActivityStream'));
+const TaskDetailPanel = lazy(() => import('../components/mission-control/TaskDetailPanel'));
 
 function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
   return (
@@ -130,6 +130,57 @@ function defaultFileCacheMeta() {
   };
 }
 
+const MOBILE_TAB_TITLES: Record<string, string> = {
+  files: 'Files',
+  agents: 'Agents',
+  tasks: 'Tasks',
+  services: 'Services',
+  chat: 'Chat',
+  activity: 'Activity',
+};
+
+const TASK_SEGMENTS: Array<{ id: string; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'backlog', label: 'Backlog' },
+  { id: 'todo', label: 'Todo' },
+  { id: 'doing', label: 'Doing' },
+  { id: 'review', label: 'Review' },
+  { id: 'done', label: 'Done' },
+];
+
+// 'all' groups these columns; done + archived are intentionally excluded from the default view.
+const TASK_GROUP_ORDER = ['backlog', 'todo', 'doing', 'review'] as const;
+
+const TASK_COLUMN_LABELS: Record<string, string> = {
+  backlog: 'Backlog',
+  todo: 'Todo',
+  doing: 'Doing',
+  review: 'Review',
+  done: 'Done',
+  archived: 'Archived',
+};
+
+const TASK_PRIORITY_CLASS: Record<string, string> = {
+  P0: 'bg-red-400/15 text-red-300',
+  P1: 'bg-amber-400/15 text-amber-300',
+  P2: 'bg-sky-400/15 text-sky-300',
+  P3: 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)]',
+};
+
+function ChevronLeftIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function fileBaseName(path: string): string {
+  const normalized = String(path ?? '').replace(/\\/g, '/');
+  const parts = normalized.split('/');
+  return parts[parts.length - 1] || normalized;
+}
+
 export default function MobileView(props: any) {
   const {
     mobileTab,
@@ -225,6 +276,8 @@ export default function MobileView(props: any) {
     setFollowingAgent,
   } = props;
 
+  const [taskSegment, setTaskSegment] = useState<string>('all');
+
   const renderFileHome = () => {
     if (runtime.fsMultiSourceEnabled) {
       return <LazyUnifiedFileDashboard apiBase={runtime.apiBase} enabled onOpen={handleSourceFileSelect} />;
@@ -237,85 +290,164 @@ export default function MobileView(props: any) {
     );
   };
 
+  const clearCurrentFile = () => {
+    setCurrentFile(null);
+    setFileContent('');
+    setCurrentFilePreviewMeta(defaultFilePreviewMeta());
+    setCurrentFileCacheMeta(defaultFileCacheMeta());
+  };
+
+  const inFileDeepView = Boolean(mobileTab === 'files' && currentFile);
+  const inTaskDetail = typeof highlightTaskId === 'number';
+  const inDeepView = inFileDeepView || inTaskDetail;
+
+  const boardTasks: any[] = Array.isArray(filteredBoardTasks) ? filteredBoardTasks : [];
+  const nonArchivedTasks = boardTasks.filter((task) => !task.archived && task.column !== 'archived');
+  const taskCountFor = (segmentId: string): number => {
+    if (segmentId === 'all') {
+      return nonArchivedTasks.filter((task) => task.column !== 'done').length;
+    }
+    return nonArchivedTasks.filter((task) => task.column === segmentId).length;
+  };
+
+  const renderTaskEmptyState = () => (
+    <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+      <span className="text-4xl opacity-30" aria-hidden="true">
+        🗂️
+      </span>
+      <div className="text-sm text-[var(--text-muted)]">Nothing here yet.</div>
+    </div>
+  );
+
+  const renderTaskCard = (task: any) => (
+    <button
+      key={task.id}
+      type="button"
+      onClick={() => handleTaskSelect(task.id)}
+      className="w-full rounded-2xl bg-[var(--bg-secondary)] px-4 py-3.5 text-left transition-opacity active:opacity-80"
+    >
+      <div className="line-clamp-2 text-[15px] font-medium text-[var(--text-primary)]">{task.name}</div>
+      <div className="mt-2 flex items-center gap-2 text-xs text-[var(--text-muted)]">
+        <span
+          className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
+            TASK_PRIORITY_CLASS[task.priority] ?? TASK_PRIORITY_CLASS.P3
+          }`}
+        >
+          {task.priority}
+        </span>
+        {task.assignee && <span className="truncate">{task.assignee}</span>}
+        {task.blocked && <span className="shrink-0 text-amber-300">· blocked</span>}
+      </div>
+    </button>
+  );
+
+  const renderTaskContent = () => {
+    if (tasksLoading) {
+      return (
+        <div className="space-y-2.5">
+          {[0, 1, 2].map((index) => (
+            <div key={index} className="h-20 animate-pulse rounded-2xl bg-[var(--bg-secondary)]" />
+          ))}
+        </div>
+      );
+    }
+
+    if (taskSegment === 'all') {
+      const groups = TASK_GROUP_ORDER.map((column) => ({
+        column,
+        items: nonArchivedTasks.filter((task) => task.column === column),
+      })).filter((group) => group.items.length > 0);
+
+      if (groups.length === 0) {
+        return renderTaskEmptyState();
+      }
+
+      return (
+        <div className="space-y-4">
+          {groups.map((group) => (
+            <div key={group.column} className="space-y-2.5">
+              <div className="sticky top-0 z-10 bg-[var(--bg-primary)] px-1 py-1 text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)]">
+                {TASK_COLUMN_LABELS[group.column]} · {group.items.length}
+              </div>
+              {group.items.map(renderTaskCard)}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    const items = nonArchivedTasks.filter((task) => task.column === taskSegment);
+    if (items.length === 0) {
+      return renderTaskEmptyState();
+    }
+    return <div className="space-y-2.5">{items.map(renderTaskCard)}</div>;
+  };
+
+  const renderConnectionDot = () => (
+    <span
+      className={`h-2 w-2 rounded-full ${connected ? 'bg-[var(--accent)]' : 'bg-orange-400'}`}
+      aria-label={connected ? 'Connected' : 'Offline'}
+      title={connected ? 'Connected' : 'Offline'}
+    />
+  );
+
   return (
     <>
-      <div className="flex min-w-0 flex-1 flex-col bg-[var(--bg-primary)] pb-14 md:hidden">
-        <div className="flex items-center justify-between border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
-          <div>
-            <div className="text-sm font-semibold">Entity Mission Control</div>
-            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-              {workspaceTab} · {onlineAgents}/{agents.length} agents online
+      <div
+        className={`flex min-w-0 flex-1 flex-col bg-[var(--bg-primary)] md:hidden ${inDeepView ? 'pb-0' : 'pb-24'}`}
+      >
+        {inFileDeepView ? (
+          <div className="flex items-center gap-1 bg-[var(--bg-primary)] px-2 py-2">
+            <button
+              type="button"
+              onClick={clearCurrentFile}
+              aria-label="Back to files"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-opacity active:opacity-70"
+            >
+              <ChevronLeftIcon />
+            </button>
+            <span className="min-w-0 flex-1 truncate text-center text-[13px] text-[var(--text-secondary)]">
+              {fileBaseName(currentFile)}
+            </span>
+            <div className="flex shrink-0 items-center">
+              <button
+                type="button"
+                disabled={!currentFile}
+                onClick={() => setEditMode(!editMode)}
+                className="flex h-11 items-center px-3 text-[13px] font-medium text-[var(--accent)] transition-opacity active:opacity-70 disabled:opacity-40"
+              >
+                {editMode ? 'Preview' : 'Edit'}
+              </button>
+              {editMode && editorCollabMode !== 'viewing' && !watchMode && canEditCurrentFile && (
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  className="flex h-11 items-center px-3 text-[13px] font-semibold text-[var(--accent)] transition-opacity active:opacity-70"
+                >
+                  Save
+                </button>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span
-              className="mc-shell-btn inline-flex items-center px-2 py-1 text-[11px]"
-              aria-label={connected ? 'Online' : 'Offline'}
-              title={connected ? 'Online' : 'Offline'}
-            >
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${connected ? 'bg-[var(--accent)]' : 'bg-orange-400'}`}
-                aria-hidden="true"
-              />
-            </span>
-            <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">{mobileTab}</div>
+        ) : mobileTab === 'chat' ? (
+          <div className="flex items-center justify-between bg-[var(--bg-primary)] px-5 pb-2 pt-3">
+            <h1 className="text-lg font-semibold text-[var(--text-primary)]">Chat</h1>
+            {renderConnectionDot()}
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center justify-between bg-[var(--bg-primary)] px-5 pb-3 pt-4">
+            <h1 className="text-2xl font-semibold text-[var(--text-primary)]">
+              {MOBILE_TAB_TITLES[mobileTab] ?? 'Entity'}
+            </h1>
+            {renderConnectionDot()}
+          </div>
+        )}
 
         <div className="min-h-0 flex-1">
           {mobileTab === 'files' && (
             <div className="flex h-full min-h-0 flex-col">
               {currentFile ? (
                 <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="flex items-center gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCurrentFile(null);
-                        setFileContent('');
-                        setCurrentFilePreviewMeta(defaultFilePreviewMeta());
-                        setCurrentFileCacheMeta(defaultFileCacheMeta());
-                      }}
-                      className="mc-shell-btn px-2 py-1 text-[11px]"
-                      aria-label="Back to files"
-                    >
-                      ←
-                    </button>
-                    <span className="flex-1 truncate text-[var(--text-muted)]">
-                      {selectedSource ? `${selectedSource.displayName} • ` : ''}{currentFile}
-                    </span>
-                    {currentFileCacheMeta.cached && (
-                      <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                        cached ({currentFileCachedAgeLabel ?? 'just now'})
-                      </span>
-                    )}
-                    {runtime.fsMultiSourceEnabled && (
-                      <button
-                        type="button"
-                        onClick={handleBackToDashboard}
-                        className="mc-shell-btn px-2 py-1 text-[11px]"
-                      >
-                        Back
-                      </button>
-                    )}
-                    <button
-                      disabled={!currentFile}
-                      onClick={() => setEditMode(!editMode)}
-                      className={`mc-shell-btn px-2 py-1 text-[11px] ${
-                        editMode ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''
-                      } ${currentFile ? '' : 'cursor-not-allowed opacity-40'}`}
-                    >
-                      {editMode ? 'Preview' : 'Edit'}
-                    </button>
-                    {editMode && editorCollabMode !== 'viewing' && !watchMode && canEditCurrentFile && (
-                      <button
-                        onClick={handleSave}
-                        className="mc-shell-btn mc-shell-btn-active border-[var(--accent)] px-2 py-1 text-[11px] font-medium text-[var(--text-primary)]"
-                      >
-                        Save
-                      </button>
-                    )}
-                  </div>
                   {manualAttributionEnabled && (
                     <div className="hidden border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 md:block">
                       <LazyAuthorshipStatsPanel
@@ -442,7 +574,7 @@ export default function MobileView(props: any) {
           )}
 
           {mobileTab === 'agents' && (
-            <div className="h-full overflow-auto">
+            <div className="h-full overflow-auto px-2">
               {selectedAgent !== null ? (
                 <LazyAgentsMobileDetail
                   agent={
@@ -462,14 +594,14 @@ export default function MobileView(props: any) {
               ) : (
                 <LazyAgentsSidebarTab
                   agents={agents}
-                  loading={agentsLoading}
-                  error={agentsError}
+                  agentsLoading={agentsLoading}
+                  agentsError={agentsError}
                   selectedAgentId={selectedAgent}
                   followingAgentId={followingAgent}
                   watchMode={watchMode}
                   activities={activities}
                   onSelectAgent={setSelectedAgent}
-                  onSetFollowingAgent={setFollowingAgent}
+                  onFollowAgent={setFollowingAgent}
                   onSetFollowDetached={setFollowDetached}
                   onOpenFile={handleFileSelect}
                   tasks={tasks}
@@ -482,22 +614,33 @@ export default function MobileView(props: any) {
             activeTaskSubViewPlugin ? (
               <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
             ) : (
-              <TaskBoard
-                viewport="mobile"
-                apiBase={runtime.mcOrigin}
-                showInsights={mcBoardTab === 'insights'}
-                activeTab={mcBoardTab === 'insights' ? 'insights' : 'kanban'}
-                highlightTaskId={highlightTaskId}
-                onOpenTask={handleTaskSelect}
-                onCloseTask={handleCloseTaskDetail}
-                onDocsLinkNavigate={handleTaskOutputDocsNavigation}
-                searchQuery={taskSearchQuery}
-                showArchiveColumn={showArchiveColumn}
-                onArchiveColumnVisibilityChange={setShowArchiveColumn}
-                tasks={filteredBoardTasks}
-                loading={tasksLoading}
-                error={tasksError}
-              />
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex gap-2 overflow-x-auto px-5 pb-3">
+                  {TASK_SEGMENTS.map((segment) => {
+                    const active = taskSegment === segment.id;
+                    return (
+                      <button
+                        key={segment.id}
+                        type="button"
+                        onClick={() => setTaskSegment(segment.id)}
+                        className={`shrink-0 rounded-full px-4 py-2 text-[13px] transition-colors ${
+                          active
+                            ? 'bg-[var(--accent)]/15 text-[var(--text-primary)]'
+                            : 'bg-[var(--bg-secondary)] text-[var(--text-muted)]'
+                        }`}
+                      >
+                        {segment.label} <span className="opacity-70">{taskCountFor(segment.id)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {tasksError && (
+                  <div className="mx-5 mb-2 rounded-xl bg-red-400/10 px-3 py-2 text-xs text-red-300">
+                    {String(tasksError)}
+                  </div>
+                )}
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">{renderTaskContent()}</div>
+              </div>
             )
           )}
 
@@ -506,47 +649,81 @@ export default function MobileView(props: any) {
           )}
 
           {mobileTab === 'chat' && (
-            <div className="h-full min-h-0">
+            <div className="flex h-full min-h-0 flex-col pb-2">
               <LazyChatView />
             </div>
           )}
 
           {mobileTab === 'activity' && (
-            <LazyActivityStream
-              activities={activities}
-              loading={activityLoading}
-              error={activityError}
-              isOpen={mobileActivityPanelOpen}
-              onToggleOpen={() => setMobileActivityPanelOpen((prev: boolean) => !prev)}
-              onOpenFile={handleFileSelect}
-              onOpenTask={handleTaskSelect}
-            />
+            <div className="h-full min-h-0">
+              <LazyActivityStream
+                activities={activities}
+                loading={activityLoading}
+                error={activityError}
+                isOpen={mobileActivityPanelOpen}
+                onToggleOpen={() => setMobileActivityPanelOpen((prev: boolean) => !prev)}
+                onOpenFile={handleFileSelect}
+                onOpenTask={handleTaskSelect}
+                fillHeight
+              />
+            </div>
           )}
         </div>
       </div>
 
-      <MobileBottomNav
-        activeTab={mobileTab}
-        onChange={(tab) => {
-          setTabletSidebarOpen(false);
-          setMobileTab(tab);
-          if (tab === 'tasks') {
-            setSidebarTab('tasks');
-            return;
-          }
-          if (tab === 'services') {
-            setSidebarTab('services');
-            return;
-          }
-          if (tab === 'chat') {
-            setSidebarTab('chat');
-            return;
-          }
-          if (tab === 'files' || tab === 'agents') {
-            setSidebarTab(tab);
-          }
-        }}
-      />
+      {inTaskDetail && (
+        <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-[var(--bg-primary)] md:hidden">
+          <div className="flex items-center gap-1 bg-[var(--bg-primary)] px-2 py-2">
+            <button
+              type="button"
+              onClick={handleCloseTaskDetail}
+              aria-label="Close task"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-opacity active:opacity-70"
+            >
+              <ChevronLeftIcon />
+            </button>
+            <span className="min-w-0 flex-1 truncate text-center text-[13px] text-[var(--text-secondary)]">
+              Task #{highlightTaskId}
+            </span>
+            <span className="h-11 w-11 shrink-0" aria-hidden="true" />
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            <Suspense fallback={<LazySurfaceFallback label="Loading task" />}>
+              <TaskDetailPanel
+                taskId={highlightTaskId}
+                apiBase={runtime.mcOrigin}
+                onClose={handleCloseTaskDetail}
+                onDocsLinkNavigate={handleTaskOutputDocsNavigation}
+              />
+            </Suspense>
+          </div>
+        </div>
+      )}
+
+      {!inDeepView && (
+        <MobileBottomNav
+          activeTab={mobileTab}
+          onChange={(tab) => {
+            setTabletSidebarOpen(false);
+            setMobileTab(tab);
+            if (tab === 'tasks') {
+              setSidebarTab('tasks');
+              return;
+            }
+            if (tab === 'services') {
+              setSidebarTab('services');
+              return;
+            }
+            if (tab === 'chat') {
+              setSidebarTab('chat');
+              return;
+            }
+            if (tab === 'files' || tab === 'agents') {
+              setSidebarTab(tab);
+            }
+          }}
+        />
+      )}
 
       {renderOfflineSyncBar(true)}
     </>

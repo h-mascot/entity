@@ -2727,3 +2727,23 @@ textarea {
     box-shadow: 0 0 0 7px rgb(0 170 255 / 0.18);
   }
 }
+
+/* Mobile navigation foundation (floating pill nav + bottom sheet) */
+@keyframes entity-mobile-sheet-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.entity-mobile-sheet-enter {
+  animation: entity-mobile-sheet-enter 180ms ease-out;
+}
+
+.entity-mobile-nav-shadow {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
