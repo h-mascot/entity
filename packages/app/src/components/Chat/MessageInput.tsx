@@ -58,6 +58,7 @@ export default function MessageInput({
   const [threadMemory, setThreadMemory] = useState(false);
   const settingsModalRef = useRef<HTMLDivElement | null>(null);
   const settingsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const settingsTriggerMobileRef = useRef<HTMLButtonElement | null>(null);
 
   const availableAgents = useMemo(() => {
     const deduped: Array<{ id: string; name: string; emoji: string }> = [];
@@ -89,7 +90,11 @@ export default function MessageInput({
         return;
       }
 
-      if (settingsModalRef.current?.contains(target) || settingsTriggerRef.current?.contains(target)) {
+      if (
+        settingsModalRef.current?.contains(target) ||
+        settingsTriggerRef.current?.contains(target) ||
+        settingsTriggerMobileRef.current?.contains(target)
+      ) {
         return;
       }
 
@@ -272,8 +277,23 @@ export default function MessageInput({
         </>
       )}
 
-      <div className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] p-2 shadow-inner shadow-black/10">
+      <div className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] p-2 shadow-inner shadow-black/10 max-md:border-transparent max-md:bg-transparent max-md:p-0 max-md:shadow-none">
         <div className="flex items-end gap-2">
+          {/* Mobile: routing selector lives inline in the composer row (native chat pattern). */}
+          <button
+            ref={settingsTriggerMobileRef}
+            type="button"
+            onClick={() => setSettingsOpen((value) => !value)}
+            className={`hidden max-md:inline-flex max-md:min-h-[44px] max-md:shrink-0 max-md:items-center max-md:gap-1 max-md:self-center max-md:rounded-full max-md:bg-[var(--bg-tertiary)] max-md:px-3 max-md:text-[12px] max-md:text-[var(--text-secondary)] ${
+              settingsOpen ? 'relative z-50' : ''
+            }`}
+            aria-expanded={settingsOpen}
+            aria-label="Open chat routing settings"
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${offline ? 'bg-[var(--text-muted)]' : 'bg-[var(--accent)]'}`} />
+            <span className="max-w-[5.5rem] truncate">{getAgentLabel(selectedAgentId)}</span>
+            <span aria-hidden="true">⌄</span>
+          </button>
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
@@ -285,7 +305,7 @@ export default function MessageInput({
             }}
             rows={compact ? 2 : 3}
             placeholder={placeholder}
-            className="min-h-[58px] flex-1 resize-y rounded-md border-0 bg-transparent px-3 py-2 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] max-md:rounded-full max-md:px-4 max-md:py-3 max-md:text-[15px]"
+            className="min-h-[58px] flex-1 resize-y rounded-md border-0 bg-transparent px-3 py-2 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] max-md:h-[48px] max-md:min-h-0 max-md:resize-none max-md:rounded-2xl max-md:bg-[var(--bg-tertiary)] max-md:px-4 max-md:py-3 max-md:text-[15px]"
           />
           <button
             type="button"
@@ -309,7 +329,7 @@ export default function MessageInput({
             {sending ? 'Sending...' : sendLabel}
           </button>
         </div>
-        <div className={`mt-2 flex flex-wrap items-center justify-between gap-2 max-md:gap-1 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+        <div className={`mt-2 flex flex-wrap items-center justify-between gap-2 max-md:hidden ${compact ? 'text-[10px]' : 'text-xs'}`}>
           <button
             ref={settingsTriggerRef}
             type="button"

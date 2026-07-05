@@ -5128,7 +5128,7 @@ export default function App() {
           <button
             type="button"
             onClick={handleDismissInstallCta}
-            className="mc-shell-btn px-1.5 py-0.5 text-[11px] leading-none text-[var(--text-muted)]"
+            className="mc-shell-btn px-1.5 py-0.5 text-[11px] leading-none text-[var(--text-muted)] max-md:min-h-[44px] max-md:min-w-[44px] max-md:text-sm"
             aria-label="Dismiss app install prompt"
             title="Dismiss app install prompt"
           >

@@ -3088,14 +3088,18 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                }`}>
 	                  {form?.blocked ? 'Blocked' : 'Clear'}
 	                </span>
-	                <span className="min-w-max whitespace-nowrap rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-emerald-300">
+	                <span className="min-w-max whitespace-nowrap rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-emerald-300 max-md:hidden">
 	                  Created by {task?.createdBy ?? 'Unknown'}
 	                </span>
-	                <span className="col-span-2 min-w-max whitespace-nowrap rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-200">
+	                <span className="col-span-2 min-w-max whitespace-nowrap rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-200 max-md:hidden">
 	                  Created {task ? formatDateTime(task.createdAt) : '-'}
 	                </span>
-	                <span className="col-span-2 min-w-max whitespace-nowrap rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-sky-200">
+	                <span className="col-span-2 min-w-max whitespace-nowrap rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-sky-200 max-md:hidden">
 	                  Updated {task ? formatDateTime(task.updatedAt) : '-'}
+	                </span>
+	                {/* Mobile: single compact meta line replaces the timestamp pills. */}
+	                <span className="hidden w-full pt-0.5 text-[11px] text-[var(--text-muted)] max-md:block">
+	                  {task?.createdBy ?? 'Unknown'} · created {task ? formatDateTime(task.createdAt) : '-'}
 	                </span>
 	                {busyAction || saveMessage ? (
 	                  <span className="text-[var(--accent)]">{busyAction ? `${busyAction}...` : saveMessage}</span>
@@ -3355,8 +3359,8 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                }`}
                 aria-pressed={detailTab === tab}
               >
-	                <span className="text-base text-[var(--accent)]" aria-hidden="true">{icon}</span>
-                <span>{label}</span>
+	                <span className="text-base text-[var(--accent)] max-md:hidden" aria-hidden="true">{icon}</span>
+                <span className="max-md:font-medium">{label}</span>
                 {count > 0 ? (
                   <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px]">{count}</span>
                 ) : null}
