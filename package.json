@@ -11,6 +11,7 @@
     "build": "npm --prefix packages/app run build && npm --prefix packages/db run build && npm --prefix packages/server run build",
     "electron": "npm --prefix electron run dev",
     "electron:build": "npm --prefix electron run build",
+    "desktop": "npm --prefix electron run dev",
     "test:unit": "npm run test --workspaces --if-present",
     "test:live": "node scripts/ctrl-live-smoke.mjs",
     "test:deploy": "bash scripts/ctrl-deploy-path-check.sh",

@@ -4,9 +4,10 @@
   "private": true,
   "main": "main.js",
   "scripts": {
-    "dev": "DEV_URL=http://localhost:5173 electron .",
-    "build:renderer": "npm --prefix ../packages/app run build && rm -rf renderer && mkdir -p renderer && cp -R ../packages/app/dist/. renderer/",
-    "build": "npm run build:renderer && electron-builder --mac dmg --win nsis"
+    "dev": "electron .",
+    "build:renderer": "npm --prefix ../packages/app run build",
+    "build": "npm run build:renderer && electron-builder --mac dmg --win nsis",
+    "build:linux": "npm run build:renderer && electron-builder --linux AppImage"
   },
   "build": {
     "appId": "com.entity.missioncontrol",
@@ -36,7 +37,7 @@
     "electronVersion": "34.5.8"
   },
   "devDependencies": {
-    "electron": "^34.0.0",
+    "electron": "^34.5.8",
     "electron-builder": "^25.1.8"
   },
   "description": "Entity Mission Control Desktop",

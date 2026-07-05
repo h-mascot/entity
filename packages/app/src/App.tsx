@@ -103,7 +103,6 @@ const MC_SHOW_ARCHIVE_KEY = 'mc_showArchive';
 const SIDEBAR_COLLAPSED_KEY = 'entity.sidebar.collapsed.v1';
 const RIGHT_SIDEBAR_COLLAPSED_KEY = 'entity.rightSidebar.collapsed.v1';
 const THEME_KEY = 'entity.theme.v1';
-const PWA_INSTALL_CTA_DISMISSED_KEY = 'entity.pwa.install-cta-dismissed.v1';
 const DEFAULT_LOGIN_PASSWORD = 'mission';
 const ENTERPRISE_ADMIN_URL = '';
 
@@ -1238,26 +1237,6 @@ function persistThemePreference(theme: AppTheme) {
   }
 }
 
-function readInstallCtaDismissed(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  return window.localStorage.getItem(PWA_INSTALL_CTA_DISMISSED_KEY) === 'true';
-}
-
-function persistInstallCtaDismissed(value: boolean) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  if (value) {
-    window.localStorage.setItem(PWA_INSTALL_CTA_DISMISSED_KEY, 'true');
-    return;
-  }
-
-  window.localStorage.removeItem(PWA_INSTALL_CTA_DISMISSED_KEY);
-}
 
 function applyDocumentTheme(theme: AppTheme) {
   if (typeof document === 'undefined') {
@@ -1726,7 +1705,6 @@ export default function App() {
   const [syncingNow, setSyncingNow] = useState(false);
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [pwaInstalled, setPwaInstalled] = useState<boolean>(() => isStandaloneDisplayMode());
-  const [installCtaDismissed, setInstallCtaDismissed] = useState<boolean>(() => readInstallCtaDismissed());
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const rightSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastContentRef = useRef('');
@@ -1772,7 +1750,6 @@ export default function App() {
   const lastBuildHashToastRef = useRef<string | null>(null);
   const docsModeActive = Boolean(docsPath);
   const docsBreadcrumbSegments = useMemo(() => (docsPath ? docsPath.split('/').filter(Boolean) : []), [docsPath]);
-  const installCtaVisible = !pwaInstalled && !installCtaDismissed;
   const showOfflineSyncBar = isOffline || offlineQueuePending > 0 || syncingNow;
   const currentFileCachedAgeLabel = currentFileCacheMeta.cached ? formatElapsedMs(currentFileCacheMeta.cacheAgeMs) : null;
   const rightPaneCachedAgeLabel = rightPaneCacheMeta.cached ? formatElapsedMs(rightPaneCacheMeta.cacheAgeMs) : null;
@@ -1848,10 +1825,6 @@ export default function App() {
 
     pushToast('Use browser menu > Add to Dock (desktop) or Add to Home Screen (mobile).', 'info');
   }, [deferredInstallPrompt, pushToast]);
-
-  const handleDismissInstallCta = useCallback(() => {
-    setInstallCtaDismissed(true);
-  }, []);
 
   const refreshOfflineQueueState = useCallback(async () => {
     const snapshot = await readOfflineWriteQueueSnapshot().catch(() => []);
@@ -2285,10 +2258,6 @@ export default function App() {
     persistThemePreference(appTheme);
     applyDocumentTheme(appTheme);
   }, [appTheme]);
-
-  useEffect(() => {
-    persistInstallCtaDismissed(installCtaDismissed);
-  }, [installCtaDismissed]);
 
   useEffect(() => {
     if (sidebarTab !== 'admin' || adminSection !== 'enterprise') {
@@ -4181,6 +4150,9 @@ export default function App() {
       <AdminView
         adminSection={adminSection}
         onOpenTaskMasterSettings={() => setAdminSection('taskMaster')}
+        onInstallApp={() => void handleInstallClick()}
+        installPromptAvailable={Boolean(deferredInstallPrompt)}
+        pwaInstalled={pwaInstalled}
         enterpriseFrameNonce={enterpriseFrameNonce}
         enterpriseFrameSrc={enterpriseFrameSrc}
         enterpriseFrameReady={enterpriseFrameReady}
@@ -5104,38 +5076,6 @@ export default function App() {
     </>
   );
 
-  const renderInstallCta = (bottomClassName: string) => {
-    if (!installCtaVisible) {
-      return null;
-    }
-
-    return (
-      // Mobile: pin under the header instead of floating over the composer/nav.
-      <div className={`fixed right-3 z-[72] ${bottomClassName} max-md:bottom-auto max-md:top-3`}>
-        <div className="flex items-center gap-2 rounded-md border border-[var(--border-secondary)] bg-[var(--bg-secondary)]/95 px-2 py-1.5 shadow-lg backdrop-blur">
-          <button
-            type="button"
-            onClick={() => {
-              void handleInstallClick();
-            }}
-            className="mc-shell-btn border-[var(--accent)] bg-[var(--bg-secondary)] px-3 py-1 text-xs font-medium text-[var(--text-primary)]"
-          >
-            {deferredInstallPrompt ? 'Install App' : 'Add to Dock'}
-          </button>
-          <button
-            type="button"
-            onClick={handleDismissInstallCta}
-            className="mc-shell-btn px-1.5 py-0.5 text-[11px] leading-none text-[var(--text-muted)] max-md:min-h-[44px] max-md:min-w-[44px] max-md:text-sm"
-            aria-label="Dismiss app install prompt"
-            title="Dismiss app install prompt"
-          >
-            ×
-          </button>
-        </div>
-      </div>
-    );
-  };
-
   const renderOfflineSyncBar = (mobileHasBottomNav: boolean) => {
     if (!showOfflineSyncBar) {
       return null;
@@ -5221,7 +5161,6 @@ export default function App() {
           onDocsLinkNavigate={handleMarkdownDocsNavigation}
           onDocsTtsSettingsChange={handleDocsTtsSettingsChange}
           onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-          renderInstallCta={renderInstallCta}
           renderOfflineSyncBar={renderOfflineSyncBar}
         />
       </Suspense>
@@ -5259,7 +5198,6 @@ export default function App() {
       className="entity-shell flex h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-secondary)]"
       data-workspace-tab={sidebarTab}
     >
-      {renderInstallCta('bottom-28 md:bottom-8')}
       {quickSwitcherOpen ? (
         <Suspense fallback={null}>
           <QuickSwitcher

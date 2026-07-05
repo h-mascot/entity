@@ -187,14 +187,24 @@ http://localhost:5173
 ### Desktop shell
 
 ```bash
-npm run electron
+npm run desktop
 ```
 
-For packaged desktop builds:
+Opens Entity as a standalone Electron window. It connects to the local server at `http://127.0.0.1:3000` (override with `ENTITY_URL`) and auto-starts the server from this repo when it isn't already running.
+
+For packaged desktop builds (dmg/nsis, run on the target OS):
 
 ```bash
 npm run electron:build
 ```
+
+### Mobile app (Expo)
+
+```bash
+cd packages/mobile && npx expo start
+```
+
+Scan the QR code with [Expo Go](https://expo.dev/go) on your phone. See `packages/mobile/README.md` for LAN setup and standalone EAS builds.
 
 ---
 
