@@ -85,6 +85,9 @@ interface AdminViewProps {
   setDocsTtsSettings: Dispatch<SetStateAction<DocsTtsSettings>>;
   onAgentRegistryChanged: () => void;
   onOpenTaskMasterSettings?: () => void;
+  onInstallApp?: () => void;
+  installPromptAvailable?: boolean;
+  pwaInstalled?: boolean;
 }
 
 function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
@@ -204,6 +207,9 @@ export default function AdminView({
   setDocsTtsSettings,
   onAgentRegistryChanged,
   onOpenTaskMasterSettings,
+  onInstallApp,
+  installPromptAvailable = false,
+  pwaInstalled = false,
 }: AdminViewProps) {
   if (adminSection === 'enterprise') {
     return (
@@ -275,6 +281,23 @@ export default function AdminView({
                 {authSession && (
                   <button type="button" onClick={handleLogout} className="mc-shell-btn px-3 py-1 text-xs text-[var(--error)]">
                     Sign out
+                  </button>
+                )}
+              </div>
+              <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-2">
+                <div className="mb-1 text-sm font-medium text-[var(--text-primary)]">Install Entity</div>
+                <div className="mb-3 text-xs text-[var(--text-muted)]">
+                  {pwaInstalled
+                    ? 'Entity is running as an installed app.'
+                    : 'Install Entity as a standalone app (PWA). On iOS use Share → Add to Home Screen; on desktop browsers use the address-bar install icon if the button is unavailable.'}
+                </div>
+                {!pwaInstalled && (
+                  <button
+                    type="button"
+                    onClick={() => onInstallApp?.()}
+                    className={`mc-shell-btn px-3 py-1 text-xs ${installPromptAvailable ? 'mc-shell-btn-active border-[var(--accent)] text-[var(--text-primary)]' : ''}`}
+                  >
+                    {installPromptAvailable ? 'Install app' : 'Show install instructions'}
                   </button>
                 )}
               </div>

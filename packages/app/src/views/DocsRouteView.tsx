@@ -17,7 +17,6 @@ interface DocsRouteViewProps {
   onDocsLinkNavigate: (href: string) => boolean;
   onDocsTtsSettingsChange: (settings: DocsTtsSettings) => void;
   onToast: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
-  renderInstallCta: (bottomClassName: string) => ReactNode;
   renderOfflineSyncBar: (mobileHasBottomNav: boolean) => ReactNode;
 }
 
@@ -53,7 +52,6 @@ export default function DocsRouteView({
   onDocsLinkNavigate,
   onDocsTtsSettingsChange,
   onToast,
-  renderInstallCta,
   renderOfflineSyncBar,
 }: DocsRouteViewProps) {
   const docsPathParts = docsPath.split('/').filter(Boolean);
@@ -61,7 +59,6 @@ export default function DocsRouteView({
 
   return (
     <div className="entity-shell flex h-screen flex-col bg-[var(--bg-primary)] text-[var(--text-secondary)]">
-      {renderInstallCta('bottom-10')}
       <DocumentViewerChrome
         filename={docsFilename || fallbackFilename}
         breadcrumb={docsBreadcrumbSegments.length > 0 ? docsBreadcrumbSegments.join(' / ') : docsPath}
