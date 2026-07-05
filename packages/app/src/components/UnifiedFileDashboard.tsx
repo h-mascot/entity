@@ -89,7 +89,8 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
 
   return (
     <div className="entity-ops-surface flex h-full w-full flex-col gap-3 overflow-hidden p-4">
-      <div className="shrink-0">
+      {/* Mobile shell already shows a large "Files" title; hide the desktop heading below md. */}
+      <div className="shrink-0 max-md:hidden">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="entity-ops-section-title">Files</div>
