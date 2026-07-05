@@ -137,7 +137,20 @@ const MOBILE_TAB_TITLES: Record<string, string> = {
   services: 'Services',
   chat: 'Chat',
   activity: 'Activity',
+  admin: 'Admin',
 };
+
+const ADMIN_MOBILE_SECTIONS: Array<{ id: string; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'profile', label: 'Profile' },
+  { id: 'missionControl', label: 'Mission Control' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'plugins', label: 'Plugins' },
+  { id: 'voice', label: 'Voice' },
+  { id: 'taskMaster', label: 'Task Master' },
+  { id: 'docs', label: 'Docs' },
+];
 
 const TASK_SEGMENTS: Array<{ id: string; label: string }> = [
   { id: 'all', label: 'All' },
@@ -727,6 +740,32 @@ export default function MobileView(props: any) {
               )}
             </div>
           )}
+
+          {mobileTab === 'admin' && (
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="shrink-0 overflow-x-auto px-4 pb-2">
+                <div className="flex w-max gap-2">
+                  {ADMIN_MOBILE_SECTIONS.map((section) => (
+                    <button
+                      key={section.id}
+                      type="button"
+                      onClick={() => props.setAdminSection?.(section.id)}
+                      className={`shrink-0 whitespace-nowrap rounded-full px-4 py-2.5 text-[14px] font-medium transition-colors ${
+                        props.adminSection === section.id
+                          ? 'text-[var(--text-primary)] [background:color-mix(in_srgb,var(--accent)_20%,transparent)]'
+                          : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)]'
+                      }`}
+                    >
+                      {section.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto">
+                {props.renderAdminWorkspace ? props.renderAdminWorkspace() : null}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -777,7 +816,7 @@ export default function MobileView(props: any) {
               setSidebarTab('chat');
               return;
             }
-            if (tab === 'files' || tab === 'agents') {
+            if (tab === 'files' || tab === 'agents' || tab === 'admin') {
               setSidebarTab(tab);
             }
           }}

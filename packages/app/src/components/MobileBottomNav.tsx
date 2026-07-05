@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export type MobileTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'activity';
+export type MobileTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'activity' | 'admin';
 
 interface MobileBottomNavProps {
   activeTab: MobileTab;
@@ -154,6 +154,26 @@ function PulseIcon({ className }: IconProps) {
   );
 }
 
+function GearIcon({ className }: IconProps) {
+  return (
+    <svg
+      className={className}
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.65 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01A1.7 1.7 0 0 0 10.05 3V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01c.26.63.87 1.04 1.56 1.04H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.94Z" />
+    </svg>
+  );
+}
+
 const PRIMARY_ITEMS: Array<{
   id: MobileTab;
   label: string;
@@ -165,7 +185,7 @@ const PRIMARY_ITEMS: Array<{
   { id: 'agents', label: 'Agents', Icon: BotIcon },
 ];
 
-const MORE_TABS: MobileTab[] = ['services', 'activity'];
+const MORE_TABS: MobileTab[] = ['services', 'activity', 'admin'];
 
 export default function MobileBottomNav({ activeTab, onChange }: MobileBottomNavProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -295,6 +315,24 @@ export default function MobileBottomNav({ activeTab, onChange }: MobileBottomNav
             >
               <PulseIcon className="h-6 w-6 shrink-0" />
               <span className="text-[15px] font-medium">Activity</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => selectMore('admin')}
+              aria-current={activeTab === 'admin' ? 'page' : undefined}
+              className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-left transition-colors ${
+                activeTab === 'admin'
+                  ? 'text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)]'
+              }`}
+              style={
+                activeTab === 'admin'
+                  ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)' }
+                  : undefined
+              }
+            >
+              <GearIcon className="h-6 w-6 shrink-0" />
+              <span className="text-[15px] font-medium">Admin</span>
             </button>
           </div>
         </div>
