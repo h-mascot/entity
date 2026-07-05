@@ -5114,7 +5114,8 @@ export default function App() {
     }
 
     return (
-      <div className={`fixed right-3 z-[72] ${bottomClassName}`}>
+      // Mobile: pin under the header instead of floating over the composer/nav.
+      <div className={`fixed right-3 z-[72] ${bottomClassName} max-md:bottom-auto max-md:top-3`}>
         <div className="flex items-center gap-2 rounded-md border border-[var(--border-secondary)] bg-[var(--bg-secondary)]/95 px-2 py-1.5 shadow-lg backdrop-blur">
           <button
             type="button"
