@@ -1,5 +1,5 @@
-const STATIC_CACHE = 'entity-static-v4';
-const RUNTIME_CACHE = 'entity-runtime-v4';
+const STATIC_CACHE = 'entity-static-v5';
+const RUNTIME_CACHE = 'entity-runtime-v5';
 const OFFLINE_DB_NAME = 'entity.offline.v1';
 const OFFLINE_DB_VERSION = 1;
 const WRITE_QUEUE_STORE = 'write-queue';

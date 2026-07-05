@@ -224,7 +224,11 @@ export default function AgentsSidebarTab({
               {onlineCount}/{agents.length} online
             </div>
           </div>
-          <span className={`entity-ops-chip ${onlineCount > 0 ? 'entity-ops-chip-green' : ''}`}>
+          <span
+            className={`entity-ops-chip max-md:flex max-md:min-h-[44px] max-md:items-center max-md:px-4 max-md:text-[13px] max-md:font-medium max-md:capitalize ${
+              onlineCount > 0 ? 'entity-ops-chip-green' : ''
+            }`}
+          >
             {watchMode ? 'watching' : 'select'}
           </span>
         </div>
@@ -262,7 +266,7 @@ export default function AgentsSidebarTab({
                 }
                 onSelectAgent(agent.id);
               }}
-              className={`entity-ops-row entity-ops-focus w-full p-2.5 text-left ${
+              className={`entity-ops-row entity-ops-focus w-full p-2.5 text-left max-md:min-h-[56px] max-md:rounded-2xl max-md:px-4 max-md:py-3.5 ${
                 isSelected
                   ? 'border-[var(--accent)] bg-[var(--surface-accent)] text-[var(--text-primary)] shadow-[inset_3px_0_0_var(--accent)]'
                   : isFollowing

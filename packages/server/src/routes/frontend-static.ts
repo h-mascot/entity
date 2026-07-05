@@ -14,7 +14,6 @@ export function registerFrontendStaticRoutes(app: Express): void {
     app.use(express.static(frontendDist, { setHeaders: setFrontendStaticCacheHeaders }));
     app.get('*', (_req, res, next) => {
       if (_req.path.startsWith('/api/')) return next();
-      // If request has a file extension, check if the file exists in frontendDist first
       const ext = path.extname(_req.path);
       if (ext) {
         const filePath = path.join(frontendDist, _req.path);
@@ -22,6 +21,10 @@ export function registerFrontendStaticRoutes(app: Express): void {
           setFrontendStaticCacheHeaders(res, filePath);
           return res.sendFile(filePath);
         }
+        // Never serve index.html for missing asset files: stale clients asking
+        // for old hashed chunks must get a 404 (a clean reload) rather than an
+        // HTML body that fails module MIME checks and wedges the app shell.
+        return res.status(404).type('text/plain').send('Not found');
       }
       sendIndexNoCache(res, path.join(frontendDist, 'index.html'));
     });

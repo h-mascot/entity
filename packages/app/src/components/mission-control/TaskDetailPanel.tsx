@@ -3047,7 +3047,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
       <div
         ref={panelRef}
         data-testid="task-detail-panel"
-        className={`pointer-events-auto absolute bottom-0 right-0 top-[45px] flex h-[calc(100%-45px)] w-full flex-col overflow-hidden border-l border-[var(--border-primary)] bg-[var(--panel-surface)] shadow-[-10px_0_28px_rgba(0,0,0,0.22)] transition-[transform,opacity] duration-200 ease-out sm:w-[min(50vw,760px)] ${
+        className={`pointer-events-auto absolute bottom-0 right-0 top-[45px] flex h-[calc(100%-45px)] w-full flex-col overflow-hidden border-l border-[var(--border-primary)] bg-[var(--panel-surface)] shadow-[-10px_0_28px_rgba(0,0,0,0.22)] transition-[transform,opacity] duration-200 ease-out sm:w-[min(50vw,760px)] max-md:!w-full max-md:max-w-none max-md:rounded-none max-md:border-0 ${
           visible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
         }`}
         tabIndex={-1}
@@ -3074,7 +3074,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 		                className="line-clamp-2 h-[2.75rem] w-full resize-none border-0 bg-transparent px-0 py-0 text-lg font-semibold leading-[1.22] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
 	                disabled={!form}
 	              />
-	              <div className="mt-1 grid w-full grid-cols-[auto_auto_auto_minmax(9rem,1fr)] gap-1.5 text-[11px] text-[var(--text-muted)]">
+	              <div className="mt-1 grid w-full grid-cols-[auto_auto_auto_minmax(9rem,1fr)] gap-1.5 text-[11px] text-[var(--text-muted)] max-md:flex max-md:flex-wrap max-md:gap-2">
 	                <span className="whitespace-nowrap rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] px-2 py-0.5 text-[var(--text-secondary)]">
 	                  {task ? `#${task.id}` : `#${taskId}`}
 	                </span>
@@ -3088,14 +3088,18 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                }`}>
 	                  {form?.blocked ? 'Blocked' : 'Clear'}
 	                </span>
-	                <span className="min-w-max whitespace-nowrap rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-emerald-300">
+	                <span className="min-w-max whitespace-nowrap rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-emerald-300 max-md:hidden">
 	                  Created by {task?.createdBy ?? 'Unknown'}
 	                </span>
-	                <span className="col-span-2 min-w-max whitespace-nowrap rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-200">
+	                <span className="col-span-2 min-w-max whitespace-nowrap rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-200 max-md:hidden">
 	                  Created {task ? formatDateTime(task.createdAt) : '-'}
 	                </span>
-	                <span className="col-span-2 min-w-max whitespace-nowrap rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-sky-200">
+	                <span className="col-span-2 min-w-max whitespace-nowrap rounded-full border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-sky-200 max-md:hidden">
 	                  Updated {task ? formatDateTime(task.updatedAt) : '-'}
+	                </span>
+	                {/* Mobile: single compact meta line replaces the timestamp pills. */}
+	                <span className="hidden w-full pt-0.5 text-[11px] text-[var(--text-muted)] max-md:block">
+	                  {task?.createdBy ?? 'Unknown'} · created {task ? formatDateTime(task.createdAt) : '-'}
 	                </span>
 	                {busyAction || saveMessage ? (
 	                  <span className="text-[var(--accent)]">{busyAction ? `${busyAction}...` : saveMessage}</span>
@@ -3106,7 +3110,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
             <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
               <button
                 type="button"
-                className="mc-shell-btn mc-shell-btn-active inline-flex h-9 w-9 items-center justify-center px-0 text-base font-semibold text-[var(--text-primary)]"
+                className="mc-shell-btn mc-shell-btn-active inline-flex h-9 w-9 items-center justify-center px-0 text-base font-semibold text-[var(--text-primary)] max-md:min-h-[44px] max-md:min-w-[44px] max-md:text-base"
                 onClick={() => void handleFollowUp()}
                 disabled={!task || busyAction !== null}
                 aria-label="Create follow-up task"
@@ -3114,13 +3118,13 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
               >
                 ↳
               </button>
-              <button type="button" className="mc-shell-btn px-3 py-2 text-xs font-medium" onClick={() => void handleContinueWork()} disabled={!task || busyAction !== null}>
+              <button type="button" className="mc-shell-btn px-3 py-2 text-xs font-medium max-md:min-h-[44px] max-md:text-base" onClick={() => void handleContinueWork()} disabled={!task || busyAction !== null}>
                 Continue
               </button>
               <button
                 ref={closeButtonRef}
                 type="button"
-                className="mc-shell-btn inline-flex h-10 min-w-[3rem] items-center justify-center px-3 py-0 text-base text-[var(--text-primary)] sm:h-9 sm:min-w-[2.75rem] sm:px-2"
+                className="mc-shell-btn inline-flex h-10 min-w-[3rem] items-center justify-center px-3 py-0 text-base text-[var(--text-primary)] sm:h-9 sm:min-w-[2.75rem] sm:px-2 max-md:min-h-[44px] max-md:min-w-[44px] max-md:text-base"
                 onClick={handleClose}
                 aria-label="Close task detail"
                 title="Close"
@@ -3142,7 +3146,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                   updateFormField('assignee', value);
                   void patchTask({ assignee: value }, { successMessage: 'Assignee saved.' });
                 }}
-	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs"
+	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs max-md:h-auto max-md:min-h-[44px] max-md:w-full max-md:rounded-xl max-md:bg-[var(--bg-tertiary)] max-md:px-4 max-md:py-3 max-md:text-[15px] max-md:appearance-none"
 	                disabled={!form || busyAction !== null}
 	              >
                 {assigneeOptions.map((assignee) => (
@@ -3164,7 +3168,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                   updateFormField('column', value);
                   void patchTask({ column: value }, { successMessage: 'Column saved.' });
                 }}
-	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs"
+	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs max-md:h-auto max-md:min-h-[44px] max-md:w-full max-md:rounded-xl max-md:bg-[var(--bg-tertiary)] max-md:px-4 max-md:py-3 max-md:text-[15px] max-md:appearance-none"
 	                disabled={!form || busyAction !== null}
 	              >
                 {TASK_COLUMNS.map((column) => (
@@ -3217,7 +3221,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                   updateFormField('priority', value);
                   void patchTask({ priority: value }, { successMessage: 'Priority saved.' });
                 }}
-	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs"
+	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs max-md:h-auto max-md:min-h-[44px] max-md:w-full max-md:rounded-xl max-md:bg-[var(--bg-tertiary)] max-md:px-4 max-md:py-3 max-md:text-[15px] max-md:appearance-none"
 	                disabled={!form || busyAction !== null}
 	              >
                 {PRIORITY_OPTIONS.map((priority) => (
@@ -3235,7 +3239,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	              <select
                 value={form?.model ?? ''}
                 onChange={(event) => void saveModel(event.target.value)}
-	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs"
+	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs max-md:h-auto max-md:min-h-[44px] max-md:w-full max-md:rounded-xl max-md:bg-[var(--bg-tertiary)] max-md:px-4 max-md:py-3 max-md:text-[15px] max-md:appearance-none"
 	                disabled={!form || busyAction !== null}
 	              >
                 <option value="">Default</option>
@@ -3326,10 +3330,10 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	          ) : null}
 	        </div>
 
-	        <div className="relative min-h-0 flex-1 overflow-hidden">
+	        <div className="relative min-h-0 flex-1 overflow-hidden max-md:flex max-md:flex-col">
 	          <aside
 	            data-testid="task-detail-rail"
-	            className="absolute bottom-0 right-0 top-0 z-10 block w-[4.5rem] border-l border-[var(--border-primary)] bg-[var(--bg-primary)]/70 backdrop-blur"
+	            className="absolute bottom-0 right-0 top-0 z-10 block w-[4.5rem] border-l border-[var(--border-primary)] bg-[var(--bg-primary)]/70 backdrop-blur max-md:static max-md:flex max-md:w-full max-md:shrink-0 max-md:flex-row max-md:items-center max-md:gap-1 max-md:overflow-x-auto max-md:border-b max-md:border-l-0 max-md:px-1 max-md:py-1 max-md:[writing-mode:horizontal-tb]"
 	            aria-label="Task detail sections"
 	          >
             {[
@@ -3348,20 +3352,22 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                    detailSectionRef.current?.scrollIntoView({ block: 'start' });
 	                  });
 	                }}
-	                className={`flex min-h-[64px] w-full flex-col items-center justify-center gap-0.5 border-b border-[var(--border-primary)] px-1 text-center text-[11px] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] ${
-	                  detailTab === tab ? 'bg-[var(--surface-accent)] text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
+	                className={`flex min-h-[64px] w-full flex-col items-center justify-center gap-0.5 border-b border-[var(--border-primary)] px-1 text-center text-[11px] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] max-md:min-h-[44px] max-md:w-auto max-md:shrink-0 max-md:flex-row max-md:gap-1.5 max-md:whitespace-nowrap max-md:rounded-full max-md:border-b-0 max-md:px-4 max-md:py-2 max-md:text-[13px] ${
+	                  detailTab === tab
+	                    ? 'bg-[var(--surface-accent)] text-[var(--text-primary)] max-md:border max-md:border-[var(--accent)]/40 max-md:text-[var(--accent)]'
+	                    : 'text-[var(--text-secondary)] max-md:border max-md:border-transparent'
 	                }`}
                 aria-pressed={detailTab === tab}
               >
-	                <span className="text-base text-[var(--accent)]" aria-hidden="true">{icon}</span>
-                <span>{label}</span>
+	                <span className="text-base text-[var(--accent)] max-md:hidden" aria-hidden="true">{icon}</span>
+                <span className="max-md:font-medium">{label}</span>
                 {count > 0 ? (
                   <span className="rounded-full bg-[var(--surface-muted)] px-1.5 py-0.5 text-[10px]">{count}</span>
                 ) : null}
 	              </button>
 	            ))}
 	          </aside>
-	          <div className="h-full overflow-y-auto overscroll-contain px-4 py-3 pr-[5.25rem] sm:px-5 sm:pr-[5.25rem]">
+	          <div className="h-full overflow-y-auto overscroll-contain px-4 py-3 pr-[5.25rem] sm:px-5 sm:pr-[5.25rem] max-md:h-auto max-md:min-h-0 max-md:flex-1 max-md:!pr-4">
 	          {loading ? (
 	            <div className="flex flex-col gap-3">
               <div className="h-28 rounded-xl bg-[var(--bg-tertiary)]" />
@@ -4208,12 +4214,12 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
 	                        onChange={(event) => setOutputInput(event.target.value)}
 	                        rows={2}
 	                        placeholder="Paste output, logs, or links..."
-	                        className="mc-shell-input min-h-[64px] flex-1 px-3 py-2 text-sm"
+	                        className="mc-shell-input min-h-[64px] flex-1 px-3 py-2 text-sm max-md:py-3 max-md:text-[15px]"
 	                      />
 	                      <div className="flex shrink-0 flex-row gap-2 sm:flex-col">
 	                        <button
 	                          type="button"
-	                          className="mc-shell-btn px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+	                          className="mc-shell-btn px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-[44px] max-md:py-3 max-md:text-[15px]"
 	                          onClick={() => void saveOutput()}
 	                          disabled={busyAction === 'save' || outputInput === task.output}
 	                        >
@@ -4544,11 +4550,11 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                             }
                           }}
                           placeholder="Add a note or update..."
-                          className="mc-shell-input min-w-0 flex-1 px-3 py-2 text-sm"
+                          className="mc-shell-input min-w-0 flex-1 px-3 py-2 text-sm max-md:py-3 max-md:text-[15px]"
                         />
                         <button
                           type="button"
-                          className="mc-shell-btn mc-shell-btn-active px-3 py-2 text-xs font-medium text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                          className="mc-shell-btn mc-shell-btn-active px-3 py-2 text-xs font-medium text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-[44px] max-md:py-3 max-md:text-[15px]"
                           onClick={() => void addNote()}
                           disabled={busyAction === 'note' || !noteInput.trim()}
                         >
@@ -4595,7 +4601,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                             }
                           }}
                           placeholder="Add a comment... use @ to mention an agent"
-                          className="mc-shell-input w-full px-3 py-2 text-sm"
+                          className="mc-shell-input w-full px-3 py-2 text-sm max-md:py-3 max-md:text-[15px]"
                         />
                         {mentionQuery !== null && mentionMatches.length > 0 ? (
                           <div className="absolute bottom-full left-0 z-30 mb-1 w-64 overflow-hidden rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
@@ -4618,7 +4624,7 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
                       </div>
                       <button
                         type="button"
-                        className="mc-shell-btn mc-shell-btn-active px-3 py-2 text-xs font-medium text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+                        className="mc-shell-btn mc-shell-btn-active px-3 py-2 text-xs font-medium text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-[44px] max-md:py-3 max-md:text-[15px]"
                         onClick={() => void postComment()}
                         disabled={busyAction === 'comment' || !commentInput.trim()}
                       >

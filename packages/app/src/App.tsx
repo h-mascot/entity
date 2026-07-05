@@ -5114,7 +5114,8 @@ export default function App() {
     }
 
     return (
-      <div className={`fixed right-3 z-[72] ${bottomClassName}`}>
+      // Mobile: pin under the header instead of floating over the composer/nav.
+      <div className={`fixed right-3 z-[72] ${bottomClassName} max-md:bottom-auto max-md:top-3`}>
         <div className="flex items-center gap-2 rounded-md border border-[var(--border-secondary)] bg-[var(--bg-secondary)]/95 px-2 py-1.5 shadow-lg backdrop-blur">
           <button
             type="button"
@@ -5128,7 +5129,7 @@ export default function App() {
           <button
             type="button"
             onClick={handleDismissInstallCta}
-            className="mc-shell-btn px-1.5 py-0.5 text-[11px] leading-none text-[var(--text-muted)]"
+            className="mc-shell-btn px-1.5 py-0.5 text-[11px] leading-none text-[var(--text-muted)] max-md:min-h-[44px] max-md:min-w-[44px] max-md:text-sm"
             aria-label="Dismiss app install prompt"
             title="Dismiss app install prompt"
           >
@@ -5262,7 +5263,7 @@ export default function App() {
       className="entity-shell flex h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-secondary)]"
       data-workspace-tab={sidebarTab}
     >
-      {renderInstallCta('bottom-24 md:bottom-8')}
+      {renderInstallCta('bottom-28 md:bottom-8')}
       {quickSwitcherOpen ? (
         <Suspense fallback={null}>
           <QuickSwitcher
