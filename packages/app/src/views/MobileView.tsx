@@ -718,7 +718,7 @@ export default function MobileView(props: any) {
                   activities={activities}
                   loading={activityLoading}
                   error={activityError}
-                  isOpen={mobileActivityPanelOpen}
+                  isOpen
                   onToggleOpen={() => setMobileActivityPanelOpen((prev: boolean) => !prev)}
                   onOpenFile={handleFileSelect}
                   onOpenTask={handleTaskSelect}
