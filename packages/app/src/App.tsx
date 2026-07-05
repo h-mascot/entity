@@ -5262,7 +5262,7 @@ export default function App() {
       className="entity-shell flex h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-secondary)]"
       data-workspace-tab={sidebarTab}
     >
-      {renderInstallCta('bottom-24 md:bottom-8')}
+      {renderInstallCta('bottom-28 md:bottom-8')}
       {quickSwitcherOpen ? (
         <Suspense fallback={null}>
           <QuickSwitcher

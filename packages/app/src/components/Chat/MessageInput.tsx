@@ -172,7 +172,7 @@ export default function MessageInput({
                 <select
                   value={selectedAgentId}
                   onChange={(event) => onSelectAgent(event.target.value)}
-                  className="mc-shell-input mt-1 w-full px-3 py-2 text-sm"
+                  className="mc-shell-input mt-1 w-full px-3 py-2 text-sm max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-tertiary)] max-md:px-3 max-md:py-1.5 max-md:text-[12px]"
                   aria-label="Select chat agent"
                 >
                   <option value={CHAT_ALL_AGENTS_ID}>All Agents</option>
@@ -188,7 +188,7 @@ export default function MessageInput({
                 <select
                   value={selectedModelId}
                   onChange={(event) => onSelectModel(event.target.value)}
-                  className="mc-shell-input mt-1 w-full px-3 py-2 text-sm"
+                  className="mc-shell-input mt-1 w-full px-3 py-2 text-sm max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-tertiary)] max-md:px-3 max-md:py-1.5 max-md:text-[12px]"
                   aria-label="Select chat model"
                 >
                   <option value="">{modelsLoading ? 'Auto (loading agent models...)' : 'Auto'}</option>
@@ -217,7 +217,7 @@ export default function MessageInput({
                 <select
                   value={mode}
                   onChange={(event) => setMode(event.target.value as typeof mode)}
-                  className="mc-shell-input mt-1 w-full px-3 py-2 text-sm"
+                  className="mc-shell-input mt-1 w-full px-3 py-2 text-sm max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-tertiary)] max-md:px-3 max-md:py-1.5 max-md:text-[12px]"
                   aria-label="Select chat mode"
                 >
                   <option value="auto">Auto</option>
@@ -285,11 +285,11 @@ export default function MessageInput({
             }}
             rows={compact ? 2 : 3}
             placeholder={placeholder}
-            className="min-h-[58px] flex-1 resize-y rounded-md border-0 bg-transparent px-3 py-2 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+            className="min-h-[58px] flex-1 resize-y rounded-md border-0 bg-transparent px-3 py-2 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] max-md:rounded-full max-md:px-4 max-md:py-3 max-md:text-[15px]"
           />
           <button
             type="button"
-            className="mc-shell-btn mb-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full px-0 py-0 text-lg"
+            className="mc-shell-btn mb-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full px-0 py-0 text-lg max-md:min-h-[44px] max-md:min-w-[44px]"
             aria-label="Add attachment"
             title="Add"
           >
@@ -301,7 +301,7 @@ export default function MessageInput({
               void sendDraft();
             }}
             disabled={sending || !draft.trim()}
-            className={`mc-shell-btn mc-shell-btn-active min-h-[38px] px-3 py-2 text-xs font-medium text-[var(--text-primary)] ${
+            className={`mc-shell-btn mc-shell-btn-active min-h-[38px] px-3 py-2 text-xs font-medium text-[var(--text-primary)] max-md:min-h-[44px] max-md:min-w-[44px] max-md:rounded-full ${
               sending || !draft.trim() ? 'cursor-not-allowed opacity-60' : ''
             }`}
             title={`Send to ${getAgentLabel(selectedAgentId)}`}
@@ -309,7 +309,7 @@ export default function MessageInput({
             {sending ? 'Sending...' : sendLabel}
           </button>
         </div>
-        <div className={`mt-2 flex flex-wrap items-center justify-between gap-2 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+        <div className={`mt-2 flex flex-wrap items-center justify-between gap-2 max-md:gap-1 ${compact ? 'text-[10px]' : 'text-xs'}`}>
           <button
             ref={settingsTriggerRef}
             type="button"
@@ -324,7 +324,7 @@ export default function MessageInput({
             <span className="truncate">{routeLabel}</span>
             <span aria-hidden="true">⌄</span>
           </button>
-          <span className="truncate text-[11px] text-[var(--text-muted)]" title={statusText}>
+          <span className="truncate text-[11px] text-[var(--text-muted)] max-md:hidden" title={statusText}>
             {statusText}
           </span>
         </div>

@@ -110,38 +110,50 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
             className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-full max-md:rounded-xl max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-4 max-md:py-3 max-md:text-[15px] max-md:focus:border-[var(--accent)]"
           />
           <div className="md:contents max-md:flex max-md:gap-2 max-md:overflow-x-auto max-md:pb-1">
-            <select value={sourceId} onChange={(event) => setSourceId(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:py-2 max-md:text-[13px]">
-              {sourceOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option === 'all' ? 'All sources' : sourceLabelById.get(option)?.displayName ?? option}
-                </option>
-              ))}
-            </select>
-            <select value={type} onChange={(event) => setType(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:py-2 max-md:text-[13px]">
-              <option value="all">All types</option>
-              <option value="daily-review">Daily Review</option>
-              <option value="business-review">Business Review</option>
-              <option value="blog">Blog</option>
-              <option value="prd">PRD</option>
-              <option value="project-doc">Project Doc</option>
-              <option value="script">Script</option>
-              <option value="one-off">One-off</option>
-            </select>
-            <select value={origin} onChange={(event) => setOrigin(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:py-2 max-md:text-[13px]">
-              <option value="all">All origins</option>
-              <option value="cron">Crons</option>
-              <option value="task">Tasks</option>
-              <option value="manual">Manual</option>
-              <option value="unknown">Unknown</option>
-            </select>
-            <select value={agent} onChange={(event) => setAgent(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:py-2 max-md:text-[13px]">
-              <option value="all">All agents</option>
-              {getFileAgentFilterOptions().map((agentOption) => (
-                <option key={agentOption.id} value={agentOption.id}>{agentOption.name}</option>
-              ))}
-              <option value={userProfile.handle}>{userProfile.displayName}</option>
-              <option value="other">Other</option>
-            </select>
+            <span className="relative md:contents max-md:inline-flex max-md:shrink-0">
+              <select value={sourceId} onChange={(event) => setSourceId(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:pr-7 max-md:py-2 max-md:text-[13px]">
+                {sourceOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option === 'all' ? 'All sources' : sourceLabelById.get(option)?.displayName ?? option}
+                  </option>
+                ))}
+              </select>
+              <span aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-[10px] text-[var(--text-muted)] max-md:inline">▾</span>
+            </span>
+            <span className="relative md:contents max-md:inline-flex max-md:shrink-0">
+              <select value={type} onChange={(event) => setType(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:pr-7 max-md:py-2 max-md:text-[13px]">
+                <option value="all">All types</option>
+                <option value="daily-review">Daily Review</option>
+                <option value="business-review">Business Review</option>
+                <option value="blog">Blog</option>
+                <option value="prd">PRD</option>
+                <option value="project-doc">Project Doc</option>
+                <option value="script">Script</option>
+                <option value="one-off">One-off</option>
+              </select>
+              <span aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-[10px] text-[var(--text-muted)] max-md:inline">▾</span>
+            </span>
+            <span className="relative md:contents max-md:inline-flex max-md:shrink-0">
+              <select value={origin} onChange={(event) => setOrigin(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:pr-7 max-md:py-2 max-md:text-[13px]">
+                <option value="all">All origins</option>
+                <option value="cron">Crons</option>
+                <option value="task">Tasks</option>
+                <option value="manual">Manual</option>
+                <option value="unknown">Unknown</option>
+              </select>
+              <span aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-[10px] text-[var(--text-muted)] max-md:inline">▾</span>
+            </span>
+            <span className="relative md:contents max-md:inline-flex max-md:shrink-0">
+              <select value={agent} onChange={(event) => setAgent(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:pr-7 max-md:py-2 max-md:text-[13px]">
+                <option value="all">All agents</option>
+                {getFileAgentFilterOptions().map((agentOption) => (
+                  <option key={agentOption.id} value={agentOption.id}>{agentOption.name}</option>
+                ))}
+                <option value={userProfile.handle}>{userProfile.displayName}</option>
+                <option value="other">Other</option>
+              </select>
+              <span aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-[10px] text-[var(--text-muted)] max-md:inline">▾</span>
+            </span>
           </div>
         </div>
 
@@ -165,7 +177,7 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
               );
             })}
           </div>
-          <button type="button" className="entity-ops-icon-btn entity-ops-focus" aria-label="File filter settings" title="File filter settings">
+          <button type="button" className="entity-ops-icon-btn entity-ops-focus max-md:hidden" aria-label="File filter settings" title="File filter settings">
             ⌘
           </button>
         </div>
@@ -197,12 +209,12 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
                 }}
                 disabled={restricted}
                 data-testid={restricted ? 'file-search-restricted-result' : undefined}
-                className={`entity-ops-row entity-ops-focus grid w-full gap-3 p-3 text-left max-md:grid-cols-[40px_minmax(0,1fr)_auto] max-md:min-h-[56px] max-md:items-center max-md:rounded-2xl max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-4 max-md:py-3.5 max-md:active:opacity-80 md:grid-cols-[42px_minmax(0,1fr)_150px_32px] ${
+                className={`entity-ops-row entity-ops-focus grid w-full gap-3 p-3 text-left max-md:grid-cols-[40px_minmax(0,1fr)_auto] max-md:min-h-[56px] max-md:items-center max-md:rounded-2xl max-md:border-transparent max-md:bg-[var(--bg-tertiary)] max-md:px-4 max-md:py-3.5 max-md:active:opacity-80 md:grid-cols-[42px_minmax(0,1fr)_150px_32px] ${
                   restricted ? 'cursor-not-allowed opacity-80' : ''
                 }`}
                 aria-label={restricted ? 'Restricted file result' : `Open ${resultTitle}`}
               >
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border-secondary)] bg-[var(--surface-accent)] font-mono text-xs text-[var(--accent)] max-md:border-transparent max-md:bg-[var(--bg-tertiary)]">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border-secondary)] bg-[var(--surface-accent)] font-mono text-xs text-[var(--accent)] max-md:border-transparent max-md:bg-[var(--bg-secondary)]">
                   {restricted ? '••' : resultIcon(result)}
                 </div>
                 <div className="min-w-0">
