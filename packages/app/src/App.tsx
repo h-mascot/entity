@@ -3195,11 +3195,7 @@ export default function App() {
 
   const handleSidebarTabChange = (tab: WorkspaceTab) => {
     setSidebarTab(tab);
-    if (tab === 'admin') {
-      setMobileTab('files');
-    } else {
-      setMobileTab(tab);
-    }
+    setMobileTab(tab);
     setTabletSidebarOpen(false);
   };
 
@@ -5472,6 +5468,9 @@ export default function App() {
             setMobileTab={setMobileTab}
             setSidebarTab={setSidebarTab}
             renderOfflineSyncBar={renderOfflineSyncBar}
+            renderAdminWorkspace={renderAdminWorkspace}
+            adminSection={adminSection}
+            setAdminSection={setAdminSection}
             agentsLoading={agentsLoading}
             agentsError={agentsError}
             followingAgent={followingAgent}
