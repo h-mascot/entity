@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import MobileBottomNav from '../components/MobileBottomNav';
 import { shouldRenderMarkdownPreview } from '../lib/markdownFile';
 
@@ -175,6 +175,51 @@ function ChevronLeftIcon() {
   );
 }
 
+function BotIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[var(--text-muted)]">
+      <rect x="4" y="8" width="16" height="11" rx="3" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 4v4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="12" cy="3.5" r="1.4" fill="currentColor" />
+      <circle cx="9" cy="13" r="1.2" fill="currentColor" />
+      <circle cx="15" cy="13" r="1.2" fill="currentColor" />
+      <path d="M2 12v3M22 12v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PulseIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[var(--text-muted)]">
+      <path
+        d="M3 12h4l2-6 4 12 2-6h6"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function MobileTabEmptyState({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: ReactNode;
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-3 px-8 pt-16 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--bg-tertiary)]">{icon}</div>
+      <div className="text-[15px] font-medium text-[var(--text-primary)]">{title}</div>
+      <div className="text-[13px] text-[var(--text-muted)]">{subtitle}</div>
+    </div>
+  );
+}
+
 function fileBaseName(path: string): string {
   const normalized = String(path ?? '').replace(/\\/g, '/');
   const parts = normalized.split('/');
@@ -324,7 +369,7 @@ export default function MobileView(props: any) {
       key={task.id}
       type="button"
       onClick={() => handleTaskSelect(task.id)}
-      className="w-full rounded-2xl bg-[var(--bg-secondary)] px-4 py-3.5 text-left transition-opacity active:opacity-80"
+      className="w-full rounded-2xl bg-[var(--bg-tertiary)] px-4 py-4 text-left transition-opacity active:opacity-80"
     >
       <div className="line-clamp-2 text-[15px] font-medium text-[var(--text-primary)]">{task.name}</div>
       <div className="mt-2 flex items-center gap-2 text-xs text-[var(--text-muted)]">
@@ -402,7 +447,7 @@ export default function MobileView(props: any) {
               type="button"
               onClick={clearCurrentFile}
               aria-label="Back to files"
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] transition-opacity active:opacity-70"
+              className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full text-xl text-[var(--text-secondary)] transition-opacity active:opacity-70"
             >
               <ChevronLeftIcon />
             </button>
@@ -414,7 +459,7 @@ export default function MobileView(props: any) {
                 type="button"
                 disabled={!currentFile}
                 onClick={() => setEditMode(!editMode)}
-                className="flex h-11 items-center px-3 text-[13px] font-medium text-[var(--accent)] transition-opacity active:opacity-70 disabled:opacity-40"
+                className="flex min-h-[44px] items-center px-4 text-[14px] font-medium text-[var(--accent)] transition-opacity active:opacity-70 disabled:opacity-40"
               >
                 {editMode ? 'Preview' : 'Edit'}
               </button>
@@ -422,7 +467,7 @@ export default function MobileView(props: any) {
                 <button
                   type="button"
                   onClick={handleSave}
-                  className="flex h-11 items-center px-3 text-[13px] font-semibold text-[var(--accent)] transition-opacity active:opacity-70"
+                  className="flex min-h-[44px] items-center px-4 text-[14px] font-semibold text-[var(--accent)] transition-opacity active:opacity-70"
                 >
                   Save
                 </button>
@@ -591,6 +636,12 @@ export default function MobileView(props: any) {
                   tasks={tasks}
                   onBack={() => setSelectedAgent(null)}
                 />
+              ) : !agentsLoading && !agentsError && (!Array.isArray(agents) || agents.length === 0) ? (
+                <MobileTabEmptyState
+                  icon={<BotIcon />}
+                  title="No agents yet"
+                  subtitle="Agents appear here when your crew comes online."
+                />
               ) : (
                 <LazyAgentsSidebarTab
                   agents={agents}
@@ -623,10 +674,10 @@ export default function MobileView(props: any) {
                         key={segment.id}
                         type="button"
                         onClick={() => setTaskSegment(segment.id)}
-                        className={`shrink-0 rounded-full px-4 py-2 text-[13px] transition-colors ${
+                        className={`shrink-0 rounded-full px-4 py-2.5 text-[14px] font-medium transition-colors ${
                           active
-                            ? 'bg-[var(--accent)]/15 text-[var(--text-primary)]'
-                            : 'bg-[var(--bg-secondary)] text-[var(--text-muted)]'
+                            ? 'bg-[color-mix(in_srgb,var(--accent)_20%,transparent)] text-[var(--text-primary)] ring-1 ring-[color-mix(in_srgb,var(--accent)_40%,transparent)]'
+                            : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)]'
                         }`}
                       >
                         {segment.label} <span className="opacity-70">{taskCountFor(segment.id)}</span>
@@ -649,23 +700,31 @@ export default function MobileView(props: any) {
           )}
 
           {mobileTab === 'chat' && (
-            <div className="flex h-full min-h-0 flex-col pb-2">
+            <div className="flex h-full min-h-0 flex-col">
               <LazyChatView />
             </div>
           )}
 
           {mobileTab === 'activity' && (
             <div className="h-full min-h-0">
-              <LazyActivityStream
-                activities={activities}
-                loading={activityLoading}
-                error={activityError}
-                isOpen={mobileActivityPanelOpen}
-                onToggleOpen={() => setMobileActivityPanelOpen((prev: boolean) => !prev)}
-                onOpenFile={handleFileSelect}
-                onOpenTask={handleTaskSelect}
-                fillHeight
-              />
+              {!activityLoading && !activityError && (!Array.isArray(activities) || activities.length === 0) ? (
+                <MobileTabEmptyState
+                  icon={<PulseIcon />}
+                  title="No activity yet"
+                  subtitle="Workspace events will show up here."
+                />
+              ) : (
+                <LazyActivityStream
+                  activities={activities}
+                  loading={activityLoading}
+                  error={activityError}
+                  isOpen={mobileActivityPanelOpen}
+                  onToggleOpen={() => setMobileActivityPanelOpen((prev: boolean) => !prev)}
+                  onOpenFile={handleFileSelect}
+                  onOpenTask={handleTaskSelect}
+                  fillHeight
+                />
+              )}
             </div>
           )}
         </div>

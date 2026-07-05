@@ -90,7 +90,7 @@ function ActivityRow({
   return (
     <button
       type="button"
-      className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-tertiary)] rounded transition-colors"
+      className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-tertiary)] rounded transition-colors max-md:px-4 max-md:py-3 max-md:rounded-xl"
       onClick={() => {
         if (entry.taskId !== undefined) onOpenTask?.(entry.taskId);
         else if (entry.filePath) onOpenFile(entry.filePath);
@@ -255,7 +255,11 @@ export default function ActivityStream({
             <span className="text-[10px] text-[var(--text-muted)]">{activities.length}</span>
           )}
         </div>
-        <button type="button" onClick={onToggleOpen} className="mc-shell-btn px-2 py-1 text-xs">
+        <button
+          type="button"
+          onClick={onToggleOpen}
+          className="mc-shell-btn px-2 py-1 text-xs max-md:min-h-[44px] max-md:px-4 max-md:text-[13px]"
+        >
           {isOpen ? 'Hide' : 'Show'}
         </button>
       </div>
@@ -268,7 +272,7 @@ export default function ActivityStream({
           {error ? (
             <div className="px-2 py-3 text-sm text-[var(--error)]">Activity unavailable: {error}</div>
           ) : groups.length === 0 ? (
-            <div className="px-2 py-3 text-sm text-[var(--text-muted)]">
+            <div className="px-2 py-3 text-sm text-[var(--text-muted)] max-md:pt-8 max-md:text-center max-md:text-[13px]">
               {loading ? 'Loading activity…' : 'Waiting for activity…'}
             </div>
           ) : (
