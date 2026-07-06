@@ -98,7 +98,8 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
     <div className="entity-ops-surface flex h-full w-full flex-col gap-3 overflow-hidden p-4">
       {/* Page title lives in the workspace top bar (Doc Hub chrome / mobile header). */}
       <div className="entity-ops-panel-strong shrink-0 p-3 max-md:border-transparent max-md:bg-transparent max-md:p-0">
-        <div className="grid gap-2 xl:grid-cols-[minmax(280px,1fr)_220px_170px_170px_170px]">
+        {/* Source selection lives in the tab row below — no duplicate dropdown here. */}
+        <div className="grid gap-2 xl:grid-cols-[minmax(280px,1fr)_190px_190px_190px]">
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -106,16 +107,6 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
             className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-full max-md:rounded-xl max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-4 max-md:py-3 max-md:text-[15px] max-md:focus:border-[var(--accent)]"
           />
           <div className="md:contents max-md:flex max-md:gap-2 max-md:overflow-x-auto max-md:pb-1">
-            <span className="relative md:contents max-md:inline-flex max-md:shrink-0">
-              <select value={sourceId} onChange={(event) => setSourceId(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:pr-7 max-md:py-2 max-md:text-[13px]">
-                {sourceOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option === 'all' ? 'All sources' : sourceLabelById.get(option)?.displayName ?? option}
-                  </option>
-                ))}
-              </select>
-              <span aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-[10px] text-[var(--text-muted)] max-md:inline">▾</span>
-            </span>
             <span className="relative md:contents max-md:inline-flex max-md:shrink-0">
               <select value={type} onChange={(event) => setType(event.target.value)} className="mc-shell-input min-h-9 px-3 py-2 text-sm max-md:w-auto max-md:shrink-0 max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:px-3 max-md:pr-7 max-md:py-2 max-md:text-[13px]">
                 <option value="all">All types</option>
@@ -208,9 +199,11 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
             const restricted = isRestrictedResult(result);
             const safePreview = restricted ? null : result.preview ?? result.snippet ?? null;
             const resultTitle = restricted ? 'Restricted file' : result.title;
+            // Type + agent render in the right-hand column; keep this line to
+            // source + path so nothing appears twice.
             const metadata = restricted
               ? `${result.sourceName} • Access restricted • snippets and previews hidden`
-              : `${result.sourceName} • ${result.path} • ${result.type} • ${result.agent}`;
+              : `${result.sourceName} • ${result.path}`;
 
             return (
               <button
