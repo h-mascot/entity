@@ -51,6 +51,10 @@ export default function DocHubWorkspaceChrome({
   pushToast,
   filesContextBarProps,
 }: DocHubWorkspaceChromeProps) {
+  // Home state (no open files): show the page title like every other tab
+  // instead of a row of disabled editor controls.
+  const homeMode = openFileTabs.length === 0;
+
   return (
     <div className="shrink-0 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4" data-testid="doc-hub-workspace-chrome">
       <div className="flex min-h-[2.75rem] flex-wrap items-center gap-2">
@@ -66,8 +70,8 @@ export default function DocHubWorkspaceChrome({
             <span>Doc Hub /</span>
           </button>
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-            {openFileTabs.length === 0 ? (
-              <span className="truncate px-2 py-1 text-xs text-[var(--text-muted)]">No files open</span>
+            {homeMode ? (
+              <span className="truncate px-1 text-sm font-semibold text-[var(--text-primary)]">Files</span>
             ) : (
               openFileTabs.map((tab) => {
                 const tabKey = buildOpenFileTabKey(tab.sourceId, tab.path);
@@ -119,42 +123,44 @@ export default function DocHubWorkspaceChrome({
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (!fileContent) {
-                pushToast('Nothing to copy.', 'warning');
-                return;
-              }
-              navigator.clipboard
-                .writeText(fileContent)
-                .then(() => pushToast('Document copied to clipboard.', 'success'))
-                .catch(() => pushToast('Failed to copy document.', 'error'));
-            }}
-            disabled={!fileContent}
-            className={`mc-shell-btn px-2 py-1 text-xs ${fileContent ? '' : 'cursor-not-allowed opacity-40'}`}
-            title="Copy whole document"
-            aria-label="Copy whole document"
-          >
-            ⧉
-          </button>
-          {showTts ? (
+        {!homeMode ? (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (!fileContent) {
+                  pushToast('Nothing to copy.', 'warning');
+                  return;
+                }
+                navigator.clipboard
+                  .writeText(fileContent)
+                  .then(() => pushToast('Document copied to clipboard.', 'success'))
+                  .catch(() => pushToast('Failed to copy document.', 'error'));
+              }}
+              disabled={!fileContent}
+              className={`mc-shell-btn px-2 py-1 text-xs ${fileContent ? '' : 'cursor-not-allowed opacity-40'}`}
+              title="Copy whole document"
+              aria-label="Copy whole document"
+            >
+              ⧉
+            </button>
+            {showTts ? (
+              <Suspense fallback={null}>
+                <MarkdownAudioControls
+                  docsPath={docsPath}
+                  content={fileContent}
+                  settings={docsTtsSettings}
+                  onSettingsChange={onDocsTtsSettingsChange}
+                  onToast={pushToast}
+                  compact
+                />
+              </Suspense>
+            ) : null}
             <Suspense fallback={null}>
-              <MarkdownAudioControls
-                docsPath={docsPath}
-                content={fileContent}
-                settings={docsTtsSettings}
-                onSettingsChange={onDocsTtsSettingsChange}
-                onToast={pushToast}
-                compact
-              />
+              <FilesContextBar {...filesContextBarProps} actionsOnly />
             </Suspense>
-          ) : null}
-          <Suspense fallback={null}>
-            <FilesContextBar {...filesContextBarProps} actionsOnly />
-          </Suspense>
-        </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
