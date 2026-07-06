@@ -4842,7 +4842,31 @@ export default function App() {
   const renderSidebar = (showCloseButton: boolean, allowCollapse = false, forceCollapsed = false) => (
     <div className="flex h-full min-h-0 flex-col">
       {allowCollapse && (sidebarCollapsed || forceCollapsed) ? (
-        <div className="flex min-h-0 flex-1 flex-col items-center py-2">
+        // Collapsed rail: a clear expand chevron at the top, and the rail
+        // itself is clickable — the affordance was previously easy to miss.
+        <div
+          className="flex min-h-0 flex-1 cursor-e-resize flex-col items-center py-2"
+          onClick={forceCollapsed ? undefined : () => setSidebarCollapsed(false)}
+          role={forceCollapsed ? undefined : 'button'}
+          aria-label={forceCollapsed ? undefined : 'Expand sidebar'}
+          title={forceCollapsed ? undefined : 'Expand sidebar'}
+        >
+          {!forceCollapsed && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setSidebarCollapsed(false);
+              }}
+              className="mc-shell-btn mb-2 inline-flex h-9 w-9 items-center justify-center px-0 py-0 text-base text-[var(--text-primary)]"
+              aria-label="Expand sidebar"
+              title="Expand sidebar"
+            >
+              »
+            </button>
+          )}
+          {/* Clicks bubble to the rail so empty space expands; the mini-panel
+              buttons run their own action first and expanding alongside is fine. */}
           <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pb-2">
             {renderCollapsedContextMiniPanel()}
           </div>
@@ -4859,7 +4883,7 @@ export default function App() {
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            <span>{sidebarCollapsed ? '»' : '«'}</span>
+            <span>{sidebarCollapsed ? '» Expand' : '«'}</span>
           </button>
         </div>
       )}
