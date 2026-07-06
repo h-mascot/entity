@@ -2,14 +2,21 @@ import type { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import dotenv from 'dotenv';
 import type Database from 'better-sqlite3';
+
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 // ---------------------------------------------------------------------------
 // Env / constants
 // ---------------------------------------------------------------------------
-const KOKORO_BASE_URL = process.env.KOKORO_TTS_BASE_URL?.trim() || 'http://127.0.0.1:8881';
+const KOKORO_BASE_URL = process.env.KOKORO_TTS_BASE_URL?.trim() || 'http://127.0.0.1:8000';
+const KOKORO_TTS_DEFAULT_VOICE = process.env.KOKORO_TTS_DEFAULT_VOICE?.trim() || 'bf_alice';
 const OPENAI_TTS_MODEL = process.env.OPENAI_TTS_MODEL?.trim() || 'gpt-4o-mini-tts';
+const OPENAI_TTS_VOICE = process.env.OPENAI_TTS_VOICE?.trim() || 'alloy';
 const EDGE_TTS_VOICE = process.env.EDGE_TTS_VOICE?.trim() || 'en-GB-SoniaNeural';
+const DEEPGRAM_TTS_VOICE = process.env.DEEPGRAM_TTS_VOICE?.trim() || 'aura-angus-en';
+const ELEVENLABS_TTS_VOICE = process.env.ELEVENLABS_TTS_VOICE?.trim() || 'pFZP5JQG7iQjIQuC4Bku';
 const MAX_CHARS = Math.min(Number(process.env.TTS_MAX_CHARS ?? 3800), 4000);
 const EDGE_TTS_TIMEOUT_MS = Math.max(Number(process.env.EDGE_TTS_TIMEOUT_MS ?? 120_000), 1_000);
 const SETTINGS_KEY = 'tts_settings';
@@ -43,12 +50,12 @@ const DEFAULTS: TtsSettings = {
   defaultSpeed: 1.0,
   maxChars: 3800,
   providers: {
-    'local-kokoro': { enabled: true, baseUrl: 'http://127.0.0.1:8881', voice: 'bf_alice' },
+    'local-kokoro': { enabled: true, baseUrl: KOKORO_BASE_URL, voice: KOKORO_TTS_DEFAULT_VOICE },
     browser: { enabled: true },
-    'edge-tts': { enabled: true, voice: 'en-GB-SoniaNeural' },
-    openai: { enabled: false, apiKeyEnv: 'OPENAI_API_KEY', model: 'gpt-4o-mini-tts', voice: 'alloy' },
-    deepgram: { enabled: false, apiKeyEnv: 'DEEPGRAM_API_KEY', voice: 'aura-2-luna-en' },
-    elevenlabs: { enabled: false, apiKeyEnv: 'ELEVENLABS_API_KEY', voiceId: '' },
+    'edge-tts': { enabled: true, voice: EDGE_TTS_VOICE },
+    openai: { enabled: Boolean(process.env.OPENAI_API_KEY?.trim()), apiKeyEnv: 'OPENAI_API_KEY', model: OPENAI_TTS_MODEL, voice: OPENAI_TTS_VOICE },
+    deepgram: { enabled: Boolean(process.env.DEEPGRAM_API_KEY?.trim()), apiKeyEnv: 'DEEPGRAM_API_KEY', voice: DEEPGRAM_TTS_VOICE },
+    elevenlabs: { enabled: Boolean(process.env.ELEVENLABS_API_KEY?.trim()), apiKeyEnv: 'ELEVENLABS_API_KEY', voiceId: ELEVENLABS_TTS_VOICE },
   },
 };
 
@@ -115,6 +122,34 @@ export function resolveEdgeTtsCommand(cwd = process.cwd(), exists: (candidate: s
     }
     currentDir = parentDir;
   }
+}
+
+async function requestKokoroAudio(text: string, voice: string): Promise<Buffer> {
+  const openAiCompatible = await fetch(`${KOKORO_BASE_URL}/v1/audio/speech`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'kokoro', voice, input: text, response_format: 'wav' }),
+  });
+
+  if (openAiCompatible.ok) {
+    return Buffer.from(await openAiCompatible.arrayBuffer());
+  }
+
+  const openAiDetail = await openAiCompatible.text().catch(() => '');
+  const legacy = await fetch(`${KOKORO_BASE_URL}/v1/text-to-speech/${voice}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+
+  if (legacy.ok) {
+    return Buffer.from(await legacy.arrayBuffer());
+  }
+
+  const legacyDetail = await legacy.text().catch(() => '');
+  throw new Error(
+    legacyDetail || openAiDetail || `Kokoro returned ${openAiCompatible.status} and legacy returned ${legacy.status}.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +238,8 @@ const VOICE_CATALOG: Record<string, Voice[]> = {
     { id: 'aura-zephyr-en', name: 'Zephyr (M)', language: 'en-US' },
   ],
   elevenlabs: [
+    { id: 'tzhoVKULF1uUbdfTSiBd', name: 'Henry Mascot', language: 'en' },
+    { id: 'pFZP5JQG7iQjIQuC4Bku', name: 'Lily (F)', language: 'en' },
     { id: 'EXAVITc4tvU7xuL82wvV', name: 'Bella (F)', language: 'en' },
     { id: 'AZnzlk1XvdvUeBnXmlwd', name: 'Domi (F)', language: 'en' },
     { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold (M)', language: 'en' },
@@ -318,18 +355,9 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
     // Kokoro (OpenAI-compatible endpoint)
     if (resolvedProvider === 'kokoro') {
       const cfg = settings.providers['local-kokoro'] ?? {};
-      const resolvedVoice = normalizeVoice(voice, cfg.voice ?? 'bf_alice');
+      const resolvedVoice = normalizeVoice(voice, cfg.voice || KOKORO_TTS_DEFAULT_VOICE);
       try {
-        const upstream = await fetch(`${KOKORO_BASE_URL}/v1/text-to-speech/${resolvedVoice}`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: sanitized }),
-        });
-        if (!upstream.ok) {
-          const detail = await upstream.text().catch(() => '');
-          return res.status(502).json({ error: 'Kokoro TTS service unavailable.', detail: detail || `Upstream returned ${upstream.status}.` });
-        }
-        const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+        const audioBuffer = await requestKokoroAudio(sanitized, resolvedVoice);
         return res.json({
           status: 'ok',
           provider: 'kokoro',
@@ -348,7 +376,7 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const apiKey = process.env.OPENAI_API_KEY?.trim();
       if (!apiKey) return res.status(400).json({ error: 'OPENAI_API_KEY is not configured.' });
       const cfg = settings.providers.openai ?? {};
-      const resolvedVoice = normalizeVoice(voice, cfg.voice ?? 'alloy');
+      const resolvedVoice = normalizeVoice(voice, cfg.voice || OPENAI_TTS_VOICE);
       const resolvedModel = normalizeModel(model, cfg.model ?? OPENAI_TTS_MODEL);
       try {
         const upstream = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -403,7 +431,7 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const apiKey = process.env.DEEPGRAM_API_KEY?.trim();
       if (!apiKey) return res.status(400).json({ error: 'DEEPGRAM_API_KEY is not configured.' });
       const cfg = settings.providers.deepgram ?? {};
-      const resolvedVoice = normalizeVoice(voice, cfg.voice ?? 'aura-angus-en');
+      const resolvedVoice = normalizeVoice(voice, cfg.voice || DEEPGRAM_TTS_VOICE);
       try {
         const upstream = await fetch(
           `https://api.deepgram.com/v1/speak?voice=${encodeURIComponent(resolvedVoice)}`,
@@ -435,7 +463,7 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
       if (!apiKey) return res.status(400).json({ error: 'ELEVENLABS_API_KEY is not configured.' });
       const cfg = settings.providers.elevenlabs ?? {};
-      const resolvedVoice = normalizeVoice(voice, cfg.voiceId ?? 'EXAVITc4tvU7xuL82wvV');
+      const resolvedVoice = normalizeVoice(voice, cfg.voiceId || cfg.voice || ELEVENLABS_TTS_VOICE);
       try {
         const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoice}`, {
           method: 'POST',
@@ -502,18 +530,9 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
     // Kokoro (OpenAI-compatible endpoint)
     if (resolvedProvider === 'kokoro') {
       const cfg = settings.providers['local-kokoro'] ?? {};
-      const resolvedVoice = normalizeVoice(voice, cfg.voice ?? 'bf_alice');
+      const resolvedVoice = normalizeVoice(voice, cfg.voice || KOKORO_TTS_DEFAULT_VOICE);
       try {
-        const upstream = await fetch(`${KOKORO_BASE_URL}/v1/text-to-speech/${resolvedVoice}`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: truncatedText }),
-        });
-        if (!upstream.ok) {
-          const detail = await upstream.text().catch(() => '');
-          return res.status(502).json({ error: 'Kokoro TTS service unavailable.', detail: detail || `Upstream returned ${upstream.status}.`, upstream: KOKORO_BASE_URL });
-        }
-        const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+        const audioBuffer = await requestKokoroAudio(truncatedText, resolvedVoice);
         return res.json({
           status: 'ok',
           provider: 'kokoro',
@@ -533,7 +552,7 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const apiKey = process.env.OPENAI_API_KEY?.trim();
       if (!apiKey) return res.status(400).json({ error: 'OPENAI_API_KEY is not configured.' });
       const cfg = settings.providers.openai ?? {};
-      const resolvedVoice = normalizeVoice(voice, cfg.voice ?? 'alloy');
+      const resolvedVoice = normalizeVoice(voice, cfg.voice || OPENAI_TTS_VOICE);
       const resolvedModel = normalizeModel(model, cfg.model ?? OPENAI_TTS_MODEL);
       try {
         const upstream = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -591,7 +610,7 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const apiKey = process.env.DEEPGRAM_API_KEY?.trim();
       if (!apiKey) return res.status(400).json({ error: 'DEEPGRAM_API_KEY is not configured.' });
       const cfg = settings.providers.deepgram ?? {};
-      const resolvedVoice = normalizeVoice(voice, cfg.voice ?? 'aura-angus-en');
+      const resolvedVoice = normalizeVoice(voice, cfg.voice || DEEPGRAM_TTS_VOICE);
       try {
         const upstream = await fetch(
           `https://api.deepgram.com/v1/speak?voice=${encodeURIComponent(resolvedVoice)}`,
@@ -625,7 +644,7 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
       if (!apiKey) return res.status(400).json({ error: 'ELEVENLABS_API_KEY is not configured.' });
       const cfg = settings.providers.elevenlabs ?? {};
-      const resolvedVoice = normalizeVoice(voice, cfg.voiceId ?? 'EXAVITc4tvU7xuL82wvV');
+      const resolvedVoice = normalizeVoice(voice, cfg.voiceId || cfg.voice || ELEVENLABS_TTS_VOICE);
       try {
         const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoice}`, {
           method: 'POST',
