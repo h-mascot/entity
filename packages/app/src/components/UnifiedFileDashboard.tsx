@@ -73,7 +73,11 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
     if (!dateValue) return '';
     const parsed = Date.parse(dateValue);
     if (Number.isNaN(parsed)) return dateValue;
-    return new Date(parsed).toISOString().slice(0, 10);
+    const date = new Date(parsed);
+    // Local date + time so recent files are distinguishable within a day.
+    const datePart = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const timePart = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    return `${datePart} ${timePart}`;
   };
 
   const resultIcon = (result: UnifiedSearchResult) => {

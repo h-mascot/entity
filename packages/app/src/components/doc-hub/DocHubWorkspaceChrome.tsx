@@ -54,6 +54,9 @@ export default function DocHubWorkspaceChrome({
   // Home state (no open files): show the page title like every other tab
   // instead of a row of disabled editor controls.
   const homeMode = openFileTabs.length === 0;
+  // Editor controls only make sense when a file is actively open — tabs can
+  // stay listed while the user is back on the dashboard home.
+  const showDocControls = Boolean(activeTabKey);
 
   return (
     <div className="shrink-0 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4" data-testid="doc-hub-workspace-chrome">
@@ -123,7 +126,7 @@ export default function DocHubWorkspaceChrome({
           </div>
         </div>
 
-        {!homeMode ? (
+        {showDocControls ? (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <button
               type="button"
