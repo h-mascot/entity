@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getFileAgentFilterOptions } from '../lib/agentRegistry';
+import { FILE_SORT_OPTIONS, sortSearchResults, type FileResultSort } from '../lib/fileSearchSort';
 import { useUserProfile } from '../lib/userProfile';
 import { useFileSources } from '../hooks/useFileSources';
 import type { FileSource, UnifiedSearchResult } from '../types/filesystem';
@@ -18,9 +19,11 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
   const [type, setType] = useState('all');
   const [origin, setOrigin] = useState('all');
   const [agent, setAgent] = useState('all');
+  const [sort, setSort] = useState<FileResultSort>('relevance');
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const sortedResults = useMemo(() => sortSearchResults(results, sort), [results, sort]);
 
   const sourceOptions = useMemo(() => ['all', ...sources.map((source) => source.id)], [sources]);
   const sourceLabelById = useMemo(() => {
@@ -89,19 +92,7 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
 
   return (
     <div className="entity-ops-surface flex h-full w-full flex-col gap-3 overflow-hidden p-4">
-      {/* Mobile shell already shows a large "Files" title; hide the desktop heading below md. */}
-      <div className="shrink-0 max-md:hidden">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <div className="entity-ops-section-title">Files</div>
-            <h1 className="entity-ops-title mt-1 text-xl">Unified File Dashboard</h1>
-          </div>
-          <div className="text-xs text-[var(--text-muted)]">
-            {loading ? 'Searching...' : `${results.length} result${results.length === 1 ? '' : 's'}`}
-          </div>
-        </div>
-      </div>
-
+      {/* Page title lives in the workspace top bar (Doc Hub chrome / mobile header). */}
       <div className="entity-ops-panel-strong shrink-0 p-3 max-md:border-transparent max-md:bg-transparent max-md:p-0">
         <div className="grid gap-2 xl:grid-cols-[minmax(280px,1fr)_220px_170px_170px_170px]">
           <input
@@ -178,9 +169,27 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
               );
             })}
           </div>
-          <button type="button" className="entity-ops-icon-btn entity-ops-focus max-md:hidden" aria-label="File filter settings" title="File filter settings">
-            ⌘
-          </button>
+          <div className="flex items-center gap-2 max-md:w-full">
+            <span className="whitespace-nowrap text-xs text-[var(--text-muted)]">
+              {loading ? 'Searching…' : `${results.length} result${results.length === 1 ? '' : 's'}`}
+            </span>
+            <span className="relative inline-flex max-md:flex-1">
+              <select
+                value={sort}
+                onChange={(event) => setSort(event.target.value as FileResultSort)}
+                aria-label="Sort results"
+                title="Sort results"
+                className="mc-shell-input min-h-9 px-3 py-1.5 pr-7 text-xs max-md:w-full max-md:appearance-none max-md:rounded-full max-md:border-transparent max-md:bg-[var(--bg-secondary)] max-md:py-2 max-md:text-[13px]"
+              >
+                {FILE_SORT_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    Sort: {option.label}
+                  </option>
+                ))}
+              </select>
+              <span aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 text-[10px] text-[var(--text-muted)] max-md:inline">▾</span>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -191,7 +200,7 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
           <div className="entity-ops-empty text-sm">No files found. Adjust filters or query.</div>
         )}
         <div className="space-y-2">
-          {results.map((result) => {
+          {sortedResults.map((result) => {
             const restricted = isRestrictedResult(result);
             const safePreview = restricted ? null : result.preview ?? result.snippet ?? null;
             const resultTitle = restricted ? 'Restricted file' : result.title;
