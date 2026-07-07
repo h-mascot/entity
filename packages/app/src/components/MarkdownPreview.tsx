@@ -62,12 +62,16 @@ interface MarkdownPreviewProps {
 
 // Shared prose overrides (colors, code, tables, blockquotes) applied in both variants
 // so embedded renders stay visually consistent with the full DocHub document view.
-const SHARED_PROSE_CLASSES = `prose-headings:text-[var(--text-primary)]
+// break-words + [overflow-wrap:anywhere] keep long unbroken tokens (e.g. SOPS ENC[...]
+// blobs, hashes, URLs) wrapping inside the content card instead of clipping past its
+// right edge; prose-pre:whitespace-pre-wrap extends the same guarantee to code blocks.
+const SHARED_PROSE_CLASSES = `break-words [overflow-wrap:anywhere]
+      prose-headings:text-[var(--text-primary)]
       prose-p:text-[var(--text-secondary)]
       prose-a:text-[var(--accent)] prose-a:no-underline hover:prose-a:underline
       prose-strong:text-[var(--text-primary)]
       prose-code:text-[var(--text-secondary)] prose-code:bg-[var(--bg-secondary)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:border prose-code:border-[var(--border-primary)]
-      prose-pre:bg-[var(--bg-secondary)] prose-pre:border prose-pre:border-[var(--bg-tertiary)] prose-pre:rounded-lg
+      prose-pre:bg-[var(--bg-secondary)] prose-pre:border prose-pre:border-[var(--bg-tertiary)] prose-pre:rounded-lg prose-pre:whitespace-pre-wrap prose-pre:break-words prose-pre:[overflow-wrap:anywhere]
       prose-blockquote:border-[var(--border-secondary)] prose-blockquote:bg-[var(--bg-tertiary)] prose-blockquote:rounded-r-lg
       prose-li:text-[var(--text-secondary)]
       prose-table:border-collapse
