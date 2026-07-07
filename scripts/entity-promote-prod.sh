@@ -40,3 +40,16 @@ else
 fi
 CTRL_LIVE_BASE_URL="$PROD_BASE_URL" npm run test:live
 npm run test:deploy
+
+if [[ -n "${ENTITY_FANOUT_ENVS:-}" ]]; then
+  IFS=':' read -r -a FANOUT_FILES <<< "${ENTITY_FANOUT_ENVS}"
+  for f in "${FANOUT_FILES[@]}"; do
+    [[ -n "$f" && -f "$f" ]] || continue
+    echo "FANOUT_START env=${f} sha=${ENTITY_RELEASE_SHA:-<unset>}"
+    if env -u ENTITY_FANOUT_ENVS node "$ROOT/scripts/entity-gateway-pull-deploy.mjs" --env "$f" --force; then
+      echo "FANOUT_OK env=${f}"
+    else
+      echo "FANOUT_FAIL env=${f} code=$?" >&2
+    fi
+  done
+fi

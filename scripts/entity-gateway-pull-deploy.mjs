@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { appendFileSync, existsSync, mkdirSync, renameSync, readFileSync, rmSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
 const args = parseArgs(process.argv.slice(2));
@@ -83,7 +84,45 @@ await withLock(async () => {
     runUrl: ci.url,
   }, null, 2)}\n`);
   log(`DEPLOY_COMPLETE sha=${targetSha} deployedAt=${deployedAt}`);
+  await runFanout(targetSha);
 });
+
+async function runFanout(targetSha) {
+  const fanoutEnvs = (process.env.ENTITY_FANOUT_ENVS || '')
+    .split(':')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (fanoutEnvs.length === 0) return;
+
+  const scriptPath = fileURLToPath(import.meta.url);
+  // Minimal child env: the child's --env file provides its own full ENTITY_*
+  // config, so strip ALL ENTITY_* keys (including ENTITY_FANOUT_ENVS, which
+  // also prevents recursion) and pass through only what the child needs.
+  const childEnv = {};
+  for (const key of ['PATH', 'HOME', 'USER', 'GH_TOKEN', 'GITHUB_TOKEN']) {
+    if (process.env[key]) childEnv[key] = process.env[key];
+  }
+
+  for (const envFile of fanoutEnvs) {
+    log(`FANOUT_START env=${envFile} sha=${targetSha}`);
+    const code = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [scriptPath, '--env', envFile, '--sha', targetSha, '--force'], {
+        env: childEnv,
+        stdio: 'inherit',
+      });
+      child.on('error', (err) => {
+        log(`FANOUT_SPAWN_ERROR env=${envFile} err=${err.message}`);
+        resolve(-1);
+      });
+      child.on('close', (exitCode) => resolve(exitCode ?? -1));
+    });
+    if (code === 0) {
+      log(`FANOUT_OK env=${envFile}`);
+    } else {
+      log(`FANOUT_FAIL env=${envFile} code=${code}`);
+    }
+  }
+}
 
 function parseArgs(argv) {
   const parsed = {
