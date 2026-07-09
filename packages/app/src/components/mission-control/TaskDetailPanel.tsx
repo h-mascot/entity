@@ -898,6 +898,12 @@ function normalizeTaskOutputHref(rawHref: string): string | null {
 
   const normalized = href.replace(/\\/g, '/');
 
+  const entitySourceDocsUrlMatch = normalized.match(/^https?:\/\/[^/\s<>()]+\/docs\/source\/([^/\s<>()]+)\/(.+)$/i);
+  if (entitySourceDocsUrlMatch) {
+    const [, sourceId, rest] = entitySourceDocsUrlMatch;
+    return `/docs/source/${sourceId}/${rest}`;
+  }
+
   const entityDocsUrlMatch = normalized.match(/^https?:\/\/[^/\s<>()]+\/docs\/(output|memory|workspace|projects|zora|spock)\/(.+)$/i);
   if (entityDocsUrlMatch) {
     const [, root, rest] = entityDocsUrlMatch;

@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { buildDocsRootCandidates } from '../docs-paths';
 import { createFileSourceRepository } from '../../../db/src/file-sources';
 import { createFileSourceAdapter } from '../fs/adapters/registry';
+import { resolveFrontendDist, sendIndexNoCache } from '../static-cache';
 
 const HOME_DIR = process.env.HOME?.trim() || os.homedir();
 // Public-safe default: use ~/entity-workspace as generic workspace root.
@@ -505,8 +506,7 @@ export function registerDocsRoute(app: any) {
   });
 
   app.get('/docs/*', (_req: Request, res: Response) => {
-    res.setHeader('Cache-Control', 'no-cache');
-    res.sendFile(path.resolve(process.cwd(), 'packages/app/dist/index.html'));
+    sendIndexNoCache(res, path.join(resolveFrontendDist(), 'index.html'));
   });
 }
 

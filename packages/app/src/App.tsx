@@ -1927,9 +1927,24 @@ export default function App() {
         return false;
       }
 
+      const target = resolveTaskOutputDocTarget(resolved, fileSources, runtime.fsMultiSourceEnabled);
+      if (target.kind === 'source') {
+        if (typeof window !== 'undefined' && window.location.pathname.startsWith('/docs/')) {
+          window.history.pushState({ mode: 'app' }, '', '/');
+        }
+        setDocsPath(null);
+        setDocsError(null);
+        setDocsLoading(false);
+        setDocsContent('');
+        setDocsFilename('Document');
+        handleSourceFileSelect(target.sourceId, target.path);
+        return true;
+      }
+
       return navigateToDocsPath(resolved);
     },
-    [docsPath, navigateToDocsPath]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSourceFileSelect is re-created per render
+    [docsPath, fileSources, navigateToDocsPath, runtime.fsMultiSourceEnabled, watchMode]
   );
 
   // Opening an output doc from a task: prefer the Doc Hub (files tab) so the
@@ -1945,11 +1960,20 @@ export default function App() {
 
       const target = resolveTaskOutputDocTarget(resolved, fileSources, runtime.fsMultiSourceEnabled);
       if (target.kind === 'source') {
-        // Leave the /task/<id> route before opening the doc so the URL (and a
-        // later reload) reflects the files workspace rather than the task.
-        if (typeof window !== 'undefined' && extractTaskRouteId(window.location.pathname) !== null) {
+        // Leave the /task/<id> or /docs/* route before opening the doc so the
+        // URL (and a later reload) reflects the Doc Hub workspace, not a
+        // standalone viewer or task detail.
+        if (
+          typeof window !== 'undefined' &&
+          (extractTaskRouteId(window.location.pathname) !== null || window.location.pathname.startsWith('/docs/'))
+        ) {
           window.history.pushState({ mode: 'app' }, '', '/');
         }
+        setDocsPath(null);
+        setDocsError(null);
+        setDocsLoading(false);
+        setDocsContent('');
+        setDocsFilename('Document');
         handleSourceFileSelect(target.sourceId, target.path);
         return true;
       }
@@ -2992,6 +3016,28 @@ export default function App() {
     setHighlightTaskId(null);
     setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(sourceId, path)));
   };
+
+  useEffect(() => {
+    if (!docsPath || !runtime.fsMultiSourceEnabled) {
+      return;
+    }
+
+    const target = resolveTaskOutputDocTarget(docsPath, fileSources, runtime.fsMultiSourceEnabled);
+    if (target.kind !== 'source') {
+      return;
+    }
+
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/docs/')) {
+      window.history.replaceState({ mode: 'app' }, '', '/');
+    }
+
+    setDocsPath(null);
+    setDocsError(null);
+    setDocsLoading(false);
+    setDocsContent('');
+    setDocsFilename('Document');
+    handleSourceFileSelect(target.sourceId, target.path);
+  }, [docsPath, fileSources, runtime.fsMultiSourceEnabled, handleSourceFileSelect]);
 
   const handleRightPaneFileSelect = useCallback((path: string) => {
     setSidebarTab('files');

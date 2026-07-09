@@ -12,6 +12,19 @@ test('routes to the matching source when the docs root is a source id', () => {
   );
 });
 
+
+test('routes /docs/source/:sourceId links to the matching source in Doc Hub', () => {
+  assert.deepEqual(
+    resolveTaskOutputDocTarget('source/workspace/output/demo.md', sources, true),
+    { kind: 'source', sourceId: 'workspace', path: 'output/demo.md' },
+  );
+});
+
+test('does not reinterpret unknown /docs/source links as workspace files', () => {
+  assert.deepEqual(resolveTaskOutputDocTarget('source/missing/output/demo.md', sources, true), { kind: 'docs-route' });
+  assert.deepEqual(resolveTaskOutputDocTarget('source/notes/todo.md', sources, true), { kind: 'docs-route' });
+});
+
 test('ignores disabled sources as roots but falls back to workspace', () => {
   assert.deepEqual(
     resolveTaskOutputDocTarget('notes/todo.md', sources, true),

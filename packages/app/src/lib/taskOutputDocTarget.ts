@@ -11,10 +11,11 @@ export type TaskOutputDocTarget =
 
 /**
  * Docs paths look like "<root>/<rest>". When the root names a configured file
- * source, open that source directly in the Doc Hub. Paths without a source
- * prefix (e.g. "output/x.md") resolve relative to the workspace root on the
- * server, so the workspace source can serve them. Anything else falls back to
- * the standalone /docs route.
+ * source, open that source directly in the Doc Hub. Source-aware direct docs
+ * URLs look like "source/<sourceId>/<path>" and must also open the Doc Hub
+ * source tab. Paths without a source prefix (e.g. "output/x.md") resolve
+ * relative to the workspace root on the server, so the workspace source can
+ * serve them. Anything else falls back to the standalone /docs route.
  */
 export function resolveTaskOutputDocTarget(
   docsPath: string,
@@ -29,6 +30,16 @@ export function resolveTaskOutputDocTarget(
   const [root, ...rest] = segments;
   const restPath = rest.join('/');
   const enabledSources = sources.filter((source) => source.enabled !== false);
+
+  if (root === 'source') {
+    const [sourceId, ...sourcePathSegments] = rest;
+    const sourcePath = sourcePathSegments.join('/');
+    if (sourceId && sourcePath && enabledSources.some((source) => source.id === sourceId)) {
+      return { kind: 'source', sourceId, path: sourcePath };
+    }
+
+    return { kind: 'docs-route' };
+  }
 
   if (root && restPath && enabledSources.some((source) => source.id === root)) {
     return { kind: 'source', sourceId: root, path: restPath };
