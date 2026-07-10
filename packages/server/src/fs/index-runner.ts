@@ -4,6 +4,7 @@ import { classifyFile } from './classify';
 import { createFileSourceAdapter } from './adapters/registry';
 import { emitFsAudit } from './security';
 import { recordFsOperation } from './metrics';
+import { isMissingPathError } from './errors';
 import type { FileSourceAdapter, SourceNode, SourcePathMetadata } from './adapters/types';
 
 const MAX_SOURCE_DEPTH = 8;
@@ -18,22 +19,20 @@ const IGNORED_DIRECTORIES = new Set([
   'box', 'tmp', 'secrets', 'orphaned-sessions', 'calls',
 ]);
 
-function isMissingPathError(err: unknown): boolean {
-  const code = (err as NodeJS.ErrnoException | undefined)?.code;
-  if (code === 'ENOENT') {
-    return true;
-  }
+const sourceIndexRuns = new Map<string, Promise<void>>();
 
-  if (!(err instanceof Error)) {
-    return false;
-  }
+async function withSourceIndexLock(sourceId: string, task: () => Promise<void>): Promise<void> {
+  const previous = sourceIndexRuns.get(sourceId) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(task);
+  sourceIndexRuns.set(sourceId, current);
 
-  const normalized = err.message.trim().toLowerCase();
-  return (
-    normalized.includes('no such file') ||
-    normalized.includes('does not exist') ||
-    normalized.includes('not found')
-  );
+  try {
+    await current;
+  } finally {
+    if (sourceIndexRuns.get(sourceId) === current) {
+      sourceIndexRuns.delete(sourceId);
+    }
+  }
 }
 
 function normalizeDirectoryPath(value: string): string {
@@ -190,7 +189,8 @@ export class FileIndexRunner {
         (async () => {
           let source: FileSourceRecord | undefined = queue.shift();
           while (source) {
-            await this.indexSource(source);
+            const currentSource = source;
+            await withSourceIndexLock(currentSource.id, () => this.indexSource(currentSource));
             source = queue.shift();
           }
         })()
@@ -211,7 +211,7 @@ export class FileIndexRunner {
       return;
     }
 
-    await this.indexSource(source);
+    await withSourceIndexLock(source.id, () => this.indexSource(source));
   }
 
   private rememberDeterministicSkip(
@@ -248,23 +248,24 @@ export class FileIndexRunner {
     visitedDirectories: Set<string>,
     pathValue: string,
     depth: number
-  ): void {
+  ): boolean {
     const nextDepth = depth + 1;
     if (nextDepth > MAX_SOURCE_DEPTH) {
-      return;
+      return false;
     }
 
     const childPath = normalizeDirectoryPath(pathValue);
     if (visitedDirectories.has(childPath) || queuedDirectories.has(childPath)) {
-      return;
+      return true;
     }
 
     if (visitedDirectories.size + queuedDirectories.size >= MAX_DIRECTORIES_PER_SOURCE) {
-      return;
+      return false;
     }
 
     queue.push({ path: childPath, depth: nextDepth });
     queuedDirectories.add(childPath);
+    return true;
   }
 
   private async indexSource(source: FileSourceRecord): Promise<void> {
@@ -281,13 +282,16 @@ export class FileIndexRunner {
       const queuedDirectories = new Set<string>(['']);
       const visitedDirectories = new Set<string>();
       const visitedFiles = new Set<string>();
+      let scanComplete = true;
 
       while (queue.length > 0) {
         if (filesScanned >= this.maxFilesPerSource) {
+          scanComplete = false;
           break;
         }
 
         if (visitedDirectories.size >= MAX_DIRECTORIES_PER_SOURCE) {
+          scanComplete = false;
           break;
         }
 
@@ -309,6 +313,9 @@ export class FileIndexRunner {
           nodes = await adapter.list(directoryPath);
         } catch (err) {
           if (isMissingPathError(err)) {
+            if (directoryPath) {
+              this.indexRepo.deleteBySourcePathPrefix(source.id, directoryPath);
+            }
             continue;
           }
           const message = err instanceof Error ? err.message : 'Unknown list error';
@@ -316,11 +323,13 @@ export class FileIndexRunner {
           if (!directoryPath) {
             throw err;
           }
+          scanComplete = false;
           continue;
         }
 
         for (const node of nodes) {
           if (filesScanned >= this.maxFilesPerSource) {
+            scanComplete = false;
             break;
           }
 
@@ -339,10 +348,12 @@ export class FileIndexRunner {
             metadata = await classifyCandidate(adapter, node);
           } catch (err) {
             if (isMissingPathError(err)) {
+              this.indexRepo.deleteBySourcePathPrefix(source.id, node.path);
               continue;
             }
             const message = err instanceof Error ? err.message : 'Unknown stat error';
             emitFsAudit('index.path.error', { sourceId: source.id, path: node.path, error: message });
+            scanComplete = false;
             continue;
           }
 
@@ -353,7 +364,9 @@ export class FileIndexRunner {
               continue;
             }
 
-            this.enqueueDirectory(queue, queuedDirectories, visitedDirectories, metadata.path, next.depth);
+            if (!this.enqueueDirectory(queue, queuedDirectories, visitedDirectories, metadata.path, next.depth)) {
+              scanComplete = false;
+            }
             continue;
           }
 
@@ -406,12 +419,18 @@ export class FileIndexRunner {
             filesIndexed += 1;
           } catch (err) {
             if (isMissingPathError(err)) {
+              this.indexRepo.deleteBySourcePathPrefix(source.id, filePath);
               continue;
             }
             const message = err instanceof Error ? err.message : 'Unknown read error';
             emitFsAudit('index.file.error', { sourceId: source.id, path: filePath, error: message });
+            scanComplete = false;
           }
         }
+      }
+
+      if (scanComplete) {
+        this.indexRepo.reconcileSourcePaths(source.id, Array.from(visitedFiles));
       }
 
       this.indexRepo.finishSyncRun(run.id, 'ok', {

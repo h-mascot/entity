@@ -4,6 +4,7 @@ import { isTextualContentType } from '../file-types';
 import { createFileSourceAdapter } from './adapters/registry';
 import { assertSourceEnabled, emitFsAudit, normalizeSourceRelativePath } from './security';
 import { recordFsOperation } from './metrics';
+import { isMissingPathError } from './errors';
 
 export interface FileRouteDeps {
   sourceRepo?: FileSourceRepository;
@@ -19,6 +20,10 @@ function parseSourceId(value: unknown): string {
 
 function mapSourceError(message: string, res: Response): Response {
   if (message === 'Source not found.') {
+    return res.status(404).json({ error: message });
+  }
+
+  if (isMissingPathError(message)) {
     return res.status(404).json({ error: message });
   }
 

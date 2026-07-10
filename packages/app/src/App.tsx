@@ -43,6 +43,7 @@ import {
 import { readUserProfile, useUserProfile } from './lib/userProfile';
 import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
+import { buildFileLoadKey } from './lib/fileLoadIdentity';
 import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
 import {
   buildOpenFileTab,
@@ -289,6 +290,10 @@ interface AuthSession {
 }
 
 type WorkspaceTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'admin';
+type CurrentFileLoadState =
+  | { status: 'idle' }
+  | { status: 'loading' | 'ready'; fileKey: string }
+  | { status: 'error'; fileKey: string; message: string };
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -1500,6 +1505,8 @@ export default function App() {
   const [rightPanePreviewMeta, setRightPanePreviewMeta] = useState<FilePreviewMeta>(() => defaultFilePreviewMeta());
   const [rightPaneCacheMeta, setRightPaneCacheMeta] = useState<FileCacheMeta>(() => defaultFileCacheMeta());
   const [rightPaneContent, setRightPaneContent] = useState('');
+  const [rightPaneLoadState, setRightPaneLoadState] = useState<CurrentFileLoadState>({ status: 'idle' });
+  const [rightPaneLoadRevision, setRightPaneLoadRevision] = useState(0);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [splitResizing, setSplitResizing] = useState(false);
   const [currentFileReadOnly, setCurrentFileReadOnly] = useState(false);
@@ -1520,6 +1527,20 @@ export default function App() {
   });
   const [docIntelligenceFocus, setDocIntelligenceFocus] = useState<'intelligence' | 'comments' | 'ask' | 'notes' | 'versions' | null>(null);
   const [fileContent, setFileContent] = useState('');
+  const [currentFileLoadState, setCurrentFileLoadState] = useState<CurrentFileLoadState>({ status: 'idle' });
+  const [currentFileLoadRevision, setCurrentFileLoadRevision] = useState(0);
+  const currentFileKey = currentFile ? buildFileLoadKey(currentSourceId, currentFile) : null;
+  const rightPaneFileKey = rightPaneFile ? buildFileLoadKey(rightPaneSourceId, rightPaneFile) : null;
+  const activeCurrentFileLoadState: CurrentFileLoadState = !currentFileKey
+    ? { status: 'idle' }
+    : currentFileLoadState.status !== 'idle' && currentFileLoadState.fileKey === currentFileKey
+      ? currentFileLoadState
+      : { status: 'loading', fileKey: currentFileKey };
+  const activeRightPaneLoadState: CurrentFileLoadState = !rightPaneFileKey
+    ? { status: 'idle' }
+    : rightPaneLoadState.status !== 'idle' && rightPaneLoadState.fileKey === rightPaneFileKey
+      ? rightPaneLoadState
+      : { status: 'loading', fileKey: rightPaneFileKey };
   const [authorshipRanges, setAuthorshipRanges] = useState<DocumentAuthorshipRangeRecord[]>([]);
   const [manualAuthorshipAuthor, setManualAuthorshipAuthor] = useState<DocumentAuthorshipActor>('human');
   const [sidebarTab, setSidebarTab] = useState<WorkspaceTab>(() => {
@@ -2623,8 +2644,18 @@ export default function App() {
 
   // Fetch file content
   useEffect(() => {
-    if (!currentFile) return;
+    if (!currentFile) {
+      setCurrentFileLoadState({ status: 'idle' });
+      return;
+    }
+    const fileKey = buildFileLoadKey(currentSourceId, currentFile);
     let cancelled = false;
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = undefined;
+    }
+    setCurrentFileLoadState({ status: 'loading', fileKey });
+    setFileContent('');
 
     if (runtime.fsMultiSourceEnabled && currentSourceId) {
       fetchSourceFile(currentSourceId, currentFile)
@@ -2654,6 +2685,7 @@ export default function App() {
           });
           lastContentRef.current = data.content || '';
           setLastSaved(Date.now());
+          setCurrentFileLoadState({ status: 'ready', fileKey });
         })
         .catch((err) => {
           if (cancelled) {
@@ -2663,6 +2695,11 @@ export default function App() {
           setCurrentFileReadOnly(true);
           setCurrentFilePreviewMeta(defaultFilePreviewMeta());
           setCurrentFileCacheMeta(defaultFileCacheMeta());
+          setCurrentFileLoadState({
+            status: 'error',
+            fileKey,
+            message: err instanceof Error ? err.message : 'Failed to load file.',
+          });
         });
       return () => {
         cancelled = true;
@@ -2690,23 +2727,34 @@ export default function App() {
         setCurrentFileCacheMeta(defaultFileCacheMeta());
         lastContentRef.current = d.content || '';
         setLastSaved(Date.now());
+        setCurrentFileLoadState({ status: 'ready', fileKey });
       })
       .catch((err) => {
         if (!cancelled) {
           console.error(err);
           setCurrentFilePreviewMeta(defaultFilePreviewMeta());
           setCurrentFileCacheMeta(defaultFileCacheMeta());
+          setCurrentFileLoadState({
+            status: 'error',
+            fileKey,
+            message: err instanceof Error ? err.message : 'Failed to load file.',
+          });
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [currentFile, currentSourceId, fetchSourceFile]);
+  }, [currentFile, currentFileLoadRevision, currentSourceId, fetchSourceFile]);
+
+  const handleRetryCurrentFile = useCallback(() => {
+    setCurrentFileLoadRevision((revision) => revision + 1);
+  }, []);
 
   // Fetch right pane file content (split view)
   useEffect(() => {
     if (!rightPaneFile) {
+      setRightPaneLoadState({ status: 'idle' });
       setRightPaneContent('');
       setRightPaneReadOnly(false);
       setRightPaneUpdatedAt(null);
@@ -2716,12 +2764,16 @@ export default function App() {
       return;
     }
 
+    const fileKey = buildFileLoadKey(rightPaneSourceId, rightPaneFile);
+
     if (rightSaveTimeoutRef.current) {
       clearTimeout(rightSaveTimeoutRef.current);
       rightSaveTimeoutRef.current = undefined;
     }
 
     let cancelled = false;
+    setRightPaneLoadState({ status: 'loading', fileKey });
+    setRightPaneContent('');
     if (runtime.fsMultiSourceEnabled && rightPaneSourceId) {
       fetchSourceFile(rightPaneSourceId, rightPaneFile)
         .then((data) => {
@@ -2750,6 +2802,7 @@ export default function App() {
             cacheAgeMs: data.cached === true ? cacheAgeMs : null,
           });
           rightLastContentRef.current = nextContent;
+          setRightPaneLoadState({ status: 'ready', fileKey });
         })
         .catch((err) => {
           if (cancelled) {
@@ -2759,6 +2812,11 @@ export default function App() {
           setRightPaneReadOnly(true);
           setRightPanePreviewMeta(defaultFilePreviewMeta());
           setRightPaneCacheMeta(defaultFileCacheMeta());
+          setRightPaneLoadState({
+            status: 'error',
+            fileKey,
+            message: err instanceof Error ? err.message : 'Failed to load file.',
+          });
         });
       return () => {
         cancelled = true;
@@ -2786,23 +2844,38 @@ export default function App() {
         });
         setRightPaneCacheMeta(defaultFileCacheMeta());
         rightLastContentRef.current = nextContent;
+        setRightPaneLoadState({ status: 'ready', fileKey });
       })
       .catch((err) => {
         if (!cancelled) {
           console.error(err);
           setRightPanePreviewMeta(defaultFilePreviewMeta());
           setRightPaneCacheMeta(defaultFileCacheMeta());
+          setRightPaneLoadState({
+            status: 'error',
+            fileKey,
+            message: err instanceof Error ? err.message : 'Failed to load file.',
+          });
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [fetchSourceFile, rightPaneFile, rightPaneSourceId]);
+  }, [fetchSourceFile, rightPaneFile, rightPaneLoadRevision, rightPaneSourceId]);
+
+  const handleRetryRightPaneFile = useCallback(() => {
+    setRightPaneLoadRevision((revision) => revision + 1);
+  }, []);
 
   // Auto-save with debounce
   const scheduleAutoSave = useCallback((content: string) => {
-    if (currentSourceId) {
+    if (
+      currentSourceId ||
+      !currentFileKey ||
+      activeCurrentFileLoadState.status !== 'ready' ||
+      activeCurrentFileLoadState.fileKey !== currentFileKey
+    ) {
       return;
     }
 
@@ -2823,10 +2896,15 @@ export default function App() {
         setLastSaved(Date.now());
       }
     }, 2000);
-  }, [currentFile, currentSourceId]);
+  }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentSourceId]);
 
   const scheduleRightPaneAutoSave = useCallback((content: string) => {
-    if (rightPaneSourceId) {
+    if (
+      rightPaneSourceId ||
+      !rightPaneFileKey ||
+      activeRightPaneLoadState.status !== 'ready' ||
+      activeRightPaneLoadState.fileKey !== rightPaneFileKey
+    ) {
       return;
     }
 
@@ -2846,18 +2924,24 @@ export default function App() {
         rightLastContentRef.current = content;
       }
     }, 2000);
-  }, [rightPaneFile, rightPaneSourceId]);
+  }, [activeRightPaneLoadState, rightPaneFile, rightPaneFileKey, rightPaneSourceId]);
 
   // Handle content changes
   const handleContentChange = useCallback((newContent: string) => {
+    if (activeCurrentFileLoadState.status !== 'ready') {
+      return;
+    }
     setFileContent(newContent);
     scheduleAutoSave(newContent);
-  }, [scheduleAutoSave]);
+  }, [activeCurrentFileLoadState.status, scheduleAutoSave]);
 
   const handleRightPaneContentChange = useCallback((newContent: string) => {
+    if (activeRightPaneLoadState.status !== 'ready') {
+      return;
+    }
     setRightPaneContent(newContent);
     scheduleRightPaneAutoSave(newContent);
-  }, [scheduleRightPaneAutoSave]);
+  }, [activeRightPaneLoadState.status, scheduleRightPaneAutoSave]);
 
   const handleManualAttribution = useCallback(
     (selection: EditorSelectionRange) => {
@@ -2907,7 +2991,12 @@ export default function App() {
 
   // Handle @mention - send to OpenClaw
   const handleSave = useCallback(async () => {
-    if (!currentFile) return;
+    if (
+      !currentFile ||
+      !currentFileKey ||
+      activeCurrentFileLoadState.status !== 'ready' ||
+      activeCurrentFileLoadState.fileKey !== currentFileKey
+    ) return;
 
     // Save source files via the source write API
     if (currentSourceId) {
@@ -2959,7 +3048,7 @@ export default function App() {
     );
     lastContentRef.current = fileContent;
     setLastSaved(Date.now());
-  }, [currentFile, currentSourceId, fileContent, writeSourceFile]);
+  }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentSourceId, fileContent, writeSourceFile]);
 
   const handleFileSelect = (path: string) => {
     setSidebarTab('files');
@@ -3578,7 +3667,8 @@ export default function App() {
     cursor: followCursor,
     debounceMs: 100,
   });
-  const canEditCurrentFile = Boolean(currentFile) && !currentFileReadOnly;
+  const canEditCurrentFile =
+    Boolean(currentFile) && activeCurrentFileLoadState.status === 'ready' && !currentFileReadOnly;
   const authorshipStats = useMemo(
     () => buildAuthorshipStats(fileContent.length, authorshipRanges),
     [authorshipRanges, fileContent.length]
@@ -4997,6 +5087,8 @@ export default function App() {
             }}
             currentSourceId={currentSourceId}
             fileContent={fileContent}
+            currentFileLoadState={activeCurrentFileLoadState}
+            handleRetryCurrentFile={handleRetryCurrentFile}
             setFileContent={setFileContent}
             editMode={editMode}
             setEditMode={setEditMode}
@@ -5016,6 +5108,8 @@ export default function App() {
             setQuickSwitcherOpen={setQuickSwitcherOpen}
             exitSplitMode={exitSplitMode}
             rightPaneContent={rightPaneContent}
+            rightPaneLoadState={activeRightPaneLoadState}
+            handleRetryRightPaneFile={handleRetryRightPaneFile}
             handleRightPaneContentChange={handleRightPaneContentChange}
             rightPanePreviewMeta={rightPanePreviewMeta}
             rightPaneRawFileUrl={rightPaneRawFileUrl}

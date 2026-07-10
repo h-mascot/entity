@@ -9,6 +9,7 @@ import { assertSourceEnabled, assertWriteTargetRealpathContained, normalizeSourc
 import { detectContentType, normalizeContentType } from "../file-types";
 import { asyncHandler } from "../middleware/async-handler";
 import { resolveWorkspaceReadPath } from "../workspace-paths";
+import { isMissingPathError } from "../fs/errors";
 
 export interface ByteRange {
   start: number;
@@ -304,6 +305,10 @@ export function registerLegacyFileRoutes(
   function mapFileRouteErrorStatus(message: string): number {
     const normalized = message.trim().toLowerCase();
 
+    if (isMissingPathError(message)) {
+      return 404;
+    }
+
     if (
       normalized.includes("outside workspace") ||
       normalized.includes("inside the workspace") ||
@@ -326,14 +331,6 @@ export function registerLegacyFileRoutes(
 
     if (normalized.includes("disabled")) {
       return 403;
-    }
-
-    if (
-      normalized.includes("not found") ||
-      normalized.includes("does not exist") ||
-      normalized.includes("no such file")
-    ) {
-      return 404;
     }
 
     return 500;

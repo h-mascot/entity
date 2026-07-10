@@ -8,6 +8,7 @@ const startSyncRunMock = vi.fn();
 const finishSyncRunMock = vi.fn();
 const upsertRecordMock = vi.fn();
 const deleteBySourcePathPrefixMock = vi.fn();
+const reconcileSourcePathsMock = vi.fn();
 const createFileSourceAdapterMock = vi.fn();
 const emitFsAuditMock = vi.fn();
 const recordFsOperationMock = vi.fn();
@@ -29,6 +30,7 @@ vi.mock('../../../db/src/file-index', () => ({
     search: vi.fn(),
     listBySource: vi.fn(),
     deleteBySourcePathPrefix: deleteBySourcePathPrefixMock,
+    reconcileSourcePaths: reconcileSourcePathsMock,
     startSyncRun: startSyncRunMock,
     finishSyncRun: finishSyncRunMock,
     getLatestSyncRun: vi.fn(),
@@ -185,6 +187,71 @@ describe('FileIndexRunner deterministic incident skips', () => {
     }));
     upsertRecordMock.mockImplementation((input) => input);
     deleteBySourcePathPrefixMock.mockReturnValue(0);
+    reconcileSourcePathsMock.mockReturnValue(0);
+  });
+
+  it('removes stale index records after a complete source scan', async () => {
+    listSourcesMock.mockReturnValue([bookSource]);
+    const fixtures = new Map<string, FixtureNode[]>([['', [node('notes/current.md', false)]]]);
+    const metadataByPath = new Map<string, FixtureMetadata>([
+      ['notes/current.md', metadata('notes/current.md', 'file')],
+    ]);
+    const bookAdapter = createAdapter(fixtures, metadataByPath, new Set());
+    createFileSourceAdapterMock.mockReturnValue(bookAdapter.adapter);
+
+    const { FileIndexRunner } = await import('./index-runner');
+    const runner = new FileIndexRunner({ maxConcurrentSources: 1 });
+
+    await runner.runOnce();
+
+    expect(reconcileSourcePathsMock).toHaveBeenCalledWith('book', ['notes/current.md']);
+  });
+
+  it('does not remove index records when the source scan hits its file limit', async () => {
+    listSourcesMock.mockReturnValue([bookSource]);
+    const paths = Array.from({ length: 11 }, (_, index) => `notes/file-${index}.md`);
+    const fixtures = new Map<string, FixtureNode[]>([
+      ['', paths.map((filePath) => node(filePath, false))],
+    ]);
+    const metadataByPath = new Map<string, FixtureMetadata>(
+      paths.map((filePath) => [filePath, metadata(filePath, 'file')]),
+    );
+    const bookAdapter = createAdapter(fixtures, metadataByPath, new Set());
+    createFileSourceAdapterMock.mockReturnValue(bookAdapter.adapter);
+
+    const { FileIndexRunner } = await import('./index-runner');
+    const runner = new FileIndexRunner({ maxConcurrentSources: 1, maxFilesPerSource: 10 });
+
+    await runner.runOnce();
+
+    expect(reconcileSourcePathsMock).not.toHaveBeenCalled();
+  });
+
+  it('serializes overlapping scans for the same source across runner instances', async () => {
+    listSourcesMock.mockReturnValue([bookSource]);
+    let activeLists = 0;
+    let maxActiveLists = 0;
+    const adapter = createAdapter(new Map([['', []]]), new Map(), new Set());
+    adapter.list.mockImplementation(async () => {
+      activeLists += 1;
+      maxActiveLists = Math.max(maxActiveLists, activeLists);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      activeLists -= 1;
+      return [];
+    });
+    createFileSourceAdapterMock.mockReturnValue(adapter.adapter);
+
+    const { FileIndexRunner } = await import('./index-runner');
+    const firstRunner = new FileIndexRunner({ maxConcurrentSources: 1 });
+    const secondRunner = new FileIndexRunner({ maxConcurrentSources: 1 });
+
+    await Promise.all([
+      firstRunner.runOnceForSource('book'),
+      secondRunner.runOnceForSource('book'),
+    ]);
+
+    expect(maxActiveLists).toBe(1);
+    expect(reconcileSourcePathsMock).toHaveBeenCalledTimes(2);
   });
 
   it('pre-classifies exact incident fixtures before read/index and preserves unexpected read errors', async () => {
