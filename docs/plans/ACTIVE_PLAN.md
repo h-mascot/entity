@@ -40,6 +40,9 @@ Make the original Doc Hub viewer the single canonical view for all document and 
 - [x] Step 5: Verify exact production-shaped and Doc Hub workflows in the browser with screenshot evidence
   - **Files:** browser evidence only
   - **Verify:** both entry points render the same canonical shell and target content/media
+- [x] Step 6: Correct remote HTML MIME misclassification and re-verify Viewing mode in production
+  - **Files:** Markdown-vs-HTML viewer selection helper and regression test
+  - **Verify:** exact production URL renders its HTML inside the sandboxed Doc Hub viewer
 
 ## Checkpoints
 
@@ -51,6 +54,7 @@ Make the original Doc Hub viewer the single canonical view for all document and 
 | 14:20 | Step 3 | ✅ | Removed standalone viewer, unified navigation into Doc Hub, kept raw endpoint as byte transport; focused tests/build pass |
 | 14:40 | Step 4 | ✅ | App 39, server 702, DB 5; builds and CTRL gate passed; live smoke passed; GitNexus impact reviewed; correctness and thermo approved |
 | 14:42 | Step 5 | ✅ | Browser proved canonical query cleanup, Doc Hub rendering, tab reload/back/forward, and cold-load route authority; screenshot captured |
+| 15:01 | Step 6 | ✅ | Added path-authority regression/fix; app 41, server 702, DB 5 and CTRL gate pass; correctness and thermo reviews approved |
 
 ## Files Touched
 
@@ -61,6 +65,8 @@ Make the original Doc Hub viewer the single canonical view for all document and 
 - `packages/app/src/lib/docHubRoute.test.ts` — created — route compatibility and precedence tests
 - `packages/app/src/views/DocsRouteView.tsx` — deleted — removed competing standalone viewer
 - `packages/app/src/components/DocumentViewerChrome.tsx` — deleted — removed standalone viewer chrome
+- `packages/app/src/lib/markdownFile.ts` — modified — keeps HTML paths out of Markdown reading mode despite misleading remote MIME
+- `packages/app/src/lib/markdownFile.test.ts` — created — regression coverage for remote HTML reported as Markdown
 - `packages/server/src/routes/docs.ts` — modified — serves the Doc Hub SPA for source media and resolves frontend dist robustly
 - `packages/server/src/__tests__/routes-docs.test.ts` — modified — verifies media remains in Doc Hub
 
