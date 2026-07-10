@@ -122,7 +122,7 @@ describe('Docs Route Handlers', () => {
   });
 
   describe('GET /docs/*', () => {
-    it('should redirect binary source docs routes to the raw file endpoint', () => {
+    it('should keep media source docs routes in the Doc Hub SPA viewer', () => {
       const res = mockRes();
       const next = vi.fn();
       handlers['/docs/source/:sourceId/*'](
@@ -131,11 +131,8 @@ describe('Docs Route Handlers', () => {
         next,
       );
 
-      expect(next).not.toHaveBeenCalled();
-      expect(res.redirect).toHaveBeenCalledWith(
-        302,
-        '/api/file/raw?source=crew-home&path=Vision+Board%2F2026-05-25%2Fimage.png',
-      );
+      expect(next).toHaveBeenCalled();
+      expect(res.redirect).not.toHaveBeenCalled();
     });
 
     it('should keep text source docs routes in the SPA viewer', () => {

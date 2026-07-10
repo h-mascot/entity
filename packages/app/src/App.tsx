@@ -44,6 +44,14 @@ import { readUserProfile, useUserProfile } from './lib/userProfile';
 import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
 import { buildFileLoadKey } from './lib/fileLoadIdentity';
+import {
+  buildDocHubExitPath,
+  buildDocHubRoutePath,
+  resolveDocHubRouteTarget,
+  resolveWorkspaceTabRoute,
+  shouldRestoreLastDocHubFile,
+  type DocHubRouteTarget,
+} from './lib/docHubRoute';
 import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
 import {
   buildOpenFileTab,
@@ -93,7 +101,6 @@ const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
 const MCCreateTaskModal = lazy(() => import('./components/mission-control/MCCreateTaskModal'));
 const ShowClawFeaturedPage = lazy(() => import('./ShowClawFeaturedPage'));
 const AdminView = lazy(() => import('./views/AdminView'));
-const DocsRouteView = lazy(() => import('./views/DocsRouteView'));
 const MobileView = lazy(() => import('./views/MobileView'));
 const FilesView = lazy(() => import('./views/FilesView'));
 
@@ -1354,31 +1361,11 @@ function createLazyDocumentsApiClient(options: { apiBase?: string; auth?: Docume
   };
 }
 
-interface DocsApiResponse {
-  content?: string;
-  path?: string;
-  filename?: string;
-}
-
 function normalizeDocsRoutePath(value: string): string {
   return value
     .split('/')
     .map((segment) => segment.trim())
     .filter(Boolean)
-    .join('/');
-}
-
-function decodeDocsRoutePath(value: string): string {
-  return value
-    .split('/')
-    .filter((segment) => segment.length > 0)
-    .map((segment) => {
-      try {
-        return decodeURIComponent(segment);
-      } catch {
-        return segment;
-      }
-    })
     .join('/');
 }
 
@@ -1390,34 +1377,6 @@ function encodeDocsRoutePath(value: string): string {
     .join('/');
 }
 
-const KNOWN_DOCS_ROOTS = ['output', 'memory', 'workspace'];
-
-function parseDocsPathFromPathname(pathname: string): string | null {
-  if (pathname.startsWith('/docs/')) {
-    const rawPath = pathname.slice('/docs/'.length);
-    const normalized = normalizeDocsRoutePath(decodeDocsRoutePath(rawPath));
-    return normalized || null;
-  }
-
-  // Support bare root paths like /output/foo.md → output/foo.md
-  const segments = pathname.split('/').filter(Boolean);
-  if (segments.length >= 2 && KNOWN_DOCS_ROOTS.includes(segments[0])) {
-    const normalized = normalizeDocsRoutePath(decodeDocsRoutePath(segments.join('/')));
-    return normalized || null;
-  }
-
-  return null;
-}
-
-function docsFilenameFromPath(pathname: string | null): string {
-  if (!pathname) {
-    return 'Document';
-  }
-
-  const parts = normalizeDocsRoutePath(pathname).split('/').filter(Boolean);
-  return parts[parts.length - 1] ?? 'Document';
-}
-
 function filePathSegments(filePath: string | null): string[] {
   return filePath?.split('/').filter(Boolean) ?? [];
 }
@@ -1425,11 +1384,6 @@ function filePathSegments(filePath: string | null): string[] {
 function filenameFromFilePath(filePath: string | null): string {
   const segments = filePathSegments(filePath);
   return segments[segments.length - 1] ?? 'Document';
-}
-
-function buildDocsApiUrls(docPath: string): string[] {
-  const encodedDocPath = encodeDocsRoutePath(docPath);
-  return buildApiCandidates(`/docs/${encodedDocPath}`, runtime.apiBase).filter((url) => url.includes('/api/'));
 }
 
 function resolveDocsPathFromHref(href: string, currentDocsPath: string | null): string | null {
@@ -1452,7 +1406,12 @@ function resolveDocsPathFromHref(href: string, currentDocsPath: string | null): 
       return null;
     }
 
-    return parseDocsPathFromPathname(resolved.pathname);
+    const target = resolveDocHubRouteTarget(resolved.pathname, resolved.search);
+    return target
+      ? target.sourceId
+        ? `source/${target.sourceId}/${target.path}`
+        : `workspace/${target.path}`
+      : null;
   } catch {
     return null;
   }
@@ -1467,35 +1426,34 @@ export default function App() {
       </Suspense>
     );
   }
+  const initialDocHubTarget =
+    typeof window === 'undefined'
+      ? null
+      : resolveDocHubRouteTarget(window.location.pathname, window.location.search);
   const initialDocumentsAuth = readDocumentsAuth();
-  const [docsPath, setDocsPath] = useState<string | null>(() => {
-    if (typeof window === 'undefined') {
-      return null;
-    }
-    return parseDocsPathFromPathname(window.location.pathname);
-  });
-  const [docsContent, setDocsContent] = useState('');
-  const [docsFilename, setDocsFilename] = useState<string>(() => {
-    if (typeof window === 'undefined') {
-      return 'Document';
-    }
-    return docsFilenameFromPath(parseDocsPathFromPathname(window.location.pathname));
-  });
-  const [docsLoading, setDocsLoading] = useState(false);
-  const [docsError, setDocsError] = useState<string | null>(null);
   const [currentFile, setCurrentFile] = useState<string | null>(() => {
     if (typeof window === 'undefined') {
       return null;
     }
-    const params = new URLSearchParams(window.location.search);
-    return params.get('file') || window.localStorage.getItem('entity.last.file') || null;
+    if (initialDocHubTarget) {
+      return initialDocHubTarget.path;
+    }
+    return shouldRestoreLastDocHubFile(window.location.pathname, window.location.search)
+      ? window.localStorage.getItem('entity.last.file') || null
+      : null;
   });
   const [currentSourceId, setCurrentSourceId] = useState<string | null>(() => {
     if (typeof window === 'undefined') {
       return null;
     }
-    const params = new URLSearchParams(window.location.search);
-    return params.get('source') || window.localStorage.getItem('entity.last.source') || null;
+    if (initialDocHubTarget) {
+      return initialDocHubTarget.sourceId;
+    }
+    const savedFile = shouldRestoreLastDocHubFile(window.location.pathname, window.location.search)
+      ? window.localStorage.getItem('entity.last.file')
+      : null;
+    return window.localStorage.getItem('entity.last.source') ||
+      (savedFile && runtime.fsMultiSourceEnabled ? 'workspace' : null);
   });
   const [splitMode, setSplitMode] = useState<false | 'horizontal'>(false);
   const [rightPaneFile, setRightPaneFile] = useState<string | null>(null);
@@ -1517,9 +1475,14 @@ export default function App() {
     if (typeof window === 'undefined') {
       return [];
     }
-    const params = new URLSearchParams(window.location.search);
-    const file = params.get('file') || window.localStorage.getItem('entity.last.file');
-    const source = params.get('source') || window.localStorage.getItem('entity.last.source');
+    const file = initialDocHubTarget?.path ||
+      (shouldRestoreLastDocHubFile(window.location.pathname, window.location.search)
+        ? window.localStorage.getItem('entity.last.file')
+        : null);
+    const source = initialDocHubTarget
+      ? initialDocHubTarget.sourceId
+      : window.localStorage.getItem('entity.last.source') ||
+        (runtime.fsMultiSourceEnabled ? 'workspace' : null);
     if (!file) {
       return [];
     }
@@ -1544,10 +1507,12 @@ export default function App() {
   const [authorshipRanges, setAuthorshipRanges] = useState<DocumentAuthorshipRangeRecord[]>([]);
   const [manualAuthorshipAuthor, setManualAuthorshipAuthor] = useState<DocumentAuthorshipActor>('human');
   const [sidebarTab, setSidebarTab] = useState<WorkspaceTab>(() => {
+    if (initialDocHubTarget) {
+      return 'files';
+    }
     if (typeof window !== 'undefined') {
-      const requestedTab = new URLSearchParams(window.location.search).get('tab') as WorkspaceTab | null;
-      const validTabs: readonly string[] = ['files', 'agents', 'tasks', 'services', 'chat', 'admin'];
-      if (requestedTab && validTabs.includes(requestedTab)) {
+      const requestedTab = resolveWorkspaceTabRoute(window.location.pathname, window.location.search);
+      if (requestedTab) {
         return requestedTab;
       }
     }
@@ -1575,20 +1540,42 @@ export default function App() {
     }
 
     const url = new URL(window.location.href);
-    if (currentFile && currentSourceId) {
-      url.searchParams.set('file', currentFile);
-      url.searchParams.set('source', currentSourceId);
+    const pathnameTarget = resolveDocHubRouteTarget(url.pathname, '');
+    if (currentFile) {
+      const sourceId = currentSourceId || (runtime.fsMultiSourceEnabled ? 'workspace' : null);
       window.localStorage.setItem('entity.last.file', currentFile);
-      window.localStorage.setItem('entity.last.source', currentSourceId);
+      if (sourceId) {
+        window.localStorage.setItem('entity.last.source', sourceId);
+      } else {
+        window.localStorage.removeItem('entity.last.source');
+      }
+
+      if (sourceId) {
+        url.pathname = buildDocHubRoutePath({ sourceId, path: currentFile });
+        url.search = '';
+      } else {
+        url.searchParams.set('file', currentFile);
+        url.searchParams.delete('source');
+        url.searchParams.set('tab', 'files');
+      }
     } else {
       url.searchParams.delete('file');
       url.searchParams.delete('source');
-      window.localStorage.removeItem('entity.last.file');
-      window.localStorage.removeItem('entity.last.source');
+      if (pathnameTarget || shouldRestoreLastDocHubFile(url.pathname, url.search)) {
+        window.localStorage.removeItem('entity.last.file');
+        window.localStorage.removeItem('entity.last.source');
+      }
+      if (pathnameTarget) {
+        url.pathname = '/';
+        url.search = '';
+      }
     }
 
     if (url.toString() !== window.location.href) {
-      window.history.replaceState(null, '', url.toString());
+      const previousState = window.history.state && typeof window.history.state === 'object'
+        ? window.history.state
+        : {};
+      window.history.replaceState(currentFile ? { ...previousState, mode: 'docs' } : null, '', url.toString());
     }
   }, [currentFile, currentSourceId]);
 
@@ -1769,8 +1756,11 @@ export default function App() {
   const reviewPollAbortRef = useRef<AbortController | null>(null);
   const reviewPollRunIdRef = useRef<string | null>(null);
   const lastBuildHashToastRef = useRef<string | null>(null);
-  const docsModeActive = Boolean(docsPath);
-  const docsBreadcrumbSegments = useMemo(() => (docsPath ? docsPath.split('/').filter(Boolean) : []), [docsPath]);
+  const currentDocsPath = currentFile
+    ? currentSourceId
+      ? `source/${currentSourceId}/${currentFile}`
+      : `workspace/${currentFile}`
+    : null;
   const showOfflineSyncBar = isOffline || offlineQueuePending > 0 || syncingNow;
   const currentFileCachedAgeLabel = currentFileCacheMeta.cached ? formatElapsedMs(currentFileCacheMeta.cacheAgeMs) : null;
   const rightPaneCachedAgeLabel = rightPaneCacheMeta.cached ? formatElapsedMs(rightPaneCacheMeta.cacheAgeMs) : null;
@@ -1869,6 +1859,23 @@ export default function App() {
     }
   }, [refreshOfflineQueueState, refreshStatus, reloadTasks, syncingNow]);
 
+  const openDocHubTarget = useCallback((target: DocHubRouteTarget) => {
+    setSidebarTab('files');
+    setMobileTab('files');
+    setTabletSidebarOpen(false);
+    setCurrentSourceId(target.sourceId);
+    setCurrentFile(target.path);
+    setCurrentFileReadOnly(false);
+    setCurrentFileUpdatedAt(null);
+    setCurrentFilePreviewMeta(defaultFilePreviewMeta());
+    setCurrentFileCacheMeta(defaultFileCacheMeta());
+    setEditMode(false);
+    setEditorCollabMode('editing');
+    setReloadPrompt(null);
+    setHighlightTaskId(null);
+    setOpenFileTabs((previous) => upsertOpenFileTab(previous, buildOpenFileTab(target.sourceId, target.path)));
+  }, []);
+
   const navigateToDocsPath = useCallback(
     (nextPath: string, replace = false, returnTaskId?: number | null): boolean => {
       if (typeof window === 'undefined') {
@@ -1880,105 +1887,65 @@ export default function App() {
         return false;
       }
 
-      // Preserve the originating task across doc→doc navigation unless a new
-      // origin is explicitly provided, so "back" can return to the task detail.
+      const explicitTarget = resolveDocHubRouteTarget(`/docs/${encodeDocsRoutePath(normalized)}`, '');
+      const configuredTarget = resolveTaskOutputDocTarget(
+        normalized,
+        fileSources,
+        runtime.fsMultiSourceEnabled,
+      );
+      const target = explicitTarget ?? (configuredTarget.kind === 'source' ? configuredTarget : null);
+      if (!target) {
+        return false;
+      }
+
       const existingState = window.history.state as { returnTaskId?: unknown } | null;
       const inheritedReturnTaskId =
         existingState && typeof existingState.returnTaskId === 'number' ? existingState.returnTaskId : null;
       const nextReturnTaskId = returnTaskId !== undefined ? returnTaskId : inheritedReturnTaskId;
       const docsState = { mode: 'docs', returnTaskId: nextReturnTaskId };
 
-      const nextPathname = `/docs/${encodeDocsRoutePath(normalized)}`;
-      if (window.location.pathname !== nextPathname) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.pathname = buildDocHubRoutePath(target);
+      nextUrl.search = '';
+      if (window.location.pathname !== nextUrl.pathname || window.location.search) {
         if (replace) {
-          window.history.replaceState(docsState, '', nextPathname);
+          window.history.replaceState(docsState, '', nextUrl.toString());
         } else {
-          window.history.pushState(docsState, '', nextPathname);
+          window.history.pushState(docsState, '', nextUrl.toString());
         }
       } else {
-        window.history.replaceState(docsState, '', nextPathname);
+        window.history.replaceState(docsState, '', nextUrl.toString());
       }
 
-      setDocsPath(normalized);
+      openDocHubTarget(target);
       return true;
     },
-    []
+    [fileSources, openDocHubTarget]
   );
-
-  const handleDocsBackToHome = useCallback(() => {
-    const state =
-      typeof window !== 'undefined' && window.history.state && typeof window.history.state === 'object'
-        ? (window.history.state as { returnTaskId?: unknown })
-        : null;
-    const returnTaskId = state && typeof state.returnTaskId === 'number' ? state.returnTaskId : null;
-
-    setDocsPath(null);
-    setDocsError(null);
-    setDocsLoading(false);
-    setDocsContent('');
-    setDocsFilename('Document');
-
-    if (returnTaskId !== null) {
-      // Return to the task detail the doc was opened from.
-      if (typeof window !== 'undefined') {
-        const nextUrl = new URL(window.location.href);
-        nextUrl.pathname = '/task/' + returnTaskId;
-        nextUrl.searchParams.delete('file');
-        nextUrl.searchParams.delete('source');
-        window.history.pushState({ mode: 'task', taskId: returnTaskId }, '', nextUrl.toString());
-      }
-      setCurrentSourceId(null);
-      setCurrentFile(null);
-      setMcBoardTab('kanban');
-      setSidebarTab('tasks');
-      setMobileTab('tasks');
-      setHighlightTaskId(returnTaskId);
-      return;
-    }
-
-    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
-      window.history.pushState({ mode: 'app' }, '', '/');
-    }
-  }, []);
 
   const handleMarkdownDocsNavigation = useCallback(
     (href: string): boolean => {
-      const resolved = resolveDocsPathFromHref(href, docsPath);
+      const resolved = resolveDocsPathFromHref(href, currentDocsPath);
       if (!resolved) {
         return false;
       }
 
       return navigateToDocsPath(resolved);
     },
-    [docsPath, navigateToDocsPath]
+    [currentDocsPath, navigateToDocsPath]
   );
 
-  // Opening an output doc from a task: prefer the Doc Hub (files tab) so the
-  // document opens as a workspace tab with the full Doc Hub chrome. Docs paths
-  // look like "<root>/<path>"; when the root matches a configured file source
-  // we open it there, otherwise fall back to the standalone /docs route.
+  // Task output links use the same canonical Doc Hub route as every other
+  // document and media entry point.
   const handleTaskOutputDocsNavigation = useCallback(
     (href: string): boolean => {
-      const resolved = resolveDocsPathFromHref(href, docsPath);
+      const resolved = resolveDocsPathFromHref(href, currentDocsPath);
       if (!resolved) {
         return false;
       }
-
-      const target = resolveTaskOutputDocTarget(resolved, fileSources, runtime.fsMultiSourceEnabled);
-      if (target.kind === 'source') {
-        // Leave the /task/<id> route before opening the doc so the URL (and a
-        // later reload) reflects the files workspace rather than the task.
-        if (typeof window !== 'undefined' && extractTaskRouteId(window.location.pathname) !== null) {
-          window.history.pushState({ mode: 'app' }, '', '/');
-        }
-        handleSourceFileSelect(target.sourceId, target.path);
-        return true;
-      }
-
       return navigateToDocsPath(resolved, false, highlightTaskId);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSourceFileSelect is re-created per render
-    [docsPath, fileSources, highlightTaskId, navigateToDocsPath, watchMode]
+    [currentDocsPath, highlightTaskId, navigateToDocsPath]
   );
 
   useEffect(() => {
@@ -1987,17 +1954,25 @@ export default function App() {
     }
 
     const syncRouteState = () => {
-      const nextPath = parseDocsPathFromPathname(window.location.pathname);
+      const target = resolveDocHubRouteTarget(window.location.pathname, window.location.search);
       const routeTaskId = extractTaskRouteId(window.location.pathname);
-      setDocsPath(nextPath);
-
-      if (routeTaskId !== null) {
+      if (target) {
+        openDocHubTarget(target);
+      } else if (routeTaskId !== null) {
         setCurrentSourceId(null);
         setCurrentFile(null);
         setSidebarTab('tasks');
         setMobileTab('tasks');
         setMcBoardTab('kanban');
         setHighlightTaskId(routeTaskId);
+      } else {
+        setCurrentSourceId(null);
+        setCurrentFile(null);
+        const workspaceTab = resolveWorkspaceTabRoute(window.location.pathname, window.location.search);
+        if (workspaceTab) {
+          setSidebarTab(workspaceTab);
+          setMobileTab(workspaceTab);
+        }
       }
     };
 
@@ -2005,52 +1980,7 @@ export default function App() {
 
     window.addEventListener('popstate', syncRouteState);
     return () => window.removeEventListener('popstate', syncRouteState);
-  }, []);
-
-  useEffect(() => {
-    if (!docsPath) {
-      return;
-    }
-
-    let cancelled = false;
-    setDocsLoading(true);
-    setDocsError(null);
-
-    requestJsonWithFallback<DocsApiResponse>({
-      urls: buildDocsApiUrls(docsPath),
-      fallbackError: 'Failed to load document.',
-    })
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-
-        const filenameCandidate =
-          typeof response.filename === 'string' && response.filename.trim()
-            ? response.filename.trim()
-            : docsFilenameFromPath(docsPath);
-        setDocsContent(typeof response.content === 'string' ? response.content : '');
-        setDocsFilename(filenameCandidate);
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-
-        setDocsContent('');
-        setDocsFilename(docsFilenameFromPath(docsPath));
-        setDocsError(error instanceof Error ? error.message : 'Failed to load document.');
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setDocsLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [docsPath]);
+  }, [openDocHubTarget]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -3051,10 +2981,11 @@ export default function App() {
   }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentSourceId, fileContent, writeSourceFile]);
 
   const handleFileSelect = (path: string) => {
+    const sourceId = runtime.fsMultiSourceEnabled ? 'workspace' : null;
     setSidebarTab('files');
     setMobileTab('files');
     setTabletSidebarOpen(false);
-    setCurrentSourceId(null);
+    setCurrentSourceId(sourceId);
     setCurrentFile(path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -3064,7 +2995,7 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
-    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(null, path)));
+    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(sourceId, path)));
   };
 
   const handleSourceFileSelect = (sourceId: string, path: string) => {
@@ -3135,7 +3066,7 @@ export default function App() {
   }, []);
 
   const handleWatchModeAutoOpenFile = useCallback((path: string) => {
-    setCurrentSourceId(null);
+    setCurrentSourceId(runtime.fsMultiSourceEnabled ? 'workspace' : null);
     setCurrentFile(path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -3148,6 +3079,23 @@ export default function App() {
   }, []);
 
   const handleBackToDashboard = () => {
+    if (typeof window !== 'undefined') {
+      const returnTaskId = window.history.state && typeof window.history.state === 'object'
+        ? window.history.state.returnTaskId
+        : null;
+      const exitPath = buildDocHubExitPath(returnTaskId);
+      window.history.pushState(null, '', exitPath);
+      if (exitPath !== '/') {
+        setSidebarTab('tasks');
+        setMobileTab('tasks');
+        setMcBoardTab('kanban');
+        setHighlightTaskId(extractTaskRouteId(exitPath));
+      } else {
+        setHighlightTaskId(null);
+      }
+    } else {
+      setHighlightTaskId(null);
+    }
     exitSplitMode();
     setCurrentSourceId(null);
     setCurrentFile(null);
@@ -3158,7 +3106,6 @@ export default function App() {
     setEditMode(false);
     setEditorCollabMode('editing');
     setReloadPrompt(null);
-    setHighlightTaskId(null);
   };
 
   const activeFileTabKey = useMemo(() => {
@@ -3187,7 +3134,7 @@ export default function App() {
     setSidebarTab('files');
     setMobileTab('files');
     setTabletSidebarOpen(false);
-    setCurrentSourceId(null);
+    setCurrentSourceId(runtime.fsMultiSourceEnabled ? 'workspace' : null);
     setCurrentFile(tab.path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -3252,6 +3199,30 @@ export default function App() {
   };
 
   const handleSidebarTabChange = (tab: WorkspaceTab) => {
+    if (typeof window !== 'undefined' && (tab !== 'files' || !currentFile)) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.pathname = '/';
+      nextUrl.search = '';
+      if (tab !== 'files') {
+        nextUrl.searchParams.set('tab', tab);
+      }
+      if (nextUrl.toString() !== window.location.href) {
+        window.history.pushState({ mode: tab }, '', nextUrl.toString());
+      }
+    }
+    if (tab !== 'files' && currentFile) {
+      exitSplitMode();
+      setCurrentSourceId(null);
+      setCurrentFile(null);
+      setCurrentFileReadOnly(false);
+      setCurrentFileUpdatedAt(null);
+      setCurrentFilePreviewMeta(defaultFilePreviewMeta());
+      setCurrentFileCacheMeta(defaultFileCacheMeta());
+      setEditMode(false);
+      setEditorCollabMode('editing');
+      setReloadPrompt(null);
+      setHighlightTaskId(null);
+    }
     setSidebarTab(tab);
     setMobileTab(tab);
     setTabletSidebarOpen(false);
@@ -5256,34 +5227,6 @@ export default function App() {
       </>
     );
   };
-
-  if (docsModeActive && docsPath) {
-    const docsBackState =
-      typeof window !== 'undefined' && window.history.state && typeof window.history.state === 'object'
-        ? (window.history.state as { returnTaskId?: unknown })
-        : null;
-    const docsBackTaskId =
-      docsBackState && typeof docsBackState.returnTaskId === 'number' ? docsBackState.returnTaskId : null;
-    return (
-      <Suspense fallback={<LazySurfaceFallback label="Loading document" />}>
-        <DocsRouteView
-          docsPath={docsPath}
-          docsFilename={docsFilename || docsFilenameFromPath(docsPath)}
-          docsBreadcrumbSegments={docsBreadcrumbSegments}
-          docsError={docsError}
-          docsContent={docsContent}
-          docsLoading={docsLoading}
-          docsTtsSettings={docsTtsSettings}
-          docsBackTaskId={docsBackTaskId}
-          onBackToHome={handleDocsBackToHome}
-          onDocsLinkNavigate={handleMarkdownDocsNavigation}
-          onDocsTtsSettingsChange={handleDocsTtsSettingsChange}
-          onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-          renderOfflineSyncBar={renderOfflineSyncBar}
-        />
-      </Suspense>
-    );
-  }
 
   const onboardingToken = typeof window !== 'undefined' ? window.location.pathname.match(/^\/onboard\/agent\/([^/]+)$/)?.[1] ?? null : null;
   const onboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === '/onboarding';
