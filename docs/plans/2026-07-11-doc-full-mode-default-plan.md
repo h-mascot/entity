@@ -6,7 +6,7 @@ Open document pages with both the left workspace sidebar and right intelligence 
 
 **Created:** 2026-07-11
 **Agent:** Codex
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 ## Plan
 
@@ -16,7 +16,7 @@ Open document pages with both the left workspace sidebar and right intelligence 
   - **Verify:** opening or switching documents collapses both rails; leaving documents opens both rails
 - [x] Step 3: Run tests, build, browser verification, GitNexus, and reviews
   - **Verify:** app suite/build and desktop browser workflows pass with screenshot evidence
-- [ ] Step 4: Commit, push, deploy, and verify production
+- [x] Step 4: Commit, push, deploy, and verify production
   - **Verify:** exact production document route opens focused; Tasks/Agents remain open
 
 ## Files Touched
@@ -31,6 +31,7 @@ Open document pages with both the left workspace sidebar and right intelligence 
 
 - 05:01 — App 43, DB 5, server 702; CTRL gate and live smoke pass under Node 22
 - 05:01 — Browser verified document focused mode and Tasks open sidebar; correctness/UI reviews approved
+- 05:05 — Commit `e762bb4` passed GitHub Actions, deployed with 989 tasks preserved, and production browser proof passed
 
 ## Resume Instructions
 
@@ -40,7 +41,7 @@ Open document pages with both the left workspace sidebar and right intelligence 
 
 ## Done
 
-- [ ] All steps complete
-- [ ] Browser workflows verified
-- [ ] Reviews approved
-- [ ] Production verified
+- [x] All steps complete
+- [x] Browser workflows verified
+- [x] Reviews approved
+- [x] Production verified
