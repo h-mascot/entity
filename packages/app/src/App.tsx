@@ -44,6 +44,7 @@ import { readUserProfile, useUserProfile } from './lib/userProfile';
 import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
 import { buildFileLoadKey } from './lib/fileLoadIdentity';
+import { getDocumentShellCollapseState } from './lib/documentShellState';
 import {
   buildDocHubExitPath,
   buildDocHubRoutePath,
@@ -108,8 +109,6 @@ const LOGIN_REQUIRED_KEY = 'entity.auth.login-required.v1';
 const AUTH_SESSION_KEY = 'entity.auth.session.v1';
 const DOCUMENTS_AUTH_KEY = 'entity.documents.auth.v1';
 const MC_SHOW_ARCHIVE_KEY = 'mc_showArchive';
-const SIDEBAR_COLLAPSED_KEY = 'entity.sidebar.collapsed.v1';
-const RIGHT_SIDEBAR_COLLAPSED_KEY = 'entity.rightSidebar.collapsed.v1';
 const THEME_KEY = 'entity.theme.v1';
 const DEFAULT_LOGIN_PASSWORD = 'mission';
 const ENTERPRISE_ADMIN_URL = '';
@@ -1182,38 +1181,6 @@ function persistArchivePreference(value: boolean) {
   window.localStorage.setItem(MC_SHOW_ARCHIVE_KEY, value ? 'true' : 'false');
 }
 
-function readSidebarCollapsed(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
-}
-
-function persistSidebarCollapsed(value: boolean) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, value ? 'true' : 'false');
-}
-
-function readRightSidebarCollapsed(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  return window.localStorage.getItem(RIGHT_SIDEBAR_COLLAPSED_KEY) === 'true';
-}
-
-function persistRightSidebarCollapsed(value: boolean) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, value ? 'true' : 'false');
-}
-
 function normalizeTheme(value: string | null): AppTheme {
   if (value === 'crew') {
     return 'kitz';
@@ -1704,8 +1671,10 @@ export default function App() {
   const [enterpriseFrameTimedOut, setEnterpriseFrameTimedOut] = useState(false);
   const [appTheme, setAppTheme] = useState<AppTheme>(() => readThemePreference());
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState<boolean>(() => readRightSidebarCollapsed());
+  const initialDocumentShellCollapseState = getDocumentShellCollapseState(currentFileKey);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(initialDocumentShellCollapseState.left);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(initialDocumentShellCollapseState.right);
+  const documentShellFileKeyRef = useRef(currentFileKey);
   const [isOffline, setIsOffline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? !navigator.onLine : false));
   const [offlineQueuePending, setOfflineQueuePending] = useState(0);
   const [offlineQueueItems, setOfflineQueueItems] = useState<OfflineQueueSnapshotItem[]>([]);
@@ -2198,12 +2167,15 @@ export default function App() {
   }, [showArchiveColumn]);
 
   useEffect(() => {
-    persistSidebarCollapsed(sidebarCollapsed);
-  }, [sidebarCollapsed]);
+    if (documentShellFileKeyRef.current === currentFileKey) {
+      return;
+    }
 
-  useEffect(() => {
-    persistRightSidebarCollapsed(rightSidebarCollapsed);
-  }, [rightSidebarCollapsed]);
+    const nextState = getDocumentShellCollapseState(currentFileKey);
+    setSidebarCollapsed(nextState.left);
+    setRightSidebarCollapsed(nextState.right);
+    documentShellFileKeyRef.current = currentFileKey;
+  }, [currentFileKey]);
 
   useEffect(() => {
     persistThemePreference(appTheme);
@@ -3665,12 +3637,6 @@ export default function App() {
   const onlineAgents = agents.filter((agent) => agent.status === 'online').length;
   const workspaceTab = isMobile ? mobileTab : sidebarTab;
   const enterpriseFrameSrc = ENTERPRISE_ADMIN_URL;
-
-  useEffect(() => {
-    if (currentDocId && rightSidebarHasPanels) {
-      setRightSidebarCollapsed(false);
-    }
-  }, [currentDocId, rightSidebarHasPanels]);
 
   useEffect(() => {
     documentsReadyRef.current = documentsReady;
