@@ -661,7 +661,12 @@ export default function DocIntelligencePanel({
             selectedThreadId={selectedCommentId}
           />
         </Suspense>
-      ) : null}
+      ) : (
+        <EmptyState
+          title="Comments unavailable"
+          body="Document comments are unavailable while collaboration is disconnected or still initializing."
+        />
+      )}
 
       {rightSidebarHasSuggestions ? (
         <Suspense fallback={null}>

@@ -3631,8 +3631,7 @@ export default function App() {
   const rightSidebarHasComments = documentsReady || commentThreads.length > 0;
   const rightSidebarHasSuggestions = suggestions.length > 0;
   const rightSidebarHasReview = reviewFindings.length > 0 || Boolean(reviewRun);
-  const rightSidebarHasPanels = rightSidebarHasComments || rightSidebarHasSuggestions || rightSidebarHasReview;
-  const rightSidebarIsCollapsed = rightSidebarCollapsed || !rightSidebarHasPanels;
+  const rightSidebarIsCollapsed = rightSidebarCollapsed;
   const activeTasks = tasks.filter((task) => task.column === 'doing');
   const onlineAgents = agents.filter((agent) => agent.status === 'online').length;
   const workspaceTab = isMobile ? mobileTab : sidebarTab;
@@ -5094,7 +5093,6 @@ export default function App() {
             handleMarkdownDocsNavigation={handleMarkdownDocsNavigation}
             docsTtsSettings={docsTtsSettings}
             handleDocsTtsSettingsChange={handleDocsTtsSettingsChange}
-            rightSidebarHasPanels={rightSidebarHasPanels}
             rightSidebarIsCollapsed={rightSidebarIsCollapsed}
             rightSidebarHasComments={rightSidebarHasComments}
             rightSidebarHasSuggestions={rightSidebarHasSuggestions}

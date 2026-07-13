@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from 'react';
+import { shouldShowDocumentRightRail } from '../lib/documentShellState';
 import { isMarkdownFilePath, shouldRenderMarkdownPreview } from '../lib/markdownFile';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
@@ -167,6 +168,10 @@ export default function DocumentEditorView(props: any) {
     editorCollabMode !== 'viewing' &&
     !watchMode &&
     !(editorCollabMode === 'editing' && currentFileReadOnly);
+  const showDocumentRightRail = shouldShowDocumentRightRail({
+    agentNativeEditorEnabled: runtime.agentNativeEditorEnabled,
+    documentsReady,
+  });
 
   const renderPrimaryEditorContent = () => (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -463,7 +468,7 @@ export default function DocumentEditorView(props: any) {
         </div>
       )}
 
-      {runtime.agentNativeEditorEnabled && documentsReady && (
+      {showDocumentRightRail && (
         <LazyDocIntelligencePanel
           collapsed={rightSidebarIsCollapsed}
           setCollapsed={setRightSidebarCollapsed}
