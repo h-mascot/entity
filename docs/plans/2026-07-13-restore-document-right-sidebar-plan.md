@@ -6,7 +6,7 @@ Restore the Comments and Intelligence rail for document pages when document coll
 
 **Created:** 2026-07-13
 **Agent:** Codex
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 ## Context
 
@@ -30,7 +30,7 @@ Focused document mode intentionally collapses both sidebars on load, but the rig
 - [x] Step 3: Run app tests, build, Codex review, and CTRL
   - **Files:** no additional files expected
   - **Verify:** app test/build commands, Codex review, `npm run ctrl:gate`, `npm run ctrl:full`
-- [ ] Step 4: Browser-verify locally and in production, deploy through the guarded pipeline, and land on `main`
+- [x] Step 4: Browser-verify locally and in production, deploy through the guarded pipeline, and land on `main`
   - **Files:** production screenshot evidence
   - **Verify:** Comments and Intelligence controls are visible and interactive on the real document route
 
@@ -44,6 +44,7 @@ Focused document mode intentionally collapses both sidebars on load, but the rig
 | 14:14 | Step 3 | complete | App tests/build, 752-test CTRL gate, production live smoke, and guarded deploy-path check passed. |
 | 14:15 | Step 4 | in progress | Local browser loaded the document and exercised both Intelligence and Comments controls. |
 | 14:18 | Step 3 | complete | Codex review rerun after wording cleanup: clean, with no accepted or actionable findings. |
+| 14:22 | Step 4 | complete | CI passed, `deploy.sh --frontend-only` preserved 1,013 tasks, and production browser verification exercised Intelligence and Comments. |
 
 ## Files Touched
 
@@ -64,8 +65,8 @@ Focused document mode intentionally collapses both sidebars on load, but the rig
 
 ## Done
 
-- [ ] All steps complete
+- [x] All steps complete
 - [x] Tests pass
 - [x] Browser proof captured locally
-- [ ] Changes committed and pushed to `main`
-- [ ] Production verified
+- [x] Changes committed and pushed to `main`
+- [x] Production verified
