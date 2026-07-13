@@ -1,6 +1,7 @@
 import { capitalizeColumn } from "./task-helpers";
 import { normalizeTaskOutputLinks } from "../task-output-links";
 import { SAMPLE_DOC_OUTPUT_PATH } from "./sample-docs";
+import { isExplicitSeedOptIn } from "./sample-seed-config";
 
 interface EnsureSampleTasksDeps {
   logActivity: (input: any) => unknown;
@@ -21,6 +22,10 @@ export const SAMPLE_DOC_VIEWER_TASK_OUTPUT =
   `Deliverable ready. Open the rendered document: [Entity Doc Viewer Demo](${SAMPLE_DOC_OUTPUT_PATH})`;
 
 export async function ensureSampleTasks(deps: EnsureSampleTasksDeps): Promise<void> {
+  if (!isExplicitSeedOptIn(process.env.ENTITY_SEED_SAMPLE_DATA)) {
+    return;
+  }
+
   const { logActivity, taskSyncLayer } = deps;
   const sampleTasks: readonly SampleTaskSeed[] = [
     {

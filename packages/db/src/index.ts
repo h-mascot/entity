@@ -4,6 +4,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import Database from 'better-sqlite3';
 import { getEntityDatabase } from './entity-db';
+import { isExplicitSeedOptIn } from './seed-config';
 
 export const TASK_COLUMNS = ['backlog', 'todo', 'doing', 'review', 'done'] as const;
 export const DEFAULT_WORKSPACE_ORG_ID = 'default-org';
@@ -6846,6 +6847,10 @@ function iterateSourceRows(source: Database.Database): IterableIterator<SourceTa
 let missionControlSeeded = false;
 
 function seedFromMissionControl(target: Database.Database): void {
+  if (!isExplicitSeedOptIn(process.env.ENTITY_SEED_MISSION_CONTROL_TASKS)) {
+    return;
+  }
+
   if (missionControlSeeded) {
     return;
   }
