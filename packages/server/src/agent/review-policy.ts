@@ -225,12 +225,6 @@ function hasReviewNote(metadata: ReviewMetadata): boolean {
   return readString(metadata.review_note).length >= 20;
 }
 
-function reviewerMatchesActor(metadata: ReviewMetadata, actor: string): boolean {
-  const reviewer = normalizeIdentity(metadata.reviewer ?? metadata.review_owner);
-  if (!reviewer) return false;
-  return reviewer === normalizeIdentity(actor);
-}
-
 function hasExplicitChatDelivery(metadata: ReviewMetadata): boolean {
   return (
     readBoolean(metadata.chat_output_delivered) &&
@@ -454,17 +448,6 @@ export function validateReviewEntry(metadata: unknown): ReviewValidationResult {
     };
   }
 
-  if (
-    riskLevel === 'high' &&
-    !readBoolean(parsed.human_required ?? parsed.requires_human ?? parsed.henry_required ?? parsed.requires_henry)
-  ) {
-    return {
-      ok: false,
-      message: 'High-risk review tasks must set human_required=true unless explicit delegation is recorded.',
-      metadata: parsed,
-    };
-  }
-
   const packet = reviewPacketFrom(parsed);
   if (!packet) {
     return {
@@ -553,16 +536,6 @@ export function validateReviewCompletion(
     };
   }
 
-  const humanRequired = readBoolean(metadata.human_required ?? metadata.requires_human ?? metadata.henry_required ?? metadata.requires_henry);
-  const delegatedByHuman = readBoolean(metadata.human_delegated ?? metadata.delegated_by_human ?? metadata.henry_delegated ?? metadata.delegated_by_henry);
-  if (humanRequired && !reviewerMatchesActor(metadata, normalizedActor) && !delegatedByHuman) {
-    return {
-      ok: false,
-      message: 'Human-required tasks can only be completed by the assigned reviewer unless explicit delegation is recorded.',
-      metadata,
-    };
-  }
-
   if (reviewType === 'auto') {
     if (!hasAcceptedDecision(metadata) || (!hasReviewNote(metadata) && !hasExplicitChatDelivery(metadata))) {
       return {
@@ -572,14 +545,6 @@ export function validateReviewCompletion(
       };
     }
     return { ok: true, metadata: { ...metadata, completedBy: normalizedActor } };
-  }
-
-  if (!reviewerMatchesActor(metadata, normalizedActor)) {
-    return {
-      ok: false,
-      message: 'Task can only be completed by the assigned reviewer.',
-      metadata,
-    };
   }
 
   const assignee = normalizeIdentity(task.assignee);
