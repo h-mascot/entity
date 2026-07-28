@@ -10,7 +10,10 @@ const SECURITY_HEADERS: Record<string, string> = {
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: https:",
     "object-src 'none'",
-    "script-src 'self'",
+    // HTML previews render agent/exported reports in sandboxed iframes with
+    // scripts enabled by default. `srcdoc` inherits the parent CSP, so inline
+    // scripts must be allowed here for those previews to execute.
+    "script-src 'self' 'unsafe-inline' blob:",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   ].join('; '),
   'Cross-Origin-Resource-Policy': 'same-origin',
