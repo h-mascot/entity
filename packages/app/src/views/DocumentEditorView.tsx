@@ -427,7 +427,10 @@ export default function DocumentEditorView(props: any) {
                       ttsSettings={docsTtsSettings}
                       onTtsSettingsChange={handleDocsTtsSettingsChange}
                       onToast={pushToast}
-                      onDocsLinkNavigate={handleMarkdownDocsNavigation}
+                      onDocsLinkNavigate={(href: string) => handleMarkdownDocsNavigation(href, {
+                        sourceId: rightPaneSourceId,
+                        path: rightPaneFile,
+                      })}
                       tts="none"
                     />
                   ) : (

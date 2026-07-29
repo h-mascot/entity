@@ -1,6 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import { runtime } from '../config/runtime';
-import { buildApiCandidates, toErrorMessage } from '../lib/http';
+import {
+  buildDocumentAudioContentIdentity,
+  buildDocumentAudioGenerationIdentity,
+  createDocumentAudioState,
+  reduceDocumentAudioState,
+  resolveDocumentAudioAction,
+  resolveMobileDocumentAudioMiniPlayer,
+} from '../lib/documentAudioState';
+import {
+  DocumentAudioRequestError,
+  requestDocumentAudio,
+  resolveSafeDocumentAudioUrl,
+} from '../lib/documentAudioRequest';
+import { buildApiCandidates, withApiToken } from '../lib/http';
+import { emitDocHubTelemetry } from '../lib/docHubTelemetry';
 
 type ToastType = 'success' | 'error' | 'info' | 'warning';
 type DocsTtsProvider = 'browser' | 'kokoro' | 'edge' | 'openai' | 'deepgram' | 'elevenlabs';
@@ -22,21 +44,21 @@ export interface DocsTtsSettings {
   playbackRate: number;
 }
 
-interface DocsTtsResponse {
-  audioUrl?: string | null;
-  chars?: number;
-  truncated?: boolean;
-  error?: string;
-  detail?: string;
-}
-
 interface MarkdownAudioControlsProps {
   docsPath: string;
+  documentIdentity?: string;
   content: string;
   settings: DocsTtsSettings;
   onSettingsChange?: (settings: DocsTtsSettings) => void;
+  onOpenVoiceSettings?: () => void;
   onToast: (message: string, type: ToastType) => void;
   compact?: boolean;
+  mobileSticky?: boolean;
+  mobileDocumentLabel?: string;
+}
+
+export interface MarkdownAudioControlsHandle {
+  activate: () => void;
 }
 
 const PROVIDER_LABELS: Record<DocsTtsProvider, string> = {
@@ -66,19 +88,6 @@ function markdownToSpeechText(markdown: string): string {
     .trim();
 }
 
-function resolveAudioUrl(rawUrl: string): string {
-  const base =
-    (typeof window !== 'undefined' && window.location.origin) ||
-    runtime.apiBase ||
-    'http://localhost:3000';
-
-  try {
-    return new URL(rawUrl, base).toString();
-  } catch {
-    return rawUrl;
-  }
-}
-
 function getVoiceForProvider(settings: DocsTtsSettings): string {
   switch (settings.provider) {
     case 'kokoro': return settings.kokoroVoice || 'bf_alice';
@@ -90,42 +99,66 @@ function getVoiceForProvider(settings: DocsTtsSettings): string {
   }
 }
 
-export default function MarkdownAudioControls({
+const MarkdownAudioControls = forwardRef<MarkdownAudioControlsHandle, MarkdownAudioControlsProps>(function MarkdownAudioControls({
   docsPath,
+  documentIdentity = docsPath,
   content,
   settings,
   onSettingsChange,
+  onOpenVoiceSettings,
   onToast,
   compact = false,
-}: MarkdownAudioControlsProps) {
+  mobileSticky = false,
+  mobileDocumentLabel = docsPath,
+}, forwardedRef) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [chars, setChars] = useState<number | null>(null);
-  const [truncated, setTruncated] = useState(false);
-  const [browserSpeaking, setBrowserSpeaking] = useState(false);
+  const [audioState, dispatchAudio] = useReducer(
+    reduceDocumentAudioState,
+    documentIdentity,
+    createDocumentAudioState,
+  );
+  const audioStateRef = useRef(audioState);
+  audioStateRef.current = audioState;
+  const requestSequenceRef = useRef(0);
+  const activeRequestRef = useRef<{ documentIdentity: string; requestId: string } | null>(null);
+  const requestAbortRef = useRef<AbortController | null>(null);
+  const browserUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioUrl = audioState.audioUrl;
+  const loading = audioState.status === 'generating';
+  const errorMessage = audioState.errorMessage;
+  const chars = audioState.chars;
+  const truncated = audioState.truncated;
+  const primaryAction = resolveDocumentAudioAction(audioState);
   const [showProviderMenu, setShowProviderMenu] = useState(false);
   const [showVoiceMenu, setShowVoiceMenu] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
+  const generationIdentity = buildDocumentAudioGenerationIdentity({
+    documentIdentity,
+    contentIdentity: buildDocumentAudioContentIdentity(content),
+    provider: settings.provider,
+    voice: getVoiceForProvider(settings),
+    model: settings.provider === 'openai' ? settings.openaiModel : '',
+    playbackRate: settings.playbackRate,
+  });
+  const generationIdentityRef = useRef(generationIdentity);
+  const telemetrySurface = mobileSticky ? 'mobile' : 'desktop';
 
-  const stopBrowserSpeech = useCallback(() => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-    setBrowserSpeaking(false);
-  }, []);
-
-  // Reset state when doc changes
+  // Reset generated artifacts when the document or synthesis profile changes.
   useEffect(() => {
-    setAudioUrl(null);
-    setErrorMessage(null);
-    setChars(null);
-    setTruncated(false);
-    setBrowserSpeaking(false);
+    const previousGenerationIdentity = generationIdentityRef.current;
+    generationIdentityRef.current = generationIdentity;
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
+    activeRequestRef.current = null;
+    dispatchAudio({ type: 'document-changed', documentIdentity });
+    dispatchAudio({
+      type: 'generation-inputs-changed',
+      currentIdentity: previousGenerationIdentity,
+      nextIdentity: generationIdentity,
+    });
     setShowProviderMenu(false);
     setShowVoiceMenu(false);
     setShowSpeedMenu(false);
@@ -133,7 +166,21 @@ export default function MarkdownAudioControls({
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
-  }, [docsPath]);
+    browserUtteranceRef.current = null;
+    const audio = audioRef.current;
+    audio?.pause();
+    audio?.removeAttribute('src');
+    return () => {
+      requestAbortRef.current?.abort();
+      const activeAudio = audioRef.current;
+      activeAudio?.pause();
+      activeAudio?.removeAttribute('src');
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+      browserUtteranceRef.current = null;
+    };
+  }, [documentIdentity, generationIdentity]);
 
   // Load voices when provider changes
   useEffect(() => {
@@ -145,12 +192,14 @@ export default function MarkdownAudioControls({
     let cancelled = false;
     setLoadingVoices(true);
 
-    const urls = buildApiCandidates('/api/tts/voices', runtime.apiBase)
+    const urls = buildApiCandidates(
+      `/api/tts/providers/${encodeURIComponent(settings.provider)}/voices`,
+      runtime.apiBase,
+    )
       .filter((url) => url.includes('/api/'));
+    const providerUrl = urls[0];
 
-    const providerUrl = `${urls[0]}?provider=${settings.provider}`;
-
-    fetch(providerUrl)
+    fetch(providerUrl, withApiToken())
       .then((r) => r.json())
       .then((data: { voices?: Voice[] }) => {
         if (!cancelled) setVoices(data.voices ?? []);
@@ -168,66 +217,152 @@ export default function MarkdownAudioControls({
   }, [settings.provider]);
 
   const handleBrowserAudio = useCallback(() => {
+    const startedAt = Date.now();
+    emitDocHubTelemetry({
+      name: 'doc_hub.audio_generation.started',
+      properties: { provider: 'browser', surface: telemetrySurface },
+    });
     if (typeof window === 'undefined' || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
       const message = 'Browser speech synthesis is not available.';
-      setErrorMessage(message);
+      emitDocHubTelemetry({
+        name: 'doc_hub.audio_generation.completed',
+        properties: {
+          provider: 'browser',
+          outcome: 'provider-missing',
+          cached: false,
+          truncated: false,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+      dispatchAudio({ type: 'provider-missing', message });
       onToast(message, 'error');
-      return;
-    }
-
-    if (browserSpeaking) {
-      stopBrowserSpeech();
       return;
     }
 
     const text = markdownToSpeechText(content).slice(0, 4000);
     if (!text) {
       const message = 'Document is empty after TTS cleanup.';
-      setErrorMessage(message);
+      const requestId = `browser-${++requestSequenceRef.current}`;
+      emitDocHubTelemetry({
+        name: 'doc_hub.audio_generation.completed',
+        properties: {
+          provider: 'browser',
+          outcome: 'failure',
+          cached: false,
+          truncated: false,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+      dispatchAudio({ type: 'listen-requested', documentIdentity, requestId, transport: 'browser' });
+      dispatchAudio({ type: 'generation-failed', documentIdentity, requestId, message });
       onToast(message, 'warning');
       return;
     }
 
     const utterance = new SpeechSynthesisUtterance(text);
+    const requestId = `browser-${++requestSequenceRef.current}`;
     utterance.rate = settings.playbackRate || 1;
-    utterance.onend = () => setBrowserSpeaking(false);
+    utterance.onend = () => {
+      if (browserUtteranceRef.current !== utterance) {
+        return;
+      }
+      dispatchAudio({
+        type: 'playback-ended',
+        documentIdentity,
+        requestId,
+      });
+    };
     utterance.onerror = () => {
-      setBrowserSpeaking(false);
-      setErrorMessage('Browser TTS failed.');
+      if (browserUtteranceRef.current !== utterance) {
+        return;
+      }
+      dispatchAudio({
+        type: 'generation-failed',
+        documentIdentity,
+        requestId,
+        message: 'Browser TTS failed.',
+      });
+      emitDocHubTelemetry({
+        name: 'doc_hub.audio_playback.error',
+        properties: {
+          phase: 'browser',
+          recoverable: true,
+          provider: 'browser',
+        },
+      });
       onToast('Browser TTS failed.', 'error');
     };
 
-    setAudioUrl(null);
-    setChars(text.length);
-    setTruncated(markdownToSpeechText(content).length > text.length);
-    setErrorMessage(null);
-    setBrowserSpeaking(true);
     window.speechSynthesis.cancel();
+    browserUtteranceRef.current = utterance;
+    dispatchAudio({ type: 'listen-requested', documentIdentity, requestId, transport: 'browser' });
+    dispatchAudio({ type: 'playback-started', documentIdentity, requestId });
     window.speechSynthesis.speak(utterance);
+    emitDocHubTelemetry({
+      name: 'doc_hub.audio_generation.completed',
+      properties: {
+        provider: 'browser',
+        outcome: 'success',
+        cached: false,
+        truncated: text.length >= 4000,
+        durationMs: Date.now() - startedAt,
+      },
+    });
     onToast('Browser TTS started.', 'success');
-  }, [browserSpeaking, content, onToast, settings.playbackRate, stopBrowserSpeech]);
+  }, [content, documentIdentity, onToast, settings.playbackRate, telemetrySurface]);
 
   const handleGenerateAudio = useCallback(async () => {
+    if (activeRequestRef.current || audioStateRef.current.status === 'generating') {
+      return;
+    }
     if (settings.provider === 'browser') {
       handleBrowserAudio();
       return;
     }
 
-    setLoading(true);
-    setErrorMessage(null);
-    setAudioUrl(null);
-
+    const startedAt = Date.now();
+    emitDocHubTelemetry({
+      name: 'doc_hub.audio_generation.started',
+      properties: {
+        provider: settings.provider,
+        surface: telemetrySurface,
+      },
+    });
     const text = markdownToSpeechText(content).slice(0, 4000);
+    const requestId = `tts-${++requestSequenceRef.current}`;
     if (!text) {
-      setLoading(false);
-      setErrorMessage('Document is empty after TTS cleanup.');
-      onToast('Document is empty after TTS cleanup.', 'warning');
+      const message = 'Document is empty after TTS cleanup.';
+      emitDocHubTelemetry({
+        name: 'doc_hub.audio_generation.completed',
+        properties: {
+          provider: settings.provider,
+          outcome: 'failure',
+          cached: false,
+          truncated: false,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+      dispatchAudio({ type: 'listen-requested', documentIdentity, requestId });
+      dispatchAudio({ type: 'generation-failed', documentIdentity, requestId, message });
+      onToast(message, 'warning');
       return;
     }
 
-    const body: Record<string, string> = {
+    const abortController = new AbortController();
+    requestAbortRef.current = abortController;
+    activeRequestRef.current = { documentIdentity, requestId };
+    dispatchAudio({ type: 'listen-requested', documentIdentity, requestId });
+
+    const body = {
+      documentRef: documentIdentity,
       text,
       provider: settings.provider,
+    } as {
+      text: string;
+      provider: string;
+      documentRef?: string;
+      voice?: string;
+      model?: string;
     };
 
     const voice = getVoiceForProvider(settings);
@@ -238,62 +373,226 @@ export default function MarkdownAudioControls({
 
     const urls = buildApiCandidates('/api/tts/generate', runtime.apiBase)
       .filter((url) => url.includes('/api/'));
-    let lastError: Error | null = null;
 
     try {
-      for (const baseUrl of urls) {
-        try {
-          const response = await fetch(baseUrl, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body),
-          });
-
-          const payload = (await response.json().catch(() => null)) as DocsTtsResponse | null;
-
-          if (!response.ok) {
-            const message =
-              [payload?.error, payload?.detail].filter(Boolean).join(' ') ||
-              `TTS request failed (${response.status}).`;
-            throw new Error(message);
-          }
-
-          const nextAudioUrl =
-            typeof payload?.audioUrl === 'string' && payload.audioUrl.trim()
-              ? payload.audioUrl.trim()
-              : null;
-
-          if (!nextAudioUrl) {
-            throw new Error('TTS succeeded but did not return an audio URL.');
-          }
-
-          setAudioUrl(resolveAudioUrl(nextAudioUrl));
-          setChars(typeof payload?.chars === 'number' ? payload.chars : null);
-          setTruncated(Boolean(payload?.truncated));
-          onToast('Audio ready.', 'success');
-          return;
-        } catch (error) {
-          lastError = error instanceof Error ? error : new Error('Failed to generate audio.');
-        }
+      const result = await requestDocumentAudio({
+        urls,
+        body,
+        signal: abortController.signal,
+        init: withApiToken(),
+      });
+      const pageOrigin =
+        typeof window === 'undefined' ? 'http://localhost:3000' : window.location.origin;
+      const nextAudioUrl = resolveSafeDocumentAudioUrl(
+        result.audioUrl,
+        pageOrigin,
+        runtime.apiBase,
+      );
+      if (!nextAudioUrl) {
+        throw new DocumentAudioRequestError(
+          'provider',
+          'The audio provider returned an unsafe or unsupported audio location. Try another provider.',
+        );
       }
 
-      const message = toErrorMessage(lastError, 'Failed to generate audio.');
-      setErrorMessage(message);
-      onToast(message, 'error');
+      dispatchAudio({
+        type: 'generation-succeeded',
+        documentIdentity,
+        requestId,
+        audioUrl: nextAudioUrl,
+        chars: result.chars,
+        truncated: result.truncated,
+        cached: result.cached,
+      });
+      emitDocHubTelemetry({
+        name: 'doc_hub.audio_generation.completed',
+        properties: {
+          provider: settings.provider,
+          outcome: 'success',
+          cached: result.cached,
+          truncated: result.truncated,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+      if (
+        activeRequestRef.current?.documentIdentity === documentIdentity
+        && activeRequestRef.current.requestId === requestId
+      ) {
+        onToast(
+          result.cached
+            ? 'Cached audio ready. Select Play to listen.'
+            : 'Audio ready. Select Play to listen.',
+          'success',
+        );
+      }
+    } catch (error) {
+      const requestError = error instanceof DocumentAudioRequestError
+        ? error
+        : new DocumentAudioRequestError(
+            'network',
+            'The audio service could not be reached. Check your connection and try again.',
+          );
+      if (requestError.kind === 'cancelled') {
+        emitDocHubTelemetry({
+          name: 'doc_hub.audio_generation.completed',
+          properties: {
+            provider: settings.provider,
+            outcome: 'cancelled',
+            cached: false,
+            truncated: false,
+            durationMs: Date.now() - startedAt,
+          },
+        });
+        return;
+      }
+      const outcome = requestError.kind === 'provider-missing'
+        ? 'provider-missing'
+        : requestError.kind === 'timeout'
+          ? 'timeout'
+          : 'failure';
+      emitDocHubTelemetry({
+        name: 'doc_hub.audio_generation.completed',
+        properties: {
+          provider: settings.provider,
+          outcome,
+          cached: false,
+          truncated: false,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+      if (requestError.kind === 'provider-missing') {
+        dispatchAudio({
+          type: 'provider-missing',
+          documentIdentity,
+          requestId,
+          message: requestError.message,
+        });
+      } else if (requestError.kind === 'timeout') {
+        dispatchAudio({ type: 'generation-timed-out', documentIdentity, requestId });
+      } else {
+        dispatchAudio({
+          type: 'generation-failed',
+          documentIdentity,
+          requestId,
+          message: requestError.message,
+        });
+      }
+      if (
+        activeRequestRef.current?.documentIdentity === documentIdentity
+        && activeRequestRef.current.requestId === requestId
+      ) {
+        onToast(requestError.message, 'error');
+      }
     } finally {
-      setLoading(false);
+      if (
+        activeRequestRef.current?.documentIdentity === documentIdentity
+        && activeRequestRef.current.requestId === requestId
+      ) {
+        activeRequestRef.current = null;
+        requestAbortRef.current = null;
+      }
     }
-  }, [content, handleBrowserAudio, onToast, settings]);
+  }, [content, documentIdentity, handleBrowserAudio, onToast, settings, telemetrySurface]);
 
-  // Auto-play when audioUrl changes
-  useEffect(() => {
-    if (!audioUrl || !audioRef.current) return;
+  const playMedia = useCallback(async (replay: boolean) => {
+    const audio = audioRef.current;
+    const current = audioStateRef.current;
+    if (!audio || !current.audioUrl) {
+      return;
+    }
+    audio.playbackRate = settings.playbackRate || 1;
+    if (replay) {
+      audio.currentTime = 0;
+    }
+    try {
+      await audio.play();
+      dispatchAudio({
+        type: 'playback-started',
+        documentIdentity: current.documentIdentity,
+        requestId: current.requestId ?? undefined,
+      });
+    } catch {
+      const message = 'Audio playback could not start. Try again.';
+      dispatchAudio({
+        type: 'playback-failed',
+        documentIdentity: current.documentIdentity,
+        requestId: current.requestId ?? undefined,
+        message,
+      });
+      emitDocHubTelemetry({
+        name: 'doc_hub.audio_playback.error',
+        properties: {
+          phase: 'play',
+          recoverable: true,
+          provider: settings.provider,
+        },
+      });
+      onToast(message, 'error');
+    }
+  }, [onToast, settings.playbackRate, settings.provider]);
 
-    audioRef.current.playbackRate = settings.playbackRate || 1;
-    audioRef.current
-      .play()
-      .catch(() => {});
-  }, [audioUrl, settings.playbackRate]);
+  const pausePlayback = useCallback(() => {
+    const current = audioStateRef.current;
+    if (current.transport === 'browser') {
+      window.speechSynthesis?.pause();
+    } else {
+      audioRef.current?.pause();
+    }
+    dispatchAudio({
+      type: 'playback-paused',
+      documentIdentity: current.documentIdentity,
+      requestId: current.requestId ?? undefined,
+    });
+  }, []);
+
+  const replayPlayback = useCallback(() => {
+    if (audioStateRef.current.transport === 'browser') {
+      handleBrowserAudio();
+      return;
+    }
+    void playMedia(true);
+  }, [handleBrowserAudio, playMedia]);
+
+  const resumePlayback = useCallback(() => {
+    const current = audioStateRef.current;
+    if (current.transport === 'browser') {
+      window.speechSynthesis?.resume();
+      dispatchAudio({
+        type: 'playback-started',
+        documentIdentity: current.documentIdentity,
+        requestId: current.requestId ?? undefined,
+      });
+      return;
+    }
+    void playMedia(false);
+  }, [playMedia]);
+
+  const handlePrimaryAction = useCallback(() => {
+    const current = audioStateRef.current;
+    if (current.status === 'playing') {
+      pausePlayback();
+      return;
+    }
+    if (current.status === 'paused') {
+      replayPlayback();
+      return;
+    }
+    if (current.status === 'ready') {
+      if (current.transport === 'browser') {
+        handleBrowserAudio();
+      } else {
+        void playMedia(current.playbackCompleted);
+      }
+      return;
+    }
+    void handleGenerateAudio();
+  }, [handleBrowserAudio, handleGenerateAudio, pausePlayback, playMedia, replayPlayback]);
+
+  useImperativeHandle(
+    forwardedRef,
+    () => ({ activate: handlePrimaryAction }),
+    [handlePrimaryAction],
+  );
 
   const updateSetting = useCallback(
     (key: keyof DocsTtsSettings, value: DocsTtsSettings[keyof DocsTtsSettings]) => {
@@ -342,6 +641,202 @@ export default function MarkdownAudioControls({
     ? (settings.provider === 'kokoro' ? [{ id: 'bf_alice', name: 'Alice' }, { id: 'bf_emma', name: 'Emma' }, { id: 'bm_lewis', name: 'Lewis' }] : [])
     : voices;
   const providerLabel = PROVIDER_LABELS[settings.provider] || settings.provider;
+  const generationProgress = audioState.progress;
+  const playbackProgress = audioState.playbackProgress;
+  const audioStatusLabel =
+    audioState.status === 'generating'
+      ? 'Generating audio…'
+      : audioState.status === 'ready'
+        ? audioState.playbackCompleted
+          ? 'Playback complete. Replay is ready.'
+          : audioState.cached
+            ? 'Cached audio ready. Select Play.'
+            : 'Audio ready. Select Play.'
+        : audioState.status === 'playing'
+          ? `Playing ${docsPath || 'document audio'}.`
+          : audioState.status === 'paused'
+            ? 'Audio paused.'
+            : audioState.status === 'provider-missing'
+              ? errorMessage
+              : audioState.status === 'failed'
+                ? errorMessage
+                : null;
+
+  const mediaEventIdentity = () => {
+    const current = audioStateRef.current;
+    return {
+      documentIdentity: current.documentIdentity,
+      requestId: current.requestId ?? undefined,
+    };
+  };
+
+  const handleMediaError = useCallback(() => {
+    const current = audioStateRef.current;
+    if (
+      current.transport !== 'media'
+      || (
+        current.status !== 'ready'
+        && current.status !== 'playing'
+        && current.status !== 'paused'
+      )
+    ) {
+      return;
+    }
+    const message = 'Audio playback failed. Try again.';
+    dispatchAudio({
+      type: 'playback-failed',
+      documentIdentity: current.documentIdentity,
+      requestId: current.requestId ?? undefined,
+      message,
+    });
+    emitDocHubTelemetry({
+      name: 'doc_hub.audio_playback.error',
+      properties: {
+        phase: 'media',
+        recoverable: true,
+        provider: settings.provider,
+      },
+    });
+    onToast(message, 'error');
+  }, [onToast, settings.provider]);
+
+  const mobileMiniPlayer = resolveMobileDocumentAudioMiniPlayer(
+    audioState,
+    documentIdentity,
+    mobileDocumentLabel,
+  );
+
+  if (mobileSticky) {
+    if (!mobileMiniPlayer) {
+      return null;
+    }
+    const mobilePrimaryAction =
+      audioState.status === 'paused'
+        ? {
+            label: 'Resume',
+            disabled: false,
+            busy: false,
+            onClick: resumePlayback,
+          }
+        : {
+            ...primaryAction,
+            onClick: handlePrimaryAction,
+          };
+    return (
+      <section
+        className="fixed inset-x-3 z-50 rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-secondary)]/95 p-3 shadow-2xl backdrop-blur md:hidden"
+        style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' }}
+        role="region"
+        aria-label={`Audio for ${mobileMiniPlayer.documentLabel}`}
+        data-document-identity={mobileMiniPlayer.documentIdentity}
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+              Current document audio
+            </div>
+            <div className="truncate text-sm font-semibold text-[var(--text-primary)]" title={docsPath}>
+              {mobileMiniPlayer.documentLabel}
+            </div>
+            {audioStatusLabel ? (
+              <div className={`mt-0.5 truncate text-xs ${errorMessage ? 'text-[var(--error)]' : 'text-[var(--text-secondary)]'}`} role="status" aria-live="polite">
+                {audioStatusLabel}
+              </div>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={mobilePrimaryAction.onClick}
+              disabled={mobilePrimaryAction.disabled}
+              aria-busy={mobilePrimaryAction.busy}
+              className="mc-shell-btn min-h-[44px] px-3 py-2 text-xs font-semibold"
+            >
+              {mobilePrimaryAction.label}
+            </button>
+            {(audioState.status === 'playing' || audioState.status === 'paused') ? (
+              <button
+                type="button"
+                onClick={replayPlayback}
+                className="mc-shell-btn min-h-[44px] px-3 py-2 text-xs font-semibold"
+              >
+                Replay
+              </button>
+            ) : null}
+          </div>
+        </div>
+        {loading ? (
+          <div
+            className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
+            role="progressbar"
+            aria-label="Audio generation progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            {...(generationProgress?.kind === 'determinate'
+              ? { 'aria-valuenow': Math.round(generationProgress.value * 100) }
+              : {})}
+          >
+            <div
+              className={`h-full rounded-full bg-[var(--accent)] ${
+                generationProgress?.kind === 'determinate' ? '' : 'w-1/3 animate-pulse'
+              }`}
+              style={generationProgress?.kind === 'determinate'
+                ? { width: `${generationProgress.value * 100}%` }
+                : undefined}
+            />
+          </div>
+        ) : null}
+        {playbackProgress !== null && audioState.transport === 'media' ? (
+          <div
+            className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
+            role="progressbar"
+            aria-label="Audio playback progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(playbackProgress * 100)}
+          >
+            <div
+              className="h-full rounded-full bg-[var(--accent)]"
+              style={{ width: `${playbackProgress * 100}%` }}
+            />
+          </div>
+        ) : null}
+        {audioState.status === 'provider-missing' && onOpenVoiceSettings ? (
+          <button
+            type="button"
+            onClick={onOpenVoiceSettings}
+            className="mc-shell-btn mt-2 min-h-[44px] px-3 py-2 text-xs"
+          >
+            Open Voice Settings
+          </button>
+        ) : null}
+        {audioUrl ? (
+          <audio
+            ref={audioRef}
+            preload="none"
+            className="hidden"
+            src={audioUrl}
+            onPlay={() => dispatchAudio({ type: 'playback-started', ...mediaEventIdentity() })}
+            onPause={() => dispatchAudio({ type: 'playback-paused', ...mediaEventIdentity() })}
+            onEnded={() => dispatchAudio({ type: 'playback-ended', ...mediaEventIdentity() })}
+            onError={handleMediaError}
+            onTimeUpdate={(event) => {
+              const { currentTime, duration } = event.currentTarget;
+              if (Number.isFinite(duration) && duration > 0) {
+                dispatchAudio({
+                  type: 'playback-progress',
+                  ...mediaEventIdentity(),
+                  value: currentTime / duration,
+                });
+              }
+            }}
+          >
+            Your browser does not support inline audio.
+          </audio>
+        ) : null}
+      </section>
+    );
+  }
 
   // Compact mode
   if (compact) {
@@ -349,13 +844,34 @@ export default function MarkdownAudioControls({
       <div className="relative inline-flex items-center gap-1">
         <button
           type="button"
-          onClick={() => void handleGenerateAudio()}
-          disabled={loading}
-          className={`mc-shell-btn px-2 py-1 text-xs ${loading ? 'cursor-wait opacity-70' : ''} ${browserSpeaking ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''}`}
-          title={`Listen with ${providerLabel}`}
+          onClick={handlePrimaryAction}
+          disabled={primaryAction.disabled}
+          aria-busy={primaryAction.busy}
+          className={`mc-shell-btn px-2 py-1 text-xs ${primaryAction.busy ? 'cursor-wait opacity-70' : ''} ${audioState.status === 'playing' ? 'mc-shell-btn-active text-[var(--text-primary)]' : ''}`}
+          title={`${primaryAction.label} with ${providerLabel}`}
         >
-          {loading ? '...' : browserSpeaking ? '■ Stop' : '🔊 Listen'}
+          🔊 {primaryAction.label}
         </button>
+        {(audioState.status === 'playing' || audioState.status === 'paused') ? (
+          <>
+            {audioState.status === 'paused' ? (
+              <button
+                type="button"
+                onClick={resumePlayback}
+                className="mc-shell-btn px-2 py-1 text-xs"
+              >
+                Resume
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={replayPlayback}
+              className="mc-shell-btn px-2 py-1 text-xs"
+            >
+              Replay
+            </button>
+          </>
+        ) : null}
 
         {/* Listen settings */}
         {onSettingsChange && (
@@ -443,21 +959,68 @@ export default function MarkdownAudioControls({
           </div>
         )}
 
-        {/* Error */}
-        {errorMessage ? (
-          <div className="absolute right-0 top-10 z-20 w-64 rounded-lg border border-[var(--error)]/40 bg-[var(--bg-secondary)] p-2 text-xs text-[var(--error)] shadow-lg">
-            {errorMessage}
+        {audioStatusLabel ? (
+          <div
+            className={`absolute right-0 top-10 z-20 w-72 rounded-lg border bg-[var(--bg-secondary)] p-2 text-xs shadow-lg ${
+              errorMessage ? 'border-[var(--error)]/40 text-[var(--error)]' : 'border-[var(--border-primary)] text-[var(--text-secondary)]'
+            }`}
+            role="status"
+            aria-live="polite"
+          >
+            <div>{audioStatusLabel}</div>
+            {loading ? (
+              <div
+                className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
+                role="progressbar"
+                aria-label="Audio generation progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                {...(generationProgress?.kind === 'determinate'
+                  ? { 'aria-valuenow': Math.round(generationProgress.value * 100) }
+                  : {})}
+              >
+                <div
+                  className={`h-full rounded-full bg-[var(--accent)] ${
+                    generationProgress?.kind === 'determinate' ? '' : 'w-1/3 animate-pulse'
+                  }`}
+                  style={generationProgress?.kind === 'determinate'
+                    ? { width: `${generationProgress.value * 100}%` }
+                    : undefined}
+                />
+              </div>
+            ) : null}
+            {audioState.status === 'provider-missing' && onOpenVoiceSettings ? (
+              <button
+                type="button"
+                onClick={onOpenVoiceSettings}
+                className="mc-shell-btn mt-2 px-2 py-1 text-xs"
+              >
+                Open Voice Settings
+              </button>
+            ) : null}
           </div>
         ) : null}
 
-        {/* Audio player */}
         {audioUrl ? (
           <audio
             ref={audioRef}
-            controls
             preload="none"
-            className="absolute right-0 top-10 z-20 w-64 rounded border border-[var(--border-primary)] bg-[var(--bg-secondary)]"
+            className="hidden"
             src={audioUrl}
+            onPlay={() => dispatchAudio({ type: 'playback-started', ...mediaEventIdentity() })}
+            onPause={() => dispatchAudio({ type: 'playback-paused', ...mediaEventIdentity() })}
+            onEnded={() => dispatchAudio({ type: 'playback-ended', ...mediaEventIdentity() })}
+            onError={handleMediaError}
+            onTimeUpdate={(event) => {
+              const { currentTime, duration } = event.currentTarget;
+              if (Number.isFinite(duration) && duration > 0) {
+                dispatchAudio({
+                  type: 'playback-progress',
+                  ...mediaEventIdentity(),
+                  value: currentTime / duration,
+                });
+              }
+            }}
           >
             Your browser does not support inline audio.
           </audio>
@@ -472,18 +1035,33 @@ export default function MarkdownAudioControls({
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => void handleGenerateAudio()}
-          disabled={loading}
-          className={`mc-shell-btn px-3 py-1 text-xs font-medium ${loading ? 'cursor-wait opacity-70' : ''}`}
+          onClick={handlePrimaryAction}
+          disabled={primaryAction.disabled}
+          aria-busy={primaryAction.busy}
+          className={`mc-shell-btn px-3 py-1 text-xs font-medium ${primaryAction.busy ? 'cursor-wait opacity-70' : ''}`}
         >
-          {loading
-            ? 'Generating audio…'
-            : browserSpeaking
-              ? '■ Stop browser TTS'
-              : audioUrl
-                ? 'Regenerate audio'
-                : `Listen with ${providerLabel}`}
+          {primaryAction.label}
         </button>
+        {(audioState.status === 'playing' || audioState.status === 'paused') ? (
+          <>
+            {audioState.status === 'paused' ? (
+              <button
+                type="button"
+                onClick={resumePlayback}
+                className="mc-shell-btn px-3 py-1 text-xs font-medium"
+              >
+                Resume
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={replayPlayback}
+              className="mc-shell-btn px-3 py-1 text-xs font-medium"
+            >
+              Replay
+            </button>
+          </>
+        ) : null}
 
         {/* Provider dropdown */}
         {onSettingsChange && (
@@ -572,21 +1150,91 @@ export default function MarkdownAudioControls({
         </span>
       </div>
 
-      {errorMessage ? (
-        <div className="mt-2 text-xs text-[var(--error)]">{errorMessage}</div>
+      {audioStatusLabel ? (
+        <div
+          className={`mt-2 text-xs ${
+            errorMessage ? 'text-[var(--error)]' : 'text-[var(--text-secondary)]'
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          {audioStatusLabel}
+          {audioState.status === 'provider-missing' && onOpenVoiceSettings ? (
+            <button
+              type="button"
+              onClick={onOpenVoiceSettings}
+              className="mc-shell-btn ml-2 px-2 py-1 text-xs"
+            >
+              Open Voice Settings
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div
+          className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
+          role="progressbar"
+          aria-label="Audio generation progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          {...(generationProgress?.kind === 'determinate'
+            ? { 'aria-valuenow': Math.round(generationProgress.value * 100) }
+            : {})}
+        >
+          <div
+            className={`h-full rounded-full bg-[var(--accent)] ${
+              generationProgress?.kind === 'determinate' ? '' : 'w-1/3 animate-pulse'
+            }`}
+            style={generationProgress?.kind === 'determinate'
+              ? { width: `${generationProgress.value * 100}%` }
+              : undefined}
+          />
+        </div>
+      ) : null}
+
+      {playbackProgress !== null && audioState.transport === 'media' ? (
+        <div
+          className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
+          role="progressbar"
+          aria-label="Audio playback progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(playbackProgress * 100)}
+        >
+          <div
+            className="h-full rounded-full bg-[var(--accent)]"
+            style={{ width: `${playbackProgress * 100}%` }}
+          />
+        </div>
       ) : null}
 
       {audioUrl ? (
         <audio
           ref={audioRef}
-          controls
           preload="none"
-          className="mt-3 w-full"
+          className="hidden"
           src={audioUrl}
+          onPlay={() => dispatchAudio({ type: 'playback-started', ...mediaEventIdentity() })}
+          onPause={() => dispatchAudio({ type: 'playback-paused', ...mediaEventIdentity() })}
+          onEnded={() => dispatchAudio({ type: 'playback-ended', ...mediaEventIdentity() })}
+          onError={handleMediaError}
+          onTimeUpdate={(event) => {
+            const { currentTime, duration } = event.currentTarget;
+            if (Number.isFinite(duration) && duration > 0) {
+              dispatchAudio({
+                type: 'playback-progress',
+                ...mediaEventIdentity(),
+                value: currentTime / duration,
+              });
+            }
+          }}
         >
           Your browser does not support inline audio playback.
         </audio>
       ) : null}
     </div>
   );
-}
+});
+
+export default MarkdownAudioControls;

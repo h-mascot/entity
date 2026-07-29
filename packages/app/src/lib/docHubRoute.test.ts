@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import * as docHubRoute from './docHubRoute.ts';
 import {
   buildDocHubExitPath,
   buildDocHubRoutePath,
+  parseDocHubRouteState,
   resolveDocHubRouteTarget,
   resolveWorkspaceTabRoute,
+  serializeDocHubRouteState,
   shouldRestoreLastDocHubFile,
 } from './docHubRoute.ts';
 

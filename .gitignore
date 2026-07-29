@@ -30,7 +30,7 @@ codedb.snapshot
 # Local agent/runtime clutter - do not publish
 .claude/
 .loop-cache/
-.runner/
+.runner/run-state.json
 artifacts/
 packages/app/artifacts/
 memory/
