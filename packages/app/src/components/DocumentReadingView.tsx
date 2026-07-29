@@ -61,7 +61,12 @@ export default function DocumentReadingView({
             onToast={onToast}
           />
         ) : null}
-        <MarkdownPreview content={content} loading={loading} onDocsLinkNavigate={onDocsLinkNavigate} />
+        <MarkdownPreview
+          content={content}
+          loading={loading}
+          onDocsLinkNavigate={onDocsLinkNavigate}
+          hasDocumentLinkBase={Boolean(docsPath)}
+        />
       </article>
     </div>
   );

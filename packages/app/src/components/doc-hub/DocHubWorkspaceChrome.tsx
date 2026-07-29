@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { DocsTtsSettings } from '../MarkdownAudioControls';
 import {
   buildOpenFileTabKey,
@@ -6,9 +6,21 @@ import {
   type OpenFileTab,
 } from '../../lib/openFileTabs';
 import { shouldRenderMarkdownPreview } from '../../lib/markdownFile';
+import {
+  buildCanonicalLocalDocHubUrl,
+  buildCanonicalDocHubUrl,
+  parseDocHubRouteState,
+} from '../../lib/docHubRoute';
+import {
+  reduceDesktopManualCopyState,
+  type DesktopManualCopyState,
+} from '../../lib/documentShellState';
+import { createShareAdapter } from '../../lib/shareAdapter';
+import { emitDocHubTelemetry } from '../../lib/docHubTelemetry';
 
 const MarkdownAudioControls = lazy(() => import('../MarkdownAudioControls'));
 const FilesContextBar = lazy(() => import('../../views/FilesContextBar'));
+const shareAdapter = createShareAdapter();
 
 interface DocHubWorkspaceChromeProps {
   openFileTabs: OpenFileTab[];
@@ -19,11 +31,73 @@ interface DocHubWorkspaceChromeProps {
   onGoHome?: () => void;
   showTts: boolean;
   docsPath: string;
+  currentSourceId: string | null;
+  fsMultiSourceEnabled: boolean;
   fileContent: string;
   docsTtsSettings: DocsTtsSettings;
   onDocsTtsSettingsChange?: (settings: DocsTtsSettings) => void;
+  onOpenVoiceSettings?: () => void;
   pushToast: (message: string, tone?: 'success' | 'error' | 'info' | 'warning') => void;
   filesContextBarProps: Record<string, unknown>;
+}
+
+function ManualCopyFallback({
+  value,
+  onDismiss,
+}: {
+  value: string;
+  onDismiss: () => void;
+}) {
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    fieldRef.current?.focus();
+    fieldRef.current?.select();
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Copy link manually"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          onDismiss();
+        }
+      }}
+    >
+      <div className="w-full max-w-lg rounded-xl border border-[var(--border-primary)] bg-[var(--bg-primary)] p-4 shadow-2xl">
+        <h2 className="text-base font-semibold text-[var(--text-primary)]">Copy link manually</h2>
+        <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          Select the link below and copy it manually.
+        </p>
+        <textarea
+          ref={fieldRef}
+          readOnly
+          value={value}
+          rows={3}
+          aria-label="Canonical link to copy"
+          className="mt-3 w-full resize-none rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent)]"
+          onFocus={(event) => event.currentTarget.select()}
+          onClick={(event) => event.currentTarget.select()}
+          onPointerUp={(event) => {
+            event.preventDefault();
+            event.currentTarget.select();
+          }}
+        />
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            className="mc-shell-btn px-3 py-1.5 text-sm"
+            onClick={onDismiss}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function fileTabIcon(path: string): string {
@@ -45,12 +119,33 @@ export default function DocHubWorkspaceChrome({
   onGoHome,
   showTts,
   docsPath,
+  currentSourceId,
+  fsMultiSourceEnabled,
   fileContent,
   docsTtsSettings,
   onDocsTtsSettingsChange,
+  onOpenVoiceSettings,
   pushToast,
   filesContextBarProps,
 }: DocHubWorkspaceChromeProps) {
+  const documentIdentity = JSON.stringify([currentSourceId, docsPath]);
+  const documentIdentityRef = useRef(documentIdentity);
+  documentIdentityRef.current = documentIdentity;
+  const [manualCopyState, setManualCopyState] = useState<DesktopManualCopyState>({
+    documentIdentity,
+    value: null,
+  });
+  const copyLinkButtonRef = useRef<HTMLButtonElement>(null);
+  const dismissManualCopy = () => {
+    setManualCopyState((state) => ({ ...state, value: null }));
+    copyLinkButtonRef.current?.focus();
+  };
+  useEffect(() => {
+    setManualCopyState((state) => reduceDesktopManualCopyState(state, {
+      type: 'document-changed',
+      documentIdentity,
+    }));
+  }, [documentIdentity]);
   // Home state (no open files): show the page title like every other tab
   // instead of a row of disabled editor controls.
   const homeMode = openFileTabs.length === 0;
@@ -129,21 +224,86 @@ export default function DocHubWorkspaceChrome({
         {showDocControls ? (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <button
+              ref={copyLinkButtonRef}
               type="button"
               onClick={() => {
-                if (!fileContent) {
-                  pushToast('Nothing to copy.', 'warning');
-                  return;
-                }
-                navigator.clipboard
-                  .writeText(fileContent)
-                  .then(() => pushToast('Document copied to clipboard.', 'success'))
-                  .catch(() => pushToast('Failed to copy document.', 'error'));
+                const restoredState = parseDocHubRouteState(
+                  window.location.pathname,
+                  window.location.search,
+                );
+                const canonicalUrl = !fsMultiSourceEnabled && currentSourceId === null
+                  ? buildCanonicalLocalDocHubUrl(
+                      docsPath,
+                      window.location.pathname,
+                      window.location.search,
+                      window.location.origin,
+                    )
+                  : buildCanonicalDocHubUrl(
+                      {
+                        sourceId: currentSourceId ?? restoredState?.sourceId ?? 'workspace',
+                        path: docsPath,
+                        ...(restoredState?.tool ? { tool: restoredState.tool } : {}),
+                        ...(restoredState?.convert ? { convert: restoredState.convert } : {}),
+                      },
+                      window.location.origin,
+                    );
+
+                const requestedDocumentIdentity = documentIdentity;
+                emitDocHubTelemetry({
+                  name: 'doc_hub.copy_share.attempt',
+                  properties: { mechanism: 'clipboard', surface: 'desktop' },
+                });
+                void shareAdapter.copy(canonicalUrl).then((result) => {
+                  if (documentIdentityRef.current !== requestedDocumentIdentity) {
+                    return;
+                  }
+                  if (result.status === 'copied') {
+                    emitDocHubTelemetry({
+                      name: 'doc_hub.copy_share.result',
+                      properties: {
+                        mechanism: 'clipboard',
+                        outcome: 'success',
+                        recoverable: true,
+                      },
+                    });
+                    pushToast('Link copied.', 'success');
+                  } else if (result.status === 'manual-required') {
+                    emitDocHubTelemetry({
+                      name: 'doc_hub.copy_share.result',
+                      properties: {
+                        mechanism: 'clipboard',
+                        outcome: 'fallback',
+                        recoverable: true,
+                      },
+                    });
+                    emitDocHubTelemetry({
+                      name: 'doc_hub.clipboard_fallback.displayed',
+                      properties: {
+                        surface: 'desktop',
+                        reason: 'clipboard-unavailable',
+                      },
+                    });
+                    setManualCopyState((state) => reduceDesktopManualCopyState(state, {
+                      type: 'manual-required',
+                      documentIdentity: requestedDocumentIdentity,
+                      value: result.value,
+                    }));
+                  } else if (result.status === 'failed') {
+                    emitDocHubTelemetry({
+                      name: 'doc_hub.copy_share.result',
+                      properties: {
+                        mechanism: 'clipboard',
+                        outcome: 'failure',
+                        recoverable: true,
+                      },
+                    });
+                    pushToast(result.safeMessage, 'error');
+                  }
+                });
               }}
-              disabled={!fileContent}
-              className={`mc-shell-btn px-2 py-1 text-xs ${fileContent ? '' : 'cursor-not-allowed opacity-40'}`}
-              title="Copy whole document"
-              aria-label="Copy whole document"
+              className="mc-shell-btn px-2 py-1 text-xs"
+              title="Copy link"
+              aria-label="Copy link"
             >
               ⧉
             </button>
@@ -151,9 +311,11 @@ export default function DocHubWorkspaceChrome({
               <Suspense fallback={null}>
                 <MarkdownAudioControls
                   docsPath={docsPath}
+                  documentIdentity={documentIdentity}
                   content={fileContent}
                   settings={docsTtsSettings}
                   onSettingsChange={onDocsTtsSettingsChange}
+                  onOpenVoiceSettings={onOpenVoiceSettings}
                   onToast={pushToast}
                   compact
                 />
@@ -165,6 +327,12 @@ export default function DocHubWorkspaceChrome({
           </div>
         ) : null}
       </div>
+      {manualCopyState.documentIdentity === documentIdentity && manualCopyState.value ? (
+        <ManualCopyFallback
+          value={manualCopyState.value}
+          onDismiss={dismissManualCopy}
+        />
+      ) : null}
     </div>
   );
 }

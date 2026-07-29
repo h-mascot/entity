@@ -41,19 +41,37 @@ import {
   resolveAgentAvatarUrl,
 } from './lib/agentRegistry';
 import { readUserProfile, useUserProfile } from './lib/userProfile';
-import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
+import { buildApiCandidates, HttpRequestError, requestJsonWithFallback } from './lib/http';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
 import { buildFileLoadKey } from './lib/fileLoadIdentity';
-import { getDocumentShellCollapseState } from './lib/documentShellState';
+import {
+  getDocumentShellCollapseState,
+  startDocHubFragmentTargetRetry,
+} from './lib/documentShellState';
 import {
   buildDocHubExitPath,
   buildDocHubRoutePath,
+  buildActivatedDocHubToolRoute,
+  buildCanonicalLocalDocHubUrl,
+  buildSynchronizedDocHubRoute,
+  parseDocHubRouteState,
+  reduceActiveDocHubToolNavigation,
+  resolveDocHubRailFocus,
+  resolveDocHubFragmentScrollIntent,
+  resolveDocHubRouteSynchronization,
   resolveDocHubRouteTarget,
+  resolveDocHubRouteSelection,
+  resolvePaneRelativeDocHubNavigation,
+  resolveRelativeDocHubNavigation,
   resolveWorkspaceTabRoute,
   shouldRestoreLastDocHubFile,
+  type RelativeDocHubNavigation,
   type DocHubRouteTarget,
+  type DocHubTool,
 } from './lib/docHubRoute';
 import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
+import { mobileCommentsPermissionMessage } from './lib/mobileCommentsState';
+import { emitDocHubTelemetry } from './lib/docHubTelemetry';
 import {
   buildOpenFileTab,
   buildOpenFileTabKey,
@@ -1353,37 +1371,51 @@ function filenameFromFilePath(filePath: string | null): string {
   return segments[segments.length - 1] ?? 'Document';
 }
 
-function resolveDocsPathFromHref(href: string, currentDocsPath: string | null): string | null {
-  if (typeof window === 'undefined') {
+function normalizedDocHubFragment(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}\s_-]/gu, '')
+    .replace(/[\s_]+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+function findDocHubFragmentTarget(hash: string): HTMLElement | null {
+  if (!hash.startsWith('#') || hash.length < 2) {
     return null;
   }
 
-  const trimmed = href.trim();
-  if (!trimmed || trimmed.startsWith('#')) {
-    return null;
-  }
-
-  const baseUrl = currentDocsPath
-    ? `${window.location.origin}/docs/${encodeDocsRoutePath(currentDocsPath)}`
-    : `${window.location.origin}/docs/`;
-
+  let fragment: string;
   try {
-    const resolved = new URL(trimmed, baseUrl);
-    if (resolved.hostname !== window.location.hostname || !resolved.pathname.startsWith('/docs/')) {
-      return null;
-    }
-
-    const target = resolveDocHubRouteTarget(resolved.pathname, resolved.search);
-    return target
-      ? target.sourceId
-        ? `source/${target.sourceId}/${target.path}`
-        : `workspace/${target.path}`
-      : null;
+    fragment = decodeURIComponent(hash.slice(1));
   } catch {
     return null;
   }
-}
 
+  const exactMatches = Array.from(
+    document.querySelectorAll<HTMLElement>('[id]'),
+  ).filter((element) => element.id === fragment);
+  const exact =
+    exactMatches.find((element) => element.getClientRects().length > 0)
+    ?? exactMatches[0];
+  if (exact) {
+    return exact;
+  }
+
+  const normalizedFragment = normalizedDocHubFragment(fragment);
+  if (!normalizedFragment) {
+    return null;
+  }
+
+  const normalizedMatches = Array.from(
+    document.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'),
+  ).filter(
+    (heading) => normalizedDocHubFragment(heading.textContent ?? '') === normalizedFragment,
+  );
+  return normalizedMatches.find((heading) => heading.getClientRects().length > 0)
+    ?? normalizedMatches[0]
+    ?? null;
+}
 
 export default function App() {
   if (typeof window !== 'undefined' && window.location.pathname === '/showclaw/entity-featured') {
@@ -1396,7 +1428,15 @@ export default function App() {
   const initialDocHubTarget =
     typeof window === 'undefined'
       ? null
-      : resolveDocHubRouteTarget(window.location.pathname, window.location.search);
+      : resolveDocHubRouteSelection(
+          window.location.pathname,
+          window.location.search,
+          runtime.fsMultiSourceEnabled,
+        );
+  const initialDocHubRouteState =
+    typeof window === 'undefined'
+      ? null
+      : parseDocHubRouteState(window.location.pathname, window.location.search);
   const initialDocumentsAuth = readDocumentsAuth();
   const [currentFile, setCurrentFile] = useState<string | null>(() => {
     if (typeof window === 'undefined') {
@@ -1455,7 +1495,12 @@ export default function App() {
     }
     return [buildOpenFileTab(source, file)];
   });
-  const [docIntelligenceFocus, setDocIntelligenceFocus] = useState<'intelligence' | 'comments' | 'ask' | 'notes' | 'versions' | null>(null);
+  const [docIntelligenceFocus, setDocIntelligenceFocus] = useState<
+    'intelligence' | 'comments' | 'ask' | 'notes' | 'versions' | null
+  >(() => resolveDocHubRailFocus(initialDocHubRouteState?.tool));
+  const [activeDocHubTool, setActiveDocHubTool] = useState<DocHubTool | null>(
+    () => initialDocHubRouteState?.tool ?? null,
+  );
   const [fileContent, setFileContent] = useState('');
   const [currentFileLoadState, setCurrentFileLoadState] = useState<CurrentFileLoadState>({ status: 'idle' });
   const [currentFileLoadRevision, setCurrentFileLoadRevision] = useState(0);
@@ -1510,6 +1555,13 @@ export default function App() {
     const pathnameTarget = resolveDocHubRouteTarget(url.pathname, '');
     if (currentFile) {
       const sourceId = currentSourceId || (runtime.fsMultiSourceEnabled ? 'workspace' : null);
+      const routeSelection = resolveDocHubRouteSelection(
+        url.pathname,
+        url.search,
+        runtime.fsMultiSourceEnabled,
+      );
+      const routeMatchesSelectedDocument =
+        routeSelection?.sourceId === sourceId && routeSelection.path === currentFile;
       window.localStorage.setItem('entity.last.file', currentFile);
       if (sourceId) {
         window.localStorage.setItem('entity.last.source', sourceId);
@@ -1518,12 +1570,25 @@ export default function App() {
       }
 
       if (sourceId) {
-        url.pathname = buildDocHubRoutePath({ sourceId, path: currentFile });
-        url.search = '';
+        const synchronizedRoute = new URL(
+          buildSynchronizedDocHubRoute(
+            routeMatchesSelectedDocument ? url.pathname : buildDocHubRoutePath({ sourceId, path: currentFile }),
+            routeMatchesSelectedDocument ? url.search : '',
+            { sourceId, path: currentFile },
+          ),
+          url.origin,
+        );
+        url.pathname = synchronizedRoute.pathname;
+        url.search = synchronizedRoute.search;
       } else {
-        url.searchParams.set('file', currentFile);
-        url.searchParams.delete('source');
-        url.searchParams.set('tab', 'files');
+        const synchronizedRoute = new URL(buildCanonicalLocalDocHubUrl(
+          currentFile,
+          routeMatchesSelectedDocument ? url.pathname : '/',
+          routeMatchesSelectedDocument ? url.search : '?tab=files',
+          url.origin,
+        ));
+        url.pathname = synchronizedRoute.pathname;
+        url.search = synchronizedRoute.search;
       }
     } else {
       url.searchParams.delete('file');
@@ -1537,6 +1602,14 @@ export default function App() {
         url.search = '';
       }
     }
+
+    const synchronizedTool = reduceActiveDocHubToolNavigation(null, {
+      type: currentFile ? 'file-selected' : 'programmatic-route',
+      pathname: url.pathname,
+      search: url.search,
+    });
+    setActiveDocHubTool(synchronizedTool);
+    setDocIntelligenceFocus(resolveDocHubRailFocus(synchronizedTool ?? undefined));
 
     if (url.toString() !== window.location.href) {
       const previousState = window.history.state && typeof window.history.state === 'object'
@@ -1570,6 +1643,11 @@ export default function App() {
   );
   const documentsAuthRef = useRef<DocumentsAuth | null>(initialDocumentsAuth);
   const [commentThreads, setCommentThreads] = useState<DocumentCommentThread[]>([]);
+  const [commentsLoadState, setCommentsLoadState] = useState<
+    'unavailable' | 'loading' | 'loaded' | 'error'
+  >('unavailable');
+  const [commentsLoadMessage, setCommentsLoadMessage] = useState<string | null>(null);
+  const [commentsLoadRevision, setCommentsLoadRevision] = useState(0);
   const [suggestions, setSuggestions] = useState<DocumentSuggestionUiRecord[]>([]);
   const [reviewRun, setReviewRun] = useState<DocumentReviewRunRecord | null>(null);
   const [reviewFindings, setReviewFindings] = useState<DocumentReviewFinding[]>([]);
@@ -1725,11 +1803,6 @@ export default function App() {
   const reviewPollAbortRef = useRef<AbortController | null>(null);
   const reviewPollRunIdRef = useRef<string | null>(null);
   const lastBuildHashToastRef = useRef<string | null>(null);
-  const currentDocsPath = currentFile
-    ? currentSourceId
-      ? `source/${currentSourceId}/${currentFile}`
-      : `workspace/${currentFile}`
-    : null;
   const showOfflineSyncBar = isOffline || offlineQueuePending > 0 || syncingNow;
   const currentFileCachedAgeLabel = currentFileCacheMeta.cached ? formatElapsedMs(currentFileCacheMeta.cacheAgeMs) : null;
   const rightPaneCachedAgeLabel = rightPaneCacheMeta.cached ? formatElapsedMs(rightPaneCacheMeta.cacheAgeMs) : null;
@@ -1828,7 +1901,10 @@ export default function App() {
     }
   }, [refreshOfflineQueueState, refreshStatus, reloadTasks, syncingNow]);
 
-  const openDocHubTarget = useCallback((target: DocHubRouteTarget) => {
+  const openDocHubTarget = useCallback((target: {
+    sourceId: string | null;
+    path: string;
+  }) => {
     setSidebarTab('files');
     setMobileTab('files');
     setTabletSidebarOpen(false);
@@ -1886,36 +1962,146 @@ export default function App() {
         window.history.replaceState(docsState, '', nextUrl.toString());
       }
 
+      const synchronized = resolveDocHubRouteSynchronization(
+        nextUrl.pathname,
+        nextUrl.search,
+        runtime.fsMultiSourceEnabled,
+      );
+      setActiveDocHubTool(synchronized.activeTool);
+      setDocIntelligenceFocus(resolveDocHubRailFocus(synchronized.activeTool ?? undefined));
       openDocHubTarget(target);
       return true;
     },
     [fileSources, openDocHubTarget]
   );
 
+  const navigateToResolvedDocHub = useCallback(
+    (navigation: RelativeDocHubNavigation, replace = false, returnTaskId?: number | null): boolean => {
+      if (typeof window === 'undefined') {
+        return false;
+      }
+
+      const existingState = window.history.state as { returnTaskId?: unknown } | null;
+      const inheritedReturnTaskId =
+        existingState && typeof existingState.returnTaskId === 'number' ? existingState.returnTaskId : null;
+      const nextReturnTaskId = returnTaskId !== undefined ? returnTaskId : inheritedReturnTaskId;
+      const docsState = { mode: 'docs', returnTaskId: nextReturnTaskId };
+      const nextUrl = new URL(navigation.route, window.location.origin);
+      const fragmentScrollIntent = resolveDocHubFragmentScrollIntent(
+        window.location.pathname,
+        window.location.search,
+        navigation.route,
+      );
+
+      if (replace) {
+        window.history.replaceState(docsState, '', nextUrl.toString());
+      } else {
+        window.history.pushState(docsState, '', nextUrl.toString());
+      }
+
+      const synchronized = resolveDocHubRouteSynchronization(
+        nextUrl.pathname,
+        nextUrl.search,
+        runtime.fsMultiSourceEnabled,
+      );
+      setActiveDocHubTool(synchronized.activeTool);
+      setDocIntelligenceFocus(resolveDocHubRailFocus(synchronized.activeTool ?? undefined));
+      openDocHubTarget(navigation.target);
+      if (fragmentScrollIntent?.timing === 'immediate') {
+        window.requestAnimationFrame(() => {
+          findDocHubFragmentTarget(fragmentScrollIntent.hash)?.scrollIntoView({ block: 'start' });
+        });
+      }
+      return true;
+    },
+    [openDocHubTarget],
+  );
+
   const handleMarkdownDocsNavigation = useCallback(
-    (href: string): boolean => {
-      const resolved = resolveDocsPathFromHref(href, currentDocsPath);
+    (
+      href: string,
+      paneTarget?: { sourceId: string | null; path: string },
+    ): boolean => {
+      if (typeof window === 'undefined') {
+        return false;
+      }
+      const resolved = paneTarget
+        ? resolvePaneRelativeDocHubNavigation(
+            window.location.pathname,
+            window.location.search,
+            paneTarget,
+            href,
+            runtime.fsMultiSourceEnabled,
+            window.location.origin,
+          )
+        : resolveRelativeDocHubNavigation(
+            window.location.pathname,
+            window.location.search,
+            href,
+            runtime.fsMultiSourceEnabled,
+            window.location.origin,
+          );
       if (!resolved) {
         return false;
       }
 
-      return navigateToDocsPath(resolved);
+      return navigateToResolvedDocHub(resolved);
     },
-    [currentDocsPath, navigateToDocsPath]
+    [navigateToResolvedDocHub]
   );
 
   // Task output links use the same canonical Doc Hub route as every other
   // document and media entry point.
   const handleTaskOutputDocsNavigation = useCallback(
     (href: string): boolean => {
-      const resolved = resolveDocsPathFromHref(href, currentDocsPath);
+      if (typeof window === 'undefined') {
+        return false;
+      }
+      const resolved = resolveRelativeDocHubNavigation(
+        window.location.pathname,
+        window.location.search,
+        href,
+        runtime.fsMultiSourceEnabled,
+        window.location.origin,
+      );
       if (!resolved) {
         return false;
       }
-      return navigateToDocsPath(resolved, false, highlightTaskId);
+      return navigateToResolvedDocHub(resolved, false, highlightTaskId);
     },
-    [currentDocsPath, highlightTaskId, navigateToDocsPath]
+    [highlightTaskId, navigateToResolvedDocHub]
   );
+
+  const pendingDeepLinkRestorationRef = useRef<{
+    fileKey: string;
+    contentClass: 'source' | 'workspace';
+    hasTool: boolean;
+  } | null>(null);
+  const completeDeepLinkRestoration = useCallback((
+    fileKey: string,
+    outcome: 'success' | 'failure',
+  ) => {
+    const pending = pendingDeepLinkRestorationRef.current;
+    if (!pending || pending.fileKey !== fileKey) return;
+    pendingDeepLinkRestorationRef.current = null;
+    if (outcome === 'success') {
+      emitDocHubTelemetry({
+        name: 'doc_hub.deep_link_restoration.success',
+        properties: {
+          contentClass: pending.contentClass,
+          hasTool: pending.hasTool,
+        },
+      });
+      return;
+    }
+    emitDocHubTelemetry({
+      name: 'doc_hub.deep_link_restoration.failure',
+      properties: {
+        reason: 'load-failed',
+        recoverable: true,
+      },
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1923,11 +2109,24 @@ export default function App() {
     }
 
     const syncRouteState = () => {
-      const target = resolveDocHubRouteTarget(window.location.pathname, window.location.search);
+      const synchronized = resolveDocHubRouteSynchronization(
+        window.location.pathname,
+        window.location.search,
+        runtime.fsMultiSourceEnabled,
+      );
+      const target = synchronized.target;
       const routeTaskId = extractTaskRouteId(window.location.pathname);
+      setActiveDocHubTool(synchronized.activeTool);
       if (target) {
+        pendingDeepLinkRestorationRef.current = {
+          fileKey: buildFileLoadKey(target.sourceId, target.path),
+          contentClass: target.sourceId === null ? 'workspace' : 'source',
+          hasTool: synchronized.activeTool !== null,
+        };
+        setDocIntelligenceFocus(resolveDocHubRailFocus(synchronized.activeTool ?? undefined));
         openDocHubTarget(target);
       } else if (routeTaskId !== null) {
+        setDocIntelligenceFocus(null);
         setCurrentSourceId(null);
         setCurrentFile(null);
         setSidebarTab('tasks');
@@ -1935,6 +2134,16 @@ export default function App() {
         setMcBoardTab('kanban');
         setHighlightTaskId(routeTaskId);
       } else {
+        if (window.location.pathname === '/docs' || window.location.pathname.startsWith('/docs/')) {
+          emitDocHubTelemetry({
+            name: 'doc_hub.deep_link_restoration.failure',
+            properties: {
+              reason: 'invalid-route',
+              recoverable: true,
+            },
+          });
+        }
+        setDocIntelligenceFocus(null);
         setCurrentSourceId(null);
         setCurrentFile(null);
         const workspaceTab = resolveWorkspaceTabRoute(window.location.pathname, window.location.search);
@@ -1950,6 +2159,21 @@ export default function App() {
     window.addEventListener('popstate', syncRouteState);
     return () => window.removeEventListener('popstate', syncRouteState);
   }, [openDocHubTarget]);
+
+  const activateMobileDocHubTool = useCallback((tool: DocHubTool) => {
+    if (typeof window === 'undefined') return;
+    const nextRoute = buildActivatedDocHubToolRoute(
+      window.location.pathname,
+      window.location.search,
+      tool,
+      window.location.hash,
+    );
+    const previousState = window.history.state && typeof window.history.state === 'object'
+      ? window.history.state
+      : {};
+    window.history.replaceState({ ...previousState, mode: 'docs' }, '', nextRoute);
+    setActiveDocHubTool(tool);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2588,6 +2812,7 @@ export default function App() {
           lastContentRef.current = data.content || '';
           setLastSaved(Date.now());
           setCurrentFileLoadState({ status: 'ready', fileKey });
+          completeDeepLinkRestoration(fileKey, 'success');
         })
         .catch((err) => {
           if (cancelled) {
@@ -2602,6 +2827,7 @@ export default function App() {
             fileKey,
             message: err instanceof Error ? err.message : 'Failed to load file.',
           });
+          completeDeepLinkRestoration(fileKey, 'failure');
         });
       return () => {
         cancelled = true;
@@ -2630,6 +2856,7 @@ export default function App() {
         lastContentRef.current = d.content || '';
         setLastSaved(Date.now());
         setCurrentFileLoadState({ status: 'ready', fileKey });
+        completeDeepLinkRestoration(fileKey, 'success');
       })
       .catch((err) => {
         if (!cancelled) {
@@ -2641,17 +2868,44 @@ export default function App() {
             fileKey,
             message: err instanceof Error ? err.message : 'Failed to load file.',
           });
+          completeDeepLinkRestoration(fileKey, 'failure');
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [currentFile, currentFileLoadRevision, currentSourceId, fetchSourceFile]);
+  }, [
+    completeDeepLinkRestoration,
+    currentFile,
+    currentFileLoadRevision,
+    currentSourceId,
+    fetchSourceFile,
+  ]);
 
   const handleRetryCurrentFile = useCallback(() => {
     setCurrentFileLoadRevision((revision) => revision + 1);
   }, []);
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined'
+      || activeCurrentFileLoadState.status !== 'ready'
+      || !window.location.hash
+    ) {
+      return;
+    }
+
+    const hash = window.location.hash;
+    const cancelRetry = startDocHubFragmentTargetRetry({
+      findTarget: () => findDocHubFragmentTarget(hash),
+      schedule: (retry) => {
+        window.requestAnimationFrame(retry);
+      },
+      onFound: (target) => target.scrollIntoView({ block: 'start' }),
+    });
+    return cancelRetry;
+  }, [activeCurrentFileLoadState.status, currentFile, fileContent]);
 
   // Fetch right pane file content (split view)
   useEffect(() => {
@@ -3837,14 +4091,31 @@ export default function App() {
     if (!documentsReady || !currentDocId) {
       return;
     }
+    setCommentsLoadRevision((revision) => revision + 1);
+  }, [currentDocId, documentsReady]);
 
-    try {
-      const response = await documentsClient.getComments(currentDocId);
-      setCommentThreads(response.threads);
-    } catch (error) {
-      pushToast(error instanceof Error ? error.message : 'Failed to refresh comments.', 'error');
+  const createMobileComment = useCallback(async (text: string) => {
+    const requestedDocId = currentDocIdRef.current;
+    if (!documentsReadyRef.current || !requestedDocId) {
+      throw new Error('Comments are unavailable for this document.');
     }
-  }, [currentDocId, documentsClient, documentsReady, pushToast]);
+
+    const response = await documentsClient.postComment(requestedDocId, {
+      from: 0,
+      to: 0,
+      text,
+      selectedText: null,
+    });
+    if (
+      currentDocIdRef.current !== requestedDocId
+      || response.docId !== requestedDocId
+    ) {
+      return;
+    }
+    setCommentThreads(response.threads);
+    setCommentsLoadState('loaded');
+    setCommentsLoadMessage(null);
+  }, [documentsClient]);
 
   const refreshSuggestions = useCallback(async () => {
     if (!documentsReady || !currentDocId) {
@@ -3914,6 +4185,54 @@ export default function App() {
   useEffect(() => {
     if (!documentsReady || !documentsAuthHydrated || !currentDocId) {
       setCommentThreads([]);
+      setCommentsLoadState('unavailable');
+      setCommentsLoadMessage(null);
+      return;
+    }
+
+    const requestedDocId = currentDocId;
+    const controller = new AbortController();
+    setCommentThreads([]);
+    setCommentsLoadState('loading');
+    setCommentsLoadMessage(null);
+
+    void documentsClient.getComments(requestedDocId, { signal: controller.signal })
+      .then((response) => {
+        if (
+          controller.signal.aborted
+          || currentDocIdRef.current !== requestedDocId
+          || response.docId !== requestedDocId
+        ) {
+          return;
+        }
+        setCommentThreads(response.threads);
+        setCommentsLoadState('loaded');
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || currentDocIdRef.current !== requestedDocId) {
+          return;
+        }
+        const status = error instanceof HttpRequestError ? error.status : undefined;
+        setCommentThreads([]);
+        setCommentsLoadState('error');
+        setCommentsLoadMessage(
+          status
+            ? mobileCommentsPermissionMessage(status) ?? 'Comments could not be loaded. Try again.'
+            : 'Comments could not be loaded. Try again.',
+        );
+      });
+
+    return () => controller.abort();
+  }, [
+    commentsLoadRevision,
+    currentDocId,
+    documentsAuthHydrated,
+    documentsClient,
+    documentsReady,
+  ]);
+
+  useEffect(() => {
+    if (!documentsReady || !documentsAuthHydrated || !currentDocId) {
       setSuggestions([]);
       setReviewRun(null);
       setReviewFindings([]);
@@ -3927,16 +4246,14 @@ export default function App() {
     const requestAuth = documentsAuthRef.current;
     (async () => {
       try {
-        const [state, comments, suggestionsResponse] = await Promise.all([
+        const [state, suggestionsResponse] = await Promise.all([
           documentsClient.getState(currentDocId),
-          documentsClient.getComments(currentDocId),
           documentsClient.getSuggestions(currentDocId),
         ]);
         if (cancelled) return;
 
         applyPresenceSeed(currentDocId, state.presence);
         setAuthorshipRanges(state.collaboration.authorship_ranges);
-        setCommentThreads(comments.threads);
         setSuggestions(suggestionsResponse.suggestions);
 
         const latest = state.reviewSummary.latestRun;
@@ -4978,6 +5295,10 @@ export default function App() {
             onAddOpenFileTab={handleAddOpenFileTab}
             onGoHome={handleBackToDashboard}
             showDocHubTts={shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) && !currentFilePreviewMeta.isBinary}
+            onOpenVoiceSettings={() => {
+              handleSidebarTabChange('admin');
+              setAdminSection('voice');
+            }}
             filesContextBarProps={{
               runtime,
               currentFile,
@@ -5388,6 +5709,11 @@ export default function App() {
             setFocusRange={setFocusRange}
             documentsClient={documentsClient}
             currentDocId={currentDocId}
+            commentThreads={commentThreads}
+            commentsLoadState={commentsLoadState}
+            commentsLoadMessage={commentsLoadMessage}
+            onRetryMobileComments={refreshComments}
+            onCreateMobileComment={createMobileComment}
             setSuggestions={setSuggestions}
             pushToast={pushToast}
             currentSourceId={currentSourceId}
@@ -5438,6 +5764,8 @@ export default function App() {
             agentsError={agentsError}
             followingAgent={followingAgent}
             setFollowingAgent={setFollowingAgent}
+            activeDocHubTool={activeDocHubTool}
+            onMobileDocHubToolActivated={activateMobileDocHubTool}
           />
         </Suspense>
       ) : null}

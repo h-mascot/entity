@@ -163,6 +163,7 @@ import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
 import { normalizeTaskOutputLinks } from "./task-output-links";
 import { registerNodeOperationsRoutes } from "./node-operations";
+import { registerDocHubTelemetryRoute } from "./doc-hub-telemetry";
 import {
   setApiNoStoreHeaders,
 } from "./static-cache";
@@ -537,6 +538,7 @@ registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge });
 
 // TTS routes
 registerTtsRoutes({ app, db: entityDb });
+registerDocHubTelemetryRoute(app);
 
 const agentStatusInterval = registerOperationalStatusRoutes(app, {
   activityRepository,

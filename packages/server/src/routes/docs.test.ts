@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import fs from 'fs';
+import http from 'http';
 import os from 'os';
 import path from 'path';
 
@@ -33,6 +34,26 @@ async function withDocsServer(workRoot: string) {
         server.close((error?: Error) => (error ? reject(error) : resolve()));
       }),
   };
+}
+
+async function rawGetStatus(baseUrl: string, requestPath: string): Promise<number> {
+  const url = new URL(baseUrl);
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: requestPath,
+        method: 'GET',
+      },
+      (response) => {
+        response.resume();
+        response.on('end', () => resolve(response.statusCode ?? 0));
+      },
+    );
+    request.on('error', reject);
+    request.end();
+  });
 }
 
 afterEach(() => {
@@ -74,6 +95,71 @@ describe('docs routes', () => {
       expect(response.status).toBe(200);
       expect(payload.root).toBe('output');
       expect(payload.content).toContain('Loaded from clawd output.');
+    } finally {
+      await server.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows benign punctuation inside source filenames while rejecting exact traversal segments', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-docs-root-'));
+    const server = await withDocsServer(root);
+
+    try {
+      expect(
+        await rawGetStatus(
+          server.baseUrl,
+          '/docs/source/workspace/reports/report..final.md',
+        ),
+      ).not.toBe(403);
+      expect(
+        await rawGetStatus(
+          server.baseUrl,
+          '/docs/source/workspace/reports/draft.md~',
+        ),
+      ).not.toBe(403);
+
+      expect(
+        await rawGetStatus(
+          server.baseUrl,
+          '/docs/source/workspace/reports/%2E%2E/report.md',
+        ),
+      ).toBe(403);
+      expect(
+        await rawGetStatus(
+          server.baseUrl,
+          '/docs/source/workspace/reports/%7E/report.md',
+        ),
+      ).toBe(403);
+    } finally {
+      await server.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows consecutive dots in source-backed API filenames while rejecting traversal segments', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-docs-root-'));
+    const server = await withDocsServer(root);
+
+    try {
+      expect(
+        await rawGetStatus(
+          server.baseUrl,
+          '/api/docs/source/workspace/reports/report..final.md',
+        ),
+      ).not.toBe(403);
+      expect(
+        await rawGetStatus(
+          server.baseUrl,
+          '/api/docs/source/workspace/reports/%2E%2E/report.md',
+        ),
+      ).toBe(403);
+      expect(
+        await rawGetStatus(
+          server.baseUrl,
+          '/api/docs/source/workspace/reports%5C..%5Csecret.md',
+        ),
+      ).toBe(403);
     } finally {
       await server.close();
       fs.rmSync(root, { recursive: true, force: true });

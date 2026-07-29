@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "project": "Entity Doc Hub Daily Use Fix Pack",
+  "runner": "runner-governed",
+  "doing": {
+    "model": "gpt-5.6-sol",
+    "reasoning": "medium"
+  },
+  "review": {
+    "model": "gpt-5.6-terra",
+    "reasoning": "high"
+  },
+  "base": "origin/main",
+  "queue": [
+    {
+      "id": "THE-650",
+      "title": "T0-03 \u2014 Identify deploy-profile targets and compare them with running paths"
+    },
+    {
+      "id": "THE-651",
+      "title": "T0-04 \u2014 Record sandbox and production database paths, ports, and health checks"
+    },
+    {
+      "id": "THE-652",
+      "title": "T0-05 \u2014 Prove the sandbox serves the expected SHA/build"
+    },
+    {
+      "id": "THE-653",
+      "title": "T0-06 \u2014 Run characterization checks for current Doc Hub routing, Markdown, HTML detection, focused mode, comments, and TTS"
+    },
+    {
+      "id": "THE-654",
+      "title": "TA-01 \u2014 Characterize current canonical Doc Hub route serialization and restoration"
+    },
+    {
+      "id": "THE-655",
+      "title": "TA-02 \u2014 Implement or extract the shared logical route-state adapter"
+    },
+    {
+      "id": "THE-656",
+      "title": "TA-03 \u2014 Implement canonical-link generation for all supported document classes"
+    },
+    {
+      "id": "THE-657",
+      "title": "TA-04 \u2014 Replace direct clipboard handling in the touched Doc Hub path with the clipboard/share adapter"
+    },
+    {
+      "id": "THE-658",
+      "title": "TA-05 \u2014 Implement the selectable manual-copy fallback"
+    },
+    {
+      "id": "THE-659",
+      "title": "TA-06 \u2014 Implement native mobile sharing with fallback to canonical Copy link"
+    },
+    {
+      "id": "THE-660",
+      "title": "TA-07 \u2014 Add the visible mobile Tools entry and four-action bottom sheet"
+    },
+    {
+      "id": "THE-661",
+      "title": "TA-08 \u2014 Add active-tool state, safe-area handling, and state preservation to the bottom sheet"
+    },
+    {
+      "id": "THE-662",
+      "title": "TA-09 \u2014 Implement full-screen mobile Convert shell and nested Back/focus behavior"
+    },
+    {
+      "id": "THE-663",
+      "title": "TA-10 \u2014 Apply first-look labels, grouping, document identity, and active states"
+    },
+    {
+      "id": "THE-664",
+      "title": "TA-11 \u2014 Inspect comments API and record the read/write or read-only branch"
+    },
+    {
+      "id": "THE-665",
+      "title": "TA-12 \u2014 Implement mobile Comments according to the recorded branch"
+    },
+    {
+      "id": "THE-666",
+      "title": "TA-13 \u2014 Extract or formalize the document audio state controller around existing TTS"
+    },
+    {
+      "id": "THE-667",
+      "title": "TA-14 \u2014 Add progress, timeout, error, ready, play, pause, and replay states"
+    },
+    {
+      "id": "THE-668",
+      "title": "TA-15 \u2014 Characterize current audio persistence and define the valid artifact identity"
+    },
+    {
+      "id": "THE-669",
+      "title": "TA-16 \u2014 Implement valid cache reuse and stale-cache invalidation"
+    },
+    {
+      "id": "THE-670",
+      "title": "TA-17 \u2014 Implement the mobile document-level sticky mini-player"
+    },
+    {
+      "id": "THE-671",
+      "title": "TA-18 \u2014 Add Milestone A telemetry with redaction tests"
+    },
+    {
+      "id": "THE-672",
+      "title": "TA-19 \u2014 Run Milestone A end-to-end and UI proof gate"
+    }
+  ]
+}

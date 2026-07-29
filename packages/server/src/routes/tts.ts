@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import dotenv from 'dotenv';
@@ -20,6 +20,8 @@ const ELEVENLABS_TTS_VOICE = process.env.ELEVENLABS_TTS_VOICE?.trim() || 'pFZP5J
 const MAX_CHARS = Math.min(Number(process.env.TTS_MAX_CHARS ?? 3800), 4000);
 const EDGE_TTS_TIMEOUT_MS = Math.max(Number(process.env.EDGE_TTS_TIMEOUT_MS ?? 120_000), 1_000);
 const SETTINGS_KEY = 'tts_settings';
+const AUDIO_TRANSFORM_VERSION = 'markdown-speech-v1';
+const AUDIO_ARTIFACT_CACHE_ENTRIES = 16;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,6 +43,25 @@ interface TtsSettings {
   maxChars: number;
   providers: Record<string, ProviderConfig>;
 }
+
+interface AudioArtifactIdentityInput {
+  documentRef: string;
+  text: string;
+  maxChars: number;
+  provider: string;
+  voice: string;
+  model: string;
+  profileVersion: string;
+  securityNamespace: string;
+  transformVersion: string;
+}
+
+interface AudioArtifactCache<T> {
+  readonly size: number;
+  getOrCreate(identity: string, factory: () => Promise<T>): Promise<T>;
+}
+
+class TtsUpstreamError extends Error {}
 
 // ---------------------------------------------------------------------------
 // Defaults (must match PRD section 7.1)
@@ -97,6 +118,73 @@ function sanitizeText(markdown: string): string {
     .replace(/[*_~]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function buildAudioArtifactIdentity(input: AudioArtifactIdentityInput): string {
+  const synthesizedText = sanitizeText(input.text).slice(0, input.maxChars);
+  return createHash('sha256')
+    .update(JSON.stringify({
+      documentRef: input.documentRef,
+      synthesizedText,
+      provider: input.provider,
+      voice: input.voice,
+      model: input.model,
+      profileVersion: input.profileVersion,
+      securityNamespace: input.securityNamespace,
+      transformVersion: input.transformVersion,
+    }))
+    .digest('hex');
+}
+
+export function createAudioArtifactCache<T>({
+  maxEntries,
+}: {
+  maxEntries: number;
+}): AudioArtifactCache<T> {
+  const entries = new Map<string, Promise<T>>();
+  const capacity = Math.max(1, Math.floor(maxEntries));
+
+  return {
+    get size() {
+      return entries.size;
+    },
+    async getOrCreate(identity, factory) {
+      const existing = entries.get(identity);
+      if (existing) {
+        entries.delete(identity);
+        entries.set(identity, existing);
+        return existing;
+      }
+
+      const pending = factory();
+      entries.set(identity, pending);
+      while (entries.size > capacity) {
+        const oldestIdentity = entries.keys().next().value;
+        if (typeof oldestIdentity === 'string') {
+          entries.delete(oldestIdentity);
+        }
+      }
+
+      try {
+        return await pending;
+      } catch (error) {
+        if (entries.get(identity) === pending) {
+          entries.delete(identity);
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+function resolveAudioSecurityNamespace(req: Request): string {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      org: req.header('x-entity-org-id')?.trim() || 'default-org',
+      principal: req.header('x-entity-principal-id')?.trim() || 'entity-local-user',
+      authorization: req.header('authorization')?.trim() || '',
+    }))
+    .digest('hex');
 }
 
 export function buildEdgeTtsArgs({ voice, text, outputFile }: { voice: string; text: string; outputFile: string }): string[] {
@@ -274,6 +362,10 @@ interface TtsDependencies {
 }
 
 export function registerTtsRoutes({ app, db }: TtsDependencies): void {
+  const audioArtifactCache = createAudioArtifactCache<{ audioUrl: string }>({
+    maxEntries: AUDIO_ARTIFACT_CACHE_ENTRIES,
+  });
+
   // GET /api/tts/settings
   app.get('/api/tts/settings', (_req: Request, res: Response) => {
     const settings = loadSettings(db);
@@ -493,11 +585,12 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
 
   // POST /api/tts/generate
   app.post('/api/tts/generate', async (req: Request, res: Response) => {
-    const { text, provider, voice, model } = req.body as {
+    const { text, provider, voice, model, documentRef } = req.body as {
       text?: string;
       provider?: string;
       voice?: string;
       model?: string;
+      documentRef?: string;
     };
 
     if (typeof text !== 'string' || !text.trim()) {
@@ -526,21 +619,59 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
     }
 
     const settings = loadSettings(db);
+    const resolveArtifact = async (
+      resolvedVoice: string,
+      resolvedModel: string,
+      profileVersion: string,
+      generate: () => Promise<{ audioUrl: string }>,
+    ): Promise<{ artifact: { audioUrl: string }; cached: boolean }> => {
+      if (typeof documentRef !== 'string' || !documentRef.trim()) {
+        return { artifact: await generate(), cached: false };
+      }
+
+      const identity = buildAudioArtifactIdentity({
+        documentRef: documentRef.trim(),
+        text,
+        maxChars: MAX_CHARS,
+        provider: resolvedProvider,
+        voice: resolvedVoice,
+        model: resolvedModel,
+        profileVersion,
+        securityNamespace: resolveAudioSecurityNamespace(req),
+        transformVersion: AUDIO_TRANSFORM_VERSION,
+      });
+      let generated = false;
+      const artifact = await audioArtifactCache.getOrCreate(identity, async () => {
+        generated = true;
+        return generate();
+      });
+      return { artifact, cached: !generated };
+    };
 
     // Kokoro (OpenAI-compatible endpoint)
     if (resolvedProvider === 'kokoro') {
       const cfg = settings.providers['local-kokoro'] ?? {};
       const resolvedVoice = normalizeVoice(voice, cfg.voice || KOKORO_TTS_DEFAULT_VOICE);
       try {
-        const audioBuffer = await requestKokoroAudio(truncatedText, resolvedVoice);
+        const { artifact, cached } = await resolveArtifact(
+          resolvedVoice,
+          'kokoro',
+          'kokoro-wav-v1',
+          async () => {
+            const audioBuffer = await requestKokoroAudio(truncatedText, resolvedVoice);
+            return { audioUrl: `data:audio/wav;base64,${audioBuffer.toString('base64')}` };
+          },
+        );
+        res.set('X-Entity-TTS-Cache', cached ? 'HIT' : 'MISS');
         return res.json({
           status: 'ok',
           provider: 'kokoro',
           requestId: randomUUID(),
-          audioUrl: `data:audio/wav;base64,${audioBuffer.toString('base64')}`,
+          audioUrl: artifact.audioUrl,
           voice: resolvedVoice,
           chars: truncatedText.length,
           truncated,
+          cached,
         });
       } catch (err) {
         return res.status(500).json({ error: 'Kokoro TTS request failed.', detail: err instanceof Error ? err.message : 'Unknown error' });
@@ -555,28 +686,38 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const resolvedVoice = normalizeVoice(voice, cfg.voice || OPENAI_TTS_VOICE);
       const resolvedModel = normalizeModel(model, cfg.model ?? OPENAI_TTS_MODEL);
       try {
-        const upstream = await fetch('https://api.openai.com/v1/audio/speech', {
-          method: 'POST',
-          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ model: resolvedModel, voice: resolvedVoice, input: truncatedText, format: 'mp3' }),
-        });
-        if (!upstream.ok) {
-          const detail = await upstream.text().catch(() => '');
-          return res.status(502).json({ error: 'OpenAI TTS request failed.', detail: detail || `OpenAI returned ${upstream.status}.` });
-        }
-        const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+        const { artifact, cached } = await resolveArtifact(
+          resolvedVoice,
+          resolvedModel,
+          'openai-mp3-v1',
+          async () => {
+            const upstream = await fetch('https://api.openai.com/v1/audio/speech', {
+              method: 'POST',
+              headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+              body: JSON.stringify({ model: resolvedModel, voice: resolvedVoice, input: truncatedText, format: 'mp3' }),
+            });
+            if (!upstream.ok) {
+              const detail = await upstream.text().catch(() => '');
+              throw new TtsUpstreamError(detail || `OpenAI returned ${upstream.status}.`);
+            }
+            const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+            return { audioUrl: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}` };
+          },
+        );
+        res.set('X-Entity-TTS-Cache', cached ? 'HIT' : 'MISS');
         return res.json({
           status: 'ok',
           provider: 'openai',
           requestId: randomUUID(),
-          audioUrl: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}`,
+          audioUrl: artifact.audioUrl,
           voice: resolvedVoice,
           model: resolvedModel,
           chars: truncatedText.length,
           truncated,
+          cached,
         });
       } catch (err) {
-        return res.status(500).json({ error: 'OpenAI TTS request failed.', detail: err instanceof Error ? err.message : 'Unknown error' });
+        return res.status(err instanceof TtsUpstreamError ? 502 : 500).json({ error: 'OpenAI TTS request failed.', detail: err instanceof Error ? err.message : 'Unknown error' });
       }
     }
 
@@ -585,22 +726,36 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const cfg = settings.providers['edge-tts'] ?? {};
       const resolvedVoice = normalizeVoice(voice, cfg.voice ?? EDGE_TTS_VOICE);
       const { execFileSync } = await import('child_process');
-      const tmpFile = `/tmp/edge-tts-${randomUUID()}.mp3`;
       try {
-        execFileSync(resolveEdgeTtsCommand(), buildEdgeTtsArgs({ voice: resolvedVoice, text: truncatedText, outputFile: tmpFile }), { timeout: EDGE_TTS_TIMEOUT_MS });
-        const audioBuffer = fs.readFileSync(tmpFile);
-        fs.unlinkSync(tmpFile);
+        const { artifact, cached } = await resolveArtifact(
+          resolvedVoice,
+          'edge-tts',
+          'edge-mp3-v1',
+          async () => {
+            const tmpFile = `/tmp/edge-tts-${randomUUID()}.mp3`;
+            try {
+              execFileSync(resolveEdgeTtsCommand(), buildEdgeTtsArgs({ voice: resolvedVoice, text: truncatedText, outputFile: tmpFile }), { timeout: EDGE_TTS_TIMEOUT_MS });
+              const audioBuffer = fs.readFileSync(tmpFile);
+              fs.unlinkSync(tmpFile);
+              return { audioUrl: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}` };
+            } catch (error) {
+              try { fs.unlinkSync(tmpFile); } catch {}
+              throw error;
+            }
+          },
+        );
+        res.set('X-Entity-TTS-Cache', cached ? 'HIT' : 'MISS');
         return res.json({
           status: 'ok',
           provider: 'edge',
           requestId: randomUUID(),
-          audioUrl: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}`,
+          audioUrl: artifact.audioUrl,
           voice: resolvedVoice,
           chars: truncatedText.length,
           truncated,
+          cached,
         });
       } catch (err) {
-        try { require('fs').unlinkSync(tmpFile); } catch {}
         return res.status(500).json({ error: 'Edge TTS request failed.', detail: err instanceof Error ? err.message : 'Unknown error' });
       }
     }
@@ -612,30 +767,40 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const cfg = settings.providers.deepgram ?? {};
       const resolvedVoice = normalizeVoice(voice, cfg.voice || DEEPGRAM_TTS_VOICE);
       try {
-        const upstream = await fetch(
-          `https://api.deepgram.com/v1/speak?voice=${encodeURIComponent(resolvedVoice)}`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Token ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: truncatedText }),
-          }
+        const { artifact, cached } = await resolveArtifact(
+          resolvedVoice,
+          'aura',
+          'deepgram-default-v1',
+          async () => {
+            const upstream = await fetch(
+              `https://api.deepgram.com/v1/speak?voice=${encodeURIComponent(resolvedVoice)}`,
+              {
+                method: 'POST',
+                headers: { Authorization: `Token ${apiKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: truncatedText }),
+              }
+            );
+            if (!upstream.ok) {
+              const detail = await upstream.text().catch(() => '');
+              throw new TtsUpstreamError(detail || `Deepgram returned ${upstream.status}.`);
+            }
+            const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+            return { audioUrl: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}` };
+          },
         );
-        if (!upstream.ok) {
-          const detail = await upstream.text().catch(() => '');
-          return res.status(502).json({ error: 'Deepgram TTS request failed.', detail: detail || `Deepgram returned ${upstream.status}.` });
-        }
-        const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+        res.set('X-Entity-TTS-Cache', cached ? 'HIT' : 'MISS');
         return res.json({
           status: 'ok',
           provider: 'deepgram',
           requestId: randomUUID(),
-          audioUrl: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}`,
+          audioUrl: artifact.audioUrl,
           voice: resolvedVoice,
           chars: truncatedText.length,
           truncated,
+          cached,
         });
       } catch (err) {
-        return res.status(500).json({ error: 'Deepgram TTS request failed.', detail: err instanceof Error ? err.message : 'Unknown error' });
+        return res.status(err instanceof TtsUpstreamError ? 502 : 500).json({ error: 'Deepgram TTS request failed.', detail: err instanceof Error ? err.message : 'Unknown error' });
       }
     }
 
@@ -646,27 +811,37 @@ export function registerTtsRoutes({ app, db }: TtsDependencies): void {
       const cfg = settings.providers.elevenlabs ?? {};
       const resolvedVoice = normalizeVoice(voice, cfg.voiceId || cfg.voice || ELEVENLABS_TTS_VOICE);
       try {
-        const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoice}`, {
-          method: 'POST',
-          headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: truncatedText, voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
-        });
-        if (!upstream.ok) {
-          const detail = await upstream.text().catch(() => '');
-          return res.status(502).json({ error: 'ElevenLabs TTS request failed.', detail: detail || `ElevenLabs returned ${upstream.status}.` });
-        }
-        const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+        const { artifact, cached } = await resolveArtifact(
+          resolvedVoice,
+          'eleven-multilingual-v2',
+          'elevenlabs-stability-0.5-similarity-0.75-v1',
+          async () => {
+            const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoice}`, {
+              method: 'POST',
+              headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: truncatedText, voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
+            });
+            if (!upstream.ok) {
+              const detail = await upstream.text().catch(() => '');
+              throw new TtsUpstreamError(detail || `ElevenLabs returned ${upstream.status}.`);
+            }
+            const audioBuffer = Buffer.from(await upstream.arrayBuffer());
+            return { audioUrl: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}` };
+          },
+        );
+        res.set('X-Entity-TTS-Cache', cached ? 'HIT' : 'MISS');
         return res.json({
           status: 'ok',
           provider: 'elevenlabs',
           requestId: randomUUID(),
-          audioUrl: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}`,
+          audioUrl: artifact.audioUrl,
           voice: resolvedVoice,
           chars: truncatedText.length,
           truncated,
+          cached,
         });
       } catch (err) {
-        return res.status(500).json({ error: 'ElevenLabs TTS request failed.', detail: err instanceof Error ? err.message : 'Unknown error' });
+        return res.status(err instanceof TtsUpstreamError ? 502 : 500).json({ error: 'ElevenLabs TTS request failed.', detail: err instanceof Error ? err.message : 'Unknown error' });
       }
     }
 

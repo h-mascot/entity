@@ -226,6 +226,14 @@ function splitSourceDocsPath(filePath: string): { sourceId: string; sourcePath: 
   return { sourceId, sourcePath };
 }
 
+function hasDocsTraversalSegment(filePath: string): boolean {
+  return filePath
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .some((segment) => segment === '..' || segment === '~');
+}
+
 function validateDocsRequestShape(
   root: string,
   filePath: string,
@@ -236,7 +244,7 @@ function validateDocsRequestShape(
       return { ok: false, status: 400, payload: { error: 'Source id and path are required' } };
     }
 
-    if (sourceDoc.sourcePath.includes('..') || sourceDoc.sourcePath.includes('~')) {
+    if (hasDocsTraversalSegment(sourceDoc.sourcePath)) {
       return { ok: false, status: 403, payload: { error: 'Path traversal not allowed' } };
     }
 
@@ -489,7 +497,7 @@ export function registerDocsRoute(app: any) {
       return res.status(400).json({ error: 'Source id and path are required' });
     }
 
-    if (sourcePath.includes('..') || sourcePath.includes('~')) {
+    if (hasDocsTraversalSegment(sourcePath)) {
       return res.status(403).json({ error: 'Path traversal not allowed' });
     }
 
