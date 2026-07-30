@@ -26,21 +26,21 @@ EE-B-06 / THE-854 closed with backup gate PASS and import characterized unsafe: 
 - [x] Step 4: Write EE-B-07 receipts (schema readiness, fail-closed e2e, release note, proof.md)
 - [x] Step 5: Commit scoped docs with THE-855 subject; reconcile Linear when proven
 
-## Checkpoints
+## Acceptance characterization
 
-| Time | Step | Status | Notes |
-|------|------|--------|-------|
-| 21:13 | Step 1-2 | ✅ | Schema not ready; live SHA d3990321…; identity unchanged |
-| 21:15 | Step 3-4 | ✅ | Fail-closed receipts + release note; focused 5/26 tests PASS |
-| 21:16 | Step 5 | ✅ | Scoped docs commit + Linear reconciliation |
+| Criterion | Result |
+| --- | --- |
+| EE-B-07 behavior implemented or characterized | CHARACTERIZED fail-closed |
+| Dependency EE-B-06 satisfied | Yes (Done, import not executed) |
+| browser + API proof pack | Fail-closed pack; no fake imported-board e2e |
+| Automated tests for touched packages | Focused engineering-import suite from this worktree |
+| Production promotion | Forbidden / not performed |
 
-## Files Touched
+## Follow-up
 
-- `docs/plans/2026-07-30-the-855-engineering-board-e2e-release-note.md`
-- `docs/plans/ACTIVE_PLAN.md`
+Additive non-prod schema/ledger readiness + fresh matching backup + execution-ready import, then a true Engineering board browser+API e2e proof.
 
-## Resume Instructions
+## External receipts
 
-1. Do not invent imported Engineering board e2e evidence.
-2. Next readiness work: additive non-prod `project_key`/`work_domain` + `task_import_keys`, fresh matching backup, then import only if execution-ready.
-3. Do not push/merge/deploy/promote production from this worker without Book/SuperAda verification authorization.
+- `/Users/enterprise/clawd/output/entity/remaining-roadmap-runner/receipts/proof/EE-B-07/proof.md`
+- `/Users/enterprise/clawd/output/entity/remaining-roadmap-runner/receipts/proof/EE-B-07/release-note.md`
