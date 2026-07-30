@@ -431,10 +431,16 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'collectReceiptDisplayLinks',
       'reviewPacketSummary',
       'saveReviewDecision / human-gate UI actions',
-      'Open Workplane launch action (WP1-A-04)',
     ],
+    openWorkplaneAction: {
+      issue: 'THE-859',
+      code: 'WP1-A-04',
+      helper: 'packages/app/src/lib/openWorkplaneFromTaskDetail.ts',
+      actionTestId: 'open-workplane-action',
+    },
     nextIssues: {
       'WP1-A-02': 'Define Workplane URL state from these seams',
+      'WP1-A-05': 'Preserve return-to-board/detail navigation from Open Workplane return context',
       'WP1-B-02': 'Normalize ProofBundle from extractTaskOutputLinks + buildReceiptProofView inputs',
     },
   };

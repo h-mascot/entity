@@ -1523,6 +1523,10 @@ export default function App() {
   const [activeDocHubTool, setActiveDocHubTool] = useState<DocHubTool | null>(
     () => initialDocHubRouteState?.tool ?? null,
   );
+  // THE-859: track Workplane route so Open Workplane pushState remounts the shell.
+  const [workplaneRouteActive, setWorkplaneRouteActive] = useState(
+    () => typeof window !== 'undefined' && isWorkplaneRoutePath(window.location.pathname),
+  );
   const [fileContent, setFileContent] = useState('');
   const [currentFileLoadState, setCurrentFileLoadState] = useState<CurrentFileLoadState>({ status: 'idle' });
   const [currentFileLoadRevision, setCurrentFileLoadRevision] = useState(0);
@@ -2142,8 +2146,11 @@ export default function App() {
     }
 
     const syncRouteState = () => {
-      // THE-858: Workplane shell owns its deep-link restore; skip Doc Hub/task sync.
-      if (isWorkplaneRoutePath(window.location.pathname)) {
+      // THE-858/THE-859: Workplane shell owns deep-link restore; skip Doc Hub/task sync.
+      // Still update route flag so Open Workplane client navigation remounts the shell.
+      const onWorkplane = isWorkplaneRoutePath(window.location.pathname);
+      setWorkplaneRouteActive(onWorkplane);
+      if (onWorkplane) {
         return;
       }
       const synchronized = resolveDocHubRouteSynchronization(
@@ -5628,7 +5635,8 @@ export default function App() {
   }
 
   // THE-858 / WP1-A-03 — Workplane route + shell (URL state from THE-857).
-  if (typeof window !== 'undefined' && isWorkplaneRoutePath(window.location.pathname)) {
+  // THE-859 — workplaneRouteActive updates on Open Workplane pushState/popstate.
+  if (workplaneRouteActive) {
     return <LazyWorkplaneShell />;
   }
 

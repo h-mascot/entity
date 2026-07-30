@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
 import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
@@ -40,6 +40,10 @@ import {
   receiptStatusTone,
   splitTaskOutputLinkToken,
 } from './taskDetailWorkplaneSeams';
+import {
+  buildOpenWorkplaneHref,
+  navigateToWorkplane,
+} from '../../lib/openWorkplaneFromTaskDetail';
 
 const TaskChatContextPanel = lazy(() => import('./TaskChatContextPanel'));
 
@@ -2894,6 +2898,25 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     )
   );
 
+  // THE-859 / WP1-A-04 — Open Workplane deep link with return context from detail.
+  const openWorkplaneHref = useMemo(
+    () =>
+      buildOpenWorkplaneHref({
+        taskId,
+        currentPathname:
+          typeof window !== 'undefined' ? window.location.pathname : `/task/${taskId}`,
+      }),
+    [taskId],
+  );
+
+  const handleOpenWorkplane = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    navigateToWorkplane(openWorkplaneHref);
+  };
+
   return (
     <div className="fixed inset-0 z-[85] pointer-events-none">
       <div
@@ -2965,9 +2988,20 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
             </div>
 
             <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+              <a
+                href={openWorkplaneHref}
+                data-testid="open-workplane-action"
+                data-workplane-href={openWorkplaneHref}
+                className="mc-shell-btn mc-shell-btn-active px-3 py-2 text-xs font-medium max-md:min-h-[44px] max-md:text-base"
+                aria-label="Open Workplane for this task"
+                title="Open Workplane"
+                onClick={handleOpenWorkplane}
+              >
+                Open Workplane
+              </a>
               <button
                 type="button"
-                className="mc-shell-btn mc-shell-btn-active inline-flex h-9 w-9 items-center justify-center px-0 text-base font-semibold text-[var(--text-primary)] max-md:min-h-[44px] max-md:min-w-[44px] max-md:text-base"
+                className="mc-shell-btn inline-flex h-9 w-9 items-center justify-center px-0 text-base font-semibold text-[var(--text-primary)] max-md:min-h-[44px] max-md:min-w-[44px] max-md:text-base"
                 onClick={() => void handleFollowUp()}
                 disabled={!task || busyAction !== null}
                 aria-label="Create follow-up task"
