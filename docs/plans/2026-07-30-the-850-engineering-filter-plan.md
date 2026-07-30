@@ -5,7 +5,7 @@
 Load and render only `work_domain=engineering` tasks in the Engineering board.
 
 **Linear issue:** THE-850
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 ## Context
 
@@ -26,7 +26,7 @@ Load and render only `work_domain=engineering` tasks in the Engineering board.
 - [x] Run app/server/root/CTRL gates and diff checks.
 - [x] Capture browser proof showing Engineering tasks present and business tasks absent at desktop/mobile sizes.
 - [x] Run independent reviews and close blockers RED-first.
-- [ ] Commit locally, write proof, reconcile Linear, update runner state, and advance.
+- [x] Commit locally, write proof, reconcile Linear, update runner state, and advance.
 
 ## Verification
 
@@ -52,11 +52,11 @@ Load and render only `work_domain=engineering` tasks in the Engineering board.
 
 ## Resume
 
-Continue from the first unchecked step. Preserve the shared all-task store for non-Engineering boards.
+Execution is complete. Preserve the shared all-task store and backend-atomic project assignment invariants.
 
 ## Done
 
 - [x] Filter/degraded tests and builds pass
 - [x] Browser proof exists
 - [x] Review approved with 0 blockers
-- [ ] Local commit/proof and Linear reconciliation exist
+- [x] Local commit/proof and Linear reconciliation exist
