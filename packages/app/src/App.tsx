@@ -73,6 +73,7 @@ import {
   type DocHubTool,
 } from './lib/docHubRoute';
 import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
+import { isWorkplaneRoutePath } from './lib/workplaneShellModel';
 import { mobileCommentsPermissionMessage } from './lib/mobileCommentsState';
 import { emitDocHubTelemetry } from './lib/docHubTelemetry';
 import {
@@ -130,6 +131,7 @@ const NewCommentPopover = lazy(() => import('./components/NewCommentPopover').th
 const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
 const MCCreateTaskModal = lazy(() => import('./components/mission-control/MCCreateTaskModal'));
 const ShowClawFeaturedPage = lazy(() => import('./ShowClawFeaturedPage'));
+const WorkplaneShell = lazy(() => import('./components/workplane/WorkplaneShell'));
 const AdminView = lazy(() => import('./views/AdminView'));
 const MobileView = lazy(() => import('./views/MobileView'));
 const FilesView = lazy(() => import('./views/FilesView'));
@@ -217,6 +219,14 @@ function LazyBusinessOnboardingFlow(props: ComponentProps<typeof BusinessOnboard
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading business onboarding" />}>
       <BusinessOnboardingFlow {...props} />
+    </Suspense>
+  );
+}
+
+function LazyWorkplaneShell(props: ComponentProps<typeof WorkplaneShell>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading Workplane" />}>
+      <WorkplaneShell {...props} />
     </Suspense>
   );
 }
@@ -1563,6 +1573,11 @@ export default function App() {
       return;
     }
 
+    // THE-858: Workplane owns `/workplane/:taskId` URL state; do not rewrite to Doc Hub.
+    if (isWorkplaneRoutePath(window.location.pathname)) {
+      return;
+    }
+
     const url = new URL(window.location.href);
     const pathnameTarget = resolveDocHubRouteTarget(url.pathname, '');
     if (currentFile) {
@@ -2127,6 +2142,10 @@ export default function App() {
     }
 
     const syncRouteState = () => {
+      // THE-858: Workplane shell owns its deep-link restore; skip Doc Hub/task sync.
+      if (isWorkplaneRoutePath(window.location.pathname)) {
+        return;
+      }
       const synchronized = resolveDocHubRouteSynchronization(
         window.location.pathname,
         window.location.search,
@@ -5606,6 +5625,11 @@ export default function App() {
         }}
       />
     );
+  }
+
+  // THE-858 / WP1-A-03 — Workplane route + shell (URL state from THE-857).
+  if (typeof window !== 'undefined' && isWorkplaneRoutePath(window.location.pathname)) {
+    return <LazyWorkplaneShell />;
   }
 
   const showLeftSidebar = sidebarTab !== 'chat';
