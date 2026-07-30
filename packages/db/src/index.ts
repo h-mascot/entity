@@ -6076,11 +6076,44 @@ function ensureWorkspaceScopeSchema(db: Database.Database): void {
   `);
 }
 
+function seedEntityEngineeringProject(db: Database.Database): void {
+  db.prepare(`
+    INSERT INTO projects (
+      org_id,
+      team_id,
+      name,
+      color,
+      lifecycle_state,
+      project_key,
+      work_domain,
+      created_at
+    )
+    SELECT ?, ?, ?, NULL, 'active', ?, ?, CURRENT_TIMESTAMP
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM projects
+      WHERE org_id = ?
+        AND team_id = ?
+        AND project_key = ?
+    )
+  `).run(
+    DEFAULT_WORKSPACE_ORG_ID,
+    DEFAULT_WORKSPACE_TEAM_ID,
+    'Entity Engineering',
+    'entity-engineering',
+    'engineering',
+    DEFAULT_WORKSPACE_ORG_ID,
+    DEFAULT_WORKSPACE_TEAM_ID,
+    'entity-engineering',
+  );
+}
+
 function openEntityDatabase(): Database.Database {
   return getEntityDatabase((db) => {
     bootstrap(db);
     ensureTaskSchema(db);
     ensureWorkspaceScopeSchema(db);
+    seedEntityEngineeringProject(db);
   });
 }
 

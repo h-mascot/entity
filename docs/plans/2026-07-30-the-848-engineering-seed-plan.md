@@ -1,6 +1,6 @@
 # THE-848 / EE-A-05 Entity Engineering Seed Plan
 
-Canonical plan: `docs/plans/2026-07-30-the-848-engineering-seed-plan.md`
+Canonical recovery pointer: `docs/plans/ACTIVE_PLAN.md`
 
 ## Task
 
@@ -76,7 +76,7 @@ Create the scoped Entity Engineering project idempotently without changing exist
 
 ## Resume Instructions
 
-1. Re-read this file and the canonical plan.
+1. Re-read this file and `docs/plans/ACTIVE_PLAN.md`.
 2. Run `git status --short --branch` and `git diff`.
 3. Continue from the first unchecked step.
 4. Use temporary SQLite paths for all mutation proof.
