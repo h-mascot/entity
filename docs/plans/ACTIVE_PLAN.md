@@ -7,7 +7,7 @@ Canonical plan: `docs/plans/2026-07-30-the-849-engineering-entry-plan.md`
 Add an accessible Mission Control Engineering tab and honest pre-filter entry state.
 
 **Linear issue:** THE-849
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 ## Context
 
@@ -26,7 +26,7 @@ Add an accessible Mission Control Engineering tab and honest pre-filter entry st
 - [x] Run app build/tests, server gate, root/CTRL gate, and diff checks.
 - [x] Build and run locally; collect desktop and mobile DOM/screenshot proof.
 - [x] Run independent review and close blockers RED-first.
-- [ ] Commit locally, write proof, reconcile Linear, update runner state, and advance.
+- [x] Commit locally, write proof, reconcile Linear, update runner state, and advance.
 
 ## Verification
 
@@ -54,4 +54,4 @@ Continue from the first unchecked step. Keep filtering out of scope until EE-B-0
 - [x] Tests and builds pass
 - [x] Browser proof exists
 - [x] Review approved with 0 blockers
-- [ ] Local commit/proof and Linear reconciliation exist
+- [x] Local commit/proof and Linear reconciliation exist
