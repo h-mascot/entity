@@ -1,4 +1,4 @@
-import { HttpRequestError, buildApiCandidates, requestJsonWithFallback } from '../../lib/http';
+import { HttpRequestError, buildApiCandidates, requestJsonWithFallback } from '../../lib/http.ts';
 
 export const MC_PROJECT_TAG_NAMES = ['Soteria', 'Curacel', 'Personal', 'Moltbot'] as const;
 
@@ -9,6 +9,12 @@ export interface ProjectOption {
   name: string;
   color: string | null;
   created_at?: string | null;
+  project_key?: string | null;
+  work_domain?: string | null;
+}
+
+interface ProjectOptionSelection {
+  includeWorkDomains?: readonly string[];
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -63,6 +69,8 @@ export function normalizeProjectOption(raw: unknown): ProjectOption | null {
     name,
     color: readNonEmptyString(record.color),
     created_at: readNonEmptyString(record.created_at),
+    project_key: readNonEmptyString(record.project_key),
+    work_domain: readNonEmptyString(record.work_domain),
   };
 }
 
@@ -89,7 +97,30 @@ export function sortProjectOptions(projects: ProjectOption[]): ProjectOption[] {
   return [...projects].sort(compareProjectOptions);
 }
 
-export async function fetchProjectOptions(apiBase: string): Promise<ProjectOption[]> {
+export function selectMissionControlProjectOptions(
+  payload: unknown[],
+  selection: ProjectOptionSelection = {},
+): ProjectOption[] {
+  const allowedTags = new Set(MC_PROJECT_TAG_NAMES.map((name) => name.toLowerCase()));
+  const includedDomains = new Set(selection.includeWorkDomains ?? []);
+  const projects = payload
+    .map(normalizeProjectOption)
+    .filter((project): project is ProjectOption => project !== null)
+    .filter(
+      (project) =>
+        allowedTags.has(project.name.toLowerCase()) ||
+        (project.work_domain !== null &&
+          project.work_domain !== undefined &&
+          includedDomains.has(project.work_domain)),
+    );
+
+  return sortProjectOptions(projects);
+}
+
+export async function fetchProjectOptions(
+  apiBase: string,
+  selection: ProjectOptionSelection = {},
+): Promise<ProjectOption[]> {
   try {
     const payload = await requestJsonWithFallback({
       urls: buildApiCandidates('/projects', apiBase),
@@ -102,13 +133,7 @@ export async function fetchProjectOptions(apiBase: string): Promise<ProjectOptio
       return [];
     }
 
-    const allowedTags = new Set(MC_PROJECT_TAG_NAMES.map((name) => name.toLowerCase()));
-    const projects = payload
-      .map(normalizeProjectOption)
-      .filter((project): project is ProjectOption => project !== null)
-      .filter((project) => allowedTags.has(project.name.toLowerCase()));
-
-    return sortProjectOptions(projects);
+    return selectMissionControlProjectOptions(payload, selection);
   } catch (error) {
     if (error instanceof HttpRequestError && error.status === 404) {
       return [];

@@ -21,7 +21,9 @@ import type { NewCommentPopoverAnchor } from './components/NewCommentPopover';
 import { ToastViewport } from './components/Toast';
 import type { DocsTtsSettings } from './components/MarkdownAudioControls';
 import TaskBoard from './components/TaskBoard';
-import MCEngineeringEntry from './components/mission-control/MCEngineeringEntry';
+import MCEngineeringEntry, {
+  ENGINEERING_TASKS_REFRESH_EVENT,
+} from './components/mission-control/MCEngineeringEntry';
 import type { MobileTab } from './components/MobileBottomNav';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -1734,6 +1736,7 @@ export default function App() {
 
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [createTaskModalOpen, setCreateTaskModalOpen] = useState(false);
+  const [createTaskWorkDomain, setCreateTaskWorkDomain] = useState<'engineering' | null>(null);
   const [adminSection, setAdminSection] = useState<AdminSection>('general');
   const [enterpriseFrameNonce, setEnterpriseFrameNonce] = useState(0);
   const [enterpriseFrameReady, setEnterpriseFrameReady] = useState(false);
@@ -3391,7 +3394,10 @@ export default function App() {
     setDocIntelligenceFocus('comments');
   }, []);
 
-  const handleTaskSelect = (taskId: number) => {
+  const handleTaskSelect = (
+    taskId: number,
+    preferredBoardTab: MCBoardTab = 'kanban',
+  ) => {
     if (typeof window !== 'undefined') {
       const nextUrl = new URL(window.location.href);
       nextUrl.pathname = '/task/' + taskId;
@@ -3404,7 +3410,7 @@ export default function App() {
 
     setCurrentSourceId(null);
     setCurrentFile(null);
-    setMcBoardTab('kanban');
+    setMcBoardTab(preferredBoardTab);
     setSidebarTab('tasks');
     setMobileTab('tasks');
     setTabletSidebarOpen(false);
@@ -3465,8 +3471,9 @@ export default function App() {
   }, [agents, followingAgent]);
 
   const openMissionControlModal = useCallback(() => {
+    setCreateTaskWorkDomain(mcBoardTab === 'engineering' ? 'engineering' : null);
     setCreateTaskModalOpen(true);
-  }, []);
+  }, [mcBoardTab]);
 
   const applyArchiveVisibility = useCallback((visible: boolean) => {
     const runtimeFn = (window as unknown as Record<string, unknown>).setArchiveVisibility;
@@ -5243,6 +5250,7 @@ export default function App() {
               searchQuery={taskSearchQuery}
               highlightTaskId={highlightTaskId}
               onCloseTask={handleCloseTaskDetail}
+              onCreateTask={openMissionControlModal}
               onDocsLinkNavigate={handleTaskOutputDocsNavigation}
               showArchiveColumn={showArchiveColumn}
               onArchiveColumnVisibilityChange={setShowArchiveColumn}
@@ -5765,6 +5773,7 @@ export default function App() {
             setTabletSidebarOpen={setTabletSidebarOpen}
             setMobileTab={setMobileTab}
             setSidebarTab={setSidebarTab}
+            openMissionControlModal={openMissionControlModal}
             renderOfflineSyncBar={renderOfflineSyncBar}
             renderAdminWorkspace={renderAdminWorkspace}
             adminSection={adminSection}
@@ -5784,10 +5793,20 @@ export default function App() {
           <MCCreateTaskModal
             open
             apiBase={runtime.apiBase}
-            onClose={() => setCreateTaskModalOpen(false)}
+            onClose={() => {
+              setCreateTaskModalOpen(false);
+              setCreateTaskWorkDomain(null);
+            }}
             onCreateTask={createTask}
+            defaultWorkDomain={createTaskWorkDomain}
             onCreated={(task) => {
-              handleTaskSelect(task.id);
+              if (createTaskWorkDomain === 'engineering') {
+                window.dispatchEvent(new Event(ENGINEERING_TASKS_REFRESH_EVENT));
+              }
+              handleTaskSelect(
+                task.id,
+                createTaskWorkDomain === 'engineering' ? 'engineering' : 'kanban',
+              );
             }}
           />
         </Suspense>

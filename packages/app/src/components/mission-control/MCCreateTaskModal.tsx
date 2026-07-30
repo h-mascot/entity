@@ -5,6 +5,10 @@ import { useUserProfile } from '../../lib/userProfile';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
 import { composeAssigneeOptions, fetchActiveAgentNames } from './agentOptions';
 import {
+  resolveTaskCreateDomainDefaults,
+  type TaskCreateWorkDomain,
+} from './taskCreateDefaults';
+import {
   buildPolicyInputsJson,
   fetchWorktypeRegistry,
   getEditableWorktypeFields,
@@ -44,6 +48,7 @@ interface MCCreateTaskModalProps {
   onClose: () => void;
   onCreateTask: (payload: CreateTaskPayload) => Promise<TaskBoardTask>;
   onCreated?: (task: TaskBoardTask) => void;
+  defaultWorkDomain?: TaskCreateWorkDomain | null;
 }
 
 const DEFAULT_FORM: CreateTaskFormState = {
@@ -65,6 +70,7 @@ export default function MCCreateTaskModal({
   onClose,
   onCreateTask,
   onCreated,
+  defaultWorkDomain = null,
 }: MCCreateTaskModalProps) {
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [visible, setVisible] = useState(false);
@@ -73,6 +79,7 @@ export default function MCCreateTaskModal({
   const [projectSearch, setProjectSearch] = useState('');
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
+  const [domainDefaultError, setDomainDefaultError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [worktypeRegistry, setWorktypeRegistry] = useState<WorktypeRegistryEntry[]>([]);
@@ -90,6 +97,7 @@ export default function MCCreateTaskModal({
       setProjects([]);
       setProjectSearch('');
       setProjectError(null);
+      setDomainDefaultError(null);
       setSubmitError(null);
       setSubmitting(false);
       return;
@@ -149,15 +157,34 @@ export default function MCCreateTaskModal({
     setLoadingProjects(true);
     setProjectError(null);
 
-    void fetchProjectOptions(apiBase)
+    void fetchProjectOptions(apiBase, {
+      includeWorkDomains:
+        defaultWorkDomain === null ? [] : [defaultWorkDomain],
+    })
       .then((loadedProjects) => {
         if (!cancelled) {
           setProjects(loadedProjects);
+          const defaults = resolveTaskCreateDomainDefaults(
+            loadedProjects,
+            defaultWorkDomain,
+          );
+          setDomainDefaultError(defaults.error);
+          setProjectError(defaults.error);
+          if (defaultWorkDomain !== null) {
+            setForm((current) => ({
+              ...current,
+              projectIds: defaults.projectIds,
+            }));
+          }
         }
       })
       .catch((error) => {
         if (!cancelled) {
-          setProjectError(toErrorMessage(error, 'Unable to load projects.'));
+          const defaults = resolveTaskCreateDomainDefaults([], defaultWorkDomain);
+          setDomainDefaultError(defaults.error);
+          setProjectError(
+            defaults.error ?? toErrorMessage(error, 'Unable to load projects.'),
+          );
         }
       })
       .finally(() => {
@@ -169,7 +196,7 @@ export default function MCCreateTaskModal({
     return () => {
       cancelled = true;
     };
-  }, [apiBase, open]);
+  }, [apiBase, defaultWorkDomain, open]);
 
   useEffect(() => {
     if (!open) {
@@ -277,6 +304,18 @@ export default function MCCreateTaskModal({
 
     if (assigneeRequired && form.assignee === 'Unassigned') {
       setSubmitError('Todo and Doing tasks require an assignee.');
+      return;
+    }
+
+    if (
+      domainDefaultError ||
+      (defaultWorkDomain !== null &&
+        selectedProjects[0]?.work_domain !== defaultWorkDomain)
+    ) {
+      setSubmitError(
+        domainDefaultError ??
+          'Engineering project must remain the primary project for Engineering tasks.',
+      );
       return;
     }
 
@@ -607,7 +646,13 @@ export default function MCCreateTaskModal({
                     {loadingProjects ? (
                       <div className="px-2 py-3 text-sm text-[var(--text-muted)]">Loading projects...</div>
                     ) : projectError ? (
-                      <div className="px-2 py-3 text-sm text-[var(--error)]">{projectError}</div>
+                      <div
+                        id="mc-create-task-project-error"
+                        role="alert"
+                        className="px-2 py-3 text-sm text-[var(--error)]"
+                      >
+                        {projectError}
+                      </div>
                     ) : filteredProjects.length > 0 ? (
                       filteredProjects.map((project) => (
                         <label
@@ -650,7 +695,14 @@ export default function MCCreateTaskModal({
               <button
                 type="submit"
                 className="mc-shell-btn mc-shell-btn-active px-4 py-2 text-sm font-medium text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={submitting}
+                disabled={
+                  submitting ||
+                  (defaultWorkDomain !== null &&
+                    (loadingProjects || domainDefaultError !== null))
+                }
+                aria-describedby={
+                  domainDefaultError ? 'mc-create-task-project-error' : undefined
+                }
               >
                 {submitting ? 'Creating...' : 'Create Task'}
               </button>

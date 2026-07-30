@@ -386,6 +386,7 @@ export default function MobileView(props: any) {
     setTabletSidebarOpen,
     setMobileTab,
     setSidebarTab,
+    openMissionControlModal,
     renderOfflineSyncBar,
     agentsLoading,
     agentsError,
@@ -1275,6 +1276,7 @@ export default function MobileView(props: any) {
                     highlightTaskId={highlightTaskId}
                     onCloseTask={handleCloseTaskDetail}
                     onDocsLinkNavigate={handleTaskOutputDocsNavigation}
+                    onCreateTask={openMissionControlModal}
                   />
                 ) : (
                   <>
