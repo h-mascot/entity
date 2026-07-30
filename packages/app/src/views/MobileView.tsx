@@ -12,6 +12,7 @@ import MobileBottomNav from '../components/MobileBottomNav';
 import MarkdownAudioControls, {
   type MarkdownAudioControlsHandle,
 } from '../components/MarkdownAudioControls';
+import MCEngineeringEntry from '../components/mission-control/MCEngineeringEntry';
 import {
   buildMobileDocHubDocumentIdentity,
   buildMobileDocHubToolsModel,
@@ -31,6 +32,10 @@ import {
 import { shouldRenderMarkdownPreview } from '../lib/markdownFile';
 import { createShareAdapter } from '../lib/shareAdapter';
 import { emitDocHubTelemetry } from '../lib/docHubTelemetry';
+import {
+  getMCBoardTabLabel,
+  isMobileMCBoardTabActive,
+} from '../lib/mcBoardTabs';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
 const CodeMirrorFileViewer = lazy(() => import('../components/CodeMirrorFileViewer'));
@@ -361,6 +366,7 @@ export default function MobileView(props: any) {
     setSelectedAgent,
     activeTaskSubViewPlugin,
     mcBoardTab,
+    setMcBoardTab,
     highlightTaskId,
     handleTaskSelect,
     handleCloseTaskDetail,
@@ -1239,10 +1245,33 @@ export default function MobileView(props: any) {
           )}
 
           {mobileTab === 'tasks' && (
-            activeTaskSubViewPlugin ? (
-              <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
-            ) : (
-              <div className="flex h-full min-h-0 flex-col">
+            <div className="flex h-full min-h-0 flex-col">
+                <div className="flex gap-2 overflow-x-auto px-5 pb-3" aria-label="Mission Control boards">
+                  {(['kanban', 'engineering'] as const).map((board) => {
+                    const active = isMobileMCBoardTabActive(mcBoardTab, board);
+                    return (
+                      <button
+                        key={board}
+                        type="button"
+                        onClick={() => setMcBoardTab(board)}
+                        className={`shrink-0 rounded-full px-4 py-2.5 text-[14px] font-medium transition-colors ${
+                          active
+                            ? 'bg-[color-mix(in_srgb,var(--accent)_20%,transparent)] text-[var(--text-primary)] ring-1 ring-[color-mix(in_srgb,var(--accent)_40%,transparent)]'
+                            : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)]'
+                        }`}
+                        aria-pressed={active}
+                      >
+                        {getMCBoardTabLabel(board)}
+                      </button>
+                    );
+                  })}
+                </div>
+                {activeTaskSubViewPlugin ? (
+                  <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
+                ) : mcBoardTab === 'engineering' ? (
+                  <MCEngineeringEntry />
+                ) : (
+                  <>
                 <div className="flex gap-2 overflow-x-auto px-5 pb-3">
                   {TASK_SEGMENTS.map((segment) => {
                     const active = taskSegment === segment.id;
@@ -1268,8 +1297,9 @@ export default function MobileView(props: any) {
                   </div>
                 )}
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">{renderTaskContent()}</div>
-              </div>
-            )
+                  </>
+                )}
+            </div>
           )}
 
           {mobileTab === 'services' && (

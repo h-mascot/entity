@@ -1,6 +1,6 @@
 # THE-849 / EE-B-01 Engineering Entry Plan
 
-Canonical plan: `docs/plans/2026-07-30-the-849-engineering-entry-plan.md`
+Canonical recovery pointer: `docs/plans/ACTIVE_PLAN.md`
 
 ## Task
 
