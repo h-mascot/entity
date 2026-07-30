@@ -9,7 +9,7 @@ Implement and prove a deterministic, database-read-only dry run for the seven ap
 **Linear issue:** THE-853 / EE-B-05
 **Created:** 2026-07-30
 **Agent:** GPT-5.6 Sol
-**Status:** REVIEWED — DELIVERY IN PROGRESS
+**Status:** COMPLETE — LINEAR AUTH BLOCKED
 
 ## Context
 
@@ -28,7 +28,7 @@ Live Linear reread is currently limited by the Linear MCP requiring authenticati
 - [x] Step 5 depends on completed implementation and focused positive/negative tests.
 - [x] Step 6 depends on green required repository gates.
 - [x] Step 7 depends on independent reviews reaching zero blockers.
-- [ ] Step 8 depends on delivery and proof receipt completion; Linear reconciliation must not request credentials.
+- [x] Step 8 depends on delivery and proof receipt completion; Linear reconciliation must not request credentials.
 
 ## Plan
 
@@ -53,7 +53,7 @@ Live Linear reread is currently limited by the Linear MCP requiring authenticati
 - [x] Step 7: Run independent correctness and data-safety reviews; fix every blocker with regression proof and re-review.
   - **Files:** implementation/test/docs files as required
   - **Verify:** both reviews APPROVED with zero blockers
-- [ ] Step 8: Commit/deliver scoped source changes, reconcile THE-853 when possible, update runner state, and stop THE-854 at its approval/backup boundary.
+- [x] Step 8: Commit/deliver scoped source changes, reconcile THE-853 when possible, update runner state, and stop THE-854 at its approval/backup boundary.
   - **Files:** source commit only; no receipts/runtime state/logs/output in git
   - **Verify:** merged main/gates green if delivery proceeds; THE-854 not executed; `wrapperLog` and `cursorSessionLog` remain distinct
 
@@ -67,6 +67,7 @@ Live Linear reread is currently limited by the Linear MCP requiring authenticati
 | 12:47 | Steps 4-5 | ✅ | 20 focused tests pass; append-only `dry-run-v5.json` records 7 decisions (5 stale, 2 conflict), pinned `origin/main`, and unchanged DB/WAL/SHM identities |
 | 12:48 | Step 6 | ✅ | Server build + 112 files/816 tests pass; workspace CTRL gate passes |
 | 12:49 | Step 7 | ✅ | Independent correctness and data-safety re-reviews both APPROVED with 0 blockers |
+| 12:58 | Step 8 | ✅ | PR #57 merged as `3d67cd2`; merged-main gates pass; runner state records Linear MCP `needsAuth` and holds THE-854 at reconciliation + approval/backup boundary |
 
 ## Errors Encountered
 
@@ -105,5 +106,5 @@ Live Linear reread is currently limited by the Linear MCP requiring authenticati
 - [x] Source, mapping, project identity, keys, exact/fuzzy titles, prerequisites, and ledger readiness are validated.
 - [x] Database no-write proof and negative-path tests pass.
 - [x] Required gates and independent reviews pass with zero blockers.
-- [ ] Source changes are delivered to main and THE-853 is reconciled, or an exact external blocker is recorded.
+- [x] Source changes are delivered to main and THE-853 is reconciled, or an exact external blocker is recorded.
 - [x] THE-854 is represented only as a blocked approval/backup boundary; no import executes.
