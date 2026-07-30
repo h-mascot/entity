@@ -27,6 +27,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     deleteProject,
     deleteRoadmap,
     deleteRoadmapItem,
+    deriveTaskWorkDomain,
     deriveSubtaskBreakdown,
     enrichTasksWithSubtaskSummary,
     evidenceArtifactRepository,
@@ -123,9 +124,25 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     if ("error" in pagination) {
       return res.status(400).json({ error: pagination.error });
     }
+    const rawWorkDomainFilter = req.query.work_domain;
+    const workDomainFilter =
+      typeof rawWorkDomainFilter === "undefined" ? null : rawWorkDomainFilter;
+    if (
+      workDomainFilter !== null &&
+      (typeof workDomainFilter !== "string" ||
+        workDomainFilter.length > 64 ||
+        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(workDomainFilter))
+    ) {
+      return res.status(400).json({
+        error: "work_domain must be a normalized lowercase slug (1-64 characters)",
+      });
+    }
 
     try {
-      let tasks = await taskSyncLayer.listTasks();
+      let tasks = (await taskSyncLayer.listTasks()).map((task: any) => ({
+        ...task,
+        ...deriveTaskWorkDomain(task),
+      }));
       // Support ?column=X filtering (single column)
       const columnFilter =
         typeof req.query.column === "string"
@@ -169,6 +186,11 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
           : null;
       if (projectFilter && projectFilter !== "all") {
         tasks = tasks.filter((task: any) => taskHasProjectName(task, projectFilter));
+      }
+      if (workDomainFilter) {
+        tasks = tasks.filter(
+          (task: any) => task.work_domain === workDomainFilter,
+        );
       }
 
       const enrichedTasks = enrichTasksWithSubtaskSummary(tasks);

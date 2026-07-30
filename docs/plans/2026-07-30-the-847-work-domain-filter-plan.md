@@ -1,6 +1,6 @@
 # THE-847 / EE-A-04 Work-Domain Filter Plan
 
-Canonical plan: `docs/plans/2026-07-30-the-847-work-domain-filter-plan.md`
+Canonical recovery pointer: `docs/plans/ACTIVE_PLAN.md`
 
 ## Task
 
@@ -71,7 +71,7 @@ Expose derived work-domain state and filtering on task-list/board APIs.
 
 ## Resume Instructions
 
-1. Re-read this file and the canonical plan.
+1. Re-read this file and `docs/plans/ACTIVE_PLAN.md`.
 2. Run `git status --short --branch` and `git diff`.
 3. Continue from the first unchecked step.
 4. Keep `tasks.project_id` as the only board-domain authority.

@@ -70,6 +70,7 @@ import {
 } from "./task-dedupe";
 import {
   buildTaskProjectLabel,
+  deriveTaskWorkDomain,
   syncTaskProjectAssignments,
   taskHasProjectName,
 } from "./task-projects";
@@ -449,7 +450,7 @@ const taskRouteDeps = {
   capitalizeColumn, commentMentionResponder, completeTaskWithReceipt,
   createProject, createRoadmap, createRoadmapItem,
   deleteProject, deleteRoadmap, deleteRoadmapItem,
-  enrichTasksWithSubtaskSummary, findTaskDuplicateCandidates,
+  deriveTaskWorkDomain, enrichTasksWithSubtaskSummary, findTaskDuplicateCandidates,
   getPrimaryReviewReason, getProjects, getRoadmaps,
   getTaskActorFromRequest: (req: Request) => getTaskActorFromRequest(req, getDefaultTaskActor()),
   getTaskHistory, getTaskProjects, hasAssignedOwner,

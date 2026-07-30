@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTaskProjectLabel,
+  deriveTaskWorkDomain,
   diffTaskProjectIds,
   parseTaskProjectNames,
   syncTaskProjectAssignments,
@@ -8,6 +9,93 @@ import {
 } from './task-projects';
 
 describe('task project helpers', () => {
+  it('derives work domain from the primary project and ignores secondary tags', () => {
+    expect(
+      deriveTaskWorkDomain({
+        org_id: 'org-a',
+        team_id: 'team-a',
+        project_id: 7,
+        projects: [
+          {
+            id: 7,
+            name: 'General',
+            org_id: 'org-a',
+            team_id: 'team-a',
+            work_domain: 'general',
+          },
+          {
+            id: 9,
+            name: 'Engineering tag',
+            org_id: 'org-a',
+            team_id: 'team-a',
+            work_domain: 'engineering',
+          },
+        ],
+      }),
+    ).toEqual({
+      work_domain: 'general',
+      work_domain_state: 'resolved',
+    });
+  });
+
+  it.each([
+    {
+      name: 'missing primary project',
+      task: { project_id: null, projects: [] },
+      expected: {
+        work_domain: null,
+        work_domain_state: 'missing_primary_project',
+      },
+    },
+    {
+      name: 'unclassified primary project',
+      task: {
+        project_id: 7,
+        projects: [{ id: 7, name: 'Legacy', work_domain: null }],
+      },
+      expected: {
+        work_domain: null,
+        work_domain_state: 'unclassified_project',
+      },
+    },
+    {
+      name: 'invalid cross-team primary project',
+      task: {
+        org_id: 'org-a',
+        team_id: 'team-a',
+        project_id: 7,
+        projects: [
+          {
+            id: 7,
+            name: 'Other team',
+            org_id: 'org-a',
+            team_id: 'team-b',
+            work_domain: 'engineering',
+          },
+        ],
+      },
+      expected: {
+        work_domain: null,
+        work_domain_state: 'invalid_primary_project',
+      },
+    },
+    {
+      name: 'malformed stored domain',
+      task: {
+        project_id: 7,
+        projects: [
+          { id: 7, name: 'Malformed', work_domain: 'Engineering' },
+        ],
+      },
+      expected: {
+        work_domain: null,
+        work_domain_state: 'unclassified_project',
+      },
+    },
+  ])('keeps $name state explicit', ({ task, expected }) => {
+    expect(deriveTaskWorkDomain(task)).toEqual(expected);
+  });
+
   it('builds a comma-separated project label in requested order', () => {
     expect(
       buildTaskProjectLabel(
