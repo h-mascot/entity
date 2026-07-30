@@ -5,7 +5,7 @@ Default task creation from the Engineering board to the canonical Engineering pr
 **Linear issue:** THE-851 / EE-B-03
 **Created:** 2026-07-30
 **Agent:** GPT-5.6 Sol
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 ## Context
 
@@ -29,7 +29,7 @@ THE-850 now filters the Engineering board by resolved primary-project domain. A 
   - **Verify:** focused tests and app build
 - [x] Capture create-task API/UI proof for success and missing-project degraded behavior.
   - **Verify:** browser DOM assertions and screenshots
-- [ ] Run full gates, independent reviews, commit/PR/merge, reconcile Linear, and advance.
+- [x] Run full gates, independent reviews, commit/PR/merge, reconcile Linear, and advance.
   - **Verify:** `npm run ctrl:gate`
 
 ## Checkpoints
@@ -66,4 +66,4 @@ THE-850 now filters the Engineering board by resolved primary-project domain. A 
 - [x] Normal modal defaults remain unchanged
 - [x] Missing Engineering project is explicit and prevents submit
 - [x] API/UI proof and full gates pass
-- [ ] Reviews approved, merged, and Linear reconciled
+- [x] Reviews approved, merged, and Linear reconciled
