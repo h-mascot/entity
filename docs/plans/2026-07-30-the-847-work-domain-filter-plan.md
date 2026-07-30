@@ -26,7 +26,7 @@ Expose derived work-domain state and filtering on task-list/board APIs.
 - [x] Step 3 depends on focused failing API/helper tests.
 - [x] Step 4 depends on focused tests passing.
 - [x] Step 5 depends on full gates and independent review reaching zero blockers.
-- [ ] Step 6 depends on a scoped local commit and final proof receipt.
+- [x] Step 6 depends on a scoped local commit and final proof receipt.
 
 ## Plan
 
@@ -45,7 +45,7 @@ Expose derived work-domain state and filtering on task-list/board APIs.
 - [x] Step 5: Run independent correctness review, fix any blocker RED-first, and re-review to zero blockers.
   - **Files:** issue-scoped source/tests only
   - **Verify:** reviewer verdict APPROVED with 0 blockers
-- [ ] Step 6: Commit locally, write proof receipts, update runner state, and reconcile Linear.
+- [x] Step 6: Commit locally, write proof receipts, update runner state, and reconcile Linear.
   - **Files:** issue proof/status files outside the repo; one scoped local commit
   - **Verify:** `git status --short --branch && git show --stat --oneline HEAD`
 
@@ -58,6 +58,7 @@ Expose derived work-domain state and filtering on task-list/board APIs.
 | 05:53 | Step 3 | Complete | Primary-derived state/filter implemented; 16 focused tests pass |
 | 05:55 | Step 4 | Complete | Server 747 tests, root build, CTRL gate, and diff check pass |
 | 05:59 | Step 5 | Complete | Two review blockers fixed RED-first; re-review APPROVED with 0 blockers |
+| 06:01 | Step 6 | Complete | Local commit and receipts written; Linear THE-847 reconciled Done |
 
 ## Files Touched
 
@@ -79,8 +80,8 @@ Expose derived work-domain state and filtering on task-list/board APIs.
 
 ## Done
 
-- [ ] All steps complete
+- [x] All steps complete
 - [x] Focused and full gates pass
 - [x] Independent review has 0 blockers
-- [ ] Scoped local commit and proof receipt exist
-- [ ] Linear reconciled
+- [x] Scoped local commit and proof receipt exist
+- [x] Linear reconciled
