@@ -44,4 +44,5 @@ Register the single-task Workplane deep link and a minimal shell that reads/writ
 1. THE-859 — Open Workplane navigates into this route
 2. THE-860 — Return navigation polish on shell return control
 3. THE-861 — Explicit refresh restore + onboarding gate bypass (`workplaneRefreshRestore`)
-4. WP1-B/C — Replace panel placeholders with real panel bodies
+4. THE-862 / WP1-B-01 — Task summary panel (empty/loading/error/ready)
+5. WP1-B/C — Remaining panel placeholders (proof/files/activity/review/warnings)

@@ -36,9 +36,14 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
 > = {
   task_summary: {
     panel: 'Task summary',
-    sourceSeams: ['normalizeTaskDetail fields', 'form state', 'GovernanceSection'],
-    status: 'partial',
-    notes: 'Summary fields live in TaskDetailPanel form/header; not yet a standalone panel component.',
+    sourceSeams: [
+      'workplaneTaskSummary.buildWorkplaneTaskSummary',
+      'TaskSummaryPanel empty/loading/error/ready',
+      'deriveMissingEvidenceState',
+      'hasReviewMetadata',
+    ],
+    status: 'reusable_now',
+    notes: 'THE-862: standalone Workplane TaskSummaryPanel with empty/loading/error/ready states.',
   },
   proof_bundle: {
     panel: 'Proof bundle',

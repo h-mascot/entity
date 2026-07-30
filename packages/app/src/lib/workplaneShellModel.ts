@@ -2,7 +2,8 @@
  * THE-858 / WP1-A-03 — Workplane shell presentation model.
  *
  * Pure helpers that turn THE-857 URL state into a minimal shell view model.
- * Panel bodies stay placeholders until WP1-B/C. Open Workplane CTA is THE-859.
+ * Task summary body is THE-862; other panel bodies stay placeholders until later WP1-B/C.
+ * Open Workplane CTA is THE-859.
  * Return href resolution expanded by THE-860 / WP1-A-05.
  * Cold-load refresh restore is THE-861 (`workplaneRefreshRestore`).
  */

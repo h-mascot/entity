@@ -2,8 +2,9 @@
  * THE-858 / WP1-A-03 — Minimal Workplane route shell.
  * THE-860 / WP1-A-05 — Return-to-board/detail navigation (never strand on shell).
  * THE-861 / WP1-A-06 — Cold load / refresh restores task + active panel from URL.
+ * THE-862 / WP1-B-01 — Task summary panel with empty/loading/error/ready states.
  *
- * Parses/serializes THE-857 URL state. Panel bodies are placeholders until WP1-B/C.
+ * Parses/serializes THE-857 URL state. Non-summary panel bodies stay placeholders until WP1-B/C.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -14,6 +15,14 @@ import {
   buildWorkplanePanelHref,
   type WorkplaneShellModel,
 } from '../../lib/workplaneShellModel.ts';
+import {
+  createWorkplaneTaskSummaryLoadState,
+  fetchWorkplaneTaskSummary,
+  workplaneTaskSummaryErrorMessage,
+  type WorkplaneTaskSummaryLoadState,
+  type WorkplaneTaskSummaryView,
+} from '../../lib/workplaneTaskSummary.ts';
+import TaskSummaryPanel from './TaskSummaryPanel.tsx';
 
 export interface WorkplaneShellProps {
   /** Optional location override for tests; defaults to window.location. */
@@ -21,6 +30,15 @@ export interface WorkplaneShellProps {
   search?: string;
   /** Called when the shell navigates (panel change / return). Defaults to history API. */
   onNavigate?: (href: string, options?: { replace?: boolean; state?: unknown }) => void;
+  /** Optional API base for task summary fetch. */
+  apiBase?: string;
+  /**
+   * Optional summary loader override (tests / Storybook).
+   * Return null → empty; throw → error; summary → ready.
+   */
+  loadTaskSummary?: (taskId: number) => Promise<WorkplaneTaskSummaryView | null>;
+  /** Optional controlled summary state (skips fetch when provided). */
+  taskSummaryState?: WorkplaneTaskSummaryLoadState;
 }
 
 function readLocation(pathname?: string, search?: string): { pathname: string; search: string } {
@@ -48,8 +66,15 @@ export default function WorkplaneShell({
   pathname: pathnameProp,
   search: searchProp,
   onNavigate,
+  apiBase = '',
+  loadTaskSummary,
+  taskSummaryState: controlledSummary,
 }: WorkplaneShellProps) {
   const [location, setLocation] = useState(() => readLocation(pathnameProp, searchProp));
+  const [summaryLoad, setSummaryLoad] = useState<WorkplaneTaskSummaryLoadState>(() =>
+    createWorkplaneTaskSummaryLoadState({ status: 'loading' }),
+  );
+  const [summaryReloadToken, setSummaryReloadToken] = useState(0);
 
   useEffect(() => {
     if (pathnameProp !== undefined) {
@@ -103,6 +128,66 @@ export default function WorkplaneShell({
     });
   }, [model.state?.returnContext, model.taskId, navigate, pathnameProp]);
 
+  const retrySummary = useCallback(() => {
+    setSummaryReloadToken((token) => token + 1);
+  }, []);
+
+  useEffect(() => {
+    if (controlledSummary) {
+      return;
+    }
+
+    const taskId = model.status === 'ready' ? model.taskId : null;
+    if (taskId === null) {
+      setSummaryLoad(createWorkplaneTaskSummaryLoadState({ status: 'empty', taskId: null }));
+      return;
+    }
+
+    let cancelled = false;
+    setSummaryLoad(createWorkplaneTaskSummaryLoadState({ status: 'loading', taskId }));
+
+    const loader = loadTaskSummary ?? ((id: number) => fetchWorkplaneTaskSummary(id, apiBase));
+
+    void loader(taskId)
+      .then((summary) => {
+        if (cancelled) return;
+        if (!summary) {
+          setSummaryLoad(createWorkplaneTaskSummaryLoadState({ status: 'empty', taskId }));
+          return;
+        }
+        setSummaryLoad(
+          createWorkplaneTaskSummaryLoadState({
+            status: 'ready',
+            taskId: summary.taskId,
+            summary,
+          }),
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setSummaryLoad(
+          createWorkplaneTaskSummaryLoadState({
+            status: 'error',
+            taskId,
+            errorMessage: workplaneTaskSummaryErrorMessage(error),
+          }),
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiBase,
+    controlledSummary,
+    loadTaskSummary,
+    model.status,
+    model.taskId,
+    summaryReloadToken,
+  ]);
+
+  const summaryState = controlledSummary ?? summaryLoad;
+
   if (model.status === 'invalid_route') {
     return (
       <div
@@ -131,14 +216,19 @@ export default function WorkplaneShell({
             Return to tasks
           </button>
         </header>
-        <main className="flex flex-1 items-center justify-center p-6">
+        <main className="flex flex-1 flex-col gap-4 overflow-auto p-6">
           <div
-            className="mc-shell-card max-w-md rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3 text-sm"
+            className="mc-shell-card mx-auto max-w-md rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3 text-sm"
             role="alert"
             data-testid="workplane-invalid"
           >
             <p className="font-medium text-[var(--text-primary)]">Workplane unavailable</p>
             <p className="mt-1 text-[var(--text-muted)]">{model.invalidReason}</p>
+          </div>
+          <div className="mx-auto w-full max-w-md">
+            <TaskSummaryPanel
+              loadState={createWorkplaneTaskSummaryLoadState({ status: 'empty', taskId: null })}
+            />
           </div>
         </main>
       </div>
@@ -146,6 +236,13 @@ export default function WorkplaneShell({
   }
 
   const activePanelMeta = model.panels.find((panel) => panel.id === model.activePanel);
+  const showTaskSummary =
+    model.activePanel === 'task_summary' || model.activePanel === null;
+
+  const headerTitle =
+    summaryState.status === 'ready' && summaryState.summary
+      ? summaryState.summary.title
+      : `Task ${model.taskId}`;
 
   return (
     <div
@@ -159,12 +256,13 @@ export default function WorkplaneShell({
       data-workplane-return-present={model.returnContext.present ? 'true' : 'false'}
       data-workplane-return-href={model.returnContext.href ?? undefined}
       data-workplane-href={model.serializedHref ?? undefined}
+      data-workplane-summary-status={summaryState.status}
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-primary)] px-4 py-3">
         <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Workplane</p>
           <h1 className="truncate text-sm font-semibold text-[var(--text-primary)]">
-            Task {model.taskId}
+            {headerTitle}
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-muted)]">
@@ -226,15 +324,19 @@ export default function WorkplaneShell({
       </nav>
 
       <main className="flex-1 overflow-auto p-4" data-testid="workplane-panel-body">
-        <div className="mc-shell-card rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
-          <p className="text-sm font-medium text-[var(--text-primary)]">
-            {activePanelMeta?.label ?? 'Panel'}
-          </p>
-          <p className="mt-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-            Placeholder — full panel ships in later Workplanes issues
-          </p>
-          <p className="mt-2 text-xs text-[var(--text-muted)]">{activePanelMeta?.notes}</p>
-        </div>
+        {showTaskSummary ? (
+          <TaskSummaryPanel loadState={summaryState} onRetry={retrySummary} />
+        ) : (
+          <div className="mc-shell-card rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
+            <p className="text-sm font-medium text-[var(--text-primary)]">
+              {activePanelMeta?.label ?? 'Panel'}
+            </p>
+            <p className="mt-1 text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+              Placeholder — full panel ships in later Workplanes issues
+            </p>
+            <p className="mt-2 text-xs text-[var(--text-muted)]">{activePanelMeta?.notes}</p>
+          </div>
+        )}
       </main>
     </div>
   );
