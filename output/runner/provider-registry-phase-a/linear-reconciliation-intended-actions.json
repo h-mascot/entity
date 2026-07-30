@@ -1,0 +1,494 @@
+{
+  "generated_at": "2026-07-29T16:19:37.260415+00:00",
+  "linear_mcp": "needsAuth",
+  "api_key_present": true,
+  "actions": [
+    {
+      "identifier": "THE-733",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "d9f710cc-be71-4a37-a8ee-25dcab36825d"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-734",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "14ca2609-6dab-4dc3-b673-1e412bd1da19"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-735",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "2b01325d-47d1-474b-8325-683896224e59"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-736",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "face8e9f-c9f9-4c22-a4ed-1dcb608e5d28"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-737",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "9f4ecb75-6975-4df4-82c0-456dc56c855e"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-738",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "bfff89b3-5dc7-4aca-8857-65e594c4a8a1"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-739",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "dbf8ff6f-b2cb-4e10-9ac3-cdcea98adae9"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-740",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "48aae4ff-182a-4b2d-b98d-e9b36b3f0ede"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-741",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "ad0ac601-cc6a-4b75-b508-a96972dde83c"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-742",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "9c941a83-b3d7-4ad4-b009-71758e219f11"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      }
+    },
+    {
+      "identifier": "THE-743",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "9a259c0e-cc41-41d8-b20f-1bfde52e1930"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      },
+      "reopened": true,
+      "final_state": {
+        "name": "In Review",
+        "type": "started"
+      }
+    },
+    {
+      "identifier": "THE-744",
+      "comment_posted": true,
+      "state_updated": true,
+      "comment_response": {
+        "errors": null,
+        "success": true,
+        "comment_id": "94c22284-41de-4e3f-a310-80fa47da2795"
+      },
+      "state_response": {
+        "errors": null,
+        "success": true,
+        "state": {
+          "name": "Done",
+          "type": "completed"
+        }
+      },
+      "reopened": true,
+      "final_state": {
+        "name": "In Review",
+        "type": "started"
+      }
+    }
+  ],
+  "intended_actions": [
+    {
+      "identifier": "THE-733",
+      "code": "PR-A-01",
+      "intended_comment": "Phase A audit proof (PR-A-01)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/phase-a-source-runtime-receipt.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/phase-a-source-runtime-receipt.md"
+    },
+    {
+      "identifier": "THE-734",
+      "code": "PR-A-02",
+      "intended_comment": "Phase A audit proof (PR-A-02)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/task-master-settings-audit.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/task-master-settings-audit.md"
+    },
+    {
+      "identifier": "THE-735",
+      "code": "PR-A-03",
+      "intended_comment": "Phase A audit proof (PR-A-03)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/docs-doc-intelligence-settings-audit.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/docs-doc-intelligence-settings-audit.md"
+    },
+    {
+      "identifier": "THE-736",
+      "code": "PR-A-04",
+      "intended_comment": "Phase A audit proof (PR-A-04)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/provider-settings-secret-storage-audit.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/provider-settings-secret-storage-audit.md"
+    },
+    {
+      "identifier": "THE-737",
+      "code": "PR-A-05",
+      "intended_comment": "Phase A audit proof (PR-A-05)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/sqlite-migration-audit.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/sqlite-migration-audit.md"
+    },
+    {
+      "identifier": "THE-738",
+      "code": "PR-A-06",
+      "intended_comment": "Phase A audit proof (PR-A-06)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/provider-adapter-capability-matrix.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/provider-adapter-capability-matrix.md"
+    },
+    {
+      "identifier": "THE-739",
+      "code": "PR-A-07",
+      "intended_comment": "Phase A audit proof (PR-A-07)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/health-endpoint-inventory.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/health-endpoint-inventory.md"
+    },
+    {
+      "identifier": "THE-740",
+      "code": "PR-A-08",
+      "intended_comment": "Phase A audit proof (PR-A-08)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/task-master-scheduler-run-history-audit.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/task-master-scheduler-run-history-audit.md"
+    },
+    {
+      "identifier": "THE-741",
+      "code": "PR-A-09",
+      "intended_comment": "Phase A audit proof (PR-A-09)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/run-now-smoke-test-semantics.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/run-now-smoke-test-semantics.md"
+    },
+    {
+      "identifier": "THE-742",
+      "code": "PR-A-10",
+      "intended_comment": "Phase A audit proof (PR-A-10)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/permissions-csrf-rate-limit-log-audit.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "Done",
+      "artifact": "output/runner/provider-registry-phase-a/permissions-csrf-rate-limit-log-audit.md"
+    },
+    {
+      "identifier": "THE-743",
+      "code": "PR-A-11",
+      "intended_comment": "Phase A audit proof (PR-A-11)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/oq-001-oq-018-decision-ledger.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "In Review",
+      "artifact": "output/runner/provider-registry-phase-a/oq-001-oq-018-decision-ledger.md",
+      "note": "Kept open pending Henry/Engineering/Security sign-off (reviewer P1)"
+    },
+    {
+      "identifier": "THE-744",
+      "code": "PR-A-12",
+      "intended_comment": "Phase A audit proof (PR-A-12)\n- SuperSpec SHA-256: `4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733`\n- Worktree HEAD: `a87a6fd9527f06654291be174c88f7271ad5db66`\n- Artifact: `output/runner/provider-registry-phase-a/migration-rollback-plan.md`\n- Coder: Cursor Agent grok-4.5 (audit/design-freeze only; no Phase B+ implementation)\n- No raw secrets in artifact.",
+      "intended_state": "In Review",
+      "artifact": "output/runner/provider-registry-phase-a/migration-rollback-plan.md",
+      "note": "Kept open pending Henry/Engineering/Security sign-off (reviewer P1)"
+    }
+  ],
+  "probe_733": {
+    "ok": true,
+    "errors": null,
+    "identifier": "THE-733",
+    "state": {
+      "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+      "name": "Todo",
+      "type": "unstarted"
+    },
+    "id": "d8a91610-1e5d-4e2a-9e23-b63e947e3bcc",
+    "team": {
+      "id": "a3d99f21-1b44-4610-bfd5-86ba8507e69b",
+      "key": "THE"
+    }
+  },
+  "team_states": [
+    {
+      "name": "In Review",
+      "type": "started"
+    },
+    {
+      "name": "Canceled",
+      "type": "canceled"
+    },
+    {
+      "name": "Duplicate",
+      "type": "duplicate"
+    },
+    {
+      "name": "Done",
+      "type": "completed"
+    },
+    {
+      "name": "Todo",
+      "type": "unstarted"
+    },
+    {
+      "name": "Backlog",
+      "type": "backlog"
+    },
+    {
+      "name": "In Progress",
+      "type": "started"
+    }
+  ],
+  "done_state_id_found": true,
+  "resolved_issues": {
+    "THE-733": {
+      "id": "d8a91610-1e5d-4e2a-9e23-b63e947e3bcc",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-734": {
+      "id": "801c3f4c-1fda-4e70-a22e-27060f651146",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-735": {
+      "id": "2f9b579f-ec9a-47bc-840e-d249db303f0a",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-736": {
+      "id": "04ebc30f-19c2-4346-b2c8-e2487dd12e07",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-737": {
+      "id": "58fdb866-2ddc-49bf-bd17-a0947478b514",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-738": {
+      "id": "572c457e-be76-488e-a25b-1d71782c6d5c",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-739": {
+      "id": "26d680c3-d62f-4003-a4e8-c5c76c1eb41e",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-740": {
+      "id": "3aaed7a4-681c-40cc-a215-cfd1a1f72866",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-741": {
+      "id": "177f16dc-bf1e-451d-bf3e-b2ec3aa45e8d",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-742": {
+      "id": "217e5310-3a3f-4cc8-b344-b9aa72f18a14",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-743": {
+      "id": "84d4162c-fed3-4332-8c34-fbebc2adea56",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    },
+    "THE-744": {
+      "id": "11dc9d2f-5139-4d94-9a7f-2e2d3acd907e",
+      "state": {
+        "id": "39d60b27-c87a-46e4-80c5-f94eba28680d",
+        "name": "Todo",
+        "type": "unstarted"
+      }
+    }
+  },
+  "status": "reconciled_with_reviewer_p1_reopen",
+  "reviewer_p1_reopen": {
+    "at": "2026-07-29T16:26:09.012485+00:00",
+    "target_state": {
+      "id": "9db4351d-ed78-4e19-b732-fa85065c388a",
+      "name": "In Review",
+      "type": "started"
+    },
+    "results": [
+      {
+        "identifier": "THE-743",
+        "comment_success": true,
+        "state_success": true,
+        "state": {
+          "name": "In Review",
+          "type": "started"
+        }
+      },
+      {
+        "identifier": "THE-744",
+        "comment_success": true,
+        "state_success": true,
+        "state": {
+          "name": "In Review",
+          "type": "started"
+        }
+      }
+    ]
+  }
+}
