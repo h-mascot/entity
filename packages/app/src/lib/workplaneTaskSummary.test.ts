@@ -197,18 +197,19 @@ test('WorkplaneShell exposes task summary panel for default task_summary panel',
   assert.match(invalid, /data-testid="workplane-task-summary-empty"/);
 });
 
-test('WorkplaneShell keeps non-summary panels as placeholders', () => {
+test('WorkplaneShell keeps later panels as placeholders (not proof_bundle)', () => {
   const html = renderToStaticMarkup(
     createElement(WorkplaneShell, {
       pathname: '/workplane/22',
-      search: '?panel=proof_bundle',
+      search: '?panel=files_docs',
       taskSummaryState: createWorkplaneTaskSummaryLoadState({
         status: 'ready',
         summary: buildWorkplaneTaskSummary(SAMPLE_TASK),
       }),
     }),
   );
-  assert.match(html, /data-workplane-active-panel="proof_bundle"/);
+  assert.match(html, /data-workplane-active-panel="files_docs"/);
   assert.match(html, /Placeholder/);
   assert.doesNotMatch(html, /data-testid="workplane-task-summary-ready"/);
+  assert.doesNotMatch(html, /data-testid="workplane-proof-bundle-ready"/);
 });

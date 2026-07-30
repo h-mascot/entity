@@ -3,8 +3,9 @@
  * THE-860 / WP1-A-05 — Return-to-board/detail navigation (never strand on shell).
  * THE-861 / WP1-A-06 — Cold load / refresh restores task + active panel from URL.
  * THE-862 / WP1-B-01 — Task summary panel with empty/loading/error/ready states.
+ * THE-864 / WP1-B-03 — Proof bundle panel with raw/curated/external/unknown kinds.
  *
- * Parses/serializes THE-857 URL state. Non-summary panel bodies stay placeholders until WP1-B/C.
+ * Parses/serializes THE-857 URL state. Remaining panel bodies stay placeholders until later WP1-B/C.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -13,8 +14,16 @@ import { navigateWorkplaneReturn } from '../../lib/workplaneReturnNavigation.ts'
 import { restoreWorkplaneAfterRefresh } from '../../lib/workplaneRefreshRestore.ts';
 import {
   buildWorkplanePanelHref,
+  buildWorkplaneProofHref,
   type WorkplaneShellModel,
 } from '../../lib/workplaneShellModel.ts';
+import {
+  createWorkplaneProofBundleLoadState,
+  fetchWorkplaneProofBundle,
+  workplaneProofBundleErrorMessage,
+  type WorkplaneProofBundleLoadState,
+} from '../../lib/workplaneProofBundle.ts';
+import type { ProofBundle } from '../../lib/proofBundle.ts';
 import {
   createWorkplaneTaskSummaryLoadState,
   fetchWorkplaneTaskSummary,
@@ -22,6 +31,7 @@ import {
   type WorkplaneTaskSummaryLoadState,
   type WorkplaneTaskSummaryView,
 } from '../../lib/workplaneTaskSummary.ts';
+import ProofBundlePanel from './ProofBundlePanel.tsx';
 import TaskSummaryPanel from './TaskSummaryPanel.tsx';
 
 export interface WorkplaneShellProps {
@@ -30,7 +40,7 @@ export interface WorkplaneShellProps {
   search?: string;
   /** Called when the shell navigates (panel change / return). Defaults to history API. */
   onNavigate?: (href: string, options?: { replace?: boolean; state?: unknown }) => void;
-  /** Optional API base for task summary fetch. */
+  /** Optional API base for task summary / proof bundle fetch. */
   apiBase?: string;
   /**
    * Optional summary loader override (tests / Storybook).
@@ -39,6 +49,13 @@ export interface WorkplaneShellProps {
   loadTaskSummary?: (taskId: number) => Promise<WorkplaneTaskSummaryView | null>;
   /** Optional controlled summary state (skips fetch when provided). */
   taskSummaryState?: WorkplaneTaskSummaryLoadState;
+  /**
+   * Optional proof-bundle loader override (tests / Storybook).
+   * Return null → empty; throw → error; bundle → ready.
+   */
+  loadProofBundle?: (taskId: number) => Promise<ProofBundle | null>;
+  /** Optional controlled proof bundle state (skips fetch when provided). */
+  proofBundleState?: WorkplaneProofBundleLoadState;
 }
 
 function readLocation(pathname?: string, search?: string): { pathname: string; search: string } {
@@ -69,12 +86,18 @@ export default function WorkplaneShell({
   apiBase = '',
   loadTaskSummary,
   taskSummaryState: controlledSummary,
+  loadProofBundle,
+  proofBundleState: controlledProof,
 }: WorkplaneShellProps) {
   const [location, setLocation] = useState(() => readLocation(pathnameProp, searchProp));
   const [summaryLoad, setSummaryLoad] = useState<WorkplaneTaskSummaryLoadState>(() =>
     createWorkplaneTaskSummaryLoadState({ status: 'loading' }),
   );
   const [summaryReloadToken, setSummaryReloadToken] = useState(0);
+  const [proofLoad, setProofLoad] = useState<WorkplaneProofBundleLoadState>(() =>
+    createWorkplaneProofBundleLoadState({ status: 'loading' }),
+  );
+  const [proofReloadToken, setProofReloadToken] = useState(0);
 
   useEffect(() => {
     if (pathnameProp !== undefined) {
@@ -132,6 +155,27 @@ export default function WorkplaneShell({
     setSummaryReloadToken((token) => token + 1);
   }, []);
 
+  const retryProof = useCallback(() => {
+    setProofReloadToken((token) => token + 1);
+  }, []);
+
+  const selectProof = useCallback(
+    (proofToken: string | null) => {
+      if (!model.state) {
+        return;
+      }
+      const href = buildWorkplaneProofHref(model.state, proofToken);
+      navigate(href, { replace: true, state: { mode: 'workplane', returnHref: model.returnContext.href } });
+      if (pathnameProp === undefined) {
+        setLocation({
+          pathname: new URL(href, 'https://entity.local').pathname,
+          search: new URL(href, 'https://entity.local').search,
+        });
+      }
+    },
+    [model.state, model.returnContext.href, navigate, pathnameProp],
+  );
+
   useEffect(() => {
     if (controlledSummary) {
       return;
@@ -186,7 +230,62 @@ export default function WorkplaneShell({
     summaryReloadToken,
   ]);
 
+  useEffect(() => {
+    if (controlledProof) {
+      return;
+    }
+
+    const taskId = model.status === 'ready' ? model.taskId : null;
+    if (taskId === null) {
+      setProofLoad(createWorkplaneProofBundleLoadState({ status: 'empty', taskId: null }));
+      return;
+    }
+
+    let cancelled = false;
+    setProofLoad(createWorkplaneProofBundleLoadState({ status: 'loading', taskId }));
+
+    const loader = loadProofBundle ?? ((id: number) => fetchWorkplaneProofBundle(id, apiBase));
+
+    void loader(taskId)
+      .then((bundle) => {
+        if (cancelled) return;
+        if (!bundle) {
+          setProofLoad(createWorkplaneProofBundleLoadState({ status: 'empty', taskId }));
+          return;
+        }
+        setProofLoad(
+          createWorkplaneProofBundleLoadState({
+            status: 'ready',
+            taskId: bundle.taskId ?? taskId,
+            bundle,
+          }),
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setProofLoad(
+          createWorkplaneProofBundleLoadState({
+            status: 'error',
+            taskId,
+            errorMessage: workplaneProofBundleErrorMessage(error),
+          }),
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiBase,
+    controlledProof,
+    loadProofBundle,
+    model.status,
+    model.taskId,
+    proofReloadToken,
+  ]);
+
   const summaryState = controlledSummary ?? summaryLoad;
+  const proofState = controlledProof ?? proofLoad;
 
   if (model.status === 'invalid_route') {
     return (
@@ -225,9 +324,12 @@ export default function WorkplaneShell({
             <p className="font-medium text-[var(--text-primary)]">Workplane unavailable</p>
             <p className="mt-1 text-[var(--text-muted)]">{model.invalidReason}</p>
           </div>
-          <div className="mx-auto w-full max-w-md">
+          <div className="mx-auto flex w-full max-w-md flex-col gap-3">
             <TaskSummaryPanel
               loadState={createWorkplaneTaskSummaryLoadState({ status: 'empty', taskId: null })}
+            />
+            <ProofBundlePanel
+              loadState={createWorkplaneProofBundleLoadState({ status: 'empty', taskId: null })}
             />
           </div>
         </main>
@@ -238,6 +340,7 @@ export default function WorkplaneShell({
   const activePanelMeta = model.panels.find((panel) => panel.id === model.activePanel);
   const showTaskSummary =
     model.activePanel === 'task_summary' || model.activePanel === null;
+  const showProofBundle = model.activePanel === 'proof_bundle';
 
   const headerTitle =
     summaryState.status === 'ready' && summaryState.summary
@@ -257,6 +360,7 @@ export default function WorkplaneShell({
       data-workplane-return-href={model.returnContext.href ?? undefined}
       data-workplane-href={model.serializedHref ?? undefined}
       data-workplane-summary-status={summaryState.status}
+      data-workplane-proof-status={proofState.status}
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-primary)] px-4 py-3">
         <div className="min-w-0">
@@ -326,7 +430,16 @@ export default function WorkplaneShell({
       <main className="flex-1 overflow-auto p-4" data-testid="workplane-panel-body">
         {showTaskSummary ? (
           <TaskSummaryPanel loadState={summaryState} onRetry={retrySummary} />
-        ) : (
+        ) : null}
+        {showProofBundle ? (
+          <ProofBundlePanel
+            loadState={proofState}
+            selectedProof={model.selectedProof}
+            onSelectProof={selectProof}
+            onRetry={retryProof}
+          />
+        ) : null}
+        {!showTaskSummary && !showProofBundle ? (
           <div className="mc-shell-card rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
             <p className="text-sm font-medium text-[var(--text-primary)]">
               {activePanelMeta?.label ?? 'Panel'}
@@ -336,7 +449,7 @@ export default function WorkplaneShell({
             </p>
             <p className="mt-2 text-xs text-[var(--text-muted)]">{activePanelMeta?.notes}</p>
           </div>
-        )}
+        ) : null}
       </main>
     </div>
   );

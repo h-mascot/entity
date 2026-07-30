@@ -30,7 +30,7 @@ Classification uses existing TaskDetailPanel rules: receipt/raw artifact kinds â
 
 ## Non-goals honored
 
-- No visual proof bundle panel (THE-864)
+- Visual proof bundle panel lands in THE-864 (`ProofBundlePanel` + `workplaneProofBundle.ts`)
 - No files/docs / missing-proof panels (THE-865 / THE-866)
 - No layout lock / mobile smoke (THE-867 / THE-868)
 - No DB schema / prod mutation / invented Engineering data

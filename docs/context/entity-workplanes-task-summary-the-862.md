@@ -26,11 +26,11 @@ Replace the Workplane `task_summary` panel placeholder with a real summary secti
 | `empty` | No task id, 404, or invalid payload | Explicit “No task available” |
 | `error` | Transport/server failure | Alert + Retry |
 
-Non-summary panels remain placeholders (THE-863+).
+Proof bundle panel ships in THE-864; other non-summary panels remain placeholders (THE-865+).
 
 ## Non-goals honored
 
-- No ProofBundle panel UI (THE-864); normalization lands in THE-863 (`proofBundle.ts`)
+- ProofBundle normalization: THE-863 (`proofBundle.ts`); panel UI: THE-864
 - No files/docs / missing-proof dedicated panels (THE-865/THE-866)
 - No layout lock / mobile smoke (THE-867/THE-868)
 - No invented Engineering board data / no DB schema changes

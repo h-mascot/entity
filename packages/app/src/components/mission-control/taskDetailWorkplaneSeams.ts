@@ -50,6 +50,8 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
     sourceSeams: [
       'proofBundle.normalizeProofBundle',
       'proofBundle.classifyProofBundleItemKind',
+      'workplaneProofBundle.createWorkplaneProofBundleLoadState',
+      'ProofBundlePanel raw/curated/external/unknown',
       'extractTaskOutputLinks',
       'normalizeTaskOutputHref',
       'deriveMissingEvidenceState',
@@ -58,7 +60,7 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
       'receiptStatusTone',
     ],
     status: 'reusable_now',
-    notes: 'THE-863: normalizeProofBundle yields typed raw|curated|external|unknown items for THE-864 panel.',
+    notes: 'THE-864: ProofBundlePanel renders normalizeProofBundle items with raw|curated|external|unknown kinds and fail-closed empty/error states.',
   },
   files_docs: {
     panel: 'Files/docs',
@@ -432,6 +434,8 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'WORKPLANE_PANEL_SEAM_MAP',
       'proofBundle.normalizeProofBundle',
       'proofBundle.classifyProofBundleItemKind',
+      'workplaneProofBundle.createWorkplaneProofBundleLoadState',
+      'ProofBundlePanel',
     ],
     stillEmbeddedInTaskDetailPanel: [
       'buildReceiptProofView',
@@ -452,6 +456,8 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'WP1-A-05': 'Preserve return-to-board/detail navigation from Open Workplane return context',
       'WP1-B-02': 'Normalize ProofBundle via packages/app/src/lib/proofBundle.ts',
       'WP1-B-03': 'Implement proof bundle panel consuming normalizeProofBundle',
+      'WP1-B-04': 'Implement files/docs panel linked to Doc Hub openers',
+      'WP1-B-05': 'Implement missing-proof warning panel',
     },
   };
 }
