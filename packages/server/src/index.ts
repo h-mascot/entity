@@ -475,6 +475,7 @@ const taskRouteDeps = {
   taskHasProjectName, taskSyncLayer, updateRoadmapItem,
   validateReviewCompletion, validateReviewEntry,
   validateTaskAccountability, validateTaskDoneReviewGateState,
+  workspaceRepo,
 };
 registerDbModeRoutes(app, "", { normalizeDbMode, taskSyncLayer });
 registerDbModeRoutes(app, "/api", { normalizeDbMode, taskSyncLayer });

@@ -1,9 +1,118 @@
 import type { Express, Request, Response } from "express";
-import type { TaskRecord, UpdateRoadmapItemInput } from "../../../db/src";
+import type {
+  TaskRecord,
+  UpdateRoadmapItemInput,
+  WorkspaceScopeRepository,
+} from "../../../db/src";
 import { asyncHandler } from "../middleware/async-handler";
 import { orderTaskProjectIdsWithPrimary } from "../task-projects";
 
 type RegisterTaskRoutesDeps = Record<string, any>;
+
+export type TaskCreateScope = {
+  org_id?: string;
+  team_id?: string;
+  project_id?: number;
+};
+
+export function parseTaskCreateScope(
+  body: Record<string, unknown>,
+): TaskCreateScope | { error: string } {
+  const scope: TaskCreateScope = {};
+  for (const key of ["org_id", "team_id"] as const) {
+    const value = body[key];
+    if (typeof value === "undefined") continue;
+    if (typeof value !== "string" || !value.trim()) {
+      return { error: `${key} must be a non-empty string` };
+    }
+    scope[key] = value.trim();
+  }
+
+  if (typeof body.project_id !== "undefined") {
+    const projectId =
+      typeof body.project_id === "number"
+        ? body.project_id
+        : typeof body.project_id === "string" && body.project_id.trim()
+          ? Number(body.project_id)
+          : Number.NaN;
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      return { error: "project_id must be a positive integer" };
+    }
+    scope.project_id = projectId;
+  }
+
+  return scope;
+}
+
+export function scopeTasksForCreateDedupe(
+  tasks: TaskRecord[],
+  scope: TaskCreateScope,
+): TaskRecord[] {
+  if (!scope.org_id && !scope.team_id) return tasks;
+  return tasks.filter((task) => {
+    if (scope.org_id && task.org_id !== scope.org_id) return false;
+    if (scope.team_id && task.team_id !== scope.team_id) return false;
+    return true;
+  });
+}
+
+type TaskCreateScopeRepository = Pick<
+  WorkspaceScopeRepository,
+  "getOrg" | "getTeam" | "getProject"
+>;
+
+export type TaskCreateScopeValidation =
+  | { ok: true }
+  | { ok: false; statusCode: number; error: string };
+
+export function validateTaskCreateScope(
+  scope: TaskCreateScope,
+  workspaceRepo: TaskCreateScopeRepository,
+): TaskCreateScopeValidation {
+  if (!scope.org_id && !scope.team_id && !scope.project_id) return { ok: true };
+  if (!scope.org_id) {
+    return {
+      ok: false,
+      statusCode: 400,
+      error: "org_id is required when team_id or project_id is provided",
+    };
+  }
+  if (!scope.team_id) {
+    return {
+      ok: false,
+      statusCode: 400,
+      error: "team_id is required when org_id is provided",
+    };
+  }
+  if (!workspaceRepo.getOrg(scope.org_id)) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: `org ${scope.org_id} not found`,
+    };
+  }
+  if (scope.team_id && !workspaceRepo.getTeam(
+    { orgId: scope.org_id },
+    scope.team_id,
+  )) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: `team ${scope.team_id} not found in org ${scope.org_id}`,
+    };
+  }
+  if (scope.project_id && !workspaceRepo.getProject(
+    { orgId: scope.org_id, teamId: scope.team_id },
+    scope.project_id,
+  )) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: `project ${scope.project_id} not found in requested workspace scope`,
+    };
+  }
+  return { ok: true };
+}
 
 export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: RegisterTaskRoutesDeps): void {
   const {
@@ -69,6 +178,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     validateReviewEntry,
     validateTaskAccountability,
     validateTaskDoneReviewGateState,
+    workspaceRepo,
     withReceiptArtifactRef,
   } = deps;
   const tasksBase = `${prefix}/tasks`;
@@ -382,6 +492,20 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       return res.status(400).json({ error: "name required" });
     }
 
+    const taskScope = parseTaskCreateScope(req.body as Record<string, unknown>);
+    if ("error" in taskScope) {
+      return res.status(400).json(taskScope);
+    }
+    if ((taskScope.org_id || taskScope.team_id || taskScope.project_id) && !workspaceRepo) {
+      return res.status(500).json({ error: "workspace scope repository unavailable" });
+    }
+    if (workspaceRepo) {
+      const scopeValidation = validateTaskCreateScope(taskScope, workspaceRepo);
+      if (!scopeValidation.ok) {
+        return res.status(scopeValidation.statusCode).json({ error: scopeValidation.error });
+      }
+    }
+
     const accountability = parseTaskAccountabilityForCreate(
       req.body as Record<string, unknown>,
       getTaskActorFromRequest(req),
@@ -434,7 +558,10 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
             : undefined;
       const normalizedOutput = normalizeTaskOutputLinks(output) ?? undefined;
       const existingTasks = await taskBackend.listTasks();
-      const dedupeCandidates = findTaskDuplicateCandidates(name, existingTasks);
+      const dedupeCandidates = findTaskDuplicateCandidates(
+        name,
+        scopeTasksForCreateDedupe(existingTasks, taskScope),
+      );
       const exactDuplicate =
         dedupeCandidates.find((candidate: any) => candidate.exact) ?? null;
       if (!createAnywayOverride && dedupeCandidates.length > 0) {
@@ -488,6 +615,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         }
       }
       const task = await taskBackend.createTask({
+        ...taskScope,
         name,
         description,
         column,

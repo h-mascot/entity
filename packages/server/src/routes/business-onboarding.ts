@@ -330,13 +330,14 @@ function assignmentForDomain(
   const named = NAMED_AGENT_ASSIGNMENTS[domainId];
   if (!named) return undefined;
   const registryAgent = findMatchingRegistryAgent(registryAgents, named.agentName);
+  if (!registryAgent) return undefined;
   return {
     domainId,
     teamName,
-    agentName: registryAgent?.name ?? named.agentName,
-    agentPrincipalId: registryAgent?.id ?? slugify(named.agentName),
+    agentName: registryAgent.name,
+    agentPrincipalId: registryAgent.id,
     functionLabel: named.functionLabel,
-    registryStatus: registryAgent ? 'matched' : 'named-existing-agent',
+    registryStatus: 'matched',
   };
 }
 

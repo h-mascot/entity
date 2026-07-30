@@ -115,6 +115,8 @@ function createFakeWorkspaceRepo(): WorkspaceScopeRepository {
         name: input.name,
         color: input.color ?? null,
         lifecycle_state: input.lifecycle_state ?? 'active',
+        project_key: input.project_key ?? null,
+        work_domain: input.work_domain ?? null,
         created_at: now,
       };
       projects.set(project.id, project);
@@ -617,5 +619,59 @@ describe('business onboarding routes', () => {
       blueprint: { confirmedAt: now },
     });
     expect(JSON.parse(workspaceRepo.getOrg(orgId)?.blueprint_json ?? '{}')).toMatchObject({ confirmedAt: now });
+  });
+
+  it('leaves named-agent domains unassigned when the registry has no matching agent', async () => {
+    const noAgentApp = express();
+    noAgentApp.use(express.json());
+    noAgentApp.use('/api', createBusinessOnboardingRouter({
+      workspaceRepo,
+      agentRegistryRepo: {
+        listAgents: () => [],
+      },
+      taskRepoFactory: createFakeTaskRepoFactory(),
+      now: () => now,
+    }));
+    const noAgentServer = http.createServer(noAgentApp);
+    await new Promise<void>((resolve) => noAgentServer.listen(0, resolve));
+    const address = noAgentServer.address();
+    if (!address || typeof address === 'string') throw new Error('no-agent test server failed to bind');
+    const noAgentBase = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const orgRes = await fetch(`${noAgentBase}/api/onboarding/business/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ orgName: 'No Registry Agents Co' }),
+      });
+      const orgId = ((await readJson(orgRes)).org as OrgRecord).id;
+      const provisionRes = await fetch(`${noAgentBase}/api/onboarding/business/${orgId}/provision`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          domains: ['product'],
+          mission: 'Do not fabricate agent principals.',
+        }),
+      });
+
+      expect(provisionRes.status).toBe(200);
+      expect(await readJson(provisionRes)).toMatchObject({
+        blueprint: {
+          agentAssignments: [],
+          teams: [
+            {
+              domainId: 'product',
+            },
+          ],
+        },
+      });
+      const body = await readJson(await fetch(`${noAgentBase}/api/onboarding/business/${orgId}/confirm`, {
+        method: 'POST',
+      }));
+      const team = (body.blueprint as { teams: Array<{ assignedAgent?: unknown }> }).teams[0];
+      expect(team?.assignedAgent).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve, reject) => noAgentServer.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 });
