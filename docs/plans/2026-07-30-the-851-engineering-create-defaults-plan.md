@@ -1,7 +1,3 @@
-## Active Plan
-
-Canonical plan: `docs/plans/2026-07-30-the-851-engineering-create-defaults-plan.md`
-
 ## Task
 
 Default task creation from the Engineering board to the canonical Engineering project and fail closed when that project is unavailable.

@@ -11,6 +11,8 @@ import {
 import { toErrorMessage } from '../../lib/http';
 import { createLatestRequestGuard } from '../../lib/taskLoadingGuards';
 
+export const ENGINEERING_TASKS_REFRESH_EVENT = 'entity:engineering-tasks:refresh';
+
 interface MCEngineeringEntryProps {
   apiBase?: string;
   viewport: MCViewport;
@@ -20,6 +22,7 @@ interface MCEngineeringEntryProps {
   onDocsLinkNavigate?: (href: string) => boolean;
   showArchiveColumn?: boolean;
   onArchiveColumnVisibilityChange?: (visible: boolean) => void;
+  onCreateTask?: () => void;
 }
 
 export default function MCEngineeringEntry({
@@ -31,6 +34,7 @@ export default function MCEngineeringEntry({
   onDocsLinkNavigate,
   showArchiveColumn = true,
   onArchiveColumnVisibilityChange,
+  onCreateTask,
 }: MCEngineeringEntryProps) {
   const [tasks, setTasks] = useState<TaskBoardTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,10 +100,13 @@ export default function MCEngineeringEntry({
     void reload();
     const intervalId = window.setInterval(() => void reload(), 30_000);
     const handleOnline = () => void reload();
+    const handleExplicitRefresh = () => void reload();
     window.addEventListener('online', handleOnline);
+    window.addEventListener(ENGINEERING_TASKS_REFRESH_EVENT, handleExplicitRefresh);
     return () => {
       window.clearInterval(intervalId);
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener(ENGINEERING_TASKS_REFRESH_EVENT, handleExplicitRefresh);
     };
   }, [activeViewport, reload]);
 
@@ -147,12 +154,24 @@ export default function MCEngineeringEntry({
             Engineering board
           </h1>
         </div>
-        <div
-          className="rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-1 text-xs text-[var(--text-muted)]"
-          aria-live="polite"
-          data-testid="engineering-board-load-state"
-        >
-          {loading ? 'Loading…' : error ? 'Degraded' : `${tasks.length} engineering task${tasks.length === 1 ? '' : 's'}`}
+        <div className="flex items-center gap-2">
+          <div
+            className="rounded-full border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-1 text-xs text-[var(--text-muted)]"
+            aria-live="polite"
+            data-testid="engineering-board-load-state"
+          >
+            {loading ? 'Loading…' : error ? 'Degraded' : `${tasks.length} engineering task${tasks.length === 1 ? '' : 's'}`}
+          </div>
+          {onCreateTask ? (
+            <button
+              type="button"
+              onClick={onCreateTask}
+              className="mc-shell-btn mc-shell-btn-active inline-flex h-8 items-center justify-center px-3 text-xs font-semibold"
+              aria-label="New Engineering task"
+            >
+              + New task
+            </button>
+          ) : null}
         </div>
       </header>
       <div className="min-h-0 w-full flex-1">
