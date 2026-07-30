@@ -9,7 +9,7 @@ Create the scoped Entity Engineering project idempotently without changing exist
 **Linear issue:** THE-848
 **Created:** 2026-07-30
 **Agent:** Cursor / GPT-5.6 Sol
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 ## Context
 
@@ -30,7 +30,7 @@ Create the scoped Entity Engineering project idempotently without changing exist
 - [x] Step 4 depends on the fresh seed test passing.
 - [x] Step 5 depends on idempotency and business-data preservation regressions passing.
 - [x] Step 6 depends on full gates and independent review reaching zero blockers.
-- [ ] Step 7 depends on local commits and final proof receipt.
+- [x] Step 7 depends on local commits and final proof receipt.
 
 ## Plan
 
@@ -52,7 +52,7 @@ Create the scoped Entity Engineering project idempotently without changing exist
 - [x] Step 6: Run independent review, fix blockers RED-first, and re-review to zero blockers.
   - **Files:** issue-scoped DB source/test and plans only
   - **Verify:** reviewer verdict APPROVED with 0 blockers
-- [ ] Step 7: Commit locally, write seed/rollback proof, update runner state, reconcile Linear, and advance.
+- [x] Step 7: Commit locally, write seed/rollback proof, update runner state, reconcile Linear, and advance.
   - **Files:** proof/status files outside repo; scoped local commits
   - **Verify:** `git status --short --branch && git show --stat --oneline HEAD`
 
@@ -66,6 +66,7 @@ Create the scoped Entity Engineering project idempotently without changing exist
 | 06:09 | Step 4 | Complete | Pre-existing business project remains byte-for-byte semantically unchanged |
 | 06:11 | Step 5 | Complete | DB 15 tests, server 747 tests, root build, CTRL gate, and diff check pass |
 | 06:18 | Step 6 | Complete | cursor-grok-4.5-high APPROVED with 0 blockers |
+| 06:19 | Step 7 | Complete | Local commit and seed/rollback proof written; Linear THE-848 Done |
 
 ## Files Touched
 
@@ -85,9 +86,9 @@ Create the scoped Entity Engineering project idempotently without changing exist
 
 ## Done
 
-- [ ] All steps complete
+- [x] All steps complete
 - [x] Fresh, idempotent, and preservation tests pass
 - [x] Full gates pass
 - [x] Independent review has 0 blockers
-- [ ] Local commit and seed/rollback proof exist
-- [ ] Linear reconciled
+- [x] Local commit and seed/rollback proof exist
+- [x] Linear reconciled
