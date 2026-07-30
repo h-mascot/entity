@@ -1,7 +1,3 @@
-## Active Plan
-
-Canonical plan: `docs/plans/2026-07-30-the-853-engineering-import-dry-run-plan.md`
-
 ## Task
 
 Implement and prove a deterministic, database-read-only dry run for the seven approved Entity Engineering import candidates.
