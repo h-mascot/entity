@@ -39,6 +39,9 @@ function createFakeWorkspaceRepo(): WorkspaceScopeRepository {
         slug: input.slug ?? slugify(input.name),
         status: input.status ?? 'active',
         deployment_mode: input.deployment_mode ?? 'saas',
+        mission: input.mission ?? null,
+        domains_json: input.domains_json ?? '[]',
+        blueprint_json: input.blueprint_json ?? null,
         created_at: now,
         updated_at: now,
       };
@@ -51,6 +54,9 @@ function createFakeWorkspaceRepo(): WorkspaceScopeRepository {
       const updated = {
         ...current,
         ...updates,
+        mission: typeof updates.mission === 'undefined' ? current.mission : updates.mission ?? null,
+        domains_json: updates.domains_json ?? current.domains_json,
+        blueprint_json: typeof updates.blueprint_json === 'undefined' ? current.blueprint_json : updates.blueprint_json ?? null,
         updated_at: now,
       };
       orgs.set(orgId, updated);
@@ -149,11 +155,39 @@ describe('workspace hierarchy routes', () => {
     const orgRes = await fetch(`${baseUrl}/api/orgs`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: 'org-a', name: 'Org A', deployment_mode: 'enterprise_self_deploy' }),
+      body: JSON.stringify({
+        id: 'org-a',
+        name: 'Org A',
+        deployment_mode: 'enterprise_self_deploy',
+        mission: 'Run a scoped business workspace.',
+        domains_json: JSON.stringify(['product']),
+      }),
     });
     expect(orgRes.status).toBe(201);
     expect(await readJson(orgRes)).toMatchObject({
-      org: { id: 'org-a', name: 'Org A', deployment_mode: 'enterprise_self_deploy' },
+      org: {
+        id: 'org-a',
+        name: 'Org A',
+        deployment_mode: 'enterprise_self_deploy',
+        mission: 'Run a scoped business workspace.',
+        domains_json: JSON.stringify(['product']),
+        blueprint_json: null,
+      },
+    });
+
+    const orgUpdateRes = await fetch(`${baseUrl}/api/orgs/org-a`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ blueprint_json: JSON.stringify({ schemaVersion: 1 }) }),
+    });
+    expect(orgUpdateRes.status).toBe(200);
+    expect(await readJson(orgUpdateRes)).toMatchObject({
+      org: {
+        id: 'org-a',
+        mission: 'Run a scoped business workspace.',
+        domains_json: JSON.stringify(['product']),
+        blueprint_json: JSON.stringify({ schemaVersion: 1 }),
+      },
     });
 
     const teamRes = await fetch(`${baseUrl}/api/orgs/org-a/teams`, {

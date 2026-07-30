@@ -2913,6 +2913,9 @@ export interface OrgRecord {
   slug: string;
   status: string;
   deployment_mode: string;
+  mission: string | null;
+  domains_json: string;
+  blueprint_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2923,6 +2926,9 @@ export interface CreateOrgInput {
   slug?: string;
   status?: string;
   deployment_mode?: string;
+  mission?: string | null;
+  domains_json?: string;
+  blueprint_json?: string | null;
 }
 
 export interface UpdateOrgInput {
@@ -2930,6 +2936,9 @@ export interface UpdateOrgInput {
   slug?: string;
   status?: string;
   deployment_mode?: string;
+  mission?: string | null;
+  domains_json?: string;
+  blueprint_json?: string | null;
 }
 
 export interface TeamRecord {
@@ -3531,6 +3540,21 @@ function normalizeJsonObjectString(value: unknown): string {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? JSON.stringify(parsed) : '{}';
   } catch {
     return '{}';
+  }
+}
+
+function normalizeJsonArrayString(value: unknown): string {
+  if (Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return '[]';
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? JSON.stringify(parsed) : '[]';
+  } catch {
+    return '[]';
   }
 }
 
@@ -5010,6 +5034,9 @@ function bootstrap(db: Database.Database): void {
       slug TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL DEFAULT 'active',
       deployment_mode TEXT NOT NULL DEFAULT 'saas',
+      mission TEXT,
+      domains_json TEXT NOT NULL DEFAULT '[]',
+      blueprint_json TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -5855,9 +5882,21 @@ function ensureTaskSchema(db: Database.Database): void {
 }
 
 function ensureWorkspaceScopeSchema(db: Database.Database): void {
+  if (!hasColumn(db, 'orgs', 'mission')) {
+    db.exec('ALTER TABLE orgs ADD COLUMN mission TEXT');
+  }
+
+  if (!hasColumn(db, 'orgs', 'domains_json')) {
+    db.exec("ALTER TABLE orgs ADD COLUMN domains_json TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  if (!hasColumn(db, 'orgs', 'blueprint_json')) {
+    db.exec('ALTER TABLE orgs ADD COLUMN blueprint_json TEXT');
+  }
+
   db.prepare(`
-    INSERT OR IGNORE INTO orgs (id, name, slug, status, deployment_mode)
-    VALUES (?, ?, ?, 'active', 'saas')
+    INSERT OR IGNORE INTO orgs (id, name, slug, status, deployment_mode, domains_json)
+    VALUES (?, ?, ?, 'active', 'saas', '[]')
   `).run(DEFAULT_WORKSPACE_ORG_ID, 'Default Workspace', 'default');
 
   db.prepare(`
@@ -7795,6 +7834,9 @@ function mapOrgRow(row: Record<string, unknown>): OrgRecord {
     slug: String(row.slug ?? ''),
     status: String(row.status ?? 'active'),
     deployment_mode: String(row.deployment_mode ?? 'saas'),
+    mission: normalizeBlockerReason(row.mission),
+    domains_json: normalizeJsonArrayString(row.domains_json),
+    blueprint_json: normalizeBlockerReason(row.blueprint_json),
     created_at: normalizeTimestamp(String(row.created_at ?? '')),
     updated_at: normalizeTimestamp(String(row.updated_at ?? row.created_at ?? '')),
   };
@@ -9439,14 +9481,17 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
       slug,
       status,
       deployment_mode,
+      mission,
+      domains_json,
+      blueprint_json,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const getOrgStmt = db.prepare('SELECT * FROM orgs WHERE id = ?');
   const updateOrgStmt = db.prepare(`
     UPDATE orgs
-    SET name = ?, slug = ?, status = ?, deployment_mode = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, slug = ?, status = ?, deployment_mode = ?, mission = ?, domains_json = ?, blueprint_json = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
   const listTeamsStmt = db.prepare(`
@@ -9566,7 +9611,10 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
         name,
         normalizeSlug(input.slug, name),
         normalizeBlockerReason(input.status) ?? 'active',
-        normalizeBlockerReason(input.deployment_mode) ?? 'saas'
+        normalizeBlockerReason(input.deployment_mode) ?? 'saas',
+        normalizeBlockerReason(input.mission),
+        normalizeJsonArrayString(input.domains_json),
+        normalizeBlockerReason(input.blueprint_json)
       );
       const row = getOrgStmt.get(id) as Record<string, unknown> | undefined;
       if (!row) {
@@ -9593,6 +9641,9 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
         typeof updates.slug === 'string' ? normalizeSlug(updates.slug, name) : current.slug,
         normalizeBlockerReason(updates.status) ?? current.status,
         normalizeBlockerReason(updates.deployment_mode) ?? current.deployment_mode,
+        typeof updates.mission === 'undefined' ? current.mission : normalizeBlockerReason(updates.mission),
+        typeof updates.domains_json === 'undefined' ? current.domains_json : normalizeJsonArrayString(updates.domains_json),
+        typeof updates.blueprint_json === 'undefined' ? current.blueprint_json : normalizeBlockerReason(updates.blueprint_json),
         id
       );
       const row = getOrgStmt.get(id) as Record<string, unknown> | undefined;

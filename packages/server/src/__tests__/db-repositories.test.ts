@@ -3363,10 +3363,33 @@ describe('Strategic Repository (Roadmaps, Projects, History)', () => {
 
     const defaultOrg = workspaceRepo.listOrgs().find((org) => org.id === dbMod.DEFAULT_WORKSPACE_ORG_ID);
     expect(defaultOrg?.name).toBe('Default Workspace');
+    expect(defaultOrg).toMatchObject({
+      mission: null,
+      domains_json: '[]',
+      blueprint_json: null,
+    });
     expect(workspaceRepo.listTeams({ orgId: dbMod.DEFAULT_WORKSPACE_ORG_ID })[0]?.id)
       .toBe(dbMod.DEFAULT_WORKSPACE_TEAM_ID);
 
-    const orgA = workspaceRepo.createOrg({ id: 'org-a', name: 'Org A' });
+    const orgA = workspaceRepo.createOrg({
+      id: 'org-a',
+      name: 'Org A',
+      mission: 'Coordinate Curacel-shaped teams.',
+      domains_json: JSON.stringify(['product', 'finance']),
+    });
+    expect(orgA).toMatchObject({
+      mission: 'Coordinate Curacel-shaped teams.',
+      domains_json: JSON.stringify(['product', 'finance']),
+      blueprint_json: null,
+    });
+    const updatedOrgA = workspaceRepo.updateOrg(orgA.id, {
+      blueprint_json: JSON.stringify({ schemaVersion: 1, domains: ['product', 'finance'] }),
+    });
+    expect(updatedOrgA).toMatchObject({
+      mission: 'Coordinate Curacel-shaped teams.',
+      domains_json: JSON.stringify(['product', 'finance']),
+      blueprint_json: JSON.stringify({ schemaVersion: 1, domains: ['product', 'finance'] }),
+    });
     const orgB = workspaceRepo.createOrg({ id: 'org-b', name: 'Org B' });
     const teamA = workspaceRepo.createTeam({ orgId: orgA.id }, { id: 'team-a', name: 'Team A' });
     const teamB = workspaceRepo.createTeam({ orgId: orgB.id }, { id: 'team-b', name: 'Team B' });
