@@ -70,6 +70,8 @@ export interface TaskBoardTask {
   updated_at: string;
   metadata: string | null;
   worktype: string | null;
+  work_domain?: string | null;
+  work_domain_state?: string | null;
   policy_inputs_json: string | null;
   review_required?: boolean;
   review_state?: string | null;
@@ -522,6 +524,8 @@ function normalizeTask(raw: unknown): TaskBoardTask | null {
     updated_at: toTimestamp(row.updated_at ?? row.created_at),
     metadata,
     worktype: normalizeOptionalString(row.worktype ?? metadataRecord?.worktype),
+    work_domain: normalizeOptionalString(row.work_domain ?? row.workDomain),
+    work_domain_state: normalizeOptionalString(row.work_domain_state ?? row.workDomainState),
     policy_inputs_json: typeof row.policy_inputs_json === 'string' ? row.policy_inputs_json : null,
     review_required: normalizeBlocked(row.review_required ?? row.reviewRequired ?? metadataRecord?.review_required),
     review_state: normalizeOptionalString(row.review_state ?? row.reviewState ?? metadataRecord?.review_state),

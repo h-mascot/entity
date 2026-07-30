@@ -1269,7 +1269,13 @@ export default function MobileView(props: any) {
                 {activeTaskSubViewPlugin ? (
                   <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
                 ) : mcBoardTab === 'engineering' ? (
-                  <MCEngineeringEntry />
+                  <MCEngineeringEntry
+                    viewport="mobile"
+                    apiBase={runtime.mcOrigin}
+                    highlightTaskId={highlightTaskId}
+                    onCloseTask={handleCloseTaskDetail}
+                    onDocsLinkNavigate={handleTaskOutputDocsNavigation}
+                  />
                 ) : (
                   <>
                 <div className="flex gap-2 overflow-x-auto px-5 pb-3">

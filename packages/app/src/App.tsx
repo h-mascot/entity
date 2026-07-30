@@ -5237,7 +5237,16 @@ export default function App() {
           {activeTaskSubViewPlugin ? (
             <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
           ) : mcBoardTab === 'engineering' ? (
-            <MCEngineeringEntry />
+            <MCEngineeringEntry
+              viewport={viewport}
+              apiBase={runtime.mcOrigin}
+              searchQuery={taskSearchQuery}
+              highlightTaskId={highlightTaskId}
+              onCloseTask={handleCloseTaskDetail}
+              onDocsLinkNavigate={handleTaskOutputDocsNavigation}
+              showArchiveColumn={showArchiveColumn}
+              onArchiveColumnVisibilityChange={setShowArchiveColumn}
+            />
           ) : mcBoardTab === 'strategic' ? (
             <LazyMCStrategicView />
           ) : (
