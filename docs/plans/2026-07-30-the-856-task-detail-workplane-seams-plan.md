@@ -1,7 +1,7 @@
 # THE-856 / WP1-A-01 — TaskDetailPanel Workplane seams characterization
 
 **Created:** 2026-07-30
-**Status:** complete locally pending Linear/book-review closeout
+**Status:** Done — CHARACTERIZED, reviewed, Linear reconciled
 **Worktree:** `/Users/enterprise/Code/entity-the-856-wp1-a-01`
 
 ## Plan
@@ -12,10 +12,10 @@
 - [x] Wire TaskDetailPanel to imported seams (no Workplane route)
 - [x] Add colocated success + degraded tests
 - [x] Write characterization inventory doc
-- [ ] Focused app tests + app build
-- [ ] Proof receipts under remaining-roadmap-runner/receipts/proof/WP1-A-01/
-- [ ] Book-review + verify + Linear Done
-- [ ] Update runner status/run-state/manager-state
+- [x] Focused app tests + app build
+- [x] Proof receipts under remaining-roadmap-runner/receipts/proof/WP1-A-01/
+- [x] Book-review + verify + Linear Done
+- [x] Update runner status/run-state/manager-state
 
 ## Files touched
 
