@@ -173,7 +173,7 @@ function normalizeEngineeringTask(raw: unknown): TaskBoardTask | null {
     projects,
     blocked: row.blocked === true || row.blocked === 1,
     blocker_reason: optionalString(row.blocker_reason),
-    due_at: optionalString(row.due_at),
+    due_at: optionalString(row.due_at ?? row.due_date),
     recurring: row.recurring === true || row.recurring === 1,
     progress_status: optionalString(row.progress_status),
     created_at: createdAt,

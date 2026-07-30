@@ -3,6 +3,7 @@ import {
   buildTaskProjectLabel,
   deriveTaskWorkDomain,
   diffTaskProjectIds,
+  orderTaskProjectIdsWithPrimary,
   parseTaskProjectNames,
   syncTaskProjectAssignments,
   taskHasProjectName,
@@ -187,5 +188,24 @@ describe('task project helpers', () => {
       'add:42:3',
       'add:42:4',
     ]);
+  });
+
+  it('preserves the primary project ahead of alphabetically ordered secondary projects', () => {
+    expect(
+      orderTaskProjectIdsWithPrimary({
+        project_id: 9,
+        projects: [
+          { id: 3, name: 'Alpha' },
+          { id: 9, name: 'Zulu primary' },
+          { id: 5, name: 'Bravo' },
+        ],
+      }),
+    ).toEqual([9, 3, 5]);
+    expect(
+      orderTaskProjectIdsWithPrimary({
+        project_id: null,
+        projects: [{ id: 3, name: 'Alpha' }],
+      }),
+    ).toEqual([3]);
   });
 });

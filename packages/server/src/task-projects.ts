@@ -35,6 +35,21 @@ export interface TaskProjectDiff {
   toRemove: number[];
 }
 
+export function orderTaskProjectIdsWithPrimary(task: TaskProjectSummary): number[] {
+  const projectIds = (task.projects ?? []).map((project) => project.id);
+  const primaryProjectId =
+    Number.isInteger(task.project_id) && Number(task.project_id) > 0
+      ? Number(task.project_id)
+      : null;
+  if (primaryProjectId === null || !projectIds.includes(primaryProjectId)) {
+    return projectIds;
+  }
+  return [
+    primaryProjectId,
+    ...projectIds.filter((projectId) => projectId !== primaryProjectId),
+  ];
+}
+
 export function diffTaskProjectIds(currentIds: readonly number[], nextIds: readonly number[]): TaskProjectDiff {
   const current = new Set(currentIds);
   const next = new Set(nextIds);

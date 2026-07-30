@@ -23,6 +23,7 @@ test('normalizes Engineering tasks and fails closed for other or unresolved doma
         id: 101,
         name: 'Ship Engineering board',
         column: 'doing',
+            due_date: '2026-08-15',
         work_domain: 'engineering',
         work_domain_state: 'resolved',
       },
@@ -59,6 +60,7 @@ test('normalizes Engineering tasks and fails closed for other or unresolved doma
   assert.equal(tasks.length, 1);
   assert.equal(tasks[0]?.id, 101);
   assert.equal(tasks[0]?.name, 'Ship Engineering board');
+  assert.equal(tasks[0]?.due_at, '2026-08-15');
   assert.equal(tasks[0]?.work_domain, 'engineering');
   assert.equal(tasks[0]?.work_domain_state, 'resolved');
 });

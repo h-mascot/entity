@@ -344,6 +344,92 @@ describe('work-domain project migration', () => {
     });
   });
 
+  it('atomically maintains the primary project while replacing and removing task projects', async () => {
+    useTestDatabase();
+    const dbModule = await import('./index');
+    const repository = dbModule.createWorkspaceScopeRepository();
+    const scope = {
+      orgId: dbModule.DEFAULT_WORKSPACE_ORG_ID,
+      teamId: dbModule.DEFAULT_WORKSPACE_TEAM_ID,
+    };
+    const engineeringProject = repository.createProject(scope, {
+      name: 'Primary Engineering',
+      project_key: 'primary-engineering',
+      work_domain: 'engineering',
+    });
+    const generalProject = repository.createProject(scope, {
+      name: 'Primary General',
+      project_key: 'primary-general',
+      work_domain: 'general',
+    });
+    const tasks = dbModule.createOrgScopedTaskRepository(scope);
+    const task = tasks.createTask({ name: 'Replace project integration' });
+
+    dbModule.replaceTaskProjects(task.id, [engineeringProject.id, generalProject.id]);
+    expect(tasks.getTask(task.id)).toMatchObject({
+      project_id: engineeringProject.id,
+      project: 'Primary Engineering, Primary General',
+    });
+
+    dbModule.replaceTaskProjects(task.id, [generalProject.id]);
+    expect(tasks.getTask(task.id)).toMatchObject({
+      project_id: generalProject.id,
+      project: 'Primary General',
+    });
+
+    dbModule.replaceTaskProjects(task.id, []);
+    expect(tasks.getTask(task.id)).toMatchObject({
+      project_id: null,
+      project: 'General',
+      projects: [],
+    });
+  });
+
+  it('rolls back task create and update when project assignment fails scope validation', async () => {
+    useTestDatabase();
+    const dbModule = await import('./index');
+    const workspace = dbModule.createWorkspaceScopeRepository();
+    const org = workspace.createOrg({ id: 'atomic-project-org', name: 'Atomic project org' });
+    const teamA = workspace.createTeam({ orgId: org.id }, { name: 'Atomic team A' });
+    const teamB = workspace.createTeam({ orgId: org.id }, { name: 'Atomic team B' });
+    const scopeA = { orgId: org.id, teamId: teamA.id };
+    const scopeB = { orgId: org.id, teamId: teamB.id };
+    const foreignProject = workspace.createProject(scopeB, {
+      name: 'Foreign project',
+      project_key: 'foreign-project',
+      work_domain: 'engineering',
+    });
+
+    expect(() =>
+      dbModule.createTaskWithProjects({
+        org_id: scopeA.orgId,
+        team_id: scopeA.teamId,
+        name: 'Must roll back',
+        projectIds: [foreignProject.id],
+      }),
+    ).toThrow('projects must belong to the task org and team');
+    expect(
+      dbModule
+        .createOrgScopedTaskRepository(scopeA)
+        .listTasks()
+        .some((task) => task.name === 'Must roll back'),
+    ).toBe(false);
+
+    const tasks = dbModule.createOrgScopedTaskRepository(scopeA);
+    const retained = tasks.createTask({ name: 'Original name' });
+    expect(() =>
+      dbModule.updateTaskWithProjects(retained.id, {
+        name: 'Must not persist',
+        projectIds: [foreignProject.id],
+      }),
+    ).toThrow('projects must belong to the task org and team');
+    expect(tasks.getTask(retained.id)).toMatchObject({
+      name: 'Original name',
+      project_id: null,
+      projects: [],
+    });
+  });
+
   it('preserves classification through the legacy local project create and list path', async () => {
     useTestDatabase();
     const dbModule = await import('./index');

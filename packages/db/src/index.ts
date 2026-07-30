@@ -400,6 +400,7 @@ export interface CreateTaskInput {
   org_id?: string;
   team_id?: string;
   project_id?: number | null;
+  projectIds?: number[];
   created_by_principal_id?: string;
   initiator_principal_id?: string;
   initiator_type?: string;
@@ -575,6 +576,7 @@ export interface UpdateTaskInput {
   org_id?: string;
   team_id?: string;
   project_id?: number | null;
+  projectIds?: number[];
   created_by_principal_id?: string;
   initiator_principal_id?: string;
   initiator_type?: string;
@@ -619,7 +621,12 @@ export interface TaskRepository {
   listSubtasks: (parentTaskId: number) => TaskRecord[];
   getTask: (id: number) => TaskRecord | undefined;
   createTask: (input: CreateTaskInput) => TaskRecord;
+  createTaskWithProjects?: (input: CreateTaskInput) => TaskRecord;
   updateTask: (id: number, updates: UpdateTaskInput) => TaskRecord | undefined;
+  updateTaskWithProjects?: (
+    id: number,
+    updates: UpdateTaskInput,
+  ) => TaskRecord | undefined;
   claimTaskForTaskMaster: (id: number, input?: ClaimTaskForTaskMasterInput) => TaskMasterClaimResult;
   moveTask: (id: number, nextColumn: string) => TaskRecord | undefined;
   deleteTask: (id: number) => boolean;
@@ -10488,6 +10495,9 @@ function createStrategicRepository(): StrategicRepository {
   const insertTaskProjectLinkStmt = db.prepare(
     'INSERT INTO task_projects (task_id, org_id, project_id) VALUES (?, ?, ?)',
   );
+  const updateTaskPrimaryProjectStmt = db.prepare(
+    'UPDATE tasks SET project_id = ? WHERE id = ?',
+  );
   const replaceTaskProjectsTx = db.transaction((taskId: number, projectIds: readonly number[]) => {
     const task = getTaskProjectScopeStmt.get(taskId) as
       | { org_id: string; team_id: string }
@@ -10522,6 +10532,7 @@ function createStrategicRepository(): StrategicRepository {
       .map((projectId) => projectsById.get(projectId))
       .filter((project): project is ProjectRecord => Boolean(project));
     const label = orderedProjects.map((project) => project.name).join(', ') || 'General';
+    updateTaskPrimaryProjectStmt.run(projectIds[0] ?? null, taskId);
     updateTaskProjectLabelStmt.run(label, taskId);
     return orderedProjects;
   });
@@ -11013,6 +11024,38 @@ export function addTaskProject(taskId: number, projectId: number): boolean {
 
 export function removeTaskProject(taskId: number, projectId: number): boolean {
   return getStrategicRepository().removeTaskProject(taskId, projectId);
+}
+
+export function createTaskWithProjects(
+  input: CreateTaskInput,
+  taskRepository: TaskRepository = createTaskRepository(),
+): TaskRecord {
+  const db = getEntityDatabase();
+  return db.transaction(() => {
+    const task = taskRepository.createTask(input);
+    if (input.projectIds !== undefined) {
+      replaceTaskProjects(task.id, input.projectIds);
+    }
+    return taskRepository.getTask(task.id) ?? task;
+  })();
+}
+
+export function updateTaskWithProjects(
+  taskId: number,
+  updates: UpdateTaskInput,
+  taskRepository: TaskRepository = createTaskRepository(),
+): TaskRecord | undefined {
+  const db = getEntityDatabase();
+  return db.transaction(() => {
+    const task = taskRepository.updateTask(taskId, updates);
+    if (!task) {
+      return undefined;
+    }
+    if (updates.projectIds !== undefined) {
+      replaceTaskProjects(task.id, updates.projectIds);
+    }
+    return taskRepository.getTask(task.id) ?? task;
+  })();
 }
 
 export function replaceTaskProjects(taskId: number, projectIds: readonly number[]): ProjectRecord[] {
