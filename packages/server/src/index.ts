@@ -139,6 +139,7 @@ import {
 import { registerAgentControlRoutes, registerAgentRegistryRoutes } from "./routes/agents";
 import { registerActivityRoutes, registerDbModeRoutes, registerRuntimeRoutes } from "./routes/runtime";
 import { registerDocIntelligenceRoutes } from "./routes/doc-intelligence";
+import { createBusinessOnboardingRouter, createTaskSyncLayerRepoFactory } from "./routes/business-onboarding";
 import { registerOperationalStatusRoutes } from "./routes/operational-status";
 import { registerSetupClawLeadRoutes } from "./routes/setupclaw";
 import { createActivityLogger } from "./routes/activity-log";
@@ -273,7 +274,13 @@ const moduleRegistryRepo = createModuleRegistryRepository();
 const workspaceRepo = createWorkspaceScopeRepository();
 const documentObjectRepository = createDocumentObjectRepository();
 const evidenceArtifactRepository = createEvidenceArtifactRepository();
+const taskSyncLayer = createTaskSyncLayer();
 app.use("/api", createWorkspaceRouter({ workspaceRepo }));
+app.use("/api", createBusinessOnboardingRouter({
+  workspaceRepo,
+  agentRegistryRepo,
+  taskRepoFactory: createTaskSyncLayerRepoFactory(taskSyncLayer),
+}));
 app.use("/api", createAgentRegistryRouter({ agentRegistryRepo, moduleRegistryRepo }));
 app.use("/api/document-objects", createDocumentObjectRouter({
   documentRepo: documentObjectRepository,
@@ -315,7 +322,6 @@ function broadcast(data: unknown) {
   });
 }
 
-const taskSyncLayer = createTaskSyncLayer();
 const activityRepository = createActivityRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();

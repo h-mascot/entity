@@ -118,6 +118,7 @@ const FileHistoryPanel = lazy(() => import('./components/FileHistoryPanel'));
 const ActivityStream = lazy(() => import('./components/ActivityStream'));
 const BottomTerminalPanel = lazy(() => import('./components/BottomTerminalPanel'));
 const OnboardingFlow = lazy(() => import('./components/OnboardingFlow'));
+const BusinessOnboardingFlow = lazy(() => import('./components/BusinessOnboardingFlow'));
 const PluginSubViewSlot = lazy(() => import('./components/plugins/PluginSubViewSlot'));
 const PluginTopLevelSlot = lazy(() => import('./components/plugins/PluginTopLevelSlot'));
 const MCStrategicView = lazy(() => import('./components/mission-control/MCStrategicView'));
@@ -140,6 +141,7 @@ const MC_SHOW_ARCHIVE_KEY = 'mc_showArchive';
 const THEME_KEY = 'entity.theme.v1';
 const DEFAULT_LOGIN_PASSWORD = 'mission';
 const ENTERPRISE_ADMIN_URL = '';
+const BUSINESS_ONBOARDING_ROUTE = '/onboarding/business';
 
 type DocumentsAuthOrigin = 'dev-runtime' | 'user';
 type DocumentsAuth = DocumentsClientAuth & { origin?: DocumentsAuthOrigin };
@@ -207,6 +209,14 @@ function LazyOnboardingFlow(props: ComponentProps<typeof OnboardingFlow>) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading onboarding" />}>
       <OnboardingFlow {...props} />
+    </Suspense>
+  );
+}
+
+function LazyBusinessOnboardingFlow(props: ComponentProps<typeof BusinessOnboardingFlow>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading business onboarding" />}>
+      <BusinessOnboardingFlow {...props} />
     </Suspense>
   );
 }
@@ -1062,6 +1072,15 @@ function persistAuthSession(session: AuthSession | null) {
   window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
 }
 
+function replaceBrowserPath(path: string, state: unknown = null): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.history.replaceState(state, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate', { state }));
+}
+
 function readDocumentsAuth(): DocumentsAuth | null {
   if (typeof window === 'undefined') {
     return null;
@@ -1743,6 +1762,7 @@ export default function App() {
   const [enterpriseFrameTimedOut, setEnterpriseFrameTimedOut] = useState(false);
   const [appTheme, setAppTheme] = useState<AppTheme>(() => readThemePreference());
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
+  const [, refreshBrowserRoute] = useState(0);
   const initialDocumentShellCollapseState = getDocumentShellCollapseState(currentFileKey);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(initialDocumentShellCollapseState.left);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(initialDocumentShellCollapseState.right);
@@ -1788,6 +1808,10 @@ export default function App() {
   } = useFileSources({ apiBase: runtime.apiBase, enabled: runtime.fsMultiSourceEnabled });
   const { label: syncStatusLabel, refreshStatus } = useSyncStatus({ apiBase: runtime.apiBase });
   const loginLocked = loginGateArmedOnLoad && loginRequired && !authSession;
+  const leaveBusinessOnboarding = useCallback(() => {
+    replaceBrowserPath('/', { mode: 'app' });
+    refreshBrowserRoute((version) => version + 1);
+  }, []);
   const presenceStatusRef = useRef<Record<string, Record<string, string>>>({});
   const currentDocIdRef = useRef<string | null>(null);
   const documentsReadyRef = useRef(false);
@@ -5531,7 +5555,39 @@ export default function App() {
 
   const onboardingToken = typeof window !== 'undefined' ? window.location.pathname.match(/^\/onboard\/agent\/([^/]+)$/)?.[1] ?? null : null;
   const onboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === '/onboarding';
+  const businessOnboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === BUSINESS_ONBOARDING_ROUTE;
   const shouldShowOnboarding = Boolean(onboardingToken) || onboardingRouteActive || onboardingCompleted === false;
+
+  if (businessOnboardingRouteActive) {
+    if (onboardingCompleted === null) {
+      return <LazySurfaceFallback label="Checking onboarding gate" />;
+    }
+
+    if (onboardingCompleted === false) {
+      return (
+        <LazyOnboardingFlow
+          apiBase={runtime.apiBase}
+          routeToken={null}
+          userProfile={userProfile}
+          appTheme={appTheme}
+          onThemeChange={setAppTheme}
+          onProfileSave={saveUserProfile}
+          onComplete={() => {
+            setOnboardingCompleted(true);
+            replaceBrowserPath(BUSINESS_ONBOARDING_ROUTE);
+          }}
+        />
+      );
+    }
+
+    return (
+      <LazyBusinessOnboardingFlow
+        apiBase={runtime.apiBase}
+        onBackToWorkspace={leaveBusinessOnboarding}
+        onComplete={leaveBusinessOnboarding}
+      />
+    );
+  }
 
   if (shouldShowOnboarding) {
     return (
@@ -5545,7 +5601,7 @@ export default function App() {
         onComplete={() => {
           setOnboardingCompleted(true);
           if (typeof window !== 'undefined' && (window.location.pathname === '/onboarding' || onboardingToken)) {
-            window.history.replaceState(null, '', '/');
+            replaceBrowserPath(BUSINESS_ONBOARDING_ROUTE);
           }
         }}
       />

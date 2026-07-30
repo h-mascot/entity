@@ -126,6 +126,9 @@ function parseCreateOrg(body: Record<string, unknown>): CreateOrgInput {
     slug: optionalBodyString(body, 'slug'),
     status: optionalBodyString(body, 'status'),
     deployment_mode: optionalBodyString(body, 'deployment_mode') ?? optionalBodyString(body, 'deploymentMode'),
+    mission: optionalBodyString(body, 'mission'),
+    domains_json: optionalBodyString(body, 'domains_json') ?? optionalBodyString(body, 'domainsJson'),
+    blueprint_json: optionalBodyString(body, 'blueprint_json') ?? optionalBodyString(body, 'blueprintJson'),
   };
 }
 
@@ -135,6 +138,9 @@ function parseUpdateOrg(body: Record<string, unknown>): UpdateOrgInput {
     slug: optionalBodyString(body, 'slug'),
     status: optionalBodyString(body, 'status'),
     deployment_mode: optionalBodyString(body, 'deployment_mode') ?? optionalBodyString(body, 'deploymentMode'),
+    mission: optionalBodyString(body, 'mission'),
+    domains_json: optionalBodyString(body, 'domains_json') ?? optionalBodyString(body, 'domainsJson'),
+    blueprint_json: optionalBodyString(body, 'blueprint_json') ?? optionalBodyString(body, 'blueprintJson'),
   };
 }
 
