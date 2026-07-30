@@ -42,6 +42,7 @@ test('resolveWorkplaneShellModel restores ready state from URL', () => {
   assert.equal(model.returnContext.taskId, 42);
   assert.equal(model.returnContext.path, '/task/42');
   assert.equal(model.returnContext.href, '/task/42');
+  assert.match(model.returnContext.label, /task detail/i);
   assert.equal(model.invalidReason, null);
   assert.equal(
     model.serializedHref,
@@ -103,11 +104,20 @@ test('return context presence and href wiring for board/tasks surfaces', () => {
   assert.equal(board.returnContext.present, true);
   assert.equal(board.returnContext.surface, 'board');
   assert.equal(board.returnContext.board, 'entity-engineering');
-  assert.equal(board.returnContext.href, '/tasks');
+  assert.equal(board.returnContext.boardTab, 'engineering');
+  assert.equal(board.returnContext.href, '/?tab=tasks');
+  assert.match(board.returnContext.label, /board/i);
 
   const tasks = resolveWorkplaneShellModel('/workplane/3', '?return=tasks');
   assert.equal(tasks.returnContext.present, true);
-  assert.equal(tasks.returnContext.href, '/tasks');
+  assert.equal(tasks.returnContext.href, '/?tab=tasks');
+});
+
+test('ready shell always exposes fallback return href when return context absent', () => {
+  const omitted = resolveWorkplaneShellModel('/workplane/7');
+  assert.equal(omitted.returnContext.present, false);
+  assert.equal(omitted.returnContext.href, '/task/7');
+  assert.match(omitted.returnContext.label, /task detail/i);
 });
 
 test('panel/proof href builders serialize via THE-857 contract', () => {
@@ -148,18 +158,21 @@ test('WorkplaneShell renders ready route with restored URL state', () => {
   assert.match(html, /data-testid="workplane-selected-proof"/);
   assert.match(html, /data-testid="workplane-return"/);
   assert.match(html, /data-return-surface="detail"/);
+  assert.match(html, /data-return-href="\/task\/42"/);
+  assert.match(html, /Return to task detail/);
   assert.match(html, /data-testid="workplane-panel-tab-files_docs"/);
   assert.match(html, /aria-current="page"/);
   assert.match(html, /Placeholder/);
 });
 
-test('WorkplaneShell renders invalid/default degraded states', () => {
+test('WorkplaneShell renders invalid/default degraded states with return action', () => {
   const invalid = renderToStaticMarkup(
     createElement(WorkplaneShell, { pathname: '/workplane/abc' }),
   );
   assert.match(invalid, /data-workplane-status="invalid_route"/);
   assert.match(invalid, /data-testid="workplane-invalid"/);
   assert.match(invalid, /Workplane unavailable/);
+  assert.match(invalid, /data-testid="workplane-return"/);
 
   const defaults = renderToStaticMarkup(
     createElement(WorkplaneShell, { pathname: '/workplane/5' }),
@@ -167,8 +180,11 @@ test('WorkplaneShell renders invalid/default degraded states', () => {
   assert.match(defaults, /data-workplane-status="ready"/);
   assert.match(defaults, /data-workplane-active-panel="task_summary"/);
   assert.match(defaults, /data-testid="workplane-selected-proof-empty"/);
-  assert.match(defaults, /data-testid="workplane-return-absent"/);
   assert.match(defaults, /data-workplane-return-present="false"/);
+  // THE-860: always expose return control (fallback to task detail).
+  assert.match(defaults, /data-testid="workplane-return"/);
+  assert.match(defaults, /data-return-href="\/task\/5"/);
+  assert.match(defaults, /Return to task detail/);
 });
 
 test('WorkplaneShell panel click serializes URL via onNavigate', () => {

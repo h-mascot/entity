@@ -72,6 +72,8 @@ interface TaskDetailPanelProps {
   apiBase?: string;
   onClose: () => void;
   onDocsLinkNavigate?: (href: string) => boolean;
+  /** THE-860 — Mission Control board/tab to preserve in Workplane return context. */
+  returnBoard?: string | null;
 }
 
 interface TaskDependency {
@@ -1713,7 +1715,13 @@ function findDependencyName(dependency: TaskDependency, boardTasks: TaskBoardTas
   return match?.name ?? `Task #${dependency.id}`;
 }
 
-export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsLinkNavigate }: TaskDetailPanelProps) {
+export default function TaskDetailPanel({
+  taskId,
+  apiBase = '',
+  onClose,
+  onDocsLinkNavigate,
+  returnBoard = null,
+}: TaskDetailPanelProps) {
   const [userProfile] = useUserProfile();
   const [activeAgentNames, setActiveAgentNames] = useState<string[]>([]);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -2899,14 +2907,16 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
   );
 
   // THE-859 / WP1-A-04 — Open Workplane deep link with return context from detail.
+  // THE-860 / WP1-A-05 — include returnBoard when Mission Control board context is known.
   const openWorkplaneHref = useMemo(
     () =>
       buildOpenWorkplaneHref({
         taskId,
         currentPathname:
           typeof window !== 'undefined' ? window.location.pathname : `/task/${taskId}`,
+        returnBoard,
       }),
-    [taskId],
+    [taskId, returnBoard],
   );
 
   const handleOpenWorkplane = (event: ReactMouseEvent<HTMLAnchorElement>) => {

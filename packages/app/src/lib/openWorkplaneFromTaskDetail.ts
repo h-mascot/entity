@@ -1,11 +1,16 @@
 /**
  * THE-859 / WP1-A-04 — Open Workplane action helpers from task detail.
+ * THE-860 / WP1-A-05 — Stash returnHref on history state for history.back().
  *
  * Builds a THE-857 deep link with return context derived from the current
- * task-detail surface. Full return-to-board restoration remains THE-860.
+ * task-detail / board surface.
  */
 
 import {
+  resolveWorkplaneReturnDestination,
+} from './workplaneReturnNavigation.ts';
+import {
+  parseWorkplaneUrlState,
   serializeWorkplaneUrlState,
   type WorkplaneReturnContext,
   type WorkplaneReturnSurface,
@@ -36,6 +41,13 @@ function resolveReturnSurface(
     return { surface: 'detail', path: detailPath };
   }
   if (pathname === '/tasks' || pathname.startsWith('/tasks/')) {
+    return {
+      surface: returnBoard?.trim() ? 'board' : 'tasks',
+      path: '/tasks',
+    };
+  }
+  // Root tasks tab (/?tab=tasks) counts as board/list origin when present.
+  if (pathname === '/' || pathname === '') {
     return {
       surface: returnBoard?.trim() ? 'board' : 'tasks',
       path: '/tasks',
@@ -95,19 +107,32 @@ export function buildOpenWorkplaneHref(input: OpenWorkplaneFromTaskDetailInput):
 /**
  * Navigate into a Workplane deep link.
  * Uses history + popstate so App can mount WorkplaneShell without a full reload.
+ * Stashes returnHref on history state so THE-860 can prefer history.back().
  */
 export function navigateToWorkplane(
   href: string,
-  navigate?: (href: string, options?: { replace?: boolean }) => void,
+  navigate?: (href: string, options?: { replace?: boolean; state?: unknown }) => void,
 ): void {
+  const url = new URL(href, 'https://entity.local');
+  const parsed = parseWorkplaneUrlState(url.pathname, url.search);
+  const destination = resolveWorkplaneReturnDestination(parsed?.returnContext ?? null, {
+    taskId: parsed?.taskId ?? null,
+  });
+  const state = {
+    mode: 'workplane' as const,
+    returnHref: destination.href,
+    returnSurface: destination.surface,
+    returnBoard: destination.boardTab,
+  };
+
   if (navigate) {
-    navigate(href, { replace: false });
+    navigate(href, { replace: false, state });
     return;
   }
   if (typeof window === 'undefined') {
     return;
   }
   const nextUrl = new URL(href, window.location.origin);
-  window.history.pushState({ mode: 'workplane' }, '', nextUrl.pathname + nextUrl.search);
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  window.history.pushState(state, '', nextUrl.pathname + nextUrl.search);
+  window.dispatchEvent(new PopStateEvent('popstate', { state }));
 }

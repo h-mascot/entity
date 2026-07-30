@@ -26,6 +26,6 @@ Expose a clear **Open Workplane** action on Mission Control task detail that nav
 
 ## Non-goals honored
 
-- No full return-to-board restoration (THE-860)
+- Full return-to-board restoration deferred to THE-860 (now implemented separately)
 - No Workplane panel body implementations (WP1-B/C)
 - No invented Engineering board data / prod DB mutation

@@ -23,6 +23,8 @@ interface MCEngineeringEntryProps {
   showArchiveColumn?: boolean;
   onArchiveColumnVisibilityChange?: (visible: boolean) => void;
   onCreateTask?: () => void;
+  /** THE-860 — board/tab key preserved into Workplane return context. */
+  returnBoard?: string | null;
 }
 
 export default function MCEngineeringEntry({
@@ -35,6 +37,7 @@ export default function MCEngineeringEntry({
   showArchiveColumn = true,
   onArchiveColumnVisibilityChange,
   onCreateTask,
+  returnBoard = 'engineering',
 }: MCEngineeringEntryProps) {
   const [tasks, setTasks] = useState<TaskBoardTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -190,6 +193,7 @@ export default function MCEngineeringEntry({
           showArchiveColumn={showArchiveColumn}
           onArchiveColumnVisibilityChange={onArchiveColumnVisibilityChange}
           scopeTaskDetailsToTasks
+          returnBoard={returnBoard}
         />
       </div>
     </section>

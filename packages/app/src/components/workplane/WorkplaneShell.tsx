@@ -1,12 +1,13 @@
 /**
  * THE-858 / WP1-A-03 — Minimal Workplane route shell.
+ * THE-860 / WP1-A-05 — Return-to-board/detail navigation (never strand on shell).
  *
  * Parses/serializes THE-857 URL state. Panel bodies are placeholders until WP1-B/C.
- * Open Workplane CTA remains THE-859.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkplanePanelId } from '../mission-control/taskDetailWorkplaneSeams.ts';
+import { navigateWorkplaneReturn } from '../../lib/workplaneReturnNavigation.ts';
 import {
   buildWorkplanePanelHref,
   resolveWorkplaneShellModel,
@@ -18,7 +19,7 @@ export interface WorkplaneShellProps {
   pathname?: string;
   search?: string;
   /** Called when the shell navigates (panel change / return). Defaults to history API. */
-  onNavigate?: (href: string, options?: { replace?: boolean }) => void;
+  onNavigate?: (href: string, options?: { replace?: boolean; state?: unknown }) => void;
 }
 
 function readLocation(pathname?: string, search?: string): { pathname: string; search: string } {
@@ -31,14 +32,15 @@ function readLocation(pathname?: string, search?: string): { pathname: string; s
   return { pathname: window.location.pathname, search: window.location.search };
 }
 
-function defaultNavigate(href: string, options?: { replace?: boolean }): void {
+function defaultNavigate(href: string, options?: { replace?: boolean; state?: unknown }): void {
   if (typeof window === 'undefined') {
     return;
   }
   const nextUrl = new URL(href, window.location.origin);
   const method = options?.replace ? 'replaceState' : 'pushState';
-  window.history[method]({ mode: 'workplane' }, '', nextUrl.pathname + nextUrl.search);
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  const state = options?.state ?? { mode: 'workplane' };
+  window.history[method](state, '', nextUrl.pathname + nextUrl.search);
+  window.dispatchEvent(new PopStateEvent('popstate', { state }));
 }
 
 export default function WorkplaneShell({
@@ -78,7 +80,7 @@ export default function WorkplaneShell({
         return;
       }
       const href = buildWorkplanePanelHref(model.state, panel);
-      navigate(href, { replace: true });
+      navigate(href, { replace: true, state: { mode: 'workplane', returnHref: model.returnContext.href } });
       if (pathnameProp === undefined) {
         setLocation({
           pathname: new URL(href, 'https://entity.local').pathname,
@@ -86,13 +88,17 @@ export default function WorkplaneShell({
         });
       }
     },
-    [model.state, navigate, pathnameProp],
+    [model.state, model.returnContext.href, navigate, pathnameProp],
   );
 
   const handleReturn = useCallback(() => {
-    const href = model.returnContext.href ?? '/tasks';
-    navigate(href, { replace: false });
-  }, [model.returnContext.href, navigate]);
+    navigateWorkplaneReturn({
+      returnContext: model.state?.returnContext ?? null,
+      taskId: model.taskId,
+      navigate,
+      preferHistoryBack: pathnameProp === undefined,
+    });
+  }, [model.state?.returnContext, model.taskId, navigate, pathnameProp]);
 
   if (model.status === 'invalid_route') {
     return (
@@ -104,6 +110,22 @@ export default function WorkplaneShell({
       >
         <header className="flex items-center justify-between border-b border-[var(--border-primary)] px-4 py-3">
           <h1 className="text-sm font-semibold text-[var(--text-primary)]">Workplane</h1>
+          <button
+            type="button"
+            className="mc-shell-btn rounded border border-[var(--border-primary)] px-2 py-1 text-[var(--text-primary)]"
+            data-testid="workplane-return"
+            data-return-surface="fallback"
+            onClick={() =>
+              navigateWorkplaneReturn({
+                returnContext: null,
+                taskId: null,
+                navigate,
+                preferHistoryBack: false,
+              })
+            }
+          >
+            Return to tasks
+          </button>
         </header>
         <main className="flex flex-1 items-center justify-center p-6">
           <div
@@ -130,6 +152,7 @@ export default function WorkplaneShell({
       data-workplane-active-panel={model.activePanel ?? undefined}
       data-workplane-selected-proof={model.selectedProof ?? undefined}
       data-workplane-return-present={model.returnContext.present ? 'true' : 'false'}
+      data-workplane-return-href={model.returnContext.href ?? undefined}
       data-workplane-href={model.serializedHref ?? undefined}
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-primary)] px-4 py-3">
@@ -150,24 +173,23 @@ export default function WorkplaneShell({
           ) : (
             <span data-testid="workplane-selected-proof-empty">No proof selected</span>
           )}
-          {model.returnContext.present ? (
-            <button
-              type="button"
-              className="mc-shell-btn rounded border border-[var(--border-primary)] px-2 py-1 text-[var(--text-primary)]"
-              data-testid="workplane-return"
-              data-return-surface={model.returnContext.surface ?? undefined}
-              data-return-board={model.returnContext.board ?? undefined}
-              data-return-task={
-                model.returnContext.taskId !== null ? String(model.returnContext.taskId) : undefined
-              }
-              data-return-path={model.returnContext.path ?? undefined}
-              onClick={handleReturn}
-            >
-              Return to {model.returnContext.surface}
-            </button>
-          ) : (
-            <span data-testid="workplane-return-absent">No return context</span>
-          )}
+          <button
+            type="button"
+            className="mc-shell-btn rounded border border-[var(--border-primary)] px-2 py-1 text-[var(--text-primary)]"
+            data-testid="workplane-return"
+            data-return-surface={model.returnContext.surface ?? 'fallback'}
+            data-return-board={model.returnContext.board ?? undefined}
+            data-return-board-tab={model.returnContext.boardTab ?? undefined}
+            data-return-task={
+              model.returnContext.taskId !== null ? String(model.returnContext.taskId) : undefined
+            }
+            data-return-path={model.returnContext.path ?? undefined}
+            data-return-href={model.returnContext.href ?? undefined}
+            aria-label={model.returnContext.label}
+            onClick={handleReturn}
+          >
+            {model.returnContext.label}
+          </button>
         </div>
       </header>
 

@@ -2160,6 +2160,12 @@ export default function App() {
       );
       const target = synchronized.target;
       const routeTaskId = extractTaskRouteId(window.location.pathname);
+      const historyRecord =
+        window.history.state && typeof window.history.state === 'object'
+          ? (window.history.state as Record<string, unknown>)
+          : null;
+      const historyBoard =
+        typeof historyRecord?.board === 'string' ? historyRecord.board.trim() : '';
       setActiveDocHubTool(synchronized.activeTool);
       if (target) {
         pendingDeepLinkRestorationRef.current = {
@@ -2175,8 +2181,24 @@ export default function App() {
         setCurrentFile(null);
         setSidebarTab('tasks');
         setMobileTab('tasks');
-        setMcBoardTab('kanban');
+        // THE-860: restore board tab from return navigation history state when present.
+        setMcBoardTab(historyBoard ? normalizeStoredMCBoardTab(historyBoard) : 'kanban');
         setHighlightTaskId(routeTaskId);
+      } else if (
+        window.location.pathname === '/tasks' ||
+        (window.location.pathname === '/' &&
+          new URLSearchParams(window.location.search).get('tab') === 'tasks')
+      ) {
+        // THE-860: board/list return lands on tasks workspace (not Doc Hub).
+        setDocIntelligenceFocus(null);
+        setCurrentSourceId(null);
+        setCurrentFile(null);
+        setSidebarTab('tasks');
+        setMobileTab('tasks');
+        if (historyBoard) {
+          setMcBoardTab(normalizeStoredMCBoardTab(historyBoard));
+        }
+        setHighlightTaskId(null);
       } else {
         if (window.location.pathname === '/docs' || window.location.pathname.startsWith('/docs/')) {
           emitDocHubTelemetry({
@@ -5304,6 +5326,7 @@ export default function App() {
               onDocsLinkNavigate={handleTaskOutputDocsNavigation}
               showArchiveColumn={showArchiveColumn}
               onArchiveColumnVisibilityChange={setShowArchiveColumn}
+              returnBoard="engineering"
             />
           ) : mcBoardTab === 'strategic' ? (
             <LazyMCStrategicView />
@@ -5324,6 +5347,7 @@ export default function App() {
               tasks={filteredBoardTasks}
               loading={tasksLoading}
               error={tasksError}
+              returnBoard={mcBoardTab}
             />
           )}
         </div>

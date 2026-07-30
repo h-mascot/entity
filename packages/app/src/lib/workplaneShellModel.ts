@@ -3,12 +3,16 @@
  *
  * Pure helpers that turn THE-857 URL state into a minimal shell view model.
  * Panel bodies stay placeholders until WP1-B/C. Open Workplane CTA is THE-859.
+ * Return href resolution expanded by THE-860 / WP1-A-05.
  */
 
 import {
   WORKPLANE_PANEL_SEAM_MAP,
   type WorkplanePanelId,
 } from '../components/mission-control/taskDetailWorkplaneSeams.ts';
+import {
+  resolveWorkplaneReturnDestination,
+} from './workplaneReturnNavigation.ts';
 import {
   WORKPLANE_PANEL_IDS,
   WORKPLANE_PATH_PREFIX,
@@ -30,12 +34,14 @@ export interface WorkplanePanelPlaceholder {
 
 export interface WorkplaneShellReturnView {
   present: boolean;
-  surface: WorkplaneReturnContext['surface'] | null;
+  surface: WorkplaneReturnContext['surface'] | 'fallback' | null;
   board: string | null;
+  boardTab: string | null;
   taskId: number | null;
   path: string | null;
-  /** Safe relative path for THE-860 return navigation, when available. */
+  /** App-routable href for return navigation (never null when shell is ready). */
   href: string | null;
+  label: string;
 }
 
 export interface WorkplaneShellModel {
@@ -69,33 +75,20 @@ function panelPlaceholders(): WorkplanePanelPlaceholder[] {
   });
 }
 
-function returnView(context: WorkplaneReturnContext | null): WorkplaneShellReturnView {
-  if (!context) {
-    return {
-      present: false,
-      surface: null,
-      board: null,
-      taskId: null,
-      path: null,
-      href: null,
-    };
-  }
-
-  const href =
-    context.path ??
-    (context.taskId !== undefined
-      ? `/task/${context.taskId}`
-      : context.surface === 'tasks' || context.surface === 'board'
-        ? '/tasks'
-        : null);
-
+function returnView(
+  context: WorkplaneReturnContext | null,
+  taskId?: number | null,
+): WorkplaneShellReturnView {
+  const destination = resolveWorkplaneReturnDestination(context, { taskId });
   return {
-    present: true,
-    surface: context.surface,
-    board: context.board ?? null,
-    taskId: context.taskId ?? null,
-    path: context.path ?? null,
-    href,
+    present: context !== null,
+    surface: destination.surface === 'fallback' && !context ? null : destination.surface,
+    board: context?.board ?? null,
+    boardTab: destination.boardTab,
+    taskId: context?.taskId ?? (typeof taskId === 'number' ? taskId : null),
+    path: context?.path ?? null,
+    href: destination.href,
+    label: destination.label,
   };
 }
 
@@ -159,7 +152,7 @@ export function resolveWorkplaneShellModel(pathname: string, search = ''): Workp
     taskId: state.taskId,
     activePanel: state.activePanel,
     selectedProof: state.selectedProof,
-    returnContext: returnView(state.returnContext),
+    returnContext: returnView(state.returnContext, state.taskId),
     panels,
     serializedHref: serializeWorkplaneUrlState(state),
     invalidReason: null,

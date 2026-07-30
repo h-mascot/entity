@@ -85,14 +85,33 @@ test('buildOpenWorkplaneHref rejects invalid task ids', () => {
 });
 
 test('navigateToWorkplane uses injected navigate when provided', () => {
-  const calls: Array<{ href: string; replace?: boolean }> = [];
+  const calls: Array<{ href: string; replace?: boolean; state?: unknown }> = [];
   navigateToWorkplane('/workplane/1?return=detail&returnTask=1&returnPath=%2Ftask%2F1', (href, options) => {
-    calls.push({ href, replace: options?.replace });
+    calls.push({ href, replace: options?.replace, state: options?.state });
   });
-  assert.deepEqual(calls, [
-    {
-      href: '/workplane/1?return=detail&returnTask=1&returnPath=%2Ftask%2F1',
-      replace: false,
-    },
-  ]);
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0]?.href,
+    '/workplane/1?return=detail&returnTask=1&returnPath=%2Ftask%2F1',
+  );
+  assert.equal(calls[0]?.replace, false);
+  assert.deepEqual(calls[0]?.state, {
+    mode: 'workplane',
+    returnHref: '/task/1',
+    returnSurface: 'detail',
+    returnBoard: null,
+  });
+});
+
+test('buildOpenWorkplaneHref board-origin preserves return-to-board path', () => {
+  const href = buildOpenWorkplaneHref({
+    taskId: 8,
+    currentPathname: '/tasks',
+    returnBoard: 'engineering',
+  });
+  const url = new URL(href, 'https://entity.local');
+  assert.equal(url.pathname, '/workplane/8');
+  assert.equal(url.searchParams.get('return'), 'board');
+  assert.equal(url.searchParams.get('returnBoard'), 'engineering');
+  assert.equal(url.searchParams.get('returnPath'), '/tasks');
 });
