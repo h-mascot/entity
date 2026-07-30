@@ -30,7 +30,7 @@ Non-summary panels remain placeholders (THE-863+).
 
 ## Non-goals honored
 
-- No ProofBundle normalization (THE-863/THE-864)
+- No ProofBundle panel UI (THE-864); normalization lands in THE-863 (`proofBundle.ts`)
 - No files/docs / missing-proof dedicated panels (THE-865/THE-866)
 - No layout lock / mobile smoke (THE-867/THE-868)
 - No invented Engineering board data / no DB schema changes

@@ -48,15 +48,17 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
   proof_bundle: {
     panel: 'Proof bundle',
     sourceSeams: [
+      'proofBundle.normalizeProofBundle',
+      'proofBundle.classifyProofBundleItemKind',
       'extractTaskOutputLinks',
       'normalizeTaskOutputHref',
+      'deriveMissingEvidenceState',
       'buildReceiptProofView',
       'collectReceiptDisplayLinks',
       'receiptStatusTone',
-      'deriveMissingEvidenceState',
     ],
     status: 'reusable_now',
-    notes: 'ReceiptProofView is the nearest ProofBundle precursor; WP1-B-02 should normalize it.',
+    notes: 'THE-863: normalizeProofBundle yields typed raw|curated|external|unknown items for THE-864 panel.',
   },
   files_docs: {
     panel: 'Files/docs',
@@ -428,6 +430,8 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'normalizeReviewDecision',
       'buildReviewDecisionMetadata',
       'WORKPLANE_PANEL_SEAM_MAP',
+      'proofBundle.normalizeProofBundle',
+      'proofBundle.classifyProofBundleItemKind',
     ],
     stillEmbeddedInTaskDetailPanel: [
       'buildReceiptProofView',
@@ -446,7 +450,8 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
     nextIssues: {
       'WP1-A-02': 'Define Workplane URL state from these seams',
       'WP1-A-05': 'Preserve return-to-board/detail navigation from Open Workplane return context',
-      'WP1-B-02': 'Normalize ProofBundle from extractTaskOutputLinks + buildReceiptProofView inputs',
+      'WP1-B-02': 'Normalize ProofBundle via packages/app/src/lib/proofBundle.ts',
+      'WP1-B-03': 'Implement proof bundle panel consuming normalizeProofBundle',
     },
   };
 }
