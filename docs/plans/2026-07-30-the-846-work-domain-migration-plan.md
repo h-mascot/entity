@@ -1,7 +1,5 @@
 # THE-846 / EE-A-03 Work-Domain Migration Plan
 
-Canonical plan: `docs/plans/2026-07-30-the-846-work-domain-migration-plan.md`
-
 ## Task
 
 Implement and prove the dormant additive project schema/type/repository migration for `project_key` and `work_domain`.
@@ -17,7 +15,7 @@ Implement and prove the dormant additive project schema/type/repository migratio
 - EE-A-02 defines nullable normalized slugs, scoped uniqueness, and no seed/backfill.
 - Preserve unknown state as `NULL`; do not touch production data.
 - Local source commit is allowed only after green proof and scoped review.
-- Local proof is written outside the repository under the Remaining Roadmap Runner directory.
+- Required proof is written outside the repository under the Remaining Roadmap Runner directory.
 
 ## Dependencies
 
@@ -74,7 +72,7 @@ Implement and prove the dormant additive project schema/type/repository migratio
 
 ## Resume Instructions
 
-1. Re-read this file and the canonical plan.
+1. Re-read `docs/plans/ACTIVE_PLAN.md`.
 2. Run `git status --short --branch` and `git diff`.
 3. Inspect the files listed under “Files Touched.”
 4. Continue from the first unchecked plan step without repeating completed RED/GREEN proof.

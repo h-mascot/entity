@@ -59,6 +59,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     readParentTaskId,
     registerCrewRoutes,
     removeTaskProject,
+    replaceTaskProjects,
     shouldValidateReviewEntryOnTransition,
     statusForStrategicError,
     syncTaskProjectAssignments,
@@ -512,10 +513,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
 
       let responseTask = task;
       if (requestedProjectIds !== undefined) {
-        syncTaskProjectAssignments(task.id, [], requestedProjectIds, {
-          addTaskProject,
-          removeTaskProject,
-        });
+        replaceTaskProjects(task.id, requestedProjectIds);
         responseTask = (await taskSyncLayer.getTask(task.id)) ?? task;
       }
 
@@ -924,18 +922,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
 
       let responseTask = task;
       if (requestedProjectIds !== undefined) {
-        const currentProjectIds = getTaskProjects(task.id).map(
-          (currentProject: any) => currentProject.id,
-        );
-        syncTaskProjectAssignments(
-          task.id,
-          currentProjectIds,
-          requestedProjectIds,
-          {
-            addTaskProject,
-            removeTaskProject,
-          },
-        );
+        replaceTaskProjects(task.id, requestedProjectIds);
         responseTask = (await taskSyncLayer.getTask(task.id)) ?? task;
       }
 
@@ -1666,6 +1653,7 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
     parseTaskId,
     registerCrewRoutes,
     removeTaskProject,
+    replaceTaskProjects,
     statusForStrategicError,
     subscribeToCrew,
     taskSyncLayer,
@@ -2094,32 +2082,7 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       }
 
       try {
-        const currentProjects = getTaskProjects(taskId);
-        const currentIds = new Set(
-          currentProjects.map((project: any) => project.id),
-        );
-        const nextIds = new Set(parsedProjectIds);
-
-        for (const currentId of currentIds) {
-          if (!nextIds.has(currentId)) {
-            removeTaskProject(taskId, currentId);
-          }
-        }
-
-        for (const nextId of nextIds) {
-          if (!currentIds.has(nextId)) {
-            addTaskProject(taskId, nextId);
-          }
-        }
-
-        const projects = getTaskProjects(taskId);
-        await taskSyncLayer.updateTask(taskId, {
-          project: buildTaskProjectLabel(
-            projects.map((project: any) => project.id),
-            getProjects(),
-            "General",
-          ),
-        });
+        const projects = replaceTaskProjects(taskId, parsedProjectIds);
         return res.json(projects);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
@@ -2141,15 +2104,8 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
     }
 
     try {
-      addTaskProject(taskId, projectId);
-      const projects = getTaskProjects(taskId);
-      await taskSyncLayer.updateTask(taskId, {
-        project: buildTaskProjectLabel(
-          projects.map((project: any) => project.id),
-          getProjects(),
-          "General",
-        ),
-      });
+      const currentIds = getTaskProjects(taskId).map((project: any) => project.id);
+      const projects = replaceTaskProjects(taskId, [...currentIds, projectId]);
       return res.status(201).json(projects);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -2178,19 +2134,16 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
         return res.status(404).json({ error: "task not found" });
       }
 
-      const removed = removeTaskProject(taskId, projectId);
-      if (!removed) {
+      const currentProjects = getTaskProjects(taskId);
+      if (!currentProjects.some((project: any) => project.id === projectId)) {
         return res.status(404).json({ error: "task project link not found" });
       }
-
-      const projects = getTaskProjects(taskId);
-      await taskSyncLayer.updateTask(taskId, {
-        project: buildTaskProjectLabel(
-          projects.map((project: any) => project.id),
-          getProjects(),
-          "General",
-        ),
-      });
+      const projects = replaceTaskProjects(
+        taskId,
+        currentProjects
+          .map((project: any) => project.id)
+          .filter((currentId: number) => currentId !== projectId),
+      );
       return res.json(projects);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";

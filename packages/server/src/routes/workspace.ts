@@ -50,6 +50,27 @@ function optionalBodyString(body: Record<string, unknown>, key: string): string 
   return value.trim();
 }
 
+function optionalProjectSlug(
+  body: Record<string, unknown>,
+  key: string,
+  alias: string,
+): string | null | undefined {
+  const selectedKey = key in body ? key : alias in body ? alias : null;
+  if (!selectedKey) return undefined;
+  const value = body[selectedKey];
+  if (value === null) return null;
+  if (
+    typeof value !== 'string' ||
+    value !== value.trim() ||
+    value.length < 1 ||
+    value.length > 64 ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+  ) {
+    throw new WorkspaceApiError(400, `${key} must be a normalized lowercase slug (1-64 characters)`);
+  }
+  return value;
+}
+
 function parseBody(req: Request): Record<string, unknown> {
   if (!isRecord(req.body)) {
     throw new WorkspaceApiError(400, 'body must be an object');
@@ -139,6 +160,8 @@ function parseCreateProject(body: Record<string, unknown>): CreateProjectInput {
     name: requiredBodyString(body, 'name'),
     color: optionalBodyString(body, 'color'),
     lifecycle_state: optionalBodyString(body, 'lifecycle_state') ?? optionalBodyString(body, 'lifecycleState'),
+    project_key: optionalProjectSlug(body, 'project_key', 'projectKey'),
+    work_domain: optionalProjectSlug(body, 'work_domain', 'workDomain'),
   };
 }
 
@@ -147,6 +170,8 @@ function parseUpdateProject(body: Record<string, unknown>): UpdateProjectInput {
     name: optionalBodyString(body, 'name'),
     color: optionalBodyString(body, 'color'),
     lifecycle_state: optionalBodyString(body, 'lifecycle_state') ?? optionalBodyString(body, 'lifecycleState'),
+    project_key: optionalProjectSlug(body, 'project_key', 'projectKey'),
+    work_domain: optionalProjectSlug(body, 'work_domain', 'workDomain'),
   };
 }
 

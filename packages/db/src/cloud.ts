@@ -63,6 +63,20 @@ function normalizeNullableNumber(value: unknown): number | null {
   return null;
 }
 
+function normalizeNullableProjectSlug(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return (
+    trimmed.length >= 1 &&
+    trimmed.length <= 64 &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(trimmed)
+  )
+    ? trimmed
+    : null;
+}
+
 function normalizeProjectRecord(raw: unknown): ProjectRecord | null {
   if (!raw || typeof raw !== 'object') {
     return null;
@@ -82,6 +96,12 @@ function normalizeProjectRecord(raw: unknown): ProjectRecord | null {
     team_id: typeof row.team_id === 'string' && row.team_id.trim() ? row.team_id.trim() : undefined,
     name,
     color: typeof row.color === 'string' && row.color.trim() ? row.color.trim() : null,
+    lifecycle_state:
+      typeof row.lifecycle_state === 'string' && row.lifecycle_state.trim()
+        ? row.lifecycle_state.trim()
+        : 'active',
+    project_key: normalizeNullableProjectSlug(row.project_key),
+    work_domain: normalizeNullableProjectSlug(row.work_domain),
     created_at: normalizeTimestamp(row.created_at),
   };
 }
