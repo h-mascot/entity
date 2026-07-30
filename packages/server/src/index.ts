@@ -36,6 +36,7 @@ import {
   getTaskHistory,
   getTaskProjects,
   removeTaskProject,
+  replaceTaskProjects,
   updateRoadmapItem,
   validateTaskDoneReviewGateState,
   type UpdateRoadmapItemInput,
@@ -69,6 +70,7 @@ import {
 } from "./task-dedupe";
 import {
   buildTaskProjectLabel,
+  deriveTaskWorkDomain,
   syncTaskProjectAssignments,
   taskHasProjectName,
 } from "./task-projects";
@@ -453,7 +455,7 @@ const taskRouteDeps = {
   capitalizeColumn, commentMentionResponder, completeTaskWithReceipt,
   createProject, createRoadmap, createRoadmapItem,
   deleteProject, deleteRoadmap, deleteRoadmapItem,
-  enrichTasksWithSubtaskSummary, findTaskDuplicateCandidates,
+  deriveTaskWorkDomain, enrichTasksWithSubtaskSummary, findTaskDuplicateCandidates,
   getPrimaryReviewReason, getProjects, getRoadmaps,
   getTaskActorFromRequest: (req: Request) => getTaskActorFromRequest(req, getDefaultTaskActor()),
   getTaskHistory, getTaskProjects, hasAssignedOwner,
@@ -461,7 +463,7 @@ const taskRouteDeps = {
   normalizeBlockedInput, normalizeTaskOutputLinks, paginateTasks,
   parsePositiveId, parseTaskId, parsePositiveIdList,
   parseTaskAccountabilityForCreate, parseTaskAccountabilityUpdates,
-  parseTaskPaginationQuery, readParentTaskId, removeTaskProject,
+  parseTaskPaginationQuery, readParentTaskId, removeTaskProject, replaceTaskProjects,
   shouldValidateReviewEntryOnTransition, statusForStrategicError,
   syncTaskProjectAssignments, taskAgent, taskCommentRepository,
   taskHasProjectName, taskSyncLayer, updateRoadmapItem,

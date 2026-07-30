@@ -1,7 +1,5 @@
 # THE-850 / EE-B-02 Engineering Filter Plan
 
-Canonical plan: `docs/plans/2026-07-30-the-850-engineering-filter-plan.md`
-
 ## Task
 
 Load and render only `work_domain=engineering` tasks in the Engineering board.

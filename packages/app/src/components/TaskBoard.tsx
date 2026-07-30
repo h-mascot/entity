@@ -41,6 +41,7 @@ interface TaskBoardProps {
   onDocsLinkNavigate?: (href: string) => boolean;
   showArchiveColumn?: boolean;
   onArchiveColumnVisibilityChange?: (visible: boolean) => void;
+  scopeTaskDetailsToTasks?: boolean;
 }
 
 function parseTaskMetadata(task: TaskBoardTask): Record<string, any> {
@@ -141,6 +142,7 @@ export default function TaskBoard({
   onDocsLinkNavigate,
   showArchiveColumn = true,
   onArchiveColumnVisibilityChange,
+  scopeTaskDetailsToTasks = false,
 }: TaskBoardProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
@@ -469,6 +471,7 @@ export default function TaskBoard({
         onDocsLinkNavigate={onDocsLinkNavigate}
         tasks={filteredTasks}
         showArchiveColumn={showArchiveColumn}
+        scopeTaskDetailsToTasks={scopeTaskDetailsToTasks}
       />
     </div>
   );

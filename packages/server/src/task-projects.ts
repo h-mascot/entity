@@ -1,11 +1,28 @@
 export interface NamedTaskProject {
   id: number;
   name: string | null;
+  org_id?: string;
+  team_id?: string;
+  work_domain?: string | null;
 }
 
 interface TaskProjectSummary {
+  org_id?: string;
+  team_id?: string;
+  project_id?: number | null;
   project?: string | null;
   projects?: readonly NamedTaskProject[] | null;
+}
+
+export type TaskWorkDomainState =
+  | 'resolved'
+  | 'unclassified_project'
+  | 'missing_primary_project'
+  | 'invalid_primary_project';
+
+export interface TaskWorkDomain {
+  work_domain: string | null;
+  work_domain_state: TaskWorkDomainState;
 }
 
 interface TaskProjectSyncOptions {
@@ -16,6 +33,21 @@ interface TaskProjectSyncOptions {
 export interface TaskProjectDiff {
   toAdd: number[];
   toRemove: number[];
+}
+
+export function orderTaskProjectIdsWithPrimary(task: TaskProjectSummary): number[] {
+  const projectIds = (task.projects ?? []).map((project) => project.id);
+  const primaryProjectId =
+    Number.isInteger(task.project_id) && Number(task.project_id) > 0
+      ? Number(task.project_id)
+      : null;
+  if (primaryProjectId === null || !projectIds.includes(primaryProjectId)) {
+    return projectIds;
+  }
+  return [
+    primaryProjectId,
+    ...projectIds.filter((projectId) => projectId !== primaryProjectId),
+  ];
 }
 
 export function diffTaskProjectIds(currentIds: readonly number[], nextIds: readonly number[]): TaskProjectDiff {
@@ -94,6 +126,47 @@ export function taskHasProjectName(task: TaskProjectSummary, projectName: string
     : parseTaskProjectNames(task.project);
 
   return candidateNames.some((candidateName) => candidateName.toLowerCase() === normalizedTarget);
+}
+
+export function deriveTaskWorkDomain(task: TaskProjectSummary): TaskWorkDomain {
+  if (!Number.isInteger(task.project_id) || Number(task.project_id) <= 0) {
+    return {
+      work_domain: null,
+      work_domain_state: 'missing_primary_project',
+    };
+  }
+
+  const primaryProject = (task.projects ?? []).find((project) => {
+    if (project.id !== task.project_id) {
+      return false;
+    }
+    if (task.org_id && project.org_id && project.org_id !== task.org_id) {
+      return false;
+    }
+    if (task.team_id && project.team_id && project.team_id !== task.team_id) {
+      return false;
+    }
+    return true;
+  });
+
+  if (!primaryProject) {
+    return {
+      work_domain: null,
+      work_domain_state: 'invalid_primary_project',
+    };
+  }
+
+  const workDomain =
+    typeof primaryProject.work_domain === 'string' &&
+    primaryProject.work_domain.length <= 64 &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(primaryProject.work_domain)
+      ? primaryProject.work_domain
+      : null;
+
+  return {
+    work_domain: workDomain,
+    work_domain_state: workDomain ? 'resolved' : 'unclassified_project',
+  };
 }
 
 export function syncTaskProjectAssignments(

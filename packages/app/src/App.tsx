@@ -21,6 +21,7 @@ import type { NewCommentPopoverAnchor } from './components/NewCommentPopover';
 import { ToastViewport } from './components/Toast';
 import type { DocsTtsSettings } from './components/MarkdownAudioControls';
 import TaskBoard from './components/TaskBoard';
+import MCEngineeringEntry from './components/mission-control/MCEngineeringEntry';
 import type { MobileTab } from './components/MobileBottomNav';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -72,6 +73,13 @@ import {
 import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
 import { mobileCommentsPermissionMessage } from './lib/mobileCommentsState';
 import { emitDocHubTelemetry } from './lib/docHubTelemetry';
+import {
+  BUILTIN_MC_BOARD_TABS,
+  getMCBoardTabLabel,
+  isBuiltInMCBoardTab,
+  normalizeStoredMCBoardTab,
+  type MCBoardTab,
+} from './lib/mcBoardTabs';
 import {
   buildOpenFileTab,
   buildOpenFileTabKey,
@@ -470,10 +478,6 @@ function SidebarActivityGroup({ group, onFileSelect, onTaskSelect }: {
   );
 }
 
-const BUILTIN_MC_BOARD_TABS = ['kanban', 'strategic', 'insights'] as const;
-
-type BuiltInMCBoardTab = (typeof BUILTIN_MC_BOARD_TABS)[number];
-type MCBoardTab = BuiltInMCBoardTab | string;
 type MCRuntimeBoard = 'ops' | 'strategic' | 'agents';
 type MCAssigneeFilter = string;
 const PROJECT_FILTER_OPTIONS = ['all', 'Soteria', 'Curacel', 'Personal', 'Moltbot'] as const;
@@ -511,19 +515,6 @@ type DocsTtsProviderOption = {
   label: string;
   hint: string;
 };
-
-function isBuiltInMCBoardTab(value: string): value is BuiltInMCBoardTab {
-  return (BUILTIN_MC_BOARD_TABS as readonly string[]).includes(value);
-}
-
-function normalizeStoredMCBoardTab(value: string | null): MCBoardTab {
-  const normalized = value?.trim() ?? '';
-  if (!normalized) {
-    return 'kanban';
-  }
-
-  return normalized === 'ops' ? 'kanban' : normalized;
-}
 
 const FALLBACK_MODULE_LABELS: Record<string, string> = {
   chat: 'Chat',
@@ -4755,11 +4746,12 @@ export default function App() {
                 key={board}
                 type="button"
                 onClick={() => setMcBoardTab(board)}
+                aria-pressed={mcBoardTab === board}
 	                className={`mc-shell-btn entity-context-tab px-3 py-1 text-xs font-medium capitalize ${
                   mcBoardTab === board ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
                 }`}
               >
-                {board === 'kanban' ? 'Kanban' : board}
+                {getMCBoardTabLabel(board)}
               </button>
             ))}
             {taskModulePlugins.map((plugin) => (
@@ -4767,6 +4759,7 @@ export default function App() {
                 key={plugin.id}
                 type="button"
                 onClick={() => setMcBoardTab(plugin.id)}
+                aria-pressed={mcBoardTab === plugin.id}
 	                className={`mc-shell-btn entity-context-tab px-3 py-1 text-xs font-medium ${
                   mcBoardTab === plugin.id ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
                 }`}
@@ -4779,6 +4772,10 @@ export default function App() {
             {activeTaskSubViewPlugin ? (
               <span className="mc-shell-pill px-3 py-1 text-xs text-[var(--text-secondary)]">
                 Plugin view · {activeTaskSubViewPlugin.name}
+              </span>
+            ) : mcBoardTab === 'engineering' ? (
+              <span className="mc-shell-pill px-3 py-1 text-xs text-[var(--text-secondary)]">
+                Entity Engineering · dedicated workspace
               </span>
             ) : (
               <>
@@ -5239,6 +5236,17 @@ export default function App() {
         <div className="flex-1 min-h-0">
           {activeTaskSubViewPlugin ? (
             <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
+          ) : mcBoardTab === 'engineering' ? (
+            <MCEngineeringEntry
+              viewport={viewport}
+              apiBase={runtime.mcOrigin}
+              searchQuery={taskSearchQuery}
+              highlightTaskId={highlightTaskId}
+              onCloseTask={handleCloseTaskDetail}
+              onDocsLinkNavigate={handleTaskOutputDocsNavigation}
+              showArchiveColumn={showArchiveColumn}
+              onArchiveColumnVisibilityChange={setShowArchiveColumn}
+            />
           ) : mcBoardTab === 'strategic' ? (
             <LazyMCStrategicView />
           ) : (
@@ -5737,6 +5745,7 @@ export default function App() {
             setSelectedAgent={setSelectedAgent}
             activeTaskSubViewPlugin={activeTaskSubViewPlugin}
             mcBoardTab={mcBoardTab}
+            setMcBoardTab={setMcBoardTab}
             highlightTaskId={highlightTaskId}
             handleTaskSelect={handleTaskSelect}
             handleCloseTaskDetail={handleCloseTaskDetail}

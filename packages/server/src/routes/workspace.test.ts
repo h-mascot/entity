@@ -101,6 +101,8 @@ function createFakeWorkspaceRepo(): WorkspaceScopeRepository {
         name: input.name,
         color: input.color ?? null,
         lifecycle_state: input.lifecycle_state ?? 'active',
+        project_key: input.project_key ?? null,
+        work_domain: input.work_domain ?? null,
         created_at: now,
       };
       projects.set(project.id, project);
@@ -167,12 +169,25 @@ describe('workspace hierarchy routes', () => {
     const projectRes = await fetch(`${baseUrl}/api/orgs/org-a/teams/team-a/projects`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Workspace API', color: '#2563eb', lifecycle_state: 'active' }),
+      body: JSON.stringify({
+        name: 'Workspace API',
+        color: '#2563eb',
+        lifecycle_state: 'active',
+        project_key: 'workspace-api',
+        work_domain: 'engineering',
+      }),
     });
     expect(projectRes.status).toBe(201);
     const projectBody = await readJson(projectRes);
     expect(projectBody).toMatchObject({
-      project: { org_id: 'org-a', team_id: 'team-a', name: 'Workspace API', lifecycle_state: 'active' },
+      project: {
+        org_id: 'org-a',
+        team_id: 'team-a',
+        name: 'Workspace API',
+        lifecycle_state: 'active',
+        project_key: 'workspace-api',
+        work_domain: 'engineering',
+      },
     });
     const projectId = Number((projectBody.project as ProjectRecord).id);
 
@@ -181,7 +196,29 @@ describe('workspace hierarchy routes', () => {
     });
     expect(projectsRes.status).toBe(200);
     expect(await readJson(projectsRes)).toMatchObject({
-      projects: [{ id: projectId, org_id: 'org-a', team_id: 'team-a', name: 'Workspace API' }],
+      projects: [{
+        id: projectId,
+        org_id: 'org-a',
+        team_id: 'team-a',
+        name: 'Workspace API',
+        project_key: 'workspace-api',
+        work_domain: 'engineering',
+      }],
+    });
+
+    const getRes = await fetch(`${baseUrl}/api/projects/${projectId}`, {
+      headers: {
+        'x-entity-org-id': 'org-a',
+        'x-entity-team-id': 'team-a',
+      },
+    });
+    expect(getRes.status).toBe(200);
+    expect(await readJson(getRes)).toMatchObject({
+      project: {
+        id: projectId,
+        project_key: 'workspace-api',
+        work_domain: 'engineering',
+      },
     });
 
     const updateRes = await fetch(`${baseUrl}/api/projects/${projectId}`, {
@@ -191,11 +228,22 @@ describe('workspace hierarchy routes', () => {
         'x-entity-org-id': 'org-a',
         'x-entity-team-id': 'team-a',
       },
-      body: JSON.stringify({ name: 'Workspace API v2', lifecycle_state: 'review' }),
+      body: JSON.stringify({
+        name: 'Workspace API v2',
+        lifecycle_state: 'review',
+        project_key: 'workspace-api-v2',
+        work_domain: null,
+      }),
     });
     expect(updateRes.status).toBe(200);
     expect(await readJson(updateRes)).toMatchObject({
-      project: { id: projectId, name: 'Workspace API v2', lifecycle_state: 'review' },
+      project: {
+        id: projectId,
+        name: 'Workspace API v2',
+        lifecycle_state: 'review',
+        project_key: 'workspace-api-v2',
+        work_domain: null,
+      },
     });
   });
 
@@ -209,6 +257,34 @@ describe('workspace hierarchy routes', () => {
     });
     expect(projectRes.status).toBe(400);
     expect(await readJson(projectRes)).toEqual({ error: 'team scope is required' });
+  });
+
+  it('rejects non-normalized project classification at the scoped API boundary', async () => {
+    const invalidKeyRes = await fetch(`${baseUrl}/api/orgs/org-a/teams/team-a/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Invalid key',
+        project_key: 'Engineering',
+      }),
+    });
+    expect(invalidKeyRes.status).toBe(400);
+    expect(await readJson(invalidKeyRes)).toEqual({
+      error: 'project_key must be a normalized lowercase slug (1-64 characters)',
+    });
+
+    const invalidDomainRes = await fetch(`${baseUrl}/api/orgs/org-a/teams/team-a/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Invalid domain',
+        work_domain: '',
+      }),
+    });
+    expect(invalidDomainRes.status).toBe(400);
+    expect(await readJson(invalidDomainRes)).toEqual({
+      error: 'work_domain must be a normalized lowercase slug (1-64 characters)',
+    });
   });
 
   it('denies cross-org and cross-team lookups by scoped not-found responses', async () => {
