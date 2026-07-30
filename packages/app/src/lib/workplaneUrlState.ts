@@ -5,7 +5,7 @@
  * task id, active panel, selected proof, return context.
  *
  * Consumed by THE-858 (route/shell), THE-859 (Open Workplane),
- * THE-860 (return navigation), and THE-861 (refresh restore).
+ * THE-860 (return navigation), and THE-861 (`workplaneRefreshRestore`).
  * This module does not register a route or UI action.
  */
 

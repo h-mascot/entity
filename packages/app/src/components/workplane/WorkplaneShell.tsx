@@ -1,6 +1,7 @@
 /**
  * THE-858 / WP1-A-03 — Minimal Workplane route shell.
  * THE-860 / WP1-A-05 — Return-to-board/detail navigation (never strand on shell).
+ * THE-861 / WP1-A-06 — Cold load / refresh restores task + active panel from URL.
  *
  * Parses/serializes THE-857 URL state. Panel bodies are placeholders until WP1-B/C.
  */
@@ -8,9 +9,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkplanePanelId } from '../mission-control/taskDetailWorkplaneSeams.ts';
 import { navigateWorkplaneReturn } from '../../lib/workplaneReturnNavigation.ts';
+import { restoreWorkplaneAfterRefresh } from '../../lib/workplaneRefreshRestore.ts';
 import {
   buildWorkplanePanelHref,
-  resolveWorkplaneShellModel,
   type WorkplaneShellModel,
 } from '../../lib/workplaneShellModel.ts';
 
@@ -67,10 +68,12 @@ export default function WorkplaneShell({
     return () => window.removeEventListener('popstate', sync);
   }, [pathnameProp, searchProp]);
 
+  // THE-861: restore from pathname+search only (same path as hard refresh).
   const model: WorkplaneShellModel = useMemo(
-    () => resolveWorkplaneShellModel(location.pathname, location.search),
+    () => restoreWorkplaneAfterRefresh(location.pathname, location.search).model,
     [location.pathname, location.search],
   );
+  const restoredFromUrl = model.status === 'ready';
 
   const navigate = onNavigate ?? defaultNavigate;
 
@@ -106,6 +109,7 @@ export default function WorkplaneShell({
         className="entity-shell flex h-screen flex-col bg-[var(--bg-primary)] text-[var(--text-secondary)]"
         data-testid="workplane-shell"
         data-workplane-status="invalid_route"
+        data-workplane-restored-from-url="false"
         data-workplane-route={model.isWorkplaneRoute ? 'true' : 'false'}
       >
         <header className="flex items-center justify-between border-b border-[var(--border-primary)] px-4 py-3">
@@ -148,6 +152,7 @@ export default function WorkplaneShell({
       className="entity-shell flex h-screen flex-col bg-[var(--bg-primary)] text-[var(--text-secondary)]"
       data-testid="workplane-shell"
       data-workplane-status="ready"
+      data-workplane-restored-from-url={restoredFromUrl ? 'true' : 'false'}
       data-workplane-task-id={String(model.taskId)}
       data-workplane-active-panel={model.activePanel ?? undefined}
       data-workplane-selected-proof={model.selectedProof ?? undefined}

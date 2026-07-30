@@ -73,6 +73,7 @@ import {
   type DocHubTool,
 } from './lib/docHubRoute';
 import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
+import { shouldBypassGatesForWorkplaneDeepLink } from './lib/workplaneRefreshRestore';
 import { isWorkplaneRoutePath } from './lib/workplaneShellModel';
 import { mobileCommentsPermissionMessage } from './lib/mobileCommentsState';
 import { emitDocHubTelemetry } from './lib/docHubTelemetry';
@@ -1523,9 +1524,11 @@ export default function App() {
   const [activeDocHubTool, setActiveDocHubTool] = useState<DocHubTool | null>(
     () => initialDocHubRouteState?.tool ?? null,
   );
-  // THE-859: track Workplane route so Open Workplane pushState remounts the shell.
+  // THE-859/THE-861: track Workplane route for Open Workplane + cold-load refresh restore.
   const [workplaneRouteActive, setWorkplaneRouteActive] = useState(
-    () => typeof window !== 'undefined' && isWorkplaneRoutePath(window.location.pathname),
+    () =>
+      typeof window !== 'undefined' &&
+      shouldBypassGatesForWorkplaneDeepLink(window.location.pathname),
   );
   const [fileContent, setFileContent] = useState('');
   const [currentFileLoadState, setCurrentFileLoadState] = useState<CurrentFileLoadState>({ status: 'idle' });
@@ -2146,9 +2149,9 @@ export default function App() {
     }
 
     const syncRouteState = () => {
-      // THE-858/THE-859: Workplane shell owns deep-link restore; skip Doc Hub/task sync.
-      // Still update route flag so Open Workplane client navigation remounts the shell.
-      const onWorkplane = isWorkplaneRoutePath(window.location.pathname);
+      // THE-858/THE-859/THE-861: Workplane shell owns deep-link + refresh restore.
+      // Skip Doc Hub/task sync; keep route flag so client navigation remounts the shell.
+      const onWorkplane = shouldBypassGatesForWorkplaneDeepLink(window.location.pathname);
       setWorkplaneRouteActive(onWorkplane);
       if (onWorkplane) {
         return;
@@ -5608,6 +5611,13 @@ export default function App() {
   const businessOnboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === BUSINESS_ONBOARDING_ROUTE;
   const shouldShowOnboarding = Boolean(onboardingToken) || onboardingRouteActive || onboardingCompleted === false;
 
+  // THE-858 / WP1-A-03 — Workplane route + shell (URL state from THE-857).
+  // THE-859 — workplaneRouteActive updates on Open Workplane pushState/popstate.
+  // THE-861 — cold load / hard refresh must restore Workplane ahead of onboarding gates.
+  if (workplaneRouteActive) {
+    return <LazyWorkplaneShell />;
+  }
+
   if (businessOnboardingRouteActive) {
     if (onboardingCompleted === null) {
       return <LazySurfaceFallback label="Checking onboarding gate" />;
@@ -5656,12 +5666,6 @@ export default function App() {
         }}
       />
     );
-  }
-
-  // THE-858 / WP1-A-03 — Workplane route + shell (URL state from THE-857).
-  // THE-859 — workplaneRouteActive updates on Open Workplane pushState/popstate.
-  if (workplaneRouteActive) {
-    return <LazyWorkplaneShell />;
   }
 
   const showLeftSidebar = sidebarTab !== 'chat';
