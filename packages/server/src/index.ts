@@ -90,6 +90,7 @@ import {
   registerPluginRuntimeModules,
 } from "./plugins/registry";
 import { registerPluginManagementRoutes } from "./plugins/routes";
+import { runInferenceProviderMigrations } from "./provider-registry/migrations";
 import { registerCrewRoutes } from "./crews-routes";
 import { registerChatRoutes } from "./routes/chat";
 import { createClickClackBridge } from "./clickclack/bridge";
@@ -341,6 +342,10 @@ const runtimeConfig = applyRuntimeConfigSeeds({ db: entityDb, fileSourceReposito
 const runtimeConfigBaseDir = path.dirname(process.env.ENTITY_CONFIG || path.resolve(process.cwd(), 'entity.config.yaml'));
 ensurePluginSettingsTable(entityDb);
 ensurePluginMigrationTable(entityDb);
+runInferenceProviderMigrations({
+  db: entityDb,
+  logger: console,
+});
 const pluginHooks = new PluginHookEmitter(console);
 const startupEffectiveConfig = buildEffectiveConfig({ db: entityDb });
 const pluginRegistry = new PluginRegistry({
