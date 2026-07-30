@@ -1,7 +1,3 @@
-## Active Plan
-
-Canonical plan: `docs/plans/2026-07-30-the-852-engineering-import-mapping-plan.md`
-
 ## Task
 
 Create a deterministic, reviewable mapping plan for importing eligible coding items from `memory/Projects/entity/todo.md` into the Entity Engineering board without importing or mutating data.
