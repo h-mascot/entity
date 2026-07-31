@@ -64,14 +64,14 @@ Required surface:
 
 - Singleton: `swarmProviderRegistry` (`register` / `get` / `list` / `has` / `size`).
 - Duplicate `register(name)` warns and skips; no replace/unregister API.
-- Comment claims providers self-register via `registerPlugin()`; **actual bootstrap is hardcoded** in `dispatcher.ensureProvidersRegistered()` once-per-process:
+- **EEPC-A-04 amendment:** bootstrap is manifest-driven via `registerBuiltinContractProviders()` (`providers/contract-bootstrap.ts`), still invoked once-per-process from `dispatcher.ensureProvidersRegistered()` in fixed order:
   1. `acp`
   2. `symphony`
   3. `eforge`
   4. `codex`
   5. `ccp`
   6. `flywheel`
-- There is **no plugin manifest**, capability declaration file, or versioned adapter contract beyond the TypeScript interface.
+- Each builtin is wrapped by `createSwarmContractAdapter` against EEPC-A-02 valid fixtures (fail-closed if manifest missing/mismatched).
 - Mount point: `packages/server/src/index.ts` → `app.use("/api/swarm", createSwarmRouter())`.
 - Soft-plugin settings key: `plugin_settings.plugin_id = 'geordi-swarm'` (`autoDispatch`, `maxConcurrentJobs`).
 
@@ -79,12 +79,12 @@ Required surface:
 
 | name | meta present | execution mode (code/intent) | Dispatch reality | Health / config env (names only) | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `acp` | no | push (implicit) | HTTP POST `{ACP}/runs`, poll status, collect proof | `ACP_BASE_URL` (default `http://localhost:8100`) | Fully implements push lifecycle |
-| `symphony` | no | pull | Marks job `queued`, returns `symphony-pull:{jobId}`; proof via tracker API | `SYMPHONY_API_URL`, `SYMPHONY_API_KEY` (health Authorization only) | ARCHITECTURE.md OpenClaw fallback not present in code |
+| `acp` | yes (contract) | push | HTTP POST `{ACP}/runs`, poll status, collect proof | `ACP_BASE_URL` (default `http://localhost:8100`) | Fully implements push lifecycle; public health via adapter projection |
+| `symphony` | yes (contract) | pull | Marks job `queued`, returns `symphony-pull:{jobId}`; proof via tracker API | `SYMPHONY_API_URL`, `SYMPHONY_API_KEY` (health Authorization only) | ARCHITECTURE.md OpenClaw fallback not present in code |
 | `eforge` | yes (`build-system`, hybrid, acceptsDispatch) | hybrid | Writes queue file under `EFORGE_QUEUE_DIR`; status from DB; poller when `EFORGE_API_URL` set | `EFORGE_API_URL`, `EFORGE_QUEUE_DIR`, `EFORGE_WEB_URL`, `EFORGE_POLL_INTERVAL_MS` | Dedicated status/control routes |
 | `codex` | yes (`build-system`, push) | push | WebSocket JSON-RPC to app server | `CODEX_APP_SERVER_URL`, `CODEX_CODEX_HOME` | Dedicated status/control routes |
-| `ccp` | yes (`delivery-control-plane`, acceptsDispatch=false) | stub | `dispatch` throws; health always unavailable | none | Registry slot only |
-| `flywheel` | yes (`environment`, acceptsDispatch=false) | stub | `dispatch` throws; health always unavailable | none | Registry slot only |
+| `ccp` | yes (`delivery-control-plane`, acceptsDispatch=false) | stub | contract adapter refuses dispatch; health always unavailable | none | Registry slot only |
+| `flywheel` | yes (`environment`, acceptsDispatch=false) | stub | contract adapter refuses dispatch; health always unavailable | none | Registry slot only |
 
 ## Dispatcher seams
 

@@ -14,24 +14,14 @@ import type { SwarmProvider } from './providers/interface';
 import { swarmProviderRegistry } from './provider-registry';
 import { getSwarmJob, updateSwarmJob, createSwarmProof, listSwarmJobs } from './db';
 import { getEntityDatabase } from '../../../db/src/entity-db';
-import { AcpProvider } from './providers/acp';
-import { SymphonyProvider } from './providers/symphony';
-import { EforgeProvider } from './providers/eforge';
-import { CodexProvider } from './providers/codex';
-import { CcpProvider } from './providers/ccp';
-import { FlywheelProvider } from './providers/flywheel';
+import { registerBuiltinContractProviders } from './providers/contract-bootstrap';
 
-// Bootstrap: register built-in providers (once)
+// Bootstrap: register built-in providers against EEPC manifests (once)
 let _registered = false;
 function ensureProvidersRegistered(): void {
   if (_registered) return;
   _registered = true;
-  swarmProviderRegistry.register(new AcpProvider());
-  swarmProviderRegistry.register(new SymphonyProvider());
-  swarmProviderRegistry.register(new EforgeProvider());
-  swarmProviderRegistry.register(new CodexProvider());
-  swarmProviderRegistry.register(new CcpProvider());
-  swarmProviderRegistry.register(new FlywheelProvider());
+  registerBuiltinContractProviders(swarmProviderRegistry);
 }
 
 /**

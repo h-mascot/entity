@@ -34,6 +34,19 @@ export type {
   MappedCallbackActivityRecord,
   CallbackIntakeResult,
 } from './callback-intake';
+// EEPC-A-04: Swarm provider adapter against execution-engine contract.
+export {
+  createSwarmContractAdapter,
+  tryCreateSwarmContractAdapter,
+  projectProviderHealth,
+  redactPublicHealthMessage,
+} from './providers/contract-adapter';
+export type { SwarmContractAdapter, AdapterBindResult } from './providers/contract-adapter';
+export {
+  registerBuiltinContractProviders,
+  isSwarmContractAdapter,
+  BUILTIN_SWARM_PROVIDER_ORDER,
+} from './providers/contract-bootstrap';
 
 import { startEforgePoller } from './providers/eforge-poller';
 

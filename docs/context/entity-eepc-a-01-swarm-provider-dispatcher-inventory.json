@@ -42,24 +42,25 @@
     "singletonExport": "swarmProviderRegistry",
     "operations": ["register", "get", "list", "has", "size"],
     "bootstrap": {
-      "file": "packages/server/src/swarm/dispatcher.ts",
-      "function": "ensureProvidersRegistered",
+      "file": "packages/server/src/swarm/providers/contract-bootstrap.ts",
+      "function": "registerBuiltinContractProviders",
       "hardcodedOrder": ["acp", "symphony", "eforge", "codex", "ccp", "flywheel"],
-      "manifestDriven": false,
-      "selfRegisterViaPluginHook": false
+      "manifestDriven": true,
+      "selfRegisterViaPluginHook": false,
+      "note": "EEPC-A-04 wraps each builtin with createSwarmContractAdapter against EEPC-A-02 valid fixtures"
     }
   },
   "providers": [
     {
       "name": "acp",
-      "hasMeta": false,
+      "hasMeta": true,
       "mode": "push",
       "dispatchReady": true,
       "configEnvNames": ["ACP_BASE_URL"]
     },
     {
       "name": "symphony",
-      "hasMeta": false,
+      "hasMeta": true,
       "mode": "pull",
       "dispatchReady": true,
       "configEnvNames": ["SYMPHONY_API_URL", "SYMPHONY_API_KEY"]
