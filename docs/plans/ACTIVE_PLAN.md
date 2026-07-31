@@ -10,7 +10,7 @@
 - [x] Step 2: Manifest-driven builtin bootstrap; wire dispatcher
 - [x] Step 3: Focused adapter tests (success + fail-closed/secret-safe)
 - [x] Step 4: Docs + inventory note; server build + full vitest
-- [ ] Step 5: Commit + EEPC-A-04 receipts + Linear Done
+- [x] Step 5: Commit + EEPC-A-04 receipts + Linear Done
 
 ## Verify
 
