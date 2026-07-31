@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState, type CSSProperties } from 'react';
 import type { ActivityEntry } from '../hooks/useActivityStream';
 import type { TaskBoardTask } from '../hooks/useTaskBoard';
 import AgentManagementSurface from './AgentManagementSurface';
+import AddAgentCreationPanel from './agents/AddAgentCreationPanel';
 import { getAgentRegistryRecord, resolveAgentAvatarUrl } from '../lib/agentRegistry';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
 
@@ -1269,6 +1270,8 @@ export default function AgentDashboardV2({
             )}
           </div>
 
+          <AddAgentCreationPanel />
+
           {crewAgents.length === 0 ? (
             <div className="entity-ops-empty px-4 py-8 text-sm">
               No agents available.
@@ -1413,6 +1416,8 @@ export default function AgentDashboardV2({
             {dashboardErrorMessage}
           </div>
         )}
+
+        <AddAgentCreationPanel />
 
         <div className="border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
           <div className="mb-3 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border-primary)] pb-3">
