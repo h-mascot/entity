@@ -1,8 +1,9 @@
 /**
  * CH-A-02 — In-memory channel adapter registry.
  *
- * Hosts may register adapters; boot must not auto-register production
- * Slack/Telegram/Discord/email adapters (CH-A-03 owns the reference adapter).
+ * Hosts may register adapters. Boot must not auto-register production
+ * Slack/Telegram/Discord/email adapters. CH-A-03's Slack reference adapter
+ * registers only when ENTITY_CHANNEL_SLACK_ADAPTER=1 (offline transport default).
  */
 
 import { isChannelAdapter, type ChannelAdapter } from './adapter';

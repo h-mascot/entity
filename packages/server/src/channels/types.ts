@@ -3,7 +3,8 @@
  *
  * Channels are intake + notify adapters over Entity work state.
  * They must not become alternate task truth stores (CH-A-04 hardens this).
- * No production Slack/Telegram/Discord/email adapters live here (CH-A-03).
+ * Production Slack/Telegram/Discord/email adapters are not mounted by default.
+ * CH-A-03 provides a Slack reference adapter behind ENTITY_CHANNEL_SLACK_ADAPTER.
  */
 
 import type { NotificationDeliveryChannel } from '../../../db/src';

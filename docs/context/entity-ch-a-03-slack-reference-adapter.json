@@ -1,0 +1,56 @@
+{
+  "code": "CH-A-03",
+  "issue": "THE-919",
+  "parent": "THE-836",
+  "decision": "REFERENCE_ADAPTER_IMPLEMENTED",
+  "dependencies": ["CH-A-02"],
+  "dependencyIssues": ["THE-918"],
+  "dependencyCommit": "2d2fd7ae66b8c9ebe292b6c49a7c4b7d841d02ed",
+  "sourceSha256": "84541727830ef8f4018ad2b9fdf587d653dfbba940b38b279ae3f90ca18ba895",
+  "proof": "adapter tests + degraded offline path",
+  "contractVersion": "entity.channel-adapter.v1",
+  "referenceAdapter": {
+    "kind": "slack",
+    "id": "slack-reference",
+    "featureFlag": "ENTITY_CHANNEL_SLACK_ADAPTER",
+    "featureFlagDefault": false,
+    "defaultTransport": "offline",
+    "productionSendsByDefault": false
+  },
+  "modulePath": "packages/server/src/channels",
+  "files": [
+    "packages/server/src/channels/feature-flag.ts",
+    "packages/server/src/channels/slack-transport.ts",
+    "packages/server/src/channels/slack-reference-adapter.ts",
+    "packages/server/src/channels/slack-reference-adapter.test.ts",
+    "packages/server/src/channels/index.ts",
+    "docs/context/entity-ch-a-03-slack-reference-adapter.md",
+    "docs/context/entity-ch-a-03-slack-reference-adapter.json"
+  ],
+  "availability": {
+    "flagOff": "not_configured",
+    "offlineTransportHealthy": "degraded",
+    "transportUnreachable": "unavailable"
+  },
+  "notifyStatuses": {
+    "offlineSuccess": "degraded",
+    "offlineUnreachable": "skipped",
+    "midFlightOffline": "degraded",
+    "flagOff": "skipped"
+  },
+  "bootRegistersWithoutFlag": false,
+  "adaptersWriteTaskTruth": false,
+  "nonGoals": [
+    "No live Slack/Telegram/Discord/email production sends by default",
+    "No Doc Hub rebuild",
+    "No Provider Registry duplicate",
+    "No secret exposure",
+    "No Skill Workshop in Entity core"
+  ],
+  "next": {
+    "code": "CH-A-04",
+    "issue": "THE-920",
+    "title": "Ensure channel adapters never become alternate task truth stores"
+  },
+  "relatedInterface": "docs/context/entity-ch-a-02-channel-adapter-interface.md"
+}

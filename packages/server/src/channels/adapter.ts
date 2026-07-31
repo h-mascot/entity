@@ -5,7 +5,7 @@
  *   intake → task / ActivityEvent proposals (host applies; adapters do not write)
  *   notify ← status (Entity status changes fan out to external channels)
  *
- * Reference adapters (Slack/Telegram) belong to CH-A-03 behind a feature flag.
+ * CH-A-03 Slack reference adapter: ENTITY_CHANNEL_SLACK_ADAPTER + offline transport.
  */
 
 import type {
