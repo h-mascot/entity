@@ -35,6 +35,7 @@ import {
 } from '../../lib/addAgentInvitePrompt';
 import { toErrorMessage } from '../../lib/http';
 import AgentIdentityCapabilityCard from './AgentIdentityCapabilityCard';
+import WorkplaneAskPanel from './WorkplaneAskPanel';
 import WorkplaneAttachedAgentsPanel from './WorkplaneAttachedAgentsPanel';
 import WorkplaneChiefRoutingPanel from './WorkplaneChiefRoutingPanel';
 import WorkplanePresencePanel from './WorkplanePresencePanel';
@@ -368,6 +369,14 @@ export default function AgentInviteDeskPanel({
               />
 
               <WorkplaneChiefRoutingPanel
+                workplaneId={selected.workplaneId}
+                taskId={selected.taskId}
+                preferredAgentId={`invite:${selected.id}`}
+                preferredAgentName={selected.agentName}
+                refreshToken={refreshToken + presenceRefresh}
+              />
+
+              <WorkplaneAskPanel
                 workplaneId={selected.workplaneId}
                 taskId={selected.taskId}
                 preferredAgentId={`invite:${selected.id}`}

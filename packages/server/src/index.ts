@@ -138,6 +138,7 @@ import { registerAgentInviteRoutes } from "./routes/agent-invites";
 import { registerAgentPresenceRoutes } from "./routes/agent-presence";
 import { registerWorkplaneAgentRoutes } from "./routes/workplane-agents";
 import { registerWorkplaneChiefRoutingRoutes } from "./routes/workplane-chief-routing";
+import { registerWorkplaneAskRoutes } from "./routes/workplane-asks";
 import { registerActivityRoutes, registerDbModeRoutes, registerRuntimeRoutes } from "./routes/runtime";
 import { registerDocIntelligenceRoutes } from "./routes/doc-intelligence";
 import { registerOperationalStatusRoutes } from "./routes/operational-status";
@@ -210,6 +211,8 @@ registerAgentPresenceRoutes(app);
 registerWorkplaneAgentRoutes(app);
 // Chief-of-Staff routing policy claim/assign (THE-885 / WP2-B-04).
 registerWorkplaneChiefRoutingRoutes(app);
+// ASK claim/resolve flow (THE-886 / WP2-B-05).
+registerWorkplaneAskRoutes(app);
 app.use("/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/search", createSearchRouter({ flags: phase2Flags }));
