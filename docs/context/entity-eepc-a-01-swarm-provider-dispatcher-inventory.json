@@ -1,0 +1,170 @@
+{
+  "code": "EEPC-A-01",
+  "issue": "THE-889",
+  "parent": "THE-831",
+  "decision": "CHARACTERIZED",
+  "dependency": "WP1-C-07",
+  "scopePath": "packages/server/src/swarm",
+  "grillAuthority": ["Q44", "Q45"],
+  "providerInterface": {
+    "file": "packages/server/src/swarm/providers/interface.ts",
+    "requiredMembers": [
+      "name",
+      "label",
+      "healthCheck",
+      "dispatch",
+      "status",
+      "cancel",
+      "collectProof"
+    ],
+    "optionalMembers": ["meta"],
+    "payloadFields": [
+      "jobId",
+      "title",
+      "spec",
+      "repo",
+      "branch",
+      "context",
+      "feedback",
+      "env"
+    ],
+    "runStates": ["queued", "running", "completed", "failed", "cancelled"],
+    "metaCategories": [
+      "orchestration",
+      "build-system",
+      "delivery-control-plane",
+      "environment"
+    ],
+    "executionModes": ["pull", "push", "hybrid"]
+  },
+  "registry": {
+    "file": "packages/server/src/swarm/provider-registry.ts",
+    "singletonExport": "swarmProviderRegistry",
+    "operations": ["register", "get", "list", "has", "size"],
+    "bootstrap": {
+      "file": "packages/server/src/swarm/dispatcher.ts",
+      "function": "ensureProvidersRegistered",
+      "hardcodedOrder": ["acp", "symphony", "eforge", "codex", "ccp", "flywheel"],
+      "manifestDriven": false,
+      "selfRegisterViaPluginHook": false
+    }
+  },
+  "providers": [
+    {
+      "name": "acp",
+      "hasMeta": false,
+      "mode": "push",
+      "dispatchReady": true,
+      "configEnvNames": ["ACP_BASE_URL"]
+    },
+    {
+      "name": "symphony",
+      "hasMeta": false,
+      "mode": "pull",
+      "dispatchReady": true,
+      "configEnvNames": ["SYMPHONY_API_URL", "SYMPHONY_API_KEY"]
+    },
+    {
+      "name": "eforge",
+      "hasMeta": true,
+      "mode": "hybrid",
+      "dispatchReady": true,
+      "configEnvNames": [
+        "EFORGE_API_URL",
+        "EFORGE_QUEUE_DIR",
+        "EFORGE_WEB_URL",
+        "EFORGE_POLL_INTERVAL_MS"
+      ]
+    },
+    {
+      "name": "codex",
+      "hasMeta": true,
+      "mode": "push",
+      "dispatchReady": true,
+      "configEnvNames": ["CODEX_APP_SERVER_URL", "CODEX_CODEX_HOME"]
+    },
+    {
+      "name": "ccp",
+      "hasMeta": true,
+      "mode": "stub",
+      "dispatchReady": false,
+      "acceptsDispatch": false,
+      "configEnvNames": []
+    },
+    {
+      "name": "flywheel",
+      "hasMeta": true,
+      "mode": "stub",
+      "dispatchReady": false,
+      "acceptsDispatch": false,
+      "configEnvNames": []
+    }
+  ],
+  "jobStatuses": [
+    "draft",
+    "queued",
+    "dispatched",
+    "running",
+    "proof",
+    "review",
+    "done",
+    "failed",
+    "cancelled"
+  ],
+  "dispatcherExports": [
+    "getProvider",
+    "listProviders",
+    "checkProviderHealth",
+    "dispatchJob",
+    "checkJobStatus",
+    "cancelJob",
+    "acceptJob",
+    "rejectJob",
+    "kickAutoDispatch"
+  ],
+  "callbackRoutes": [
+    "POST /api/swarm/jobs/:id/claim",
+    "POST /api/swarm/jobs/:id/release",
+    "POST /api/swarm/jobs/:id/status",
+    "POST /api/swarm/jobs/:id/proof",
+    "POST /api/swarm/jobs/:id/complete",
+    "POST /api/swarm/jobs/:id/fail"
+  ],
+  "healthRoutes": [
+    "GET /api/swarm/providers",
+    "GET /api/swarm/providers/:name/health",
+    "GET /api/swarm/providers/eforge/status",
+    "POST /api/swarm/providers/eforge/control",
+    "GET /api/swarm/providers/codex/status",
+    "POST /api/swarm/providers/codex/control",
+    "GET /api/swarm/healer/status",
+    "POST /api/swarm/heal"
+  ],
+  "sideLoops": ["healer", "eforge-poller"],
+  "secretSafety": {
+    "listProvidersReturnsTokens": false,
+    "healthMayEmbedUrlsOrPaths": true,
+    "dangerousActionRoutes": ["POST /api/swarm/providers/eforge/control"],
+    "trackerRoutesAuthenticated": false
+  },
+  "gapsForManifestSchema": [
+    "identity version fields",
+    "manifest-driven registration",
+    "required execution mode",
+    "lifecycle capability flags",
+    "public-safe health contract",
+    "formal callback auth/idempotency",
+    "config binding secret classification",
+    "status mapping for pull dispatch",
+    "dangerous-action allowlist",
+    "activity event placeholder",
+    "architecture doc drift (ready status / OpenClaw)"
+  ],
+  "nonGoals": [
+    "Doc Hub rebuild",
+    "Provider Registry duplicate",
+    "production mutation",
+    "secret exposure",
+    "Skill Workshop in Entity core"
+  ]
+}
