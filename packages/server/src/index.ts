@@ -134,6 +134,7 @@ import {
   withReceiptArtifactRef,
 } from "./routes/task-helpers";
 import { registerAgentControlRoutes, registerAgentRegistryRoutes } from "./routes/agents";
+import { registerAgentInviteRoutes } from "./routes/agent-invites";
 import { registerActivityRoutes, registerDbModeRoutes, registerRuntimeRoutes } from "./routes/runtime";
 import { registerDocIntelligenceRoutes } from "./routes/doc-intelligence";
 import { registerOperationalStatusRoutes } from "./routes/operational-status";
@@ -198,6 +199,8 @@ app.use(createApiAuthMiddleware());
 
 registerCoreProbeRoutes(app, phase2Flags);
 registerConfigRoutes(app);
+// Durable invite controls before /api/agents/:id* registry routes (THE-880 / WP2-A-05).
+registerAgentInviteRoutes(app);
 app.use("/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/search", createSearchRouter({ flags: phase2Flags }));

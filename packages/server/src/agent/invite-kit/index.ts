@@ -45,3 +45,18 @@ export {
 } from './status-machine';
 
 export { hashInviteToken, mintInviteToken } from './token';
+
+export {
+  buildInviteUrlBundle,
+  createInviteControls,
+  getInviteControls,
+  recordToDomain,
+  resetInviteControlsForTests,
+  type CreateDurableInviteInput,
+  type DurableInviteView,
+  type InviteControlFailure,
+  type InviteControlResult,
+  type InviteControls,
+  type InviteUrlBundle,
+  type TokenizedInviteAccess,
+} from './controls';

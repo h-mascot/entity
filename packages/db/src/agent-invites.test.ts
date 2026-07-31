@@ -151,6 +151,27 @@ describe('agent_invites durable foundation', () => {
     ).toThrow(/Unsupported agent invite status/);
   });
 
+  it('looks up rotated previous_token_hash for fail-closed access checks', async () => {
+    const mod = await loadInviteRepo();
+    const repo = mod.createAgentInviteRepository();
+    const firstHash = hashToken('prev-token-aaaaaaaa');
+    const secondHash = hashToken('curr-token-bbbbbbbb');
+    const created = repo.createInvite({
+      token_hash: firstHash,
+      agent_name: 'Scout',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    repo.updateInvite(created.id, {
+      status: 'created',
+      token_hash: secondHash,
+      generation: 2,
+      previous_token_hash: firstHash,
+    });
+    expect(repo.getInviteByTokenHash(firstHash)).toBeUndefined();
+    expect(repo.getInviteByPreviousTokenHash(firstHash)?.id).toBe(created.id);
+    expect(repo.getInviteByTokenHash(secondHash)?.id).toBe(created.id);
+  });
+
   it('lists invites filtered by status', async () => {
     const mod = await loadInviteRepo();
     const repo = mod.createAgentInviteRepository();

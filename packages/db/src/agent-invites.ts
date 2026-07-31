@@ -118,6 +118,8 @@ export interface AgentInviteRepository {
   createInvite: (input: CreateAgentInviteInput) => AgentInviteRecord;
   getInviteById: (id: string) => AgentInviteRecord | undefined;
   getInviteByTokenHash: (tokenHash: string) => AgentInviteRecord | undefined;
+  /** Lookup rotated-away tokens so callers can fail-closed (not 404-as-unknown). */
+  getInviteByPreviousTokenHash: (tokenHash: string) => AgentInviteRecord | undefined;
   listInvites: (filters?: { status?: AgentInviteStatus; limit?: number }) => AgentInviteRecord[];
   updateInvite: (id: string, patch: UpdateAgentInviteStatusInput) => AgentInviteRecord | undefined;
   replaceProgress: (inviteId: string, progress: readonly CreateAgentInviteProgressInput[]) => AgentInviteProgressRecord[];
@@ -311,6 +313,9 @@ export function createAgentInviteRepository(): AgentInviteRepository {
 
   const getByIdStmt = db.prepare('SELECT * FROM agent_invites WHERE id = ?');
   const getByHashStmt = db.prepare('SELECT * FROM agent_invites WHERE token_hash = ?');
+  const getByPreviousHashStmt = db.prepare(
+    'SELECT * FROM agent_invites WHERE previous_token_hash = ? ORDER BY updated_at DESC LIMIT 1',
+  );
   const insertInviteStmt = db.prepare(`
     INSERT INTO agent_invites (
       id, token_hash, generation, status, agent_id, agent_name, role,
@@ -421,6 +426,13 @@ export function createAgentInviteRepository(): AgentInviteRepository {
 
     getInviteByTokenHash: (tokenHash) => {
       const row = getByHashStmt.get(requireNonEmptyString(tokenHash, 'tokenHash')) as
+        | Record<string, unknown>
+        | undefined;
+      return row ? mapInviteRow(row) : undefined;
+    },
+
+    getInviteByPreviousTokenHash: (tokenHash) => {
+      const row = getByPreviousHashStmt.get(requireNonEmptyString(tokenHash, 'tokenHash')) as
         | Record<string, unknown>
         | undefined;
       return row ? mapInviteRow(row) : undefined;

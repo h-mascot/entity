@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import type { ModuleRegistryRecord, ModuleSkillRefRecord } from '../../../db/src';
 import { getEntityDatabase } from '../../../db/src/entity-db';
+import { getInviteControls } from '../agent/invite-kit/controls';
 import {
   buildAgentContextPlan,
   buildCompatibilityEntityMcUrls,
@@ -102,6 +103,30 @@ function readAgentSession(db: ReturnType<typeof getEntityDatabase>, token: strin
  */
 function isExpiredAgentSession(session: OnboardingAgentSession): boolean {
   return session.status === 'expired' || new Date(session.expiresAt).getTime() < Date.now();
+}
+
+/**
+ * Durable invite gate (WP2-A-05). When a token maps to agent_invites, enforce
+ * revoke / expiry / rotation before legacy session handling. Legacy first-run
+ * sessions without a durable row continue unchanged.
+ */
+function assertTokenizedInviteAccess(
+  res: express.Response,
+  rawToken: string,
+  options: { markOpened?: boolean } = {},
+): boolean {
+  const access = getInviteControls().resolveTokenizedInviteAccess(rawToken);
+  if (access.kind === 'denied') {
+    res.status(access.statusCode).json({
+      error: access.error,
+      code: access.code,
+    });
+    return false;
+  }
+  if (access.kind === 'allowed' && options.markOpened) {
+    getInviteControls().markOpenedFromToken(rawToken);
+  }
+  return true;
 }
 
 function ensureOnboardingRegistrySeed(db: ReturnType<typeof getEntityDatabase>): void {
@@ -593,6 +618,9 @@ export function registerConfigRoutes(app: express.Express): void {
 
   app.get('/api/onboarding/agent-session/:token/manifest', (req, res) => {
     try {
+      if (!assertTokenizedInviteAccess(res, req.params.token, { markOpened: true })) {
+        return;
+      }
       const db = getEntityDatabase(ensureAppSettingsTable);
       const session = readAgentSession(db, req.params.token);
       if (!session) {
@@ -622,6 +650,9 @@ export function registerConfigRoutes(app: express.Express): void {
 
   app.patch('/api/onboarding/agent-session/:token/progress', (req, res) => {
     try {
+      if (!assertTokenizedInviteAccess(res, req.params.token)) {
+        return;
+      }
       const db = getEntityDatabase(ensureAppSettingsTable);
       const session = readAgentSession(db, req.params.token);
       if (!session) {
@@ -660,6 +691,9 @@ export function registerConfigRoutes(app: express.Express): void {
 
   app.get('/api/onboarding/agent-session/:token/skill', (req, res) => {
     try {
+      if (!assertTokenizedInviteAccess(res, req.params.token)) {
+        return;
+      }
       const db = getEntityDatabase(ensureAppSettingsTable);
       const session = readAgentSession(db, req.params.token);
       if (!session) {
@@ -686,6 +720,9 @@ export function registerConfigRoutes(app: express.Express): void {
 
   app.get('/api/onboarding/agent-session/:token/bundle', (req, res) => {
     try {
+      if (!assertTokenizedInviteAccess(res, req.params.token)) {
+        return;
+      }
       const db = getEntityDatabase(ensureAppSettingsTable);
       const session = readAgentSession(db, req.params.token);
       if (!session) {
