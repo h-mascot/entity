@@ -100,7 +100,7 @@ test('buildLocalPreviewInvite uses invite-kit created status and agents_invite s
   assert.match(invite.manifestPath, /\/api\/onboarding\/agent-session\/tokpreview01\/manifest$/);
   assert.equal(invite.expiresAt, '2026-07-31T05:30:00.000Z');
   assert.deepEqual(invite.selectedModules, ['entity-agent-contracts', 'entity-mc']);
-  assert.match(invite.nextStep, /WP2-A-04/);
+  assert.match(invite.nextStep, /invite prompt/i);
   assert.match(invite.nextStep, /WP2-A-05/);
 });
 

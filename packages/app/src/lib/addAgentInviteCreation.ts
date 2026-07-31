@@ -4,7 +4,8 @@
  * Hosts Agents → Add Agent creation state using the THE-877 invite-kit product
  * statuses. Durable POST /api/agents/invites is intentionally absent (WP2-A-05);
  * createInviteKit uses a bounded local_preview seam and never claims production
- * persistence. Full copyable prompt shape is WP2-A-04.
+ * persistence. Copyable prompt + URL bundle shaping lives in addAgentInvitePrompt
+ * (WP2-A-04 / THE-879).
  */
 
 export const AGENT_INVITE_STATUSES = [
@@ -277,7 +278,7 @@ export function buildLocalPreviewInvite(
     seam: 'local_preview',
     persistence: 'local_preview_not_durable',
     nextStep:
-      'Copy setup details for the agent next (WP2-A-04). Durable invite persistence and revoke/regenerate land in WP2-A-05.',
+      'Copy the full invite prompt or individual setup/manifest/bundle/skill/progress URLs below. Durable invite persistence and revoke/regenerate land in WP2-A-05.',
   };
 }
 

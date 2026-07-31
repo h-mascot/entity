@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ADD_AGENT_BUNDLES,
   ADD_AGENT_ROLES,
@@ -16,6 +16,16 @@ import {
   type AddAgentRole,
   type CreateInviteKitOptions,
 } from '../../lib/addAgentInviteCreation';
+import {
+  INVITE_URL_KEYS,
+  buildInvitePrompt,
+  copyInviteText,
+  createInitialCopyState,
+  inviteUrlLabel,
+  textForCopyTarget,
+  type InvitePromptCopyState,
+  type InvitePromptCopyTarget,
+} from '../../lib/addAgentInvitePrompt';
 
 export interface AddAgentCreationPanelProps {
   /** Optional override for tests / browser proof error injection. */
@@ -42,6 +52,9 @@ export default function AddAgentCreationPanel({
 }: AddAgentCreationPanelProps) {
   const [state, setState] = useState<AddAgentCreationState>(() => createInitialCreationState());
   const [open, setOpen] = useState(false);
+  const [copyState, setCopyState] = useState<InvitePromptCopyState>(() => createInitialCopyState());
+  const [showUrlDetails, setShowUrlDetails] = useState(true);
+  const [showPrompt, setShowPrompt] = useState(true);
 
   const forceErrorFromQuery = useMemo(() => {
     if (typeof window === 'undefined') return null;
@@ -52,6 +65,25 @@ export default function AddAgentCreationPanel({
       return null;
     }
   }, []);
+
+  const origin = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    return window.location.origin;
+  }, []);
+
+  const promptBuild = useMemo(() => {
+    if (!state.invite) return null;
+    return buildInvitePrompt({
+      invite: state.invite,
+      origin,
+      workspaceName: 'Entity workspace',
+      roleDisplay: roleLabel(state.invite.role),
+    });
+  }, [state.invite, origin]);
+
+  useEffect(() => {
+    setCopyState(createInitialCopyState());
+  }, [state.invite?.id]);
 
   const openPanel = () => {
     setOpen(true);
@@ -74,7 +106,22 @@ export default function AddAgentCreationPanel({
       forceError: createOptions?.forceError ?? forceErrorFromQuery,
     });
     setState(next);
+    setShowUrlDetails(true);
+    setShowPrompt(true);
   };
+
+  const onCopy = async (target: InvitePromptCopyTarget) => {
+    if (!promptBuild) {
+      setCopyState({ lastCopied: null, error: 'Invite prompt not ready.' });
+      return;
+    }
+    const text = textForCopyTarget(promptBuild, target);
+    const next = await copyInviteText(text, target);
+    setCopyState(next);
+  };
+
+  const copyButtonLabel = (target: InvitePromptCopyTarget, idle: string) =>
+    copyState.lastCopied === target ? 'Copied' : idle;
 
   return (
     <section
@@ -327,10 +374,12 @@ export default function AddAgentCreationPanel({
             </div>
           )}
 
-          {state.uiStatus === 'ready' && state.invite && (
+          {state.uiStatus === 'ready' && state.invite && promptBuild && (
             <div
               className="space-y-3 rounded border border-[var(--success)]/40 bg-[var(--bg-primary)]/50 px-3 py-3"
               data-testid="add-agent-ready"
+              data-invite-prompt-ok={promptBuild.ok ? '1' : '0'}
+              data-invite-prompt-degraded={promptBuild.degraded ? '1' : '0'}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -357,26 +406,134 @@ export default function AddAgentCreationPanel({
                 </span>
               </div>
 
-              <div className="grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
-                <div>
-                  <div className="text-[var(--text-muted)]">Setup path</div>
-                  <code
-                    className="mt-0.5 block break-all text-[var(--text-primary)]"
-                    data-testid="add-agent-setup-path"
-                  >
-                    {state.invite.setupPath}
-                  </code>
+              {promptBuild.degraded && !promptBuild.ok && (
+                <div
+                  className="rounded border border-[var(--error)] bg-[var(--surface-error)] px-3 py-2 text-xs text-[var(--error)]"
+                  data-testid="add-agent-prompt-degraded"
+                  role="alert"
+                >
+                  <div className="font-medium">Invite prompt degraded</div>
+                  <p className="mt-1">{promptBuild.error}</p>
                 </div>
-                <div>
-                  <div className="text-[var(--text-muted)]">Manifest path</div>
-                  <code
-                    className="mt-0.5 block break-all text-[var(--text-primary)]"
-                    data-testid="add-agent-manifest-path"
+              )}
+
+              {promptBuild.warnings.length > 0 && (
+                <div
+                  className="rounded border border-[var(--border-primary)] px-3 py-2 text-xs text-[var(--text-muted)]"
+                  data-testid="add-agent-prompt-warnings"
+                >
+                  {promptBuild.warnings.map((warning) => (
+                    <p key={warning} className="mt-1 first:mt-0">
+                      {warning}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              <div data-testid="add-agent-url-kit">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-[var(--text-primary)]">
+                    Invite URL bundle
+                  </div>
+                  <button
+                    type="button"
+                    className="text-xs text-[var(--accent)] underline-offset-2 hover:underline"
+                    data-testid="add-agent-toggle-urls"
+                    onClick={() => setShowUrlDetails((prev) => !prev)}
                   >
-                    {state.invite.manifestPath}
-                  </code>
+                    {showUrlDetails ? 'Hide URLs' : 'Show URLs'}
+                  </button>
+                </div>
+                {showUrlDetails && (
+                  <div className="mt-2 grid gap-2 text-xs text-[var(--text-secondary)] sm:grid-cols-2">
+                    {INVITE_URL_KEYS.map((key) => (
+                      <div
+                        key={key}
+                        className="rounded border border-[var(--border-primary)] px-2 py-2"
+                        data-testid={`add-agent-url-card-${key}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[var(--text-muted)]">{inviteUrlLabel(key)}</span>
+                          <button
+                            type="button"
+                            className="entity-ops-chip px-2 py-0.5 text-[11px]"
+                            data-testid={`add-agent-copy-${key}`}
+                            onClick={() => void onCopy(key)}
+                            disabled={!promptBuild.urls[key]}
+                          >
+                            {copyButtonLabel(key, 'Copy')}
+                          </button>
+                        </div>
+                        <code
+                          className="mt-1 block break-all text-[var(--text-primary)]"
+                          data-testid={`add-agent-${key}-url`}
+                        >
+                          {promptBuild.urls[key] || '(missing)'}
+                        </code>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Relative path anchors kept for WP2-A-03 DOM continuity */}
+                <div className="sr-only">
+                  <span data-testid="add-agent-setup-path">{state.invite.setupPath}</span>
+                  <span data-testid="add-agent-manifest-path">{state.invite.manifestPath}</span>
                 </div>
               </div>
+
+              <div data-testid="add-agent-invite-prompt">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-[var(--text-primary)]">
+                    Copyable invite prompt
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="text-xs text-[var(--accent)] underline-offset-2 hover:underline"
+                      data-testid="add-agent-toggle-prompt"
+                      onClick={() => setShowPrompt((prev) => !prev)}
+                    >
+                      {showPrompt ? 'Hide prompt' : 'Show prompt'}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-[var(--bg-primary)] disabled:opacity-50"
+                      data-testid="add-agent-copy-prompt"
+                      onClick={() => void onCopy('prompt')}
+                      disabled={!promptBuild.prompt.trim()}
+                    >
+                      {copyButtonLabel('prompt', 'Copy full prompt')}
+                    </button>
+                  </div>
+                </div>
+                {showPrompt && (
+                  <textarea
+                    readOnly
+                    className="mt-2 h-56 w-full rounded border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-2 font-mono text-[11px] leading-relaxed text-[var(--text-primary)]"
+                    data-testid="add-agent-prompt-text"
+                    value={promptBuild.prompt}
+                  />
+                )}
+              </div>
+
+              {copyState.error && (
+                <div
+                  className="rounded border border-[var(--error)] px-3 py-2 text-xs text-[var(--error)]"
+                  data-testid="add-agent-copy-error"
+                  role="alert"
+                >
+                  {copyState.error}
+                </div>
+              )}
+              {copyState.lastCopied && !copyState.error && (
+                <div
+                  className="text-xs text-[var(--success)]"
+                  data-testid="add-agent-copy-success"
+                  role="status"
+                >
+                  Copied {copyState.lastCopied === 'prompt' ? 'full invite prompt' : `${copyState.lastCopied} URL`}.
+                </div>
+              )}
 
               <div
                 className="rounded border border-[var(--border-primary)] px-3 py-2 text-xs text-[var(--text-secondary)]"
