@@ -84,5 +84,5 @@ test('characterizeTaskDetailWorkplaneSeams maps all Q33 panels and forbids route
     'task_summary',
   ]);
   assert.equal(WORKPLANE_PANEL_SEAM_MAP.proof_bundle.status, 'reusable_now');
-  assert.equal(WORKPLANE_PANEL_SEAM_MAP.activity_progress.status, 'partial');
+  assert.equal(WORKPLANE_PANEL_SEAM_MAP.activity_progress.status, 'reusable_now');
 });

@@ -8,8 +8,9 @@
  * THE-866 / WP1-B-05 — Missing-proof warning panel (derived from proof bundle).
  * THE-867 / WP1-B-06 — Layout lock: humans own panel nav; agents cannot mutate layout.
  * THE-868 / WP1-B-07 — Narrow/mobile viewport smoke for Workplane panels.
+ * THE-871 / WP1-C-03 — Activity/progress panel (THE-869 spine via THE-870 API).
  *
- * Parses/serializes THE-857 URL state. Remaining panel bodies stay placeholders until later WP1-B/C.
+ * Parses/serializes THE-857 URL state. Remaining panel bodies stay placeholders until later WP1-C.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -47,6 +48,13 @@ import {
   type WorkplaneTaskSummaryLoadState,
   type WorkplaneTaskSummaryView,
 } from '../../lib/workplaneTaskSummary.ts';
+import {
+  createWorkplaneActivityProgressLoadState,
+  fetchWorkplaneActivityProgress,
+  workplaneActivityProgressErrorMessage,
+  type ActivityProgressBundle,
+  type WorkplaneActivityProgressLoadState,
+} from '../../lib/workplaneActivityProgress.ts';
 import { buildMissingProofWarningView } from '../../lib/workplaneMissingProof.ts';
 import {
   workplaneNarrowDomAttrs,
@@ -54,6 +62,7 @@ import {
   workplanePanelNavNarrowClassNames,
   workplaneShellNarrowClassNames,
 } from '../../lib/workplaneNarrowViewport.ts';
+import ActivityProgressPanel from './ActivityProgressPanel.tsx';
 import FilesDocsPanel from './FilesDocsPanel.tsx';
 import MissingProofWarningPanel from './MissingProofWarningPanel.tsx';
 import ProofBundlePanel from './ProofBundlePanel.tsx';
@@ -88,6 +97,13 @@ export interface WorkplaneShellProps {
   loadFilesDocs?: (taskId: number) => Promise<WorkplaneFilesDocsBundle | null>;
   /** Optional controlled files/docs state (skips fetch when provided). */
   filesDocsState?: WorkplaneFilesDocsLoadState;
+  /**
+   * Optional activity/progress loader override (tests / Storybook).
+   * Return null → empty; throw → error; bundle → ready.
+   */
+  loadActivityProgress?: (taskId: number) => Promise<ActivityProgressBundle | null>;
+  /** Optional controlled activity/progress state (skips fetch when provided). */
+  activityProgressState?: WorkplaneActivityProgressLoadState;
   /**
    * Optional agent/task payload that may attempt layout mutation (THE-867).
    * Always fail-closed: canonical panels + human/URL active panel win.
@@ -127,6 +143,8 @@ export default function WorkplaneShell({
   proofBundleState: controlledProof,
   loadFilesDocs,
   filesDocsState: controlledFilesDocs,
+  loadActivityProgress,
+  activityProgressState: controlledActivity,
   agentLayoutPayload,
 }: WorkplaneShellProps) {
   const [location, setLocation] = useState(() => readLocation(pathnameProp, searchProp));
@@ -142,6 +160,10 @@ export default function WorkplaneShell({
     createWorkplaneFilesDocsLoadState({ status: 'loading' }),
   );
   const [filesDocsReloadToken, setFilesDocsReloadToken] = useState(0);
+  const [activityLoad, setActivityLoad] = useState<WorkplaneActivityProgressLoadState>(() =>
+    createWorkplaneActivityProgressLoadState({ status: 'loading' }),
+  );
+  const [activityReloadToken, setActivityReloadToken] = useState(0);
   /** Browser-proof / test fixture for agent layout attacks (never trusted). */
   const [fixtureAgentLayoutPayload, setFixtureAgentLayoutPayload] = useState<unknown>(null);
 
@@ -252,6 +274,10 @@ export default function WorkplaneShell({
 
   const retryFilesDocs = useCallback(() => {
     setFilesDocsReloadToken((token) => token + 1);
+  }, []);
+
+  const retryActivity = useCallback(() => {
+    setActivityReloadToken((token) => token + 1);
   }, []);
 
   const selectProof = useCallback(
@@ -433,9 +459,65 @@ export default function WorkplaneShell({
     filesDocsReloadToken,
   ]);
 
+  useEffect(() => {
+    if (controlledActivity) {
+      return;
+    }
+
+    const taskId = model.status === 'ready' ? model.taskId : null;
+    if (taskId === null) {
+      setActivityLoad(createWorkplaneActivityProgressLoadState({ status: 'empty', taskId: null }));
+      return;
+    }
+
+    let cancelled = false;
+    setActivityLoad(createWorkplaneActivityProgressLoadState({ status: 'loading', taskId }));
+
+    const loader =
+      loadActivityProgress ?? ((id: number) => fetchWorkplaneActivityProgress(id, apiBase));
+
+    void loader(taskId)
+      .then((bundle) => {
+        if (cancelled) return;
+        if (!bundle) {
+          setActivityLoad(createWorkplaneActivityProgressLoadState({ status: 'empty', taskId }));
+          return;
+        }
+        setActivityLoad(
+          createWorkplaneActivityProgressLoadState({
+            status: 'ready',
+            taskId: bundle.taskId ?? taskId,
+            bundle,
+          }),
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setActivityLoad(
+          createWorkplaneActivityProgressLoadState({
+            status: 'error',
+            taskId,
+            errorMessage: workplaneActivityProgressErrorMessage(error),
+          }),
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiBase,
+    controlledActivity,
+    loadActivityProgress,
+    model.status,
+    model.taskId,
+    activityReloadToken,
+  ]);
+
   const summaryState = controlledSummary ?? summaryLoad;
   const proofState = controlledProof ?? proofLoad;
   const filesDocsState = controlledFilesDocs ?? filesDocsLoad;
+  const activityState = controlledActivity ?? activityLoad;
   const missingProofView = buildMissingProofWarningView(proofState);
 
   const narrowAttrs = workplaneNarrowDomAttrs();
@@ -498,6 +580,12 @@ export default function WorkplaneShell({
             <FilesDocsPanel
               loadState={createWorkplaneFilesDocsLoadState({ status: 'empty', taskId: null })}
             />
+            <ActivityProgressPanel
+              loadState={createWorkplaneActivityProgressLoadState({
+                status: 'empty',
+                taskId: null,
+              })}
+            />
             <MissingProofWarningPanel
               proofLoadState={createWorkplaneProofBundleLoadState({
                 status: 'empty',
@@ -515,6 +603,7 @@ export default function WorkplaneShell({
     model.activePanel === 'task_summary' || model.activePanel === null;
   const showProofBundle = model.activePanel === 'proof_bundle';
   const showFilesDocs = model.activePanel === 'files_docs';
+  const showActivityProgress = model.activePanel === 'activity_progress';
   const showMissingProof = model.activePanel === 'missing_proof_warnings';
 
   const headerTitle =
@@ -537,6 +626,7 @@ export default function WorkplaneShell({
       data-workplane-summary-status={summaryState.status}
       data-workplane-proof-status={proofState.status}
       data-workplane-files-docs-status={filesDocsState.status}
+      data-workplane-activity-status={activityState.status}
       data-workplane-missing-proof-status={missingProofView.status}
       data-workplane-missing-proof-warning-visible={
         missingProofView.warningVisible ? 'true' : 'false'
@@ -633,6 +723,9 @@ export default function WorkplaneShell({
         {showFilesDocs ? (
           <FilesDocsPanel loadState={filesDocsState} onRetry={retryFilesDocs} />
         ) : null}
+        {showActivityProgress ? (
+          <ActivityProgressPanel loadState={activityState} onRetry={retryActivity} />
+        ) : null}
         {showMissingProof ? (
           <MissingProofWarningPanel
             proofLoadState={proofState}
@@ -643,6 +736,7 @@ export default function WorkplaneShell({
         {!showTaskSummary &&
         !showProofBundle &&
         !showFilesDocs &&
+        !showActivityProgress &&
         !showMissingProof ? (
           <div className="mc-shell-card rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
             <p className="text-sm font-medium text-[var(--text-primary)]">

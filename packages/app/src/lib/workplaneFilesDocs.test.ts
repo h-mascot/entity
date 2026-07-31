@@ -239,7 +239,7 @@ test('WorkplaneShell renders FilesDocsPanel for files_docs panel', () => {
   const other = renderToStaticMarkup(
     createElement(WorkplaneShell, {
       pathname: '/workplane/865',
-      search: '?panel=activity_progress',
+      search: '?panel=comments_review_checklist',
       taskSummaryState: createWorkplaneTaskSummaryLoadState({ status: 'empty', taskId: 865 }),
       proofBundleState: createWorkplaneProofBundleLoadState({ status: 'empty', taskId: 865 }),
       filesDocsState: createWorkplaneFilesDocsLoadState({ status: 'ready', bundle }),

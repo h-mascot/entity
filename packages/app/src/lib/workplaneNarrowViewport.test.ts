@@ -9,6 +9,7 @@ import {
   createWorkplaneFilesDocsLoadState,
   normalizeWorkplaneFilesDocs,
 } from './workplaneFilesDocs.ts';
+import { createWorkplaneActivityProgressLoadState } from './workplaneActivityProgress.ts';
 import { createWorkplaneProofBundleLoadState } from './workplaneProofBundle.ts';
 import {
   buildWorkplaneTaskSummary,
@@ -226,23 +227,48 @@ test('narrow smoke: task summary / proof / files / missing-proof panels remain u
   assert.match(missingHtml, /data-missing-proof-review-ready="false"/);
 });
 
-test('narrow smoke: activity/comments placeholders stay present and layout stays locked', () => {
-  for (const panel of ['activity_progress', 'comments_review_checklist'] as const) {
-    const html = renderToStaticMarkup(
-      createElement(WorkplaneShell, {
-        pathname: '/workplane/22',
-        search: `?panel=${panel}`,
-        taskSummaryState: READY_SUMMARY,
-        proofBundleState: EMPTY_PROOF,
-        filesDocsState: EMPTY_FILES,
+test('narrow smoke: activity panel renders; comments placeholder stays; layout locked', () => {
+  const activityHtml = renderToStaticMarkup(
+    createElement(WorkplaneShell, {
+      pathname: '/workplane/22',
+      search: '?panel=activity_progress',
+      taskSummaryState: READY_SUMMARY,
+      proofBundleState: EMPTY_PROOF,
+      filesDocsState: EMPTY_FILES,
+      activityProgressState: createWorkplaneActivityProgressLoadState({
+        status: 'ready',
+        bundle: {
+          taskId: 22,
+          events: [],
+          empty: true,
+          degraded: false,
+          warnings: [],
+          reviewReady: false,
+        },
       }),
-    );
-    assert.match(html, new RegExp(`data-workplane-active-panel="${panel}"`));
-    assert.match(html, /Placeholder/);
-    assert.match(html, /data-workplane-narrow-ready="true"/);
-    assert.match(html, /data-workplane-layout-locked="true"/);
-    assert.match(html, /data-testid="workplane-panel-nav"/);
-  }
+    }),
+  );
+  assert.match(activityHtml, /data-workplane-active-panel="activity_progress"/);
+  assert.match(activityHtml, /data-testid="workplane-activity-progress"/);
+  assert.match(activityHtml, /data-activity-empty="true"/);
+  assert.doesNotMatch(activityHtml, /Placeholder — full panel ships/);
+  assert.match(activityHtml, /data-workplane-narrow-ready="true"/);
+  assert.match(activityHtml, /data-workplane-layout-locked="true"/);
+
+  const commentsHtml = renderToStaticMarkup(
+    createElement(WorkplaneShell, {
+      pathname: '/workplane/22',
+      search: '?panel=comments_review_checklist',
+      taskSummaryState: READY_SUMMARY,
+      proofBundleState: EMPTY_PROOF,
+      filesDocsState: EMPTY_FILES,
+    }),
+  );
+  assert.match(commentsHtml, /data-workplane-active-panel="comments_review_checklist"/);
+  assert.match(commentsHtml, /Placeholder/);
+  assert.match(commentsHtml, /data-workplane-narrow-ready="true"/);
+  assert.match(commentsHtml, /data-workplane-layout-locked="true"/);
+  assert.match(commentsHtml, /data-testid="workplane-panel-nav"/);
 });
 
 test('NEGATIVE: human panel navigation still accepted under narrow contract (layout lock intact)', () => {

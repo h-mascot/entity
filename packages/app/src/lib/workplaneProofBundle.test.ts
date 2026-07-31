@@ -237,7 +237,7 @@ test('WorkplaneShell renders ProofBundlePanel for proof_bundle panel', () => {
   const other = renderToStaticMarkup(
     createElement(WorkplaneShell, {
       pathname: '/workplane/64',
-      search: '?panel=activity_progress',
+      search: '?panel=comments_review_checklist',
       taskSummaryState: createWorkplaneTaskSummaryLoadState({ status: 'empty', taskId: 64 }),
       proofBundleState: createWorkplaneProofBundleLoadState({ status: 'ready', bundle }),
     }),

@@ -260,7 +260,7 @@ test('WorkplaneShell wires MissingProofWarningPanel for missing_proof_warnings p
   const other = renderToStaticMarkup(
     createElement(WorkplaneShell, {
       pathname: '/workplane/866',
-      search: '?panel=activity_progress',
+      search: '?panel=comments_review_checklist',
       taskSummaryState: createWorkplaneTaskSummaryLoadState({ status: 'empty', taskId: 866 }),
       proofBundleState: createWorkplaneProofBundleLoadState({
         status: 'ready',
