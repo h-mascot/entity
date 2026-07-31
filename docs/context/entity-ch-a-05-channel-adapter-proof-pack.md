@@ -1,11 +1,12 @@
 # CH-A-05 — Channel adapter proof pack
 
-**Linear:** THE-921  
-**Build-plan task:** CH-A-05  
-**Parent:** THE-836 (Entity Channel Integrations — Phase A: Adapter foundation)  
-**Decision:** PROOF PACK IMPLEMENTED  
-**Dependencies:** CH-A-03 / THE-919, CH-A-04 / THE-920  
-**Proof:** E2E + negative proof  
+**Linear:** THE-921
+**Build-plan task:** CH-A-05
+**Parent:** THE-836 (Entity Channel Integrations — Phase A: Adapter foundation)
+**Decision:** PROOF PACK IMPLEMENTED
+**Dependencies:** CH-A-03 / THE-919, CH-A-04 / THE-920
+**Proof:** E2E + negative proof
+
 
 Source SHA-256 (consolidated packet): `84541727830ef8f4018ad2b9fdf587d653dfbba940b38b279ae3f90ca18ba895`
 
