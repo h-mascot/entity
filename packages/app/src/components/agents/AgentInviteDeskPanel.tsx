@@ -35,6 +35,7 @@ import {
 } from '../../lib/addAgentInvitePrompt';
 import { toErrorMessage } from '../../lib/http';
 import AgentIdentityCapabilityCard from './AgentIdentityCapabilityCard';
+import WorkplanePresencePanel from './WorkplanePresencePanel';
 
 export interface AgentInviteDeskPanelProps {
   /** Optional refresh signal from parent (e.g. after Add Agent create). */
@@ -77,6 +78,7 @@ export default function AgentInviteDeskPanel({
 }: AgentInviteDeskPanelProps) {
   const [state, setState] = useState<AgentInviteDeskState>(() => createInitialDeskState());
   const [copyState, setCopyState] = useState<InvitePromptCopyState>(() => createInitialCopyState());
+  const [presenceRefresh, setPresenceRefresh] = useState(0);
 
   const origin = useMemo(() => {
     if (typeof window === 'undefined') return '';
@@ -88,6 +90,7 @@ export default function AgentInviteDeskPanel({
     try {
       const payload = await listLoader();
       setState((prev) => deskFromListSuccess(prev, payload));
+      setPresenceRefresh((value) => value + 1);
     } catch (error) {
       setState((prev) => deskFromListError(prev, toErrorMessage(error, 'Unable to load invites.')));
     }
@@ -347,6 +350,11 @@ export default function AgentInviteDeskPanel({
                   taskId: selected.taskId,
                   progress: selected.progress,
                 }}
+              />
+
+              <WorkplanePresencePanel
+                workplaneId={selected.workplaneId}
+                refreshToken={refreshToken + presenceRefresh}
               />
 
               <dl className="grid gap-2 text-xs sm:grid-cols-2" data-testid="invite-desk-meta">

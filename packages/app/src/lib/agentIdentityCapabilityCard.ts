@@ -2,7 +2,7 @@
  * THE-882 / WP2-B-01 — Client identity/capability card field model.
  *
  * Mirrors server schema for Agent Desk UI smoke. Presence stays explicit
- * missing/unknown until WP2-B-02 heartbeat endpoint lands.
+ * missing/unknown until a real heartbeat arrives (WP2-B-02).
  */
 
 export const AGENT_PRESENCE_STATUSES = [

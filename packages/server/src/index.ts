@@ -135,6 +135,7 @@ import {
 } from "./routes/task-helpers";
 import { registerAgentControlRoutes, registerAgentRegistryRoutes } from "./routes/agents";
 import { registerAgentInviteRoutes } from "./routes/agent-invites";
+import { registerAgentPresenceRoutes } from "./routes/agent-presence";
 import { registerActivityRoutes, registerDbModeRoutes, registerRuntimeRoutes } from "./routes/runtime";
 import { registerDocIntelligenceRoutes } from "./routes/doc-intelligence";
 import { registerOperationalStatusRoutes } from "./routes/operational-status";
@@ -201,6 +202,8 @@ registerCoreProbeRoutes(app, phase2Flags);
 registerConfigRoutes(app);
 // Durable invite controls before /api/agents/:id* registry routes (THE-880 / WP2-A-05).
 registerAgentInviteRoutes(app);
+// Heartbeat / Workplane presence before /api/agents/:id* (THE-883 / WP2-B-02).
+registerAgentPresenceRoutes(app);
 app.use("/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/search", createSearchRouter({ flags: phase2Flags }));

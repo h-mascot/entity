@@ -4,7 +4,8 @@
  * Canonical plain fields for Agent Desk / invite onboarding surface (Q57):
  * identity, permissions, runtime/model, capabilities, heartbeat, current task/workplane.
  *
- * Presence values stay explicit missing/unknown until WP2-B-02 heartbeat endpoint.
+ * Presence values stay explicit missing/unknown until a real heartbeat exists
+ * (see WP2-B-02 / THE-883 heartbeat endpoint + Workplane presence panel).
  * Compatible with durable invite views from THE-879 / THE-880 / THE-881.
  */
 

@@ -50,7 +50,7 @@ function ChipList({
 
 /**
  * WP2-B-01 UI smoke card — identity, capabilities, runtime/model, heartbeat, current work.
- * Heartbeat stays explicit missing until WP2-B-02.
+ * Heartbeat stays explicit missing until a real WP2-B-02 heartbeat arrives.
  */
 export default function AgentIdentityCapabilityCard({
   invite = null,
