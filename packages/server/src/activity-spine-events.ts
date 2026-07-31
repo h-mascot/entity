@@ -1,18 +1,24 @@
 /**
  * THE-870 / WP1-C-02 — Task-scoped ActivityEvent spine append/query API.
+ * THE-872 / WP1-C-04 — Read-path adapters merge existing agent/progress/
+ * task/proof/status signals into the query response for Workplane consumption.
  *
- * Surfaces THE-869 spine storage for later Workplane activity/progress panel
- * work (THE-871). Does not implement adapters or review gates.
+ * Append remains write-to-spine-store only. Query is additive: stored rows +
+ * adapted signals. No import mutations. No review-gate enforcement.
  */
 
 import { Router, type Request } from 'express';
 import type {
   ActivityEventSpineRepository,
   AppendActivityEventSpineInput,
-  ListActivityEventSpineResult,
   StoredActivityEventSpine,
   TaskRecord,
 } from '../../db/src';
+import {
+  adaptTaskSignalsToSpine,
+  mergeStoredAndAdaptedSpineEvents,
+  type MergedActivitySpineEvent,
+} from './activity-event-spine-adapters';
 import { asyncHandler } from './middleware/async-handler';
 
 export interface ActivitySpineEventQueryContext {
@@ -30,9 +36,29 @@ export type ActivitySpineEventServiceResult<T> =
       degraded: true;
     };
 
+export interface ActivitySpineEventQueryResult {
+  taskId: number;
+  events: MergedActivitySpineEvent[];
+  empty: boolean;
+  degraded: boolean;
+  warnings: Array<{ code: string; message: string }>;
+  adaptedCount: number;
+  storedCount: number;
+  /** True when adapted read-path signals were included in this response. */
+  includeAdapted: boolean;
+}
+
 interface ActivitySpineEventServiceDependencies {
   spineRepository: ActivityEventSpineRepository;
   getTask: (taskId: number) => Promise<TaskRecord | undefined> | TaskRecord | undefined;
+  /** Optional THE-872 read-path sources. Absent feeds are omitted (not invented). */
+  listActivityEventsForTask?: (
+    taskId: number,
+    limit?: number,
+  ) => Promise<readonly unknown[]> | readonly unknown[];
+  listSwarmJobsForTask?: (
+    taskId: number,
+  ) => Promise<readonly unknown[]> | readonly unknown[];
 }
 
 export interface ActivitySpineEventService {
@@ -43,8 +69,13 @@ export interface ActivitySpineEventService {
   ) => Promise<ActivitySpineEventServiceResult<StoredActivityEventSpine>>;
   queryTaskSpineEvents: (
     taskId: number,
-    options?: { limit?: number; context?: ActivitySpineEventQueryContext },
-  ) => Promise<ActivitySpineEventServiceResult<ListActivityEventSpineResult>>;
+    options?: {
+      limit?: number;
+      context?: ActivitySpineEventQueryContext;
+      /** Default true — set false for stored-only read. */
+      includeAdapted?: boolean;
+    },
+  ) => Promise<ActivitySpineEventServiceResult<ActivitySpineEventQueryResult>>;
 }
 
 function readOrgScope(req: Request): ActivitySpineEventQueryContext {
@@ -52,6 +83,16 @@ function readOrgScope(req: Request): ActivitySpineEventQueryContext {
   const queryOrg = typeof req.query.orgId === 'string' ? req.query.orgId : undefined;
   const orgId = (headerOrg ?? queryOrg)?.trim();
   return orgId ? { orgId } : {};
+}
+
+function readIncludeAdapted(req: Request): boolean {
+  const raw = req.query.includeAdapted ?? req.query.include_adapted;
+  if (typeof raw !== 'string') return true;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === '0' || normalized === 'false' || normalized === 'no') {
+    return false;
+  }
+  return true;
 }
 
 function isTaskVisible(task: TaskRecord, context?: ActivitySpineEventQueryContext): boolean {
@@ -132,10 +173,35 @@ function parseAppendBody(body: unknown): AppendActivityEventSpineInput {
   };
 }
 
+function toAdapterActivityEvent(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return raw;
+  }
+  const record = raw as Record<string, unknown>;
+  // Support both ActivityRecord rows and ActivityEventEnvelope shapes.
+  return {
+    id: record.id,
+    taskId: record.taskId ?? record.task_id,
+    eventType: record.eventType ?? record.activity_event_type ?? record.type,
+    actorType: record.actorType ?? record.actor_type,
+    actorPrincipalId: record.actorPrincipalId ?? record.actor_principal_id,
+    actor: record.actor,
+    action: record.action,
+    description: record.description,
+    createdAt: record.createdAt ?? record.created_at,
+    payload: record.payload,
+    payloadRef: record.payloadRef ?? record.payload_ref ?? record.file_path,
+    schemaStatus: record.schemaStatus ?? record.activity_event_schema_status,
+    degraded: record.degraded,
+    warnings: record.warnings,
+  };
+}
+
 export function createActivitySpineEventService(
   dependencies: ActivitySpineEventServiceDependencies,
 ): ActivitySpineEventService {
-  const { spineRepository, getTask } = dependencies;
+  const { spineRepository, getTask, listActivityEventsForTask, listSwarmJobsForTask } =
+    dependencies;
 
   return {
     async appendTaskSpineEvent(taskId, input, context) {
@@ -164,7 +230,80 @@ export function createActivitySpineEventService(
       const listed = spineRepository.listForTask(taskResult.value.id, {
         limit: options.limit,
       });
-      return { ok: true, value: listed };
+
+      const includeAdapted = options.includeAdapted !== false;
+      if (!includeAdapted) {
+        return {
+          ok: true,
+          value: {
+            ...listed,
+            adaptedCount: 0,
+            storedCount: listed.events.length,
+            includeAdapted: false,
+          },
+        };
+      }
+
+      let activityEvents: readonly unknown[] | null | undefined = undefined;
+      if (listActivityEventsForTask) {
+        try {
+          const rows = await listActivityEventsForTask(
+            taskResult.value.id,
+            typeof options.limit === 'number' ? options.limit : 200,
+          );
+          activityEvents = Array.isArray(rows)
+            ? rows.map(toAdapterActivityEvent)
+            : null;
+        } catch {
+          activityEvents = null;
+        }
+      }
+
+      let swarmJobs: readonly unknown[] | null | undefined = undefined;
+      if (listSwarmJobsForTask) {
+        try {
+          const rows = await listSwarmJobsForTask(taskResult.value.id);
+          swarmJobs = Array.isArray(rows) ? rows : null;
+        } catch {
+          swarmJobs = null;
+        }
+      }
+
+      const adapted = adaptTaskSignalsToSpine({
+        taskId: taskResult.value.id,
+        task: taskResult.value,
+        activityEvents,
+        swarmJobs,
+      });
+
+      const merged = mergeStoredAndAdaptedSpineEvents({
+        taskId: taskResult.value.id,
+        stored: listed.events,
+        adapted,
+      });
+
+      const limited =
+        typeof options.limit === 'number' && Number.isInteger(options.limit) && options.limit > 0
+          ? merged.events.slice(0, options.limit)
+          : merged.events;
+
+      return {
+        ok: true,
+        value: {
+          taskId: merged.taskId,
+          events: limited,
+          empty: limited.length === 0,
+          degraded: listed.degraded || merged.degraded,
+          warnings: [...listed.warnings, ...merged.warnings],
+          adaptedCount: limited.filter(
+            (event) => 'adapted' in event && event.adapted === true,
+          ).length,
+          storedCount: limited.filter(
+            (event) => !('adapted' in event && event.adapted === true),
+          ).length,
+          includeAdapted: true,
+        },
+      };
     },
   };
 }
@@ -180,6 +319,7 @@ export function createActivitySpineEventRouter(service: ActivitySpineEventServic
       const result = await service.queryTaskSpineEvents(taskId, {
         limit: Number.isFinite(limitRaw) ? limitRaw : 200,
         context: readOrgScope(req),
+        includeAdapted: readIncludeAdapted(req),
       });
 
       if (!result.ok) {
@@ -190,6 +330,9 @@ export function createActivitySpineEventRouter(service: ActivitySpineEventServic
           degraded: true,
           empty: false,
           events: [],
+          adaptedCount: 0,
+          storedCount: 0,
+          includeAdapted: false,
         });
       }
 
@@ -199,6 +342,9 @@ export function createActivitySpineEventRouter(service: ActivitySpineEventServic
         empty: result.value.empty,
         degraded: result.value.degraded,
         warnings: result.value.warnings,
+        adaptedCount: result.value.adaptedCount,
+        storedCount: result.value.storedCount,
+        includeAdapted: result.value.includeAdapted,
         permissionState: 'visible',
       });
     }),

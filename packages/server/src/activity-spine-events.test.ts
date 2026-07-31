@@ -178,6 +178,7 @@ describe('THE-870 / WP1-C-02 ActivityEvent spine API', () => {
 
     const queried = await service.queryTaskSpineEvents(task.id, {
       context: { orgId: 'org-a' },
+      includeAdapted: false,
     });
     expect(queried.ok).toBe(true);
     if (!queried.ok) throw new Error(queried.message);
@@ -197,7 +198,10 @@ describe('THE-870 / WP1-C-02 ActivityEvent spine API', () => {
       getTask: (taskId) => (taskId === task.id ? task : undefined),
     });
 
-    const queried = await service.queryTaskSpineEvents(task.id);
+    // Stored-only empty (THE-870). THE-872 adapters may still project task snapshot.
+    const queried = await service.queryTaskSpineEvents(task.id, {
+      includeAdapted: false,
+    });
     expect(queried.ok).toBe(true);
     if (!queried.ok) throw new Error(queried.message);
     expect(queried.value).toMatchObject({
@@ -206,6 +210,7 @@ describe('THE-870 / WP1-C-02 ActivityEvent spine API', () => {
       empty: true,
       degraded: false,
       warnings: [],
+      includeAdapted: false,
     });
   });
 
@@ -245,7 +250,9 @@ describe('THE-870 / WP1-C-02 ActivityEvent spine API', () => {
     const { baseUrl, close } = await listen(app);
 
     try {
-      const emptyResponse = await fetch(`${baseUrl}/tasks/${task.id}/activity-spine-events`);
+      const emptyResponse = await fetch(
+        `${baseUrl}/tasks/${task.id}/activity-spine-events?includeAdapted=0`,
+      );
       expect(emptyResponse.status).toBe(200);
       const emptyBody = (await emptyResponse.json()) as {
         empty: boolean;
@@ -268,13 +275,165 @@ describe('THE-870 / WP1-C-02 ActivityEvent spine API', () => {
       const postBody = (await postResponse.json()) as { event: StoredActivityEventSpine };
       expect(postBody.event.eventType).toBe('blocker');
 
-      const listedResponse = await fetch(`${baseUrl}/tasks/${task.id}/activity-spine-events`);
+      const listedResponse = await fetch(
+        `${baseUrl}/tasks/${task.id}/activity-spine-events?includeAdapted=0`,
+      );
       const listedBody = (await listedResponse.json()) as {
         empty: boolean;
         events: StoredActivityEventSpine[];
       };
       expect(listedBody.empty).toBe(false);
       expect(listedBody.events).toHaveLength(1);
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe('THE-872 / WP1-C-04 ActivityEvent spine read-path adapters', () => {
+  it('merges adapted task/activity/swarm signals into GET query', async () => {
+    const task = makeTask({
+      progress_status: 'working',
+      output: 'output/proof.md',
+      blocked: true,
+      blocker_reason: 'needs review',
+    });
+    const service = createActivitySpineEventService({
+      spineRepository: createMemorySpineRepository(),
+      getTask: (taskId) => (taskId === task.id ? task : undefined),
+      listActivityEventsForTask: () => [
+        {
+          id: 101,
+          task_id: task.id,
+          activity_event_type: 'artifact_linked',
+          action: 'link',
+          description: 'Linked artifact',
+          created_at: '2026-07-31T04:00:00.000Z',
+          activity_event_schema_status: 'structured',
+          file_path: 'output/artifact.json',
+        },
+      ],
+      listSwarmJobsForTask: () => [
+        {
+          id: 'swarm-872',
+          task_id: task.id,
+          status: 'running',
+          provider: 'symphony',
+          title: 'Adapter wiring',
+          updated_at: '2026-07-31T05:00:00.000Z',
+        },
+      ],
+    });
+
+    const queried = await service.queryTaskSpineEvents(task.id);
+    expect(queried.ok).toBe(true);
+    if (!queried.ok) throw new Error(queried.message);
+    expect(queried.value.includeAdapted).toBe(true);
+    expect(queried.value.empty).toBe(false);
+    expect(queried.value.adaptedCount).toBeGreaterThan(0);
+    expect(queried.value.events.some((event) => event.eventType === 'status')).toBe(true);
+    expect(queried.value.events.some((event) => event.eventType === 'progress')).toBe(true);
+    expect(queried.value.events.some((event) => event.eventType === 'proof')).toBe(true);
+    expect(queried.value.events.some((event) => event.eventType === 'blocker')).toBe(true);
+    expect(
+      queried.value.events.some(
+        (event) => 'sourceId' in event && event.sourceId === 'activity_event:101',
+      ),
+    ).toBe(true);
+    expect(
+      queried.value.events.some(
+        (event) => 'sourceId' in event && event.sourceId === 'swarm_job:swarm-872',
+      ),
+    ).toBe(true);
+  });
+
+  it('supports stored-only mode and fail-closed unavailable feeds', async () => {
+    const task = makeTask({ progress_status: null, output: null });
+    const spineRepository = createMemorySpineRepository();
+    await createActivitySpineEventService({
+      spineRepository,
+      getTask: (taskId) => (taskId === task.id ? task : undefined),
+    }).appendTaskSpineEvent(task.id, {
+      eventType: 'log',
+      payload: { summary: 'stored only' },
+      timestamp: '2026-07-31T00:00:00.000Z',
+    });
+
+    const service = createActivitySpineEventService({
+      spineRepository,
+      getTask: (taskId) => (taskId === task.id ? task : undefined),
+      listActivityEventsForTask: () => {
+        throw new Error('feed down');
+      },
+      listSwarmJobsForTask: () => {
+        throw new Error('swarm down');
+      },
+    });
+
+    const storedOnly = await service.queryTaskSpineEvents(task.id, {
+      includeAdapted: false,
+    });
+    expect(storedOnly.ok).toBe(true);
+    if (!storedOnly.ok) throw new Error(storedOnly.message);
+    expect(storedOnly.value.includeAdapted).toBe(false);
+    expect(storedOnly.value.events).toHaveLength(1);
+    expect(storedOnly.value.adaptedCount).toBe(0);
+
+    const degraded = await service.queryTaskSpineEvents(task.id, {
+      includeAdapted: true,
+    });
+    expect(degraded.ok).toBe(true);
+    if (!degraded.ok) throw new Error(degraded.message);
+    expect(degraded.value.degraded).toBe(true);
+    expect(
+      degraded.value.warnings.some((w) => w.code === 'adapter_activity_events_unavailable'),
+    ).toBe(true);
+    expect(
+      degraded.value.warnings.some((w) => w.code === 'adapter_swarm_jobs_unavailable'),
+    ).toBe(true);
+    // Stored row still present; task snapshot still adapts column status.
+    expect(degraded.value.storedCount).toBe(1);
+    expect(degraded.value.events.some((event) => event.eventType === 'status')).toBe(true);
+  });
+
+  it('HTTP GET includes adapted metadata by default', async () => {
+    const task = makeTask({ progress_status: 'working', output: null, blocked: false });
+    const service = createActivitySpineEventService({
+      spineRepository: createMemorySpineRepository(),
+      getTask: (taskId) => (taskId === task.id ? task : undefined),
+      listActivityEventsForTask: () => [],
+      listSwarmJobsForTask: () => [],
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(createActivitySpineEventRouter(service));
+    const { baseUrl, close } = await listen(app);
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${task.id}/activity-spine-events`);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        includeAdapted: boolean;
+        adaptedCount: number;
+        empty: boolean;
+        events: Array<{ eventType: string; adapted?: boolean }>;
+      };
+      expect(body.includeAdapted).toBe(true);
+      expect(body.adaptedCount).toBeGreaterThan(0);
+      expect(body.empty).toBe(false);
+      expect(body.events.some((event) => event.adapted === true)).toBe(true);
+
+      const raw = await fetch(
+        `${baseUrl}/tasks/${task.id}/activity-spine-events?includeAdapted=0`,
+      );
+      const rawBody = (await raw.json()) as {
+        includeAdapted: boolean;
+        adaptedCount: number;
+        events: unknown[];
+      };
+      expect(rawBody.includeAdapted).toBe(false);
+      expect(rawBody.adaptedCount).toBe(0);
+      expect(rawBody.events).toEqual([]);
     } finally {
       await close();
     }

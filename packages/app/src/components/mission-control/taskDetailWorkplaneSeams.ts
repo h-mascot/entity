@@ -90,6 +90,8 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
       'activity-event-spine.normalizeActivityEventSpine',
       'activity-event-spine.classifyActivityEventToSpineType',
       'activity-event-spine-store.createActivityEventSpineRepository',
+      'activity-event-spine-adapters.adaptTaskSignalsToSpine',
+      'activity-event-spine-adapters.mergeStoredAndAdaptedSpineEvents',
       'GET/POST /tasks/:id/activity-spine-events',
       'normalizeActivity',
       'TECHNICAL_ACTIVITY_TYPES',
@@ -97,7 +99,7 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
     ],
     status: 'reusable_now',
     notes:
-      'THE-871: ActivityProgressPanel renders THE-869 spine types from THE-870 API with explicit empty/degraded states; never claims review-ready.',
+      'THE-871 panel + THE-872 read-path adapters: GET /tasks/:id/activity-spine-events merges stored spine rows with adapted activity/task/swarm signals; fail-closed when feeds absent/malformed; never claims review-ready.',
   },
   comments_review_checklist: {
     panel: 'Comments/review checklist',

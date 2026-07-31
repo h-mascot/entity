@@ -170,6 +170,7 @@ import { completeTaskWithReceipt } from "./receipt-writer";
 import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
+import { listSwarmJobs } from "./swarm/db";
 import { normalizeTaskOutputLinks } from "./task-output-links";
 import { registerNodeOperationsRoutes } from "./node-operations";
 import { registerDocHubTelemetryRoute } from "./doc-hub-telemetry";
@@ -338,6 +339,10 @@ const activityEventService = createActivityEventService({
 const activitySpineEventService = createActivitySpineEventService({
   spineRepository: activityEventSpineRepository,
   getTask: (taskId) => taskSyncLayer.getTask(taskId),
+  // THE-872 / WP1-C-04 — read-path adapters (no mutation / no Engineering import).
+  listActivityEventsForTask: (taskId, limit) =>
+    activityRepository.listActivitiesByTaskId(taskId, limit),
+  listSwarmJobsForTask: (taskId) => listSwarmJobs({ task_id: taskId }),
 });
 const taskMasterClaimService = createTaskMasterClaimService({
   taskSyncLayer,

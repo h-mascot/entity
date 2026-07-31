@@ -7,7 +7,7 @@
 
 ## Context
 
-Map existing agent/progress/task/proof/status signals into THE-869 ActivityEvent spine envelopes for Workplane consumption. Read path only.
+Map existing agent/progress/task/proof/status signals into THE-869/THE-870 ActivityEvent spine envelopes for Workplane consumption. Read path only.
 
 ## Plan
 
