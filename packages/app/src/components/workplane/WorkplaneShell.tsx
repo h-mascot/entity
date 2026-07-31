@@ -11,6 +11,7 @@
  * THE-871 / WP1-C-03 — Activity/progress panel (THE-869 spine via THE-870 API).
  * THE-873 / WP1-C-05 — Comments/review checklist panel via existing reviewActions.
  * THE-874 / WP1-C-06 — Review gate: missing proof cannot present as review-ready.
+ * THE-875 / WP1-C-07 — Slice-1 E2E proof pack (with/without/raw/linked/refresh).
  *
  * Parses/serializes THE-857 URL state. All Q33 Slice-1 panel bodies are implemented.
  */

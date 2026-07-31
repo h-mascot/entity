@@ -133,7 +133,7 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
     ],
     status: 'reusable_now',
     notes:
-      'THE-866: MissingProofWarningPanel derives from ProofBundle load state; warns when proof is missing/unknown/unavailable and never claims review-ready.',
+      'THE-866: MissingProofWarningPanel derives from ProofBundle load state; warns when proof is missing/unknown/unavailable and never claims review-ready. THE-875 E2E pack covers without_proof warning path.',
   },
 };
 
