@@ -4,6 +4,7 @@
  * THE-861 / WP1-A-06 — Cold load / refresh restores task + active panel from URL.
  * THE-862 / WP1-B-01 — Task summary panel with empty/loading/error/ready states.
  * THE-864 / WP1-B-03 — Proof bundle panel with raw/curated/external/unknown kinds.
+ * THE-865 / WP1-B-04 — Files/docs panel linked to Doc Hub openers.
  *
  * Parses/serializes THE-857 URL state. Remaining panel bodies stay placeholders until later WP1-B/C.
  */
@@ -25,12 +26,20 @@ import {
 } from '../../lib/workplaneProofBundle.ts';
 import type { ProofBundle } from '../../lib/proofBundle.ts';
 import {
+  createWorkplaneFilesDocsLoadState,
+  fetchWorkplaneFilesDocs,
+  workplaneFilesDocsErrorMessage,
+  type WorkplaneFilesDocsBundle,
+  type WorkplaneFilesDocsLoadState,
+} from '../../lib/workplaneFilesDocs.ts';
+import {
   createWorkplaneTaskSummaryLoadState,
   fetchWorkplaneTaskSummary,
   workplaneTaskSummaryErrorMessage,
   type WorkplaneTaskSummaryLoadState,
   type WorkplaneTaskSummaryView,
 } from '../../lib/workplaneTaskSummary.ts';
+import FilesDocsPanel from './FilesDocsPanel.tsx';
 import ProofBundlePanel from './ProofBundlePanel.tsx';
 import TaskSummaryPanel from './TaskSummaryPanel.tsx';
 
@@ -40,7 +49,7 @@ export interface WorkplaneShellProps {
   search?: string;
   /** Called when the shell navigates (panel change / return). Defaults to history API. */
   onNavigate?: (href: string, options?: { replace?: boolean; state?: unknown }) => void;
-  /** Optional API base for task summary / proof bundle fetch. */
+  /** Optional API base for task summary / proof bundle / files-docs fetch. */
   apiBase?: string;
   /**
    * Optional summary loader override (tests / Storybook).
@@ -56,6 +65,13 @@ export interface WorkplaneShellProps {
   loadProofBundle?: (taskId: number) => Promise<ProofBundle | null>;
   /** Optional controlled proof bundle state (skips fetch when provided). */
   proofBundleState?: WorkplaneProofBundleLoadState;
+  /**
+   * Optional files/docs loader override (tests / Storybook).
+   * Return null → empty; throw → error; bundle → ready.
+   */
+  loadFilesDocs?: (taskId: number) => Promise<WorkplaneFilesDocsBundle | null>;
+  /** Optional controlled files/docs state (skips fetch when provided). */
+  filesDocsState?: WorkplaneFilesDocsLoadState;
 }
 
 function readLocation(pathname?: string, search?: string): { pathname: string; search: string } {
@@ -88,6 +104,8 @@ export default function WorkplaneShell({
   taskSummaryState: controlledSummary,
   loadProofBundle,
   proofBundleState: controlledProof,
+  loadFilesDocs,
+  filesDocsState: controlledFilesDocs,
 }: WorkplaneShellProps) {
   const [location, setLocation] = useState(() => readLocation(pathnameProp, searchProp));
   const [summaryLoad, setSummaryLoad] = useState<WorkplaneTaskSummaryLoadState>(() =>
@@ -98,6 +116,10 @@ export default function WorkplaneShell({
     createWorkplaneProofBundleLoadState({ status: 'loading' }),
   );
   const [proofReloadToken, setProofReloadToken] = useState(0);
+  const [filesDocsLoad, setFilesDocsLoad] = useState<WorkplaneFilesDocsLoadState>(() =>
+    createWorkplaneFilesDocsLoadState({ status: 'loading' }),
+  );
+  const [filesDocsReloadToken, setFilesDocsReloadToken] = useState(0);
 
   useEffect(() => {
     if (pathnameProp !== undefined) {
@@ -157,6 +179,10 @@ export default function WorkplaneShell({
 
   const retryProof = useCallback(() => {
     setProofReloadToken((token) => token + 1);
+  }, []);
+
+  const retryFilesDocs = useCallback(() => {
+    setFilesDocsReloadToken((token) => token + 1);
   }, []);
 
   const selectProof = useCallback(
@@ -284,8 +310,63 @@ export default function WorkplaneShell({
     proofReloadToken,
   ]);
 
+  useEffect(() => {
+    if (controlledFilesDocs) {
+      return;
+    }
+
+    const taskId = model.status === 'ready' ? model.taskId : null;
+    if (taskId === null) {
+      setFilesDocsLoad(createWorkplaneFilesDocsLoadState({ status: 'empty', taskId: null }));
+      return;
+    }
+
+    let cancelled = false;
+    setFilesDocsLoad(createWorkplaneFilesDocsLoadState({ status: 'loading', taskId }));
+
+    const loader = loadFilesDocs ?? ((id: number) => fetchWorkplaneFilesDocs(id, apiBase));
+
+    void loader(taskId)
+      .then((bundle) => {
+        if (cancelled) return;
+        if (!bundle) {
+          setFilesDocsLoad(createWorkplaneFilesDocsLoadState({ status: 'empty', taskId }));
+          return;
+        }
+        setFilesDocsLoad(
+          createWorkplaneFilesDocsLoadState({
+            status: 'ready',
+            taskId: bundle.taskId ?? taskId,
+            bundle,
+          }),
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setFilesDocsLoad(
+          createWorkplaneFilesDocsLoadState({
+            status: 'error',
+            taskId,
+            errorMessage: workplaneFilesDocsErrorMessage(error),
+          }),
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiBase,
+    controlledFilesDocs,
+    loadFilesDocs,
+    model.status,
+    model.taskId,
+    filesDocsReloadToken,
+  ]);
+
   const summaryState = controlledSummary ?? summaryLoad;
   const proofState = controlledProof ?? proofLoad;
+  const filesDocsState = controlledFilesDocs ?? filesDocsLoad;
 
   if (model.status === 'invalid_route') {
     return (
@@ -331,6 +412,9 @@ export default function WorkplaneShell({
             <ProofBundlePanel
               loadState={createWorkplaneProofBundleLoadState({ status: 'empty', taskId: null })}
             />
+            <FilesDocsPanel
+              loadState={createWorkplaneFilesDocsLoadState({ status: 'empty', taskId: null })}
+            />
           </div>
         </main>
       </div>
@@ -341,6 +425,7 @@ export default function WorkplaneShell({
   const showTaskSummary =
     model.activePanel === 'task_summary' || model.activePanel === null;
   const showProofBundle = model.activePanel === 'proof_bundle';
+  const showFilesDocs = model.activePanel === 'files_docs';
 
   const headerTitle =
     summaryState.status === 'ready' && summaryState.summary
@@ -361,6 +446,7 @@ export default function WorkplaneShell({
       data-workplane-href={model.serializedHref ?? undefined}
       data-workplane-summary-status={summaryState.status}
       data-workplane-proof-status={proofState.status}
+      data-workplane-files-docs-status={filesDocsState.status}
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-primary)] px-4 py-3">
         <div className="min-w-0">
@@ -439,7 +525,10 @@ export default function WorkplaneShell({
             onRetry={retryProof}
           />
         ) : null}
-        {!showTaskSummary && !showProofBundle ? (
+        {showFilesDocs ? (
+          <FilesDocsPanel loadState={filesDocsState} onRetry={retryFilesDocs} />
+        ) : null}
+        {!showTaskSummary && !showProofBundle && !showFilesDocs ? (
           <div className="mc-shell-card rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
             <p className="text-sm font-medium text-[var(--text-primary)]">
               {activePanelMeta?.label ?? 'Panel'}

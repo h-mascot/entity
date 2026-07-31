@@ -162,7 +162,8 @@ test('WorkplaneShell renders ready route with restored URL state', () => {
   assert.match(html, /Return to task detail/);
   assert.match(html, /data-testid="workplane-panel-tab-files_docs"/);
   assert.match(html, /aria-current="page"/);
-  assert.match(html, /Placeholder/);
+  assert.match(html, /data-testid="workplane-files-docs"/);
+  assert.doesNotMatch(html, /Placeholder — full panel ships/);
 });
 
 test('WorkplaneShell renders invalid/default degraded states with return action', () => {

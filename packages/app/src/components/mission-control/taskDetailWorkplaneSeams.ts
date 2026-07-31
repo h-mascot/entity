@@ -64,9 +64,21 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
   },
   files_docs: {
     panel: 'Files/docs',
-    sourceSeams: ['buildTaskDocumentObjectViews', 'inferDocumentObjectKind', 'isRestrictedDocumentObject'],
+    sourceSeams: [
+      'workplaneFilesDocs.normalizeWorkplaneFilesDocs',
+      'workplaneFilesDocs.buildFilesDocsOpener',
+      'FilesDocsPanel Doc Hub openers',
+      'buildTaskDocumentObjectViews',
+      'inferDocumentObjectKind',
+      'isRestrictedDocumentObject',
+      'normalizeTaskOutputHref',
+      'extractTaskOutputLinks',
+      'docHubRoute.buildDocHubRoutePath',
+      'docHubRoute.resolveDocHubRouteTarget',
+    ],
     status: 'reusable_now',
-    notes: 'DocumentObjectView distinguishes native/external/raw_proof/curated/unknown.',
+    notes:
+      'THE-865: FilesDocsPanel renders task-linked docs/files with Doc Hub source openers; restricted/empty fail closed.',
   },
   activity_progress: {
     panel: 'Activity/progress',
@@ -436,6 +448,9 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'proofBundle.classifyProofBundleItemKind',
       'workplaneProofBundle.createWorkplaneProofBundleLoadState',
       'ProofBundlePanel',
+      'workplaneFilesDocs.normalizeWorkplaneFilesDocs',
+      'workplaneFilesDocs.buildFilesDocsOpener',
+      'FilesDocsPanel',
     ],
     stillEmbeddedInTaskDetailPanel: [
       'buildReceiptProofView',
