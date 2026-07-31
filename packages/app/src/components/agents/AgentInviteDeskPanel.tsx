@@ -34,6 +34,7 @@ import {
   type InvitePromptCopyTarget,
 } from '../../lib/addAgentInvitePrompt';
 import { toErrorMessage } from '../../lib/http';
+import AgentIdentityCapabilityCard from './AgentIdentityCapabilityCard';
 
 export interface AgentInviteDeskPanelProps {
   /** Optional refresh signal from parent (e.g. after Add Agent create). */
@@ -332,6 +333,21 @@ export default function AgentInviteDeskPanel({
                   {state.actionError}
                 </div>
               )}
+
+              <AgentIdentityCapabilityCard
+                invite={{
+                  id: selected.id,
+                  agentName: selected.agentName,
+                  role: selected.role,
+                  status: selected.status,
+                  selectedBundle: selected.selectedBundle,
+                  selectedModules: selected.selectedModules,
+                  permissionsScope: selected.permissionsScope,
+                  workplaneId: selected.workplaneId,
+                  taskId: selected.taskId,
+                  progress: selected.progress,
+                }}
+              />
 
               <dl className="grid gap-2 text-xs sm:grid-cols-2" data-testid="invite-desk-meta">
                 <div>
