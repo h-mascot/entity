@@ -1,9 +1,9 @@
 # EEPC-B-04 — Execution-engine contract end-to-end proof pack
 
-**Linear:** THE-899  
-**Build-plan task:** EEPC-B-04  
-**Parent:** THE-832 (Entity Execution-Engine Plugin Contract — Phase B)  
-**Decision:** IMPLEMENTED  
+**Linear:** THE-899
+**Build-plan task:** EEPC-B-04
+**Parent:** THE-832 (Entity Execution-Engine Plugin Contract — Phase B)
+**Decision:** IMPLEMENTED
 **Dependencies:** EEPC-B-02 / THE-897, EEPC-B-03 / THE-898, EEPC-A-07 / THE-895
 
 Grill authority (Q45–Q46, Q55): Swarm/Codex/eforge register through the execution-engine contract; Entity owns task state / proof / callback intake; runners are swappable arms. UI verification evidence is required for execution-engine packs.

@@ -1,9 +1,9 @@
 # EEPC-A-07 — Unauthorized/malformed callback negative path
 
-**Linear:** THE-895  
-**Build-plan task:** EEPC-A-07  
-**Parent:** THE-831 (Entity Execution-Engine Plugin Contract — Phase A)  
-**Decision:** IMPLEMENTED (authRequired enforcement + public-safe negative paths)  
+**Linear:** THE-895
+**Build-plan task:** EEPC-A-07
+**Parent:** THE-831 (Entity Execution-Engine Plugin Contract — Phase A)
+**Decision:** IMPLEMENTED (authRequired enforcement + public-safe negative paths)
 **Dependencies:** EEPC-A-03 / THE-891 Done
 
 ## What this delivers
