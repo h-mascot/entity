@@ -60,6 +60,8 @@ Runtime guard `assertChannelAdapterNotTaskTruthStore` rejects adapters that expo
 ## CH-A-05 handoff
 
 Channel adapter proof pack (E2E + negative proof) builds on CH-A-03 + CH-A-04.
+See `docs/context/entity-ch-a-05-channel-adapter-proof-pack.md` and
+`packages/server/src/channels/channel-adapter-proof-pack.e2e.test.ts`.
 
 ## Verification
 

@@ -2,6 +2,7 @@
  * CH-A-02 / THE-918 — Channel adapter interface surface.
  * CH-A-03 / THE-919 — Slack reference adapter behind feature flag.
  * CH-A-04 / THE-920 — Adapters never become alternate task truth stores.
+ * CH-A-05 / THE-921 — Channel adapter proof pack (E2E + negative).
  *
  * Entity owns the work plane. Channel adapters only:
  *   - parse intake → task / ActivityEvent proposals
@@ -13,6 +14,8 @@
  * Production Slack/Telegram/Discord/email sends are not registered by default.
  * The Slack reference adapter opts in via ENTITY_CHANNEL_SLACK_ADAPTER=1 and
  * uses a deterministic offline transport (no live Slack API).
+ *
+ * Proof pack: `channel-adapter-proof-pack.e2e.test.ts` composes CH-A-03 + CH-A-04.
  */
 
 export {

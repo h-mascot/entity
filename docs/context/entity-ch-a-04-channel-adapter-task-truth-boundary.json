@@ -40,7 +40,11 @@
   ],
   "next": {
     "code": "CH-A-05",
-    "title": "Channel adapter proof pack"
+    "issue": "THE-921",
+    "title": "Channel adapter proof pack",
+    "proof": "E2E + negative proof",
+    "docs": "docs/context/entity-ch-a-05-channel-adapter-proof-pack.md",
+    "test": "packages/server/src/channels/channel-adapter-proof-pack.e2e.test.ts"
   },
   "related": [
     "docs/context/entity-ch-a-02-channel-adapter-interface.md",
