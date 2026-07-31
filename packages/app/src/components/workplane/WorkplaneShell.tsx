@@ -5,6 +5,7 @@
  * THE-862 / WP1-B-01 — Task summary panel with empty/loading/error/ready states.
  * THE-864 / WP1-B-03 — Proof bundle panel with raw/curated/external/unknown kinds.
  * THE-865 / WP1-B-04 — Files/docs panel linked to Doc Hub openers.
+ * THE-866 / WP1-B-05 — Missing-proof warning panel (derived from proof bundle).
  *
  * Parses/serializes THE-857 URL state. Remaining panel bodies stay placeholders until later WP1-B/C.
  */
@@ -39,7 +40,9 @@ import {
   type WorkplaneTaskSummaryLoadState,
   type WorkplaneTaskSummaryView,
 } from '../../lib/workplaneTaskSummary.ts';
+import { buildMissingProofWarningView } from '../../lib/workplaneMissingProof.ts';
 import FilesDocsPanel from './FilesDocsPanel.tsx';
+import MissingProofWarningPanel from './MissingProofWarningPanel.tsx';
 import ProofBundlePanel from './ProofBundlePanel.tsx';
 import TaskSummaryPanel from './TaskSummaryPanel.tsx';
 
@@ -367,6 +370,7 @@ export default function WorkplaneShell({
   const summaryState = controlledSummary ?? summaryLoad;
   const proofState = controlledProof ?? proofLoad;
   const filesDocsState = controlledFilesDocs ?? filesDocsLoad;
+  const missingProofView = buildMissingProofWarningView(proofState);
 
   if (model.status === 'invalid_route') {
     return (
@@ -415,6 +419,12 @@ export default function WorkplaneShell({
             <FilesDocsPanel
               loadState={createWorkplaneFilesDocsLoadState({ status: 'empty', taskId: null })}
             />
+            <MissingProofWarningPanel
+              proofLoadState={createWorkplaneProofBundleLoadState({
+                status: 'empty',
+                taskId: null,
+              })}
+            />
           </div>
         </main>
       </div>
@@ -426,6 +436,7 @@ export default function WorkplaneShell({
     model.activePanel === 'task_summary' || model.activePanel === null;
   const showProofBundle = model.activePanel === 'proof_bundle';
   const showFilesDocs = model.activePanel === 'files_docs';
+  const showMissingProof = model.activePanel === 'missing_proof_warnings';
 
   const headerTitle =
     summaryState.status === 'ready' && summaryState.summary
@@ -447,6 +458,10 @@ export default function WorkplaneShell({
       data-workplane-summary-status={summaryState.status}
       data-workplane-proof-status={proofState.status}
       data-workplane-files-docs-status={filesDocsState.status}
+      data-workplane-missing-proof-status={missingProofView.status}
+      data-workplane-missing-proof-warning-visible={
+        missingProofView.warningVisible ? 'true' : 'false'
+      }
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-primary)] px-4 py-3">
         <div className="min-w-0">
@@ -528,7 +543,17 @@ export default function WorkplaneShell({
         {showFilesDocs ? (
           <FilesDocsPanel loadState={filesDocsState} onRetry={retryFilesDocs} />
         ) : null}
-        {!showTaskSummary && !showProofBundle && !showFilesDocs ? (
+        {showMissingProof ? (
+          <MissingProofWarningPanel
+            proofLoadState={proofState}
+            view={missingProofView}
+            onRetry={retryProof}
+          />
+        ) : null}
+        {!showTaskSummary &&
+        !showProofBundle &&
+        !showFilesDocs &&
+        !showMissingProof ? (
           <div className="mc-shell-card rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
             <p className="text-sm font-medium text-[var(--text-primary)]">
               {activePanelMeta?.label ?? 'Panel'}

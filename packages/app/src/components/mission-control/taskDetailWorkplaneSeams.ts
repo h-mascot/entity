@@ -101,9 +101,18 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
   },
   missing_proof_warnings: {
     panel: 'Missing-proof warnings',
-    sourceSeams: ['deriveMissingEvidenceState', 'ReceiptProofView.degradedMessages', 'doneWithoutReceipt'],
+    sourceSeams: [
+      'workplaneMissingProof.buildMissingProofWarningView',
+      'MissingProofWarningPanel',
+      'proofBundle.normalizeProofBundle',
+      'workplaneProofBundle.createWorkplaneProofBundleLoadState',
+      'deriveMissingEvidenceState',
+      'ReceiptProofView.degradedMessages',
+      'doneWithoutReceipt',
+    ],
     status: 'reusable_now',
-    notes: 'Missing evidence is explicit for done tasks without links/summary; never silently healthy.',
+    notes:
+      'THE-866: MissingProofWarningPanel derives from ProofBundle load state; warns when proof is missing/unknown/unavailable and never claims review-ready.',
   },
 };
 
@@ -451,6 +460,8 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'workplaneFilesDocs.normalizeWorkplaneFilesDocs',
       'workplaneFilesDocs.buildFilesDocsOpener',
       'FilesDocsPanel',
+      'workplaneMissingProof.buildMissingProofWarningView',
+      'MissingProofWarningPanel',
     ],
     stillEmbeddedInTaskDetailPanel: [
       'buildReceiptProofView',
@@ -472,7 +483,9 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'WP1-B-02': 'Normalize ProofBundle via packages/app/src/lib/proofBundle.ts',
       'WP1-B-03': 'Implement proof bundle panel consuming normalizeProofBundle',
       'WP1-B-04': 'Implement files/docs panel linked to Doc Hub openers',
-      'WP1-B-05': 'Implement missing-proof warning panel',
+      'WP1-B-05': 'MissingProofWarningPanel via workplaneMissingProof (THE-866)',
+      'WP1-B-06': 'Lock layout: humans only',
+      'WP1-C-05': 'Comments/review checklist panel',
     },
   };
 }
