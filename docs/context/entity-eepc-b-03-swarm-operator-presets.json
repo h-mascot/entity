@@ -1,0 +1,22 @@
+{
+  "code": "EEPC-B-03",
+  "issue": "THE-898",
+  "title": "Operator presets for Swarm dispatch using contract",
+  "decision": "IMPLEMENTED",
+  "dependency": "EEPC-B-01",
+  "proof": "preset tests",
+  "paths": [
+    "packages/app/src/lib/swarmOperatorPresets.ts",
+    "packages/app/src/lib/swarmOperatorPresets.test.ts",
+    "packages/app/src/components/SwarmBoard.tsx",
+    "docs/context/entity-eepc-b-03-swarm-operator-presets.md"
+  ],
+  "nonGoals": [
+    "Doc Hub rebuild",
+    "Provider Registry duplicate",
+    "Skill Workshop",
+    "production mutation",
+    "secret exposure",
+    "push/PR/merge without Book/SuperAda verification"
+  ]
+}
