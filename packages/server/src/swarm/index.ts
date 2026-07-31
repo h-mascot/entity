@@ -6,7 +6,15 @@
  */
 
 export { createSwarmRouter } from './routes';
-export { dispatchJob, checkJobStatus, acceptJob, rejectJob, cancelJob, listProviders, checkProviderHealth } from './dispatcher';
+export { dispatchJob, checkJobStatus, acceptJob, rejectJob, cancelJob, listProviders, checkProviderHealth, ensureProvidersRegistered } from './dispatcher';
+export {
+  listRegisteredExecutionEngines,
+  getRegisteredExecutionEngineHealth,
+  projectPublicProviderHealth,
+  projectLegacyPublicHealth,
+  toLegacyProviderListEntry,
+} from './execution-engines';
+export type { PublicExecutionEngine } from './execution-engines';
 export { startEforgePoller, stopEforgePoller, syncEforgeRuns, getEforgePollerStatus } from './providers/eforge-poller';
 export type { SwarmJob, SwarmProof, CreateSwarmJobInput, UpdateSwarmJobInput, SwarmJobStatus, SwarmPriority } from './types';
 // EEPC-A-02: schema/validation only — does not register providers.

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { describePluginMountPoint, usePluginStore, type PluginUIEntry, type SwarmProviderUIEntry } from '../../stores/pluginStore';
+import { redactExecutionEngineMessage } from '../../lib/executionEnginePublicHealth';
 
 // ── Shared helpers ──────────────────────────────────────────────────────────────
 
@@ -298,15 +299,20 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
 
   const tabs: TabConfig[] = [
     { id: 'plugins', label: 'Plugins', count: plugins.length },
-    { id: 'swarm', label: 'Swarm Providers', count: swarmProviders.length },
+    { id: 'swarm', label: 'Execution Engines', count: swarmProviders.length },
   ];
 
   useEffect(() => {
     if (!initialized && !loading) {
       void fetchPlugins(apiBase);
-      void fetchSwarmProviders(apiBase);
     }
-  }, [apiBase, fetchPlugins, fetchSwarmProviders, initialized, loading]);
+  }, [apiBase, fetchPlugins, initialized, loading]);
+
+  // EEPC-B-01: always refresh public engine health when the admin panel mounts.
+  // Plugins may already be initialized from App shell, which previously skipped this fetch.
+  useEffect(() => {
+    void fetchSwarmProviders(apiBase);
+  }, [apiBase, fetchSwarmProviders]);
 
   // Select first item when list changes
   useEffect(() => {
@@ -444,12 +450,12 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-[var(--text-primary)]">
-                {activeTab === 'plugins' ? 'Plugin registry' : 'Swarm Providers'}
+                {activeTab === 'plugins' ? 'Plugin registry' : 'Execution engines'}
               </div>
               <div className="mt-1 text-xs text-[var(--text-muted)]">
                 {activeTab === 'plugins'
                   ? 'Server-loaded plugins, current status, and controls.'
-                  : 'Execution providers for build and test jobs.'}
+                  : 'Registered execution engines with public health (secrets redacted).'}
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 {activeTab === 'plugins' ? (
@@ -583,16 +589,17 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
               </div>
             )
           ) : (
-            /* Swarm Providers list */
+            /* Execution engines list (EEPC-B-01) */
             swarmProviders.length === 0 && !loading ? (
               <div className="rounded-xl border border-dashed border-[var(--border-primary)] bg-[var(--bg-primary)] px-4 py-6 text-sm text-[var(--text-muted)]">
-                No swarm providers registered.
+                No execution engines registered.
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2" data-testid="execution-engines-list">
                 {swarmProviders.map((provider) => (
                   <div
                     key={provider.name}
+                    data-testid={`execution-engine-${provider.name}`}
                     onClick={() => setSelectedProviderName(provider.name)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
@@ -613,7 +620,7 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-medium text-[var(--text-primary)]">{provider.label}</span>
                           <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                            {provider.category ?? 'provider'}
+                            {provider.category ?? 'execution-engine'}
                           </span>
                           {provider.repo && (
                             <a
@@ -788,12 +795,12 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border-primary)] pb-4">
                 <div>
                   <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                    Provider detail
+                    Execution engine detail
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <div className="text-lg font-semibold text-[var(--text-primary)]">{selectedProvider.label}</div>
                     <span className="mc-shell-pill px-2 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]">
-                      {selectedProvider.category ?? 'provider'}
+                      {selectedProvider.category ?? 'execution-engine'}
                     </span>
                     {selectedProvider.repo && (
                       <a
@@ -809,7 +816,7 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
                     )}
                   </div>
                   <div className="mt-1 max-w-2xl text-sm text-[var(--text-muted)]">
-                    {selectedProvider.description ?? `Swarm execution provider: ${selectedProvider.name}`}
+                    {selectedProvider.description ?? `Execution engine: ${selectedProvider.name}`}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -819,7 +826,7 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
                     onClick={() => {
                       setRestartingId(selectedProvider.name);
                       void restartProvider(selectedProvider.name, apiBase)
-                        .catch((err) => console.error('Restart provider failed:', err))
+                        .catch((err) => console.error('Refresh engine health failed:', err))
                         .finally(() => setRestartingId(null));
                     }}
                     className="mc-shell-btn flex items-center gap-1.5 px-3 py-1.5 text-xs"
@@ -839,20 +846,25 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
                 </div>
               </div>
 
-              <div className="grid gap-3 lg:grid-cols-2">
+              <div className="grid gap-3 lg:grid-cols-2" data-testid="execution-engine-detail">
                 <div className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] p-3">
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">Provider name</div>
+                  <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">Engine name</div>
                   <div className="mt-2 text-sm text-[var(--text-primary)] font-mono">{selectedProvider.name}</div>
+                  {selectedProvider.id ? (
+                    <div className="mt-1 text-xs text-[var(--text-muted)] font-mono">{selectedProvider.id}</div>
+                  ) : null}
                 </div>
                 <div className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] p-3">
-                  <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">Health status</div>
+                  <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">Public health</div>
                   <div className={`mt-2 text-sm font-medium ${
                     selectedProvider.status.available ? 'text-emerald-300' : 'text-amber-300'
                   }`}>
                     {selectedProvider.status.available ? 'Healthy' : 'Unavailable'}
                   </div>
                   {selectedProvider.status.message && (
-                    <div className="mt-1 text-xs text-[var(--text-muted)]">{selectedProvider.status.message}</div>
+                    <div className="mt-1 text-xs text-[var(--text-muted)]" data-testid="execution-engine-health-message">
+                      {redactExecutionEngineMessage(selectedProvider.status.message)}
+                    </div>
                   )}
                 </div>
               </div>
@@ -894,7 +906,7 @@ export default function PluginAdminPanel({ apiBase = '' }: { apiBase?: string })
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-[var(--border-primary)] bg-[var(--bg-primary)] px-4 py-6 text-sm text-[var(--text-muted)]">
-              Select a swarm provider to inspect its details.
+              Select an execution engine to inspect its public health.
             </div>
           )}
         </div>

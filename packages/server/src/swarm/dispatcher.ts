@@ -18,7 +18,7 @@ import { registerBuiltinContractProviders } from './providers/contract-bootstrap
 
 // Bootstrap: register built-in providers against EEPC manifests (once)
 let _registered = false;
-function ensureProvidersRegistered(): void {
+export function ensureProvidersRegistered(): void {
   if (_registered) return;
   _registered = true;
   registerBuiltinContractProviders(swarmProviderRegistry);
@@ -46,6 +46,7 @@ export function listProviders(): Array<{ name: string; label: string; meta?: Swa
 
 /**
  * Check if a provider is healthy and available.
+ * Legacy internal diagnostics — prefer getRegisteredExecutionEngineHealth for public routes.
  */
 export async function checkProviderHealth(name: string) {
   ensureProvidersRegistered();

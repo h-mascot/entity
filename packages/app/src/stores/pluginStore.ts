@@ -1,5 +1,10 @@
 import { create } from 'zustand';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
+import {
+  normalizeExecutionEngineListItem,
+  projectExecutionEngineHealthForUi,
+  type PublicExecutionEngineListItem,
+} from '../lib/executionEnginePublicHealth';
 
 export type PluginMountPoint =
   | { type: 'top-level-tab' }
@@ -39,15 +44,20 @@ export interface PluginUIEntry {
 }
 
 export interface SwarmProviderUIEntry {
+  id?: string;
   name: string;
   label: string;
+  kind?: 'execution-engine';
   category?: string;
   description?: string;
   capabilities?: string[];
+  acceptsDispatch?: boolean;
+  executionMode?: string;
   status: {
     installed: boolean;
     available: boolean;
     message?: string;
+    latencyMs?: number;
   };
   repo?: {
     url: string;
@@ -260,20 +270,28 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
   },
   fetchSwarmProviders: async (apiBase = '') => {
     try {
-      const payload = await requestJsonWithFallback<{
-        providers: Array<{
-          name: string;
-          label: string;
-          category?: string;
-          description?: string;
-          capabilities?: string[];
-        }>;
-      }>({
-        urls: buildApiCandidates('/swarm/providers', apiBase),
-        fallbackError: 'Unable to load swarm providers.',
-      });
+      // Prefer EEPC-B-01 execution-engines list (health already public-projected).
+      let engines: PublicExecutionEngineListItem[] = [];
+      try {
+        const enginePayload = await requestJsonWithFallback<{
+          engines?: PublicExecutionEngineListItem[];
+        }>({
+          urls: buildApiCandidates('/swarm/execution-engines', apiBase),
+          fallbackError: 'Unable to load execution engines.',
+        });
+        engines = enginePayload?.engines ?? [];
+      } catch {
+        const payload = await requestJsonWithFallback<{
+          providers?: PublicExecutionEngineListItem[];
+          engines?: PublicExecutionEngineListItem[];
+        }>({
+          urls: buildApiCandidates('/swarm/providers', apiBase),
+          fallbackError: 'Unable to load swarm providers.',
+        });
+        engines = payload?.engines ?? payload?.providers ?? [];
+      }
 
-      // Known repo mappings
+      // Known public repo mappings (URLs are intentional product links, not health diagnostics).
       const knownRepos: Record<string, { url: string; label: string }> = {
         'entity-plugins': { url: 'https://github.com/h-mascot/entity-plugins', label: 'entity-plugins' },
         eforge: { url: 'https://github.com/h-mascot/eforge', label: 'eforge' },
@@ -281,46 +299,28 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
         acp: { url: 'https://github.com/h-mascot/geordi', label: 'Geordi/ACP' },
       };
 
-      const providersWithStatus = await Promise.all(
-        (payload?.providers ?? []).map(async (provider) => {
-          try {
-            const health = await requestJsonWithFallback<{
-              available: boolean;
-              message?: string;
-            }>({
-              urls: buildApiCandidates(`/swarm/providers/${encodeURIComponent(provider.name)}/health`, apiBase),
-              fallbackError: '',
-            });
-            return {
-              name: provider.name,
-              label: provider.label,
-              category: provider.category,
-              description: provider.description,
-              capabilities: provider.capabilities,
-              status: {
-                installed: true,
-                available: health?.available ?? false,
-                message: health?.message,
-              },
-              repo: knownRepos[provider.name],
-            } satisfies SwarmProviderUIEntry;
-          } catch {
-            return {
-              name: provider.name,
-              label: provider.label,
-              category: provider.category,
-              description: provider.description,
-              capabilities: provider.capabilities,
-              status: {
-                installed: false,
-                available: false,
-                message: 'Unable to check health',
-              },
-              repo: knownRepos[provider.name],
-            } satisfies SwarmProviderUIEntry;
-          }
-        })
-      );
+      const providersWithStatus: SwarmProviderUIEntry[] = engines.map((raw) => {
+        const engine = normalizeExecutionEngineListItem(raw);
+        const health = projectExecutionEngineHealthForUi(engine.health);
+        return {
+          id: engine.id,
+          name: engine.name,
+          label: engine.label,
+          kind: 'execution-engine',
+          category: engine.category,
+          description: engine.description,
+          capabilities: engine.capabilities,
+          acceptsDispatch: engine.acceptsDispatch,
+          executionMode: engine.executionMode,
+          status: {
+            installed: true,
+            available: health.available,
+            message: health.message,
+            latencyMs: health.latencyMs,
+          },
+          repo: knownRepos[engine.name],
+        };
+      });
 
       // Add eforge binary check if not in providers
       const hasEforge = providersWithStatus.some((p) => p.name === 'eforge');
@@ -328,11 +328,12 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
         providersWithStatus.unshift({
           name: 'eforge',
           label: 'Eforge',
+          kind: 'execution-engine',
           category: 'build-system',
           description: 'Binary build system provider (eforge CLI)',
           capabilities: ['build', 'test', 'deploy'],
           status: {
-            installed: false, // Will be updated by server
+            installed: false,
             available: false,
             message: 'eforge binary not found',
           },
@@ -384,11 +385,36 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     });
   },
   restartProvider: async (name, apiBase = '') => {
-    await requestJsonWithFallback<unknown>({
-      urls: buildApiCandidates(`/swarm/providers/${encodeURIComponent(name)}/restart`, apiBase),
-      init: { method: 'POST' },
-      fallbackError: `Unable to restart provider "${name}".`,
+    // EEPC-B-01: "Check Health" refreshes public health only — no live mutation/restart.
+    const rawHealth = await requestJsonWithFallback<{
+      available?: boolean;
+      message?: string;
+      latencyMs?: number;
+    }>({
+      urls: buildApiCandidates(`/swarm/providers/${encodeURIComponent(name)}/health`, apiBase),
+      fallbackError: `Unable to check health for "${name}".`,
     });
+    const health = projectExecutionEngineHealthForUi({
+      available: Boolean(rawHealth?.available),
+      message: rawHealth?.message,
+      latencyMs: rawHealth?.latencyMs,
+    });
+    set((state) => ({
+      swarmProviders: state.swarmProviders.map((provider) =>
+        provider.name === name
+          ? {
+              ...provider,
+              status: {
+                ...provider.status,
+                installed: true,
+                available: health.available,
+                message: health.message,
+                latencyMs: health.latencyMs,
+              },
+            }
+          : provider,
+      ),
+    }));
   },
   installFromGitHub: async (url, apiBase = '') => {
     try {
