@@ -30,17 +30,22 @@ export type {
   ManifestValidationIssue,
 } from './manifest';
 // EEPC-A-03: callback intake → ActivityEvents (scaffolding; no production provider OAuth).
+// EEPC-A-07: authRequired negative path + public-safe errors.
 export {
   createExecutionCallbackIntakeService,
   createExecutionCallbackIntakeRouter,
   validateExecutionCallback,
   mapValidatedCallbackToActivityRecord,
+  authorizeExecutionCallback,
+  resolveCallbackAuthSecretFromEnv,
+  toPublicCallbackErrorBody,
   INTAKE_CALLBACK_EVENTS,
 } from './callback-intake';
 export type {
   ExecutionCallbackPayload,
   MappedCallbackActivityRecord,
   CallbackIntakeResult,
+  CallbackAuthContext,
 } from './callback-intake';
 // EEPC-A-04: Swarm provider adapter against execution-engine contract.
 export {

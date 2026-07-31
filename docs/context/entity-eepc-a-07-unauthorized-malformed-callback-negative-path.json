@@ -1,0 +1,46 @@
+{
+  "code": "EEPC-A-07",
+  "issue": "THE-895",
+  "title": "Unauthorized/malformed callback negative path",
+  "decision": "IMPLEMENTED",
+  "dependencies": ["EEPC-A-03"],
+  "dependencyCommitEepcA03": "2b0286a567a68c7e7fe3e9ee81919e9dd901027e",
+  "auth": {
+    "headers": ["Authorization: Bearer <token>", "X-Entity-Callback-Token"],
+    "secretResolution": [
+      "ENTITY_EEPC_CALLBACK_TOKEN",
+      "manifest.config.bindings[secret=true].env",
+      "ENTITY_EEPC_CALLBACK_TOKEN_<PROVIDER>"
+    ],
+    "failClosedMisconfigured": "auth_misconfigured/503"
+  },
+  "negativeCodes": [
+    "unauthorized",
+    "auth_misconfigured",
+    "malformed_payload",
+    "missing_provider",
+    "missing_job_id",
+    "invalid_event",
+    "invalid_status",
+    "invalid_test_result",
+    "invalid_percent",
+    "malformed_data",
+    "private_path_forbidden",
+    "secret_key_forbidden",
+    "secret_value_leak",
+    "unknown_provider",
+    "unknown_job",
+    "job_provider_mismatch",
+    "event_not_allowed"
+  ],
+  "guarantees": [
+    "rejected callbacks never append ActivityEvents",
+    "rejected callbacks never create proof records",
+    "public error bodies scrub secrets and private paths"
+  ],
+  "source": [
+    "packages/server/src/swarm/callback-intake/",
+    "docs/context/entity-eepc-a-07-unauthorized-malformed-callback-negative-path.md"
+  ],
+  "proof": "security negative tests"
+}

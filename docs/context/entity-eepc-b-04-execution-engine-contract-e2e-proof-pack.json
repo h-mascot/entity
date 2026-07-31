@@ -1,0 +1,28 @@
+{
+  "issue": "THE-899",
+  "code": "EEPC-B-04",
+  "title": "Execution-engine contract end-to-end proof pack",
+  "decision": "IMPLEMENTED",
+  "dependencies": ["EEPC-B-02", "EEPC-B-03", "EEPC-A-07"],
+  "proof": "E2E + security receipt",
+  "scenarios": [
+    "list_engines_no_secrets",
+    "operator_presets_dispatch",
+    "callback_to_workplane_proof",
+    "unauthorized_callback_rejected",
+    "malformed_callback_rejected",
+    "degraded_health_visible"
+  ],
+  "paths": [
+    "packages/app/src/lib/executionEngineContractE2EProofPack.ts",
+    "packages/app/src/lib/executionEngineContractE2EProofPack.test.ts",
+    "packages/server/src/swarm/execution-engine-contract-e2e.test.ts",
+    "packages/server/src/swarm/callback-intake/auth.ts",
+    "packages/server/src/swarm/callback-intake/public-safe.ts",
+    "packages/server/src/swarm/callback-intake/callback-negative.test.ts",
+    "docs/context/entity-eepc-b-04-execution-engine-contract-e2e-proof-pack.md"
+  ],
+  "source_sha256": "84541727830ef8f4018ad2b9fdf587d653dfbba940b38b279ae3f90ca18ba895",
+  "production_promotion": false,
+  "push_pr_merge": false
+}

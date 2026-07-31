@@ -64,7 +64,7 @@ Jobs without `task_id` still map (HTTP 202) and are marked degraded with `missin
 ## Deferred (explicit)
 
 - Manifest-driven provider adapter registration (EEPC-A-04+)
-- Auth on tracker/callback routes (EEPC-A-07)
+- ~~Auth on tracker/callback routes (EEPC-A-07)~~ → delivered in EEPC-A-07 / THE-895
 - Workplane panel wiring for job proof/status (EEPC-B-02)
 - Replacing legacy status/proof mutation routes with intake-first emission
 

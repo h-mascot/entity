@@ -37,6 +37,7 @@ import {
   createExecutionCallbackIntakeRouter,
   createExecutionCallbackIntakeService,
   getValidatedManifestByProvider,
+  resolveCallbackAuthSecretFromEnv,
 } from './callback-intake';
 
 function readTrimmedString(value: unknown): string | undefined {
@@ -118,6 +119,7 @@ export function createSwarmRouter(): Router {
   const router = Router();
 
   // EEPC-A-03 — callback intake → ActivityEvents (does not replace legacy mutation routes).
+  // EEPC-A-07 — authRequired callbacks resolve secrets from env (never logged / never in errors).
   const callbackIntake = createExecutionCallbackIntakeService({
     getManifest: getValidatedManifestByProvider,
     getJob: (jobId) => {
@@ -130,6 +132,8 @@ export function createSwarmRouter(): Router {
         status: job.status,
       };
     },
+    getCallbackAuthSecret: (provider) =>
+      resolveCallbackAuthSecretFromEnv(provider, getValidatedManifestByProvider(provider)),
   });
   router.use(createExecutionCallbackIntakeRouter(callbackIntake));
 

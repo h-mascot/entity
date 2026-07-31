@@ -1,5 +1,6 @@
 /**
  * EEPC-A-03 — callback mapping tests (plan/progress/proof/status/blocker → ActivityEvents).
+ * EEPC-A-07 — success paths supply authRequired credentials.
  */
 import express from 'express';
 import http from 'http';
@@ -15,6 +16,7 @@ import {
   type CallbackIntakeDependencies,
   type ExecutionCallbackJobRef,
 } from './index';
+import { TEST_AUTH, TEST_CALLBACK_SECRET } from './test-helpers';
 
 const SYMPHONY_JOB: ExecutionCallbackJobRef = {
   id: 'job-symphony-1',
@@ -38,6 +40,7 @@ function deps(overrides: Partial<CallbackIntakeDependencies> = {}): CallbackInta
   return {
     getManifest: getValidatedManifestByProvider,
     getJob: (jobId) => jobs.get(jobId),
+    getCallbackAuthSecret: () => TEST_CALLBACK_SECRET,
     ...overrides,
   };
 }
@@ -90,12 +93,15 @@ describe('EEPC-A-03 callback intake mapping', () => {
     ];
 
     for (const entry of cases) {
-      const result = await service.intake({
-        event: entry.event,
-        provider: 'symphony',
-        jobId: SYMPHONY_JOB.id,
-        [entry.event]: entry.body,
-      });
+      const result = await service.intake(
+        {
+          event: entry.event,
+          provider: 'symphony',
+          jobId: SYMPHONY_JOB.id,
+          [entry.event]: entry.body,
+        },
+        TEST_AUTH,
+      );
       expect(result.ok).toBe(true);
       if (!result.ok) continue;
       expect(result.record.kind).toBe(entry.event);
@@ -123,13 +129,16 @@ describe('EEPC-A-03 callback intake mapping', () => {
       }),
     );
 
-    const result = await service.intake({
-      event: 'progress',
-      provider: 'symphony',
-      jobId: SYMPHONY_JOB.id,
-      summary: 'Working',
-      percent: 10,
-    });
+    const result = await service.intake(
+      {
+        event: 'progress',
+        provider: 'symphony',
+        jobId: SYMPHONY_JOB.id,
+        summary: 'Working',
+        percent: 10,
+      },
+      TEST_AUTH,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -151,6 +160,7 @@ describe('EEPC-A-03 callback intake mapping', () => {
         summary: 'Plan without task',
       },
       deps(),
+      TEST_AUTH,
     );
     expect(validated.ok).toBe(true);
     if (!validated.ok) return;
@@ -183,6 +193,7 @@ describe('EEPC-A-03 callback intake mapping', () => {
         summary: 'noop',
       },
       deps(),
+      TEST_AUTH,
     );
     expect(unknownProvider.ok).toBe(false);
     if (unknownProvider.ok) return;
@@ -197,6 +208,7 @@ describe('EEPC-A-03 callback intake mapping', () => {
         summary: 'noop',
       },
       deps(),
+      TEST_AUTH,
     );
     expect(unknownJob.ok).toBe(false);
     if (unknownJob.ok) return;
@@ -214,6 +226,7 @@ describe('EEPC-A-03 callback intake mapping', () => {
         status: 'ready',
       },
       deps(),
+      TEST_AUTH,
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -254,6 +267,7 @@ describe('EEPC-A-03 callback intake mapping', () => {
         status: 'running',
       },
       deps(),
+      TEST_AUTH,
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -275,6 +289,7 @@ describe('EEPC-A-03 callback intake mapping', () => {
             ? { id: jobId, provider: 'flywheel', task_id: 1, status: 'queued' }
             : undefined,
       }),
+      TEST_AUTH,
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -291,7 +306,10 @@ describe('EEPC-A-03 callback intake mapping', () => {
     try {
       const okRes = await fetch(`${baseUrl}/jobs/${SYMPHONY_JOB.id}/callbacks/plan`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${TEST_CALLBACK_SECRET}`,
+        },
         body: JSON.stringify({
           provider: 'symphony',
           summary: 'HTTP plan intake',
@@ -305,7 +323,10 @@ describe('EEPC-A-03 callback intake mapping', () => {
 
       const badRes = await fetch(`${baseUrl}/jobs/${SYMPHONY_JOB.id}/progress`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${TEST_CALLBACK_SECRET}`,
+        },
         body: JSON.stringify({
           provider: 'symphony',
           summary: 'nope',

@@ -1,9 +1,11 @@
 /**
  * EEPC-A-03 — Callback intake orchestration (validate → map → optional ActivityEvent append).
+ * EEPC-A-07 — Auth context + fail-closed: rejected callbacks never append ActivityEvents.
  */
 
 import { mapValidatedCallbackToActivityRecord } from './map';
 import type {
+  CallbackAuthContext,
   CallbackIntakeDependencies,
   CallbackIntakeResult,
 } from './types';
@@ -11,9 +13,10 @@ import { validateExecutionCallback } from './validate';
 
 export function createExecutionCallbackIntakeService(deps: CallbackIntakeDependencies) {
   return {
-    async intake(input: unknown): Promise<CallbackIntakeResult> {
-      const validated = validateExecutionCallback(input, deps);
+    async intake(input: unknown, auth?: CallbackAuthContext): Promise<CallbackIntakeResult> {
+      const validated = validateExecutionCallback(input, deps, auth);
       if (!validated.ok) {
+        // Negative path: never map or persist ActivityEvents / proof records.
         return {
           ok: false,
           status: validated.status,

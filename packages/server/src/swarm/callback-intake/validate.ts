@@ -1,11 +1,15 @@
 /**
  * EEPC-A-03 — Validate execution-engine callback payloads against EEPC-A-02 manifests.
+ * EEPC-A-07 — Unauthorized/malformed negative path + authRequired enforcement.
  */
 
 import { SWARM_JOB_STATUSES, type SwarmJobStatus } from '../types';
 import type { ActivityEventKind, ExecutionEnginePluginManifest } from '../manifest/types';
+import { authorizeExecutionCallback } from './auth';
+import { collectPrivatePathLeaks } from './public-safe';
 import {
   INTAKE_CALLBACK_EVENTS,
+  type CallbackAuthContext,
   type CallbackIntakeDependencies,
   type CallbackValidationIssue,
   type CallbackValidationResult,
@@ -128,6 +132,7 @@ export function parseCallbackPayloadShape(
 
   const raw = input as Record<string, unknown>;
   collectSecretLeaks(raw, 'payload', issues);
+  collectPrivatePathLeaks(raw, 'payload', issues);
   if (issues.length > 0) {
     return { ok: false, issues };
   }
@@ -295,24 +300,21 @@ export function parseCallbackPayloadShape(
 
 export function validateExecutionCallback(
   input: unknown,
-  deps: Pick<CallbackIntakeDependencies, 'getManifest' | 'getJob'>,
+  deps: Pick<CallbackIntakeDependencies, 'getManifest' | 'getJob' | 'getCallbackAuthSecret'>,
+  auth?: CallbackAuthContext,
 ): CallbackValidationResult {
   const shape = parseCallbackPayloadShape(input);
   if (!shape.ok) {
     const primary = shape.issues[0];
     const code = primary?.code ?? 'malformed_payload';
-    const status =
-      code === 'secret_value_leak' || code === 'secret_key_forbidden'
-        ? 400
-        : 400;
-    return fail(status, code, primary?.message ?? 'Malformed callback payload', shape.issues);
+    return fail(400, code, primary?.message ?? 'Malformed callback payload', shape.issues);
   }
 
   const { payload } = shape;
   const manifest = deps.getManifest(payload.provider);
   if (!manifest) {
-    return fail(404, 'unknown_provider', `Unknown execution-engine provider "${payload.provider}"`, [
-      issue('provider', 'unknown_provider', `No validated manifest for provider "${payload.provider}"`),
+    return fail(404, 'unknown_provider', 'Unknown execution-engine provider', [
+      issue('provider', 'unknown_provider', 'No validated manifest for provider'),
     ]);
   }
 
@@ -323,26 +325,38 @@ export function validateExecutionCallback(
   }
 
   if (!eventAllowedByManifest(payload.event, manifest)) {
-    return fail(400, 'event_not_allowed', `Provider does not allow callback event "${payload.event}"`, [
+    return fail(400, 'event_not_allowed', 'Provider does not allow callback event', [
       issue(
         'event',
         'event_not_allowed',
-        `event "${payload.event}" is not declared in callbacks.intake or activityEvents.emits`,
+        'event is not declared in callbacks.intake or activityEvents.emits',
       ),
     ]);
   }
 
   const activityEventKind = resolveActivityEventKind(payload.event, manifest);
   if (!activityEventKind) {
-    return fail(400, 'missing_activity_mapping', `No ActivityEvent kind mapping for "${payload.event}"`, [
+    return fail(400, 'missing_activity_mapping', 'No ActivityEvent kind mapping for event', [
       issue('event', 'missing_activity_mapping', 'Manifest must map callback event to an ActivityEvent kind'),
     ]);
   }
 
+  // EEPC-A-07 — authorize before job lookup side effects / ActivityEvent mapping.
+  const authDecision = authorizeExecutionCallback({
+    event: payload.event,
+    provider: payload.provider,
+    manifest,
+    auth,
+    getCallbackAuthSecret: deps.getCallbackAuthSecret,
+  });
+  if (!authDecision.ok) {
+    return fail(authDecision.status, authDecision.code, authDecision.message, authDecision.issues);
+  }
+
   const job = deps.getJob(payload.jobId);
   if (!job) {
-    return fail(404, 'unknown_job', `Unknown swarm job "${payload.jobId}"`, [
-      issue('jobId', 'unknown_job', `No job found for id "${payload.jobId}"`),
+    return fail(404, 'unknown_job', 'Unknown swarm job', [
+      issue('jobId', 'unknown_job', 'No job found for id'),
     ]);
   }
 
@@ -351,7 +365,7 @@ export function validateExecutionCallback(
       issue(
         'provider',
         'job_provider_mismatch',
-        `Job "${job.id}" belongs to provider "${job.provider}", not "${payload.provider}"`,
+        'Job belongs to a different provider than the callback',
       ),
     ]);
   }

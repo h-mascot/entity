@@ -139,6 +139,13 @@ export type CallbackIntakeResult =
       issues: CallbackValidationIssue[];
     };
 
+/** Header-only auth presentation for EEPC-A-07 (never accepted from JSON body). */
+export interface CallbackAuthContext {
+  authorization?: string;
+  /** Value of X-Entity-Callback-Token when present. */
+  callbackToken?: string;
+}
+
 export interface CallbackIntakeDependencies {
   getManifest: (provider: string) => ExecutionEnginePluginManifest | undefined;
   getJob: (jobId: string) => ExecutionCallbackJobRef | undefined;
@@ -147,4 +154,9 @@ export interface CallbackIntakeDependencies {
     taskId: number,
     input: ActivityEventAppendInput,
   ) => Promise<{ ok: true; value: unknown } | { ok: false; status: number; code: string; message: string }>;
+  /**
+   * EEPC-A-07 — Resolve shared callback secret for authRequired events.
+   * Must never log or return values into public error bodies.
+   */
+  getCallbackAuthSecret?: (provider: string) => string | undefined;
 }

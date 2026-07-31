@@ -74,7 +74,7 @@ Under `packages/server/src/swarm/manifest/fixtures/`:
 - Manifest-driven `ensureProvidersRegistered` (EEPC-A-04+)
 - Callback → ActivityEvent spine implementation (EEPC-A-03)
 - Public list/health redaction enforcement in routes (EEPC-B-01)
-- Auth on tracker routes (EEPC-A-07)
+- ~~Auth on tracker routes (EEPC-A-07)~~ → delivered in EEPC-A-07 / THE-895
 - ARCHITECTURE.md OpenClaw/`ready` status drift cleanup
 
 ## Verification

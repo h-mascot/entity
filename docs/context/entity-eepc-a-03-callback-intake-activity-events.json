@@ -30,8 +30,10 @@
     "docs/context/entity-eepc-a-03-callback-intake-activity-events.md"
   ],
   "deferred": [
-    "EEPC-A-04 provider adapters",
-    "EEPC-A-07 callback auth",
     "EEPC-B-02 Workplane panel wiring"
+  ],
+  "deliveredLater": [
+    "EEPC-A-04 provider adapters",
+    "EEPC-A-07 callback auth (THE-895)"
   ]
 }
