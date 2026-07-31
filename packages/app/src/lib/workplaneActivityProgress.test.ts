@@ -16,6 +16,7 @@ import {
 import { createWorkplaneTaskSummaryLoadState } from './workplaneTaskSummary.ts';
 import { createWorkplaneProofBundleLoadState } from './workplaneProofBundle.ts';
 import { createWorkplaneFilesDocsLoadState } from './workplaneFilesDocs.ts';
+import { createWorkplaneCommentsReviewLoadState } from './workplaneCommentsReview.ts';
 
 const MIXED_API = {
   taskId: 871,
@@ -359,8 +360,13 @@ test('WorkplaneShell renders ActivityProgressPanel for activity_progress panel',
         status: 'ready',
         bundle,
       }),
+      commentsReviewState: createWorkplaneCommentsReviewLoadState({
+        status: 'empty',
+        taskId: 871,
+      }),
     }),
   );
-  assert.match(other, /Placeholder — full panel ships/);
+  assert.match(other, /data-testid="workplane-comments-review"/);
   assert.doesNotMatch(other, /data-testid="workplane-activity-progress-ready"/);
+  assert.doesNotMatch(other, /Placeholder — full panel ships/);
 });

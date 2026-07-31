@@ -104,15 +104,21 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
   comments_review_checklist: {
     panel: 'Comments/review checklist',
     sourceSeams: [
+      'workplaneCommentsReview.buildCommentsReviewBundle',
+      'workplaneCommentsReview.createWorkplaneCommentsReviewLoadState',
+      'workplaneCommentsReview.buildReviewPacketSummary',
+      'CommentsReviewChecklistPanel empty/loading/error/ready',
       'hasReviewMetadata',
-      'reviewPacketSummary',
       'normalizeReviewDecision',
       'buildReviewDecisionMetadata',
-      'saveReviewDecision',
-      'human-gate actions',
+      'reviewActionToDecision',
+      'REVIEW_DECISION_LABELS',
+      'GET /tasks/:id/comments',
+      'saveReviewDecision / human-gate write path (TaskDetailPanel)',
     ],
     status: 'reusable_now',
-    notes: 'Review write path already centralized in reviewActions.ts; detail panel still has a local metadata patch fallback.',
+    notes:
+      'THE-873: CommentsReviewChecklistPanel displays task comments + review checklist via reviewActions; writes stay on TaskDetailPanel / WP1-C-06 gate.',
   },
   missing_proof_warnings: {
     panel: 'Missing-proof warnings',
@@ -478,6 +484,10 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'workplaneActivityProgress.normalizeActivityProgressBundle',
       'workplaneActivityProgress.createWorkplaneActivityProgressLoadState',
       'ActivityProgressPanel',
+      'workplaneCommentsReview.buildCommentsReviewBundle',
+      'workplaneCommentsReview.createWorkplaneCommentsReviewLoadState',
+      'workplaneCommentsReview.buildReviewPacketSummary',
+      'CommentsReviewChecklistPanel',
       'workplaneMissingProof.buildMissingProofWarningView',
       'MissingProofWarningPanel',
     ],
@@ -486,7 +496,6 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'buildTaskDocumentObjectViews',
       'buildDocumentObjectView',
       'collectReceiptDisplayLinks',
-      'reviewPacketSummary',
       'saveReviewDecision / human-gate UI actions',
     ],
     openWorkplaneAction: {
@@ -505,7 +514,8 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'WP1-B-06': 'workplaneLayoutLock — humans own panel nav; agents cannot mutate layout (THE-867)',
       'WP1-B-07': 'workplaneNarrowViewport — narrow/mobile smoke; no horizontal overflow (THE-868)',
       'WP1-C-03': 'ActivityProgressPanel via workplaneActivityProgress (THE-871)',
-      'WP1-C-05': 'Comments/review checklist panel',
+      'WP1-C-05': 'CommentsReviewChecklistPanel via workplaneCommentsReview (THE-873)',
+      'WP1-C-06': 'Enforce review gate: missing proof cannot present as review-ready',
     },
   };
 }

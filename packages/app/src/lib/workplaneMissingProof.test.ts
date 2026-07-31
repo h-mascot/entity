@@ -10,6 +10,7 @@ import {
   buildMissingProofWarningView,
   createMissingProofWarningView,
 } from './workplaneMissingProof.ts';
+import { createWorkplaneCommentsReviewLoadState } from './workplaneCommentsReview.ts';
 import { createWorkplaneFilesDocsLoadState } from './workplaneFilesDocs.ts';
 import { createWorkplaneProofBundleLoadState } from './workplaneProofBundle.ts';
 import { createWorkplaneTaskSummaryLoadState } from './workplaneTaskSummary.ts';
@@ -267,8 +268,13 @@ test('WorkplaneShell wires MissingProofWarningPanel for missing_proof_warnings p
         bundle: noProofBundle,
       }),
       filesDocsState: createWorkplaneFilesDocsLoadState({ status: 'empty', taskId: 866 }),
+      commentsReviewState: createWorkplaneCommentsReviewLoadState({
+        status: 'empty',
+        taskId: 866,
+      }),
     }),
   );
-  assert.match(other, /Placeholder — full panel ships/);
+  assert.match(other, /data-testid="workplane-comments-review"/);
   assert.doesNotMatch(other, /data-testid="workplane-missing-proof"/);
+  assert.doesNotMatch(other, /Placeholder — full panel ships/);
 });

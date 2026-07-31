@@ -11,6 +11,7 @@ import {
   createWorkplaneFilesDocsLoadState,
   normalizeWorkplaneFilesDocs,
 } from './workplaneFilesDocs.ts';
+import { createWorkplaneCommentsReviewLoadState } from './workplaneCommentsReview.ts';
 import { createWorkplaneProofBundleLoadState } from './workplaneProofBundle.ts';
 import { createWorkplaneTaskSummaryLoadState } from './workplaneTaskSummary.ts';
 
@@ -243,8 +244,13 @@ test('WorkplaneShell renders FilesDocsPanel for files_docs panel', () => {
       taskSummaryState: createWorkplaneTaskSummaryLoadState({ status: 'empty', taskId: 865 }),
       proofBundleState: createWorkplaneProofBundleLoadState({ status: 'empty', taskId: 865 }),
       filesDocsState: createWorkplaneFilesDocsLoadState({ status: 'ready', bundle }),
+      commentsReviewState: createWorkplaneCommentsReviewLoadState({
+        status: 'empty',
+        taskId: 865,
+      }),
     }),
   );
-  assert.match(other, /Placeholder — full panel ships/);
+  assert.match(other, /data-testid="workplane-comments-review"/);
   assert.doesNotMatch(other, /data-testid="workplane-files-docs-ready"/);
+  assert.doesNotMatch(other, /Placeholder — full panel ships/);
 });

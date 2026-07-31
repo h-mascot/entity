@@ -10,6 +10,7 @@ import {
   normalizeWorkplaneFilesDocs,
 } from './workplaneFilesDocs.ts';
 import { createWorkplaneActivityProgressLoadState } from './workplaneActivityProgress.ts';
+import { createWorkplaneCommentsReviewLoadState } from './workplaneCommentsReview.ts';
 import { createWorkplaneProofBundleLoadState } from './workplaneProofBundle.ts';
 import {
   buildWorkplaneTaskSummary,
@@ -227,7 +228,7 @@ test('narrow smoke: task summary / proof / files / missing-proof panels remain u
   assert.match(missingHtml, /data-missing-proof-review-ready="false"/);
 });
 
-test('narrow smoke: activity panel renders; comments placeholder stays; layout locked', () => {
+test('narrow smoke: activity + comments/review panels render; layout locked', () => {
   const activityHtml = renderToStaticMarkup(
     createElement(WorkplaneShell, {
       pathname: '/workplane/22',
@@ -262,10 +263,45 @@ test('narrow smoke: activity panel renders; comments placeholder stays; layout l
       taskSummaryState: READY_SUMMARY,
       proofBundleState: EMPTY_PROOF,
       filesDocsState: EMPTY_FILES,
+      commentsReviewState: createWorkplaneCommentsReviewLoadState({
+        status: 'ready',
+        bundle: {
+          taskId: 22,
+          taskTitle: 'Narrow smoke',
+          decision: 'pending',
+          decisionLabel: 'Pending',
+          reviewer: null,
+          reviewedAt: null,
+          reviewNote: null,
+          reviewType: null,
+          reviewRequired: false,
+          humanGateRequired: false,
+          humanGateState: null,
+          hasReviewMetadata: false,
+          packetSummary: null,
+          checklist: [
+            {
+              id: 'review-decision',
+              label: 'Review decision: Pending',
+              status: 'pending',
+              source: 'review_decision',
+            },
+          ],
+          availableActions: [],
+          comments: [],
+          commentsAvailable: true,
+          commentsEmpty: true,
+          empty: true,
+          degraded: false,
+          warnings: [],
+          reviewReady: false,
+        },
+      }),
     }),
   );
   assert.match(commentsHtml, /data-workplane-active-panel="comments_review_checklist"/);
-  assert.match(commentsHtml, /Placeholder/);
+  assert.match(commentsHtml, /data-testid="workplane-comments-review"/);
+  assert.doesNotMatch(commentsHtml, /Placeholder — full panel ships/);
   assert.match(commentsHtml, /data-workplane-narrow-ready="true"/);
   assert.match(commentsHtml, /data-workplane-layout-locked="true"/);
   assert.match(commentsHtml, /data-testid="workplane-panel-nav"/);

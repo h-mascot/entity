@@ -12,6 +12,7 @@ import {
   isProofBundleItemSelected,
   toProofBundleSelectionToken,
 } from './workplaneProofBundle.ts';
+import { createWorkplaneCommentsReviewLoadState } from './workplaneCommentsReview.ts';
 import { createWorkplaneTaskSummaryLoadState } from './workplaneTaskSummary.ts';
 
 const MIXED_TASK = {
@@ -240,8 +241,13 @@ test('WorkplaneShell renders ProofBundlePanel for proof_bundle panel', () => {
       search: '?panel=comments_review_checklist',
       taskSummaryState: createWorkplaneTaskSummaryLoadState({ status: 'empty', taskId: 64 }),
       proofBundleState: createWorkplaneProofBundleLoadState({ status: 'ready', bundle }),
+      commentsReviewState: createWorkplaneCommentsReviewLoadState({
+        status: 'empty',
+        taskId: 64,
+      }),
     }),
   );
-  assert.match(other, /Placeholder — full panel ships/);
+  assert.match(other, /data-testid="workplane-comments-review"/);
   assert.doesNotMatch(other, /data-testid="workplane-proof-bundle-ready"/);
+  assert.doesNotMatch(other, /Placeholder — full panel ships/);
 });

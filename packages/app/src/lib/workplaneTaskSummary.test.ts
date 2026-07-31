@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import TaskSummaryPanel from '../components/workplane/TaskSummaryPanel.tsx';
 import WorkplaneShell from '../components/workplane/WorkplaneShell.tsx';
+import { createWorkplaneCommentsReviewLoadState } from './workplaneCommentsReview.ts';
 import {
   buildWorkplaneTaskSummary,
   createWorkplaneTaskSummaryLoadState,
@@ -197,7 +198,7 @@ test('WorkplaneShell exposes task summary panel for default task_summary panel',
   assert.match(invalid, /data-testid="workplane-task-summary-empty"/);
 });
 
-test('WorkplaneShell keeps later panels as placeholders (not summary/proof/files/activity)', () => {
+test('WorkplaneShell renders comments/review panel without swapping summary/proof panels', () => {
   const html = renderToStaticMarkup(
     createElement(WorkplaneShell, {
       pathname: '/workplane/22',
@@ -206,10 +207,15 @@ test('WorkplaneShell keeps later panels as placeholders (not summary/proof/files
         status: 'ready',
         summary: buildWorkplaneTaskSummary(SAMPLE_TASK),
       }),
+      commentsReviewState: createWorkplaneCommentsReviewLoadState({
+        status: 'empty',
+        taskId: 22,
+      }),
     }),
   );
   assert.match(html, /data-workplane-active-panel="comments_review_checklist"/);
-  assert.match(html, /Placeholder/);
+  assert.match(html, /data-testid="workplane-comments-review"/);
+  assert.doesNotMatch(html, /Placeholder — full panel ships/);
   assert.doesNotMatch(html, /data-testid="workplane-task-summary-ready"/);
   assert.doesNotMatch(html, /data-testid="workplane-proof-bundle-ready"/);
   assert.doesNotMatch(html, /data-testid="workplane-files-docs-ready"/);
