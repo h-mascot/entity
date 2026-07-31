@@ -7,6 +7,7 @@
  * THE-865 / WP1-B-04 — Files/docs panel linked to Doc Hub openers.
  * THE-866 / WP1-B-05 — Missing-proof warning panel (derived from proof bundle).
  * THE-867 / WP1-B-06 — Layout lock: humans own panel nav; agents cannot mutate layout.
+ * THE-868 / WP1-B-07 — Narrow/mobile viewport smoke for Workplane panels.
  *
  * Parses/serializes THE-857 URL state. Remaining panel bodies stay placeholders until later WP1-B/C.
  */
@@ -47,6 +48,12 @@ import {
   type WorkplaneTaskSummaryView,
 } from '../../lib/workplaneTaskSummary.ts';
 import { buildMissingProofWarningView } from '../../lib/workplaneMissingProof.ts';
+import {
+  workplaneNarrowDomAttrs,
+  workplanePanelBodyNarrowClassNames,
+  workplanePanelNavNarrowClassNames,
+  workplaneShellNarrowClassNames,
+} from '../../lib/workplaneNarrowViewport.ts';
 import FilesDocsPanel from './FilesDocsPanel.tsx';
 import MissingProofWarningPanel from './MissingProofWarningPanel.tsx';
 import ProofBundlePanel from './ProofBundlePanel.tsx';
@@ -431,15 +438,17 @@ export default function WorkplaneShell({
   const filesDocsState = controlledFilesDocs ?? filesDocsLoad;
   const missingProofView = buildMissingProofWarningView(proofState);
 
+  const narrowAttrs = workplaneNarrowDomAttrs();
+
   if (model.status === 'invalid_route') {
     return (
       <div
-        className="entity-shell flex h-screen flex-col bg-[var(--bg-primary)] text-[var(--text-secondary)]"
+        className={workplaneShellNarrowClassNames()}
         data-testid="workplane-shell"
         data-workplane-status="invalid_route"
         data-workplane-restored-from-url="false"
         data-workplane-route={model.isWorkplaneRoute ? 'true' : 'false'}
-        data-workplane-layout-locked="true"
+        data-workplane-layout-locked={narrowAttrs['data-workplane-layout-locked']}
         data-workplane-layout-version={model.layoutVersion}
         data-workplane-layout-owner="human"
         data-workplane-panel-order={model.panelOrder}
@@ -447,6 +456,9 @@ export default function WorkplaneShell({
         data-workplane-agent-layout-rejected={
           layoutLockView.rejectedAttempts.length > 0 ? 'true' : 'false'
         }
+        data-workplane-narrow-ready={narrowAttrs['data-workplane-narrow-ready']}
+        data-workplane-viewport-smoke={narrowAttrs['data-workplane-viewport-smoke']}
+        data-workplane-overflow-policy={narrowAttrs['data-workplane-overflow-policy']}
       >
         <header className="flex items-center justify-between border-b border-[var(--border-primary)] px-4 py-3">
           <h1 className="text-sm font-semibold text-[var(--text-primary)]">Workplane</h1>
@@ -512,7 +524,7 @@ export default function WorkplaneShell({
 
   return (
     <div
-      className="entity-shell flex h-screen flex-col bg-[var(--bg-primary)] text-[var(--text-secondary)]"
+      className={workplaneShellNarrowClassNames()}
       data-testid="workplane-shell"
       data-workplane-status="ready"
       data-workplane-restored-from-url={restoredFromUrl ? 'true' : 'false'}
@@ -529,7 +541,7 @@ export default function WorkplaneShell({
       data-workplane-missing-proof-warning-visible={
         missingProofView.warningVisible ? 'true' : 'false'
       }
-      data-workplane-layout-locked="true"
+      data-workplane-layout-locked={narrowAttrs['data-workplane-layout-locked']}
       data-workplane-layout-version={model.layoutVersion}
       data-workplane-layout-owner="human"
       data-workplane-panel-order={model.panelOrder}
@@ -537,8 +549,11 @@ export default function WorkplaneShell({
       data-workplane-agent-layout-rejected={
         layoutLockView.rejectedAttempts.length > 0 ? 'true' : 'false'
       }
+      data-workplane-narrow-ready={narrowAttrs['data-workplane-narrow-ready']}
+      data-workplane-viewport-smoke={narrowAttrs['data-workplane-viewport-smoke']}
+      data-workplane-overflow-policy={narrowAttrs['data-workplane-overflow-policy']}
     >
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-primary)] px-4 py-3">
+      <header className="workplane-shell-header flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-primary)] px-4 py-3">
         <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">Workplane</p>
           <h1 className="truncate text-sm font-semibold text-[var(--text-primary)]">
@@ -577,7 +592,7 @@ export default function WorkplaneShell({
       </header>
 
       <nav
-        className="flex flex-wrap gap-1 border-b border-[var(--border-primary)] px-3 py-2"
+        className={workplanePanelNavNarrowClassNames()}
         aria-label="Workplane panels"
         data-testid="workplane-panel-nav"
       >
@@ -587,7 +602,7 @@ export default function WorkplaneShell({
             <button
               key={panel.id}
               type="button"
-              className={`mc-shell-btn rounded px-2 py-1 text-[11px] ${
+              className={`mc-shell-btn workplane-panel-tab rounded px-2 py-1 text-[11px] ${
                 active
                   ? 'mc-shell-btn-active text-[var(--text-primary)]'
                   : 'text-[var(--text-muted)]'
@@ -603,7 +618,7 @@ export default function WorkplaneShell({
         })}
       </nav>
 
-      <main className="flex-1 overflow-auto p-4" data-testid="workplane-panel-body">
+      <main className={workplanePanelBodyNarrowClassNames()} data-testid="workplane-panel-body">
         {showTaskSummary ? (
           <TaskSummaryPanel loadState={summaryState} onRetry={retrySummary} />
         ) : null}
