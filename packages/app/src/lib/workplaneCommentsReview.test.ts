@@ -76,6 +76,27 @@ test('reviewActions semantics: normalize + action→decision labels used by chec
   );
 });
 
+test('buildCommentsReviewBundle prefers metadata decision when review_state is not_required', () => {
+  const bundle = buildCommentsReviewBundle({
+    task: {
+      id: 874,
+      name: 'Accepted via metadata',
+      review_required: false,
+      review_state: 'not_required',
+      metadata: {
+        review_decision: 'accepted',
+        review_type: 'peer',
+        reviewed_by: 'henry',
+      },
+    },
+    comments: [],
+    commentsAvailable: true,
+  });
+  assert.ok(bundle);
+  assert.equal(bundle.decision, 'accepted');
+  assert.equal(bundle.decisionLabel, 'Accepted');
+});
+
 test('buildCommentsReviewBundle maps API request_fix review_state to needs_fix', () => {
   const bundle = buildCommentsReviewBundle({
     task: {

@@ -490,6 +490,8 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'CommentsReviewChecklistPanel',
       'workplaneMissingProof.buildMissingProofWarningView',
       'MissingProofWarningPanel',
+      'workplaneReviewGate.evaluateWorkplaneReviewGate',
+      'workplaneReviewGate.applyReviewGateToCommentsReviewLoadState',
     ],
     stillEmbeddedInTaskDetailPanel: [
       'buildReceiptProofView',
@@ -515,7 +517,8 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'WP1-B-07': 'workplaneNarrowViewport — narrow/mobile smoke; no horizontal overflow (THE-868)',
       'WP1-C-03': 'ActivityProgressPanel via workplaneActivityProgress (THE-871)',
       'WP1-C-05': 'CommentsReviewChecklistPanel via workplaneCommentsReview (THE-873)',
-      'WP1-C-06': 'Enforce review gate: missing proof cannot present as review-ready',
+      'WP1-C-06': 'workplaneReviewGate — missing proof cannot present as review-ready (THE-874)',
+      'WP1-C-07': 'Workplanes slice 1 end-to-end proof pack',
     },
   };
 }

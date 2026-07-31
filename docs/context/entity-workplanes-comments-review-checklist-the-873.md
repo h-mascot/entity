@@ -29,11 +29,11 @@ Render task comments and a review checklist in the Workplane `comments_review_ch
 - **loading** / **empty** / **error** / **ready** load envelope
 - Ready with empty comments is explicit (`No comments yet`)
 - Comments unavailable → degraded warning; checklist still from task metadata
-- `reviewReady` always `false` here — WP1-C-06 owns gate enforcement
+- `reviewReady` defaults `false` from the builder; THE-874 / WP1-C-06 stamps the real gate result
 
 ## Non-goals
 
 - No review write/human-gate mutation from Workplane (stays on TaskDetailPanel)
-- No missing-proof → review-ready gate (THE-874 / WP1-C-06)
+- Missing-proof → review-ready gate lands in THE-874 / WP1-C-06
 - No new task truth store / invented Engineering board rows
 - No production promotion

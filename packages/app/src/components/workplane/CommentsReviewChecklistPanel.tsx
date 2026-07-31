@@ -1,9 +1,10 @@
 /**
  * THE-873 / WP1-C-05 — Workplane comments/review checklist panel.
+ * THE-874 / WP1-C-06 — review-ready presentation gated by missing-proof gate.
  *
  * Displays task comments and a review checklist derived from existing
- * reviewActions + task metadata. Explicit empty/loading/error; never claims
- * review-ready (WP1-C-06 owns the gate).
+ * reviewActions + task metadata. Explicit empty/loading/error. reviewReady
+ * comes from evaluateWorkplaneReviewGate — missing proof cannot present ready.
  */
 
 import {
@@ -16,11 +17,25 @@ import {
   type WorkplaneCommentItem,
   type WorkplaneCommentsReviewLoadState,
 } from '../../lib/workplaneCommentsReview.ts';
+import type { WorkplaneReviewGateResult } from '../../lib/workplaneReviewGate.ts';
 
 export interface CommentsReviewChecklistPanelProps {
   loadState: WorkplaneCommentsReviewLoadState;
+  /** THE-874 gate result; when omitted, panel fails closed (not review-ready). */
+  reviewGate?: WorkplaneReviewGateResult | null;
   /** Retry handler for error state (optional). */
   onRetry?: () => void;
+}
+
+function resolveReviewReady(
+  loadState: WorkplaneCommentsReviewLoadState,
+  reviewGate: WorkplaneReviewGateResult | null | undefined,
+): boolean {
+  if (reviewGate) return reviewGate.reviewReady;
+  if (loadState.status === 'ready' && loadState.bundle) {
+    return loadState.bundle.reviewReady === true;
+  }
+  return false;
 }
 
 function DecisionBadge({ decision }: { decision: ReviewDecision }) {
@@ -86,7 +101,72 @@ function CommentRow({ comment }: { comment: WorkplaneCommentItem }) {
   );
 }
 
-function ReadyBundle({ bundle }: { bundle: CommentsReviewBundle }) {
+function ReviewGateBanner({
+  reviewReady,
+  reviewGate,
+}: {
+  reviewReady: boolean;
+  reviewGate: WorkplaneReviewGateResult | null | undefined;
+}) {
+  if (reviewReady) {
+    return (
+      <div
+        className="mb-3 rounded border border-[var(--border-primary)] px-3 py-2 text-xs text-[var(--text-primary)]"
+        role="status"
+        data-testid="workplane-review-gate-ready"
+        data-review-ready="true"
+      >
+        <p className="font-medium">Review gate clear</p>
+        <p className="mt-1 text-[var(--text-muted)]">
+          {reviewGate?.reason ?? 'Proof is present and review state allows review-ready presentation.'}
+        </p>
+      </div>
+    );
+  }
+
+  const missingProof = reviewGate?.missingProofBlocks ?? true;
+  const reason =
+    reviewGate?.reason ??
+    'Review gate blocked. Missing or incomplete proof cannot present as review-ready.';
+
+  return (
+    <div
+      className="mb-3 rounded border border-[var(--border-primary)] px-3 py-2 text-xs text-[var(--text-primary)]"
+      role="status"
+      data-testid="workplane-review-gate-blocked"
+      data-review-ready="false"
+      data-missing-proof-blocks={missingProof ? 'true' : 'false'}
+      data-review-gate-blocker-count={String(reviewGate?.blockers.length ?? 0)}
+    >
+      <p className="font-medium">
+        {missingProof ? 'Missing proof — not review-ready' : 'Review gate blocked — not review-ready'}
+      </p>
+      <p className="mt-1 text-[var(--text-muted)]">{reason}</p>
+      {reviewGate && reviewGate.blockers.length > 0 ? (
+        <ul
+          className="mt-2 list-disc pl-4 text-[11px] text-[var(--text-muted)]"
+          data-testid="workplane-review-gate-blockers"
+        >
+          {reviewGate.blockers.map((blocker) => (
+            <li key={`${blocker.code}:${blocker.message}`} data-blocker-code={blocker.code}>
+              {blocker.message}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function ReadyBundle({
+  bundle,
+  reviewReady,
+  reviewGate,
+}: {
+  bundle: CommentsReviewBundle;
+  reviewReady: boolean;
+  reviewGate: WorkplaneReviewGateResult | null | undefined;
+}) {
   return (
     <div
       data-testid="workplane-comments-review-ready"
@@ -100,8 +180,10 @@ function ReadyBundle({ bundle }: { bundle: CommentsReviewBundle }) {
       data-checklist-count={String(bundle.checklist.length)}
       data-review-empty={bundle.empty ? 'true' : 'false'}
       data-review-degraded={bundle.degraded ? 'true' : 'false'}
-      data-review-ready="false"
+      data-review-ready={reviewReady ? 'true' : 'false'}
     >
+      <ReviewGateBanner reviewReady={reviewReady} reviewGate={reviewGate} />
+
       <div className="flex flex-wrap items-center gap-2">
         <DecisionBadge decision={bundle.decision} />
         {bundle.reviewRequired ? (
@@ -156,7 +238,8 @@ function ReadyBundle({ bundle }: { bundle: CommentsReviewBundle }) {
         >
           <p className="font-medium">Comments/review stream degraded</p>
           <p className="mt-1 text-[var(--text-muted)]">
-            Some comments or review fields are unavailable. This panel never marks review as ready.
+            Some comments or review fields are unavailable. Degraded streams cannot present as
+            review-ready.
           </p>
           {bundle.warnings.length > 0 ? (
             <ul className="mt-2 list-disc pl-4 text-[11px] text-[var(--text-muted)]">
@@ -247,9 +330,11 @@ function ReadyBundle({ bundle }: { bundle: CommentsReviewBundle }) {
 
 export default function CommentsReviewChecklistPanel({
   loadState,
+  reviewGate = null,
   onRetry,
 }: CommentsReviewChecklistPanelProps) {
   const { status, taskId, bundle, errorMessage } = loadState;
+  const reviewReady = resolveReviewReady(loadState, reviewGate);
 
   return (
     <section
@@ -258,7 +343,10 @@ export default function CommentsReviewChecklistPanel({
       data-testid="workplane-comments-review"
       data-comments-review-status={status}
       data-comments-review-task-id={taskId !== null ? String(taskId) : undefined}
-      data-review-ready="false"
+      data-review-ready={reviewReady ? 'true' : 'false'}
+      data-missing-proof-blocks={
+        reviewGate ? (reviewGate.missingProofBlocks ? 'true' : 'false') : undefined
+      }
     >
       <header className="mb-2">
         <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
@@ -313,7 +401,9 @@ export default function CommentsReviewChecklistPanel({
         </div>
       ) : null}
 
-      {status === 'ready' && bundle ? <ReadyBundle bundle={bundle} /> : null}
+      {status === 'ready' && bundle ? (
+        <ReadyBundle bundle={bundle} reviewReady={reviewReady} reviewGate={reviewGate} />
+      ) : null}
     </section>
   );
 }

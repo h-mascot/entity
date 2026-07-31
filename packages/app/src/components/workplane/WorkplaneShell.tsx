@@ -10,6 +10,7 @@
  * THE-868 / WP1-B-07 — Narrow/mobile viewport smoke for Workplane panels.
  * THE-871 / WP1-C-03 — Activity/progress panel (THE-869 spine via THE-870 API).
  * THE-873 / WP1-C-05 — Comments/review checklist panel via existing reviewActions.
+ * THE-874 / WP1-C-06 — Review gate: missing proof cannot present as review-ready.
  *
  * Parses/serializes THE-857 URL state. All Q33 Slice-1 panel bodies are implemented.
  */
@@ -64,6 +65,10 @@ import {
   type WorkplaneCommentsReviewLoadState,
 } from '../../lib/workplaneCommentsReview.ts';
 import { buildMissingProofWarningView } from '../../lib/workplaneMissingProof.ts';
+import {
+  applyReviewGateToCommentsReviewLoadState,
+  evaluateWorkplaneReviewGate,
+} from '../../lib/workplaneReviewGate.ts';
 import {
   workplaneNarrowDomAttrs,
   workplanePanelBodyNarrowClassNames,
@@ -607,6 +612,14 @@ export default function WorkplaneShell({
   const activityState = controlledActivity ?? activityLoad;
   const commentsReviewState = controlledCommentsReview ?? commentsReviewLoad;
   const missingProofView = buildMissingProofWarningView(proofState);
+  const reviewGate = evaluateWorkplaneReviewGate({
+    missingProof: missingProofView,
+    commentsReview: commentsReviewState,
+  });
+  const gatedCommentsReviewState = applyReviewGateToCommentsReviewLoadState(
+    commentsReviewState,
+    reviewGate,
+  );
 
   const narrowAttrs = workplaneNarrowDomAttrs();
 
@@ -679,6 +692,15 @@ export default function WorkplaneShell({
                 status: 'empty',
                 taskId: null,
               })}
+              reviewGate={evaluateWorkplaneReviewGate({
+                missingProof: buildMissingProofWarningView(
+                  createWorkplaneProofBundleLoadState({ status: 'empty', taskId: null }),
+                ),
+                commentsReview: createWorkplaneCommentsReviewLoadState({
+                  status: 'empty',
+                  taskId: null,
+                }),
+              })}
             />
             <MissingProofWarningPanel
               proofLoadState={createWorkplaneProofBundleLoadState({
@@ -727,6 +749,9 @@ export default function WorkplaneShell({
       data-workplane-missing-proof-warning-visible={
         missingProofView.warningVisible ? 'true' : 'false'
       }
+      data-workplane-review-ready={reviewGate.reviewReady ? 'true' : 'false'}
+      data-workplane-review-gate-blocked={reviewGate.blocked ? 'true' : 'false'}
+      data-workplane-missing-proof-blocks={reviewGate.missingProofBlocks ? 'true' : 'false'}
       data-workplane-layout-locked={narrowAttrs['data-workplane-layout-locked']}
       data-workplane-layout-version={model.layoutVersion}
       data-workplane-layout-owner="human"
@@ -824,7 +849,8 @@ export default function WorkplaneShell({
         ) : null}
         {showCommentsReview ? (
           <CommentsReviewChecklistPanel
-            loadState={commentsReviewState}
+            loadState={gatedCommentsReviewState}
+            reviewGate={reviewGate}
             onRetry={retryCommentsReview}
           />
         ) : null}

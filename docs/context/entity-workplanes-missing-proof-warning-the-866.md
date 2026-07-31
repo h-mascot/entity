@@ -29,12 +29,12 @@ Render a dedicated Workplane missing-proof warning panel that explicitly shows w
 | `empty` | No task id / 404 / invalid payload | Explicit unavailable warning |
 | `error` | Transport/server failure | Alert + Retry |
 
-`reviewReady` is always `false` from this panel. Review-gate enforcement remains WP1-C-06.
+`reviewReady` is always `false` from this panel. Cross-panel review-ready presentation is enforced by THE-874 / WP1-C-06 (`workplaneReviewGate`).
 
 ## Non-goals honored
 
-- No comments/review checklist (THE-? / WP1-C-05)
-- No review-gate enforcement (WP1-C-06)
+- No comments/review checklist (THE-873 / WP1-C-05)
+- No cross-panel review-gate enforcement (landed in THE-874 / WP1-C-06)
 - No viewport smoke (WP1-B-07)
 - No ActivityEvents (WP1-C)
 - No Doc Hub rebuild / DB migration / production runtime changes

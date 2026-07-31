@@ -4,7 +4,7 @@
  * Reuses existing task truth (`GET /tasks/:id` + `GET /tasks/:id/comments`) and
  * reviewActions semantics (normalizeReviewDecision / REVIEW_DECISION_LABELS /
  * reviewActionToDecision). No new task store. Fail-closed empty/loading/error;
- * never claims review-ready (gate enforcement is WP1-C-06).
+ * reviewReady defaults false until THE-874 / WP1-C-06 gate stamps it.
  */
 
 import {
@@ -81,8 +81,11 @@ export interface CommentsReviewBundle {
   empty: boolean;
   degraded: boolean;
   warnings: CommentsReviewWarning[];
-  /** Always false — WP1-C-06 owns review-ready gate enforcement. */
-  reviewReady: false;
+  /**
+   * Presentation flag stamped by THE-874 / WP1-C-06 review gate.
+   * Builders default to false; WorkplaneShell applies evaluateWorkplaneReviewGate.
+   */
+  reviewReady: boolean;
 }
 
 export interface WorkplaneCommentsReviewLoadState {
@@ -325,13 +328,22 @@ export function buildCommentsReviewBundle(input: {
   if (!taskId || !taskTitle) return null;
 
   const metadata = parseJsonRecord(record.metadata) ?? {};
-  const decision = normalizeReviewDecision(
-    record.review_state ??
-      record.reviewState ??
-      metadata.review_decision ??
-      metadata.review_state ??
-      metadata.reviewState,
-  );
+  // Prefer an explicit metadata decision when column-level review_state is
+  // absent or the sentinel `not_required` (otherwise normalize → pending and
+  // THE-874 cannot treat accepted+proof as review-ready).
+  const columnReviewState = record.review_state ?? record.reviewState;
+  const columnNormalized =
+    typeof columnReviewState === 'string'
+      ? columnReviewState.trim().toLowerCase().replace(/[\s-]+/g, '_')
+      : '';
+  const decisionSource =
+    columnNormalized && columnNormalized !== 'not_required'
+      ? columnReviewState
+      : (metadata.review_decision ??
+        metadata.review_state ??
+        metadata.reviewState ??
+        columnReviewState);
+  const decision = normalizeReviewDecision(decisionSource);
   const reviewer = readFirstString(
     record.reviewer_principal_id,
     record.reviewerPrincipalId,
@@ -426,6 +438,7 @@ export function buildCommentsReviewBundle(input: {
     empty,
     degraded: warnings.length > 0,
     warnings,
+    // Fail-closed until WP1-C-06 gate evaluates proof + review together.
     reviewReady: false,
   };
 }
