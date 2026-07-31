@@ -6,6 +6,8 @@
  *   notify ← status (Entity status changes fan out to external channels)
  *
  * CH-A-03 Slack reference adapter: ENTITY_CHANNEL_SLACK_ADAPTER + offline transport.
+ * CH-A-04: applyChannelIntakeProposals is the sole host write path; adapters
+ * must not become alternate task truth stores.
  */
 
 import type {

@@ -2,7 +2,8 @@
  * CH-A-02 / THE-918 — Channel adapter contract types.
  *
  * Channels are intake + notify adapters over Entity work state.
- * They must not become alternate task truth stores (CH-A-04 hardens this).
+ * They must not become alternate task truth stores
+ * (CH-A-04 / THE-920: host apply path + architecture scan).
  * Production Slack/Telegram/Discord/email adapters are not mounted by default.
  * CH-A-03 provides a Slack reference adapter behind ENTITY_CHANNEL_SLACK_ADAPTER.
  */

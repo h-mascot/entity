@@ -1,10 +1,14 @@
 /**
  * CH-A-02 / THE-918 — Channel adapter interface surface.
  * CH-A-03 / THE-919 — Slack reference adapter behind feature flag.
+ * CH-A-04 / THE-920 — Adapters never become alternate task truth stores.
  *
  * Entity owns the work plane. Channel adapters only:
  *   - parse intake → task / ActivityEvent proposals
  *   - notify ← status
+ *
+ * Host/task service is the sole writer of task truth
+ * (`applyChannelIntakeProposals` + injected writers).
  *
  * Production Slack/Telegram/Discord/email sends are not registered by default.
  * The Slack reference adapter opts in via ENTITY_CHANNEL_SLACK_ADAPTER=1 and
@@ -76,3 +80,20 @@ export {
   type ChannelNotifyStatus,
   type ChannelStatusNotifyRequest,
 } from './types';
+
+export {
+  applyChannelIntakeProposals,
+  assertChannelAdapterNotTaskTruthStore,
+  CHANNEL_ADAPTER_ALLOWED_ROLES,
+  CHANNEL_ADAPTER_ALLOWED_SURFACE_KEYS,
+  CHANNEL_ADAPTER_FORBIDDEN_TRUTH_METHODS,
+  CHANNEL_ADAPTER_PRODUCTION_SOURCE_FILES,
+  CHANNEL_HOST_TRUTH_BOUNDARY_FILE,
+  CHANNEL_TASK_TRUTH_OWNER,
+  collectChannelAdapterTruthStoreMethodViolations,
+  scanChannelAdapterSourceForTruthStoreViolations,
+  type ApplyChannelIntakeResult,
+  type ChannelAdapterAllowedRole,
+  type ChannelAdapterTruthStoreViolation,
+  type ChannelIntakeHostWriters,
+} from './task-truth-boundary';
