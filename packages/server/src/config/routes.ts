@@ -680,6 +680,16 @@ export function registerConfigRoutes(app: express.Express): void {
         progress,
       });
       setSettingJson(db, `${ONBOARDING_AGENT_SESSION_PREFIX}${session.token}`, next, 'onboarding-agent');
+      // WP2-B-07: keep durable invite progress/status aligned with tokenized progress.
+      getInviteControls().reportProgressFromToken(
+        req.params.token,
+        updates.map((entry: { id?: unknown; stepId?: unknown; status?: unknown; message?: unknown }) => ({
+          id: typeof entry?.id === 'string' ? entry.id : undefined,
+          stepId: typeof entry?.stepId === 'string' ? entry.stepId : undefined,
+          status: typeof entry?.status === 'string' ? entry.status : undefined,
+          message: typeof entry?.message === 'string' ? entry.message : undefined,
+        })),
+      );
       res.json(next);
     } catch (error) {
       res.status(400).json({

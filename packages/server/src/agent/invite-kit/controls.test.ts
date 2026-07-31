@@ -238,4 +238,41 @@ describe('invite-kit durable controls (WP2-A-05)', () => {
     const access = controls.resolveTokenizedInviteAccess('legacyonlytoken1');
     expect(access.kind).toBe('legacy');
   });
+
+  it('reportProgressFromToken moves opened → in_progress → completed (WP2-B-07)', async () => {
+    const controls = await loadControls({
+      mintToken: () => 'progresstoken001',
+    });
+    const created = controls.createInvite({
+      agentName: 'Progress Bot',
+      selectedModules: ['entity-mc'],
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    controls.markOpenedFromToken('progresstoken001');
+    const opened = controls.getInvite(created.value.id);
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    expect(opened.value.status).toBe('opened');
+
+    controls.reportProgressFromToken('progresstoken001', [
+      { id: 'install-entity-mc', status: 'running', message: 'installing' },
+    ]);
+    const running = controls.getInvite(created.value.id);
+    expect(running.ok).toBe(true);
+    if (!running.ok) return;
+    expect(running.value.status).toBe('in_progress');
+    expect(running.value.progress[0]?.status).toBe('running');
+
+    controls.reportProgressFromToken('progresstoken001', [
+      { id: 'install-entity-mc', status: 'done', message: 'ok' },
+    ]);
+    const completed = controls.getInvite(created.value.id);
+    expect(completed.ok).toBe(true);
+    if (!completed.ok) return;
+    expect(completed.value.status).toBe('completed');
+    expect(completed.value.progress[0]?.status).toBe('done');
+    expect(completed.value.token).toBeUndefined();
+  });
 });

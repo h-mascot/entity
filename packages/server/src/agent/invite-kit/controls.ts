@@ -26,6 +26,7 @@ import {
   applyExpiryIfNeeded,
   applyRegenerate,
   canAccessTokenizedEndpoints,
+  hasCompletionEvidence,
   transitionInvite,
 } from './status-machine';
 import { hashInviteToken, mintInviteToken } from './token';
@@ -40,12 +41,22 @@ import {
   type InviteAuditStore,
 } from './audit-store';
 import {
+  INVITE_PROGRESS_STEP_STATUSES,
   type AgentInviteDomain,
   type AgentInviteProgressItem,
   type AgentInviteStatus,
   type ChiefRoutingMode,
   type InviteCreationSource,
+  type InviteProgressStepStatus,
 } from './types';
+
+/** Tokenized progress PATCH update row (session checklist id == durable stepId). */
+export interface TokenizedProgressUpdate {
+  id?: string;
+  stepId?: string;
+  status?: string;
+  message?: string;
+}
 
 const ONBOARDING_AGENT_SESSION_PREFIX = 'onboarding.agentSession.';
 
@@ -692,6 +703,71 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
     persistDomain(repo, result.invite);
   }
 
+  /**
+   * Sync tokenized progress PATCH into durable invite progress + status
+   * (THE-888 / WP2-B-07 invite→progress seam). Never invents completion:
+   * `complete` only when checklist evidence is fully done.
+   */
+  function reportProgressFromToken(
+    rawToken: string,
+    updates: readonly TokenizedProgressUpdate[] = [],
+  ): void {
+    const access = resolveTokenizedInviteAccess(rawToken);
+    if (access.kind !== 'allowed') return;
+    const now = nowFn();
+    const nowIso = now.toISOString();
+    let invite = access.invite;
+
+    const nextProgress = invite.progress.map((step) => {
+      const update = updates.find((entry) => {
+        const key = typeof entry.id === 'string' && entry.id
+          ? entry.id
+          : typeof entry.stepId === 'string'
+            ? entry.stepId
+            : '';
+        return key === step.stepId;
+      });
+      if (!update) return step;
+      const statusRaw = typeof update.status === 'string' ? update.status : step.status;
+      const status = (INVITE_PROGRESS_STEP_STATUSES as readonly string[]).includes(statusRaw)
+        ? statusRaw as InviteProgressStepStatus
+        : step.status;
+      return {
+        ...step,
+        status,
+        message: typeof update.message === 'string' ? update.message : step.message,
+        updatedAt: nowIso,
+      };
+    });
+    invite = { ...invite, progress: nextProgress };
+
+    const progressTransition = transitionInvite(invite, 'report_progress', { now });
+    if (progressTransition.ok) {
+      invite = { ...progressTransition.invite, progress: nextProgress };
+    }
+
+    if (hasCompletionEvidence(invite.progress)) {
+      const completeTransition = transitionInvite(invite, 'complete', { now });
+      if (completeTransition.ok) {
+        invite = { ...completeTransition.invite, progress: invite.progress };
+      }
+    }
+
+    persistDomain(repo, invite);
+    repo.replaceProgress(
+      invite.id,
+      invite.progress.map((step) => ({
+        step_id: step.stepId,
+        label: step.label,
+        module_id: step.moduleId ?? null,
+        status: step.status,
+        message: step.message ?? null,
+        evidence_url: step.evidenceUrl ?? null,
+        updated_at: step.updatedAt,
+      })),
+    );
+  }
+
   return {
     createInvite,
     getInvite,
@@ -700,6 +776,7 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
     regenerateInvite,
     resolveTokenizedInviteAccess,
     markOpenedFromToken,
+    reportProgressFromToken,
     /** Test helper */
     _repo: repo,
   };

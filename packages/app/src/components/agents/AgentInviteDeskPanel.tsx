@@ -40,6 +40,8 @@ import WorkplaneAttachedAgentsPanel from './WorkplaneAttachedAgentsPanel';
 import WorkplaneChiefRoutingPanel from './WorkplaneChiefRoutingPanel';
 import WorkplanePresencePanel from './WorkplanePresencePanel';
 
+/** THE-888 / WP2-B-07 — Desk hosts invite→progress→presence→Chief ASK surfaces for the Slice-2 E2E pack. */
+
 export interface AgentInviteDeskPanelProps {
   /** Optional refresh signal from parent (e.g. after Add Agent create). */
   refreshToken?: number;
