@@ -135,6 +135,7 @@ import {
 } from "./routes/task-helpers";
 import { registerAgentControlRoutes, registerAgentRegistryRoutes } from "./routes/agents";
 import { registerAgentInviteRoutes } from "./routes/agent-invites";
+import { registerAgentAdminSettingsRoutes } from "./routes/agent-admin-settings";
 import { registerAgentPresenceRoutes } from "./routes/agent-presence";
 import { registerWorkplaneAgentRoutes } from "./routes/workplane-agents";
 import { registerWorkplaneChiefRoutingRoutes } from "./routes/workplane-chief-routing";
@@ -205,6 +206,8 @@ registerCoreProbeRoutes(app, phase2Flags);
 registerConfigRoutes(app);
 // Durable invite controls before /api/agents/:id* registry routes (THE-880 / WP2-A-05).
 registerAgentInviteRoutes(app);
+// Admin invite TTL / modules / revoke audit (THE-887 / WP2-B-06).
+registerAgentAdminSettingsRoutes(app);
 // Heartbeat / Workplane presence before /api/agents/:id* (THE-883 / WP2-B-02).
 registerAgentPresenceRoutes(app);
 // Attach agents to task Workplanes (THE-884 / WP2-B-03).

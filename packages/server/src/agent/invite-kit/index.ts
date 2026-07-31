@@ -61,3 +61,30 @@ export {
   type InviteUrlBundle,
   type TokenizedInviteAccess,
 } from './controls';
+
+export {
+  CATALOG_INVITE_MODULE_IDS,
+  HARD_MAX_INVITE_TTL_MS,
+  HARD_MIN_INVITE_TTL_MS,
+  clearAgentInviteAdminSettingsForTests,
+  defaultAgentInviteAdminSettings,
+  getAgentInviteAdminSettings,
+  normalizeAgentInviteAdminSettings,
+  resolveInviteModules,
+  resolveInviteTtlMs,
+  updateAgentInviteAdminSettings,
+  type AgentInviteAdminSettings,
+  type AgentInviteAdminSettingsView,
+  type UpdateAgentInviteAdminSettingsInput,
+} from './admin-settings';
+
+export {
+  INVITE_AUDIT_EVENT_TYPES,
+  createInviteAuditStore,
+  getInviteAuditStore,
+  resetInviteAuditStoreForTests,
+  sanitizeAuditDetail,
+  type InviteAuditEvent,
+  type InviteAuditEventType,
+  type InviteAuditStore,
+} from './audit-store';

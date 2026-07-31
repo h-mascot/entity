@@ -30,7 +30,16 @@ import {
 } from './status-machine';
 import { hashInviteToken, mintInviteToken } from './token';
 import {
-  DEFAULT_AGENT_INVITE_TTL_MS,
+  getAgentInviteAdminSettings,
+  resolveInviteModules,
+  resolveInviteTtlMs,
+  type AgentInviteAdminSettings,
+} from './admin-settings';
+import {
+  getInviteAuditStore,
+  type InviteAuditStore,
+} from './audit-store';
+import {
   type AgentInviteDomain,
   type AgentInviteProgressItem,
   type AgentInviteStatus,
@@ -120,7 +129,9 @@ export type InviteControlFailureCode =
   | 'invite_expired'
   | 'invite_past_expires_at'
   | 'invite_token_rotated'
-  | 'invite_status_blocked';
+  | 'invite_status_blocked'
+  | 'ttl_out_of_range'
+  | 'module_not_allowed';
 
 export interface InviteControlFailure {
   ok: false;
@@ -150,6 +161,8 @@ export interface InviteControlsDeps {
   repo?: AgentInviteRepository;
   now?: () => Date;
   mintToken?: () => string;
+  getAdminSettings?: () => AgentInviteAdminSettings;
+  auditStore?: InviteAuditStore;
 }
 
 function fail(
@@ -286,18 +299,32 @@ function loadDomain(repo: AgentInviteRepository, id: string): AgentInviteDomain 
   return recordToDomain(record, repo.listProgress(id));
 }
 
-function resolveExpiresAt(input: CreateDurableInviteInput, now: Date): string {
+function resolveExpiresAt(
+  input: CreateDurableInviteInput,
+  now: Date,
+  settings: AgentInviteAdminSettings,
+): string {
   if (typeof input.expiresAt === 'string' && input.expiresAt.trim()) {
     const parsed = Date.parse(input.expiresAt);
     if (Number.isNaN(parsed)) {
       throw new Error('expiresAt must be a valid ISO timestamp');
     }
-    return new Date(parsed).toISOString();
+    const expiresAt = new Date(parsed).toISOString();
+    const ttlMs = parsed - now.getTime();
+    const ttlCheck = resolveInviteTtlMs(ttlMs, settings);
+    if (!ttlCheck.ok) {
+      throw Object.assign(new Error(ttlCheck.error), { code: ttlCheck.code });
+    }
+    return expiresAt;
   }
-  const ttl = typeof input.ttlMs === 'number' && Number.isFinite(input.ttlMs) && input.ttlMs > 0
-    ? Math.min(input.ttlMs, 7 * 24 * 60 * 60 * 1000)
-    : DEFAULT_AGENT_INVITE_TTL_MS;
-  return new Date(now.getTime() + ttl).toISOString();
+  const ttlCheck = resolveInviteTtlMs(
+    typeof input.ttlMs === 'number' ? input.ttlMs : undefined,
+    settings,
+  );
+  if (!ttlCheck.ok) {
+    throw Object.assign(new Error(ttlCheck.error), { code: ttlCheck.code });
+  }
+  return new Date(now.getTime() + ttlCheck.ttlMs).toISOString();
 }
 
 function writeCompatibilitySession(
@@ -375,6 +402,21 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
   const repo = deps.repo ?? createAgentInviteRepository();
   const nowFn = deps.now ?? (() => new Date());
   const mintToken = deps.mintToken ?? (() => mintInviteToken());
+  const readSettings = deps.getAdminSettings
+    ?? (() => {
+      const view = getAgentInviteAdminSettings();
+      return {
+        defaultTtlMs: view.defaultTtlMs,
+        minTtlMs: view.minTtlMs,
+        maxTtlMs: view.maxTtlMs,
+        allowedModules: view.allowedModules,
+        defaultModules: view.defaultModules,
+        updatedAt: view.updatedAt,
+        updatedBy: view.updatedBy,
+      };
+    });
+  const audit = deps.auditStore ?? getInviteAuditStore();
+  audit.ensureSchema();
 
   repo.ensureSchema();
 
@@ -384,20 +426,26 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
       if (!agentName) {
         return fail('invalid_input', 'agentName is required', 400);
       }
+      const settings = readSettings();
+      const modulesResolved = resolveInviteModules(input.selectedModules, settings);
+      if (!modulesResolved.ok) {
+        return fail(modulesResolved.code, modulesResolved.error, 400);
+      }
       const now = nowFn();
       const rawToken = mintToken();
       const tokenHash = hashInviteToken(rawToken);
       const creationSource = input.creationSource ?? 'agents_invite';
-      const expiresAt = resolveExpiresAt(input, now);
-      const progress = input.progress ?? [
-        {
-          stepId: 'install-entity-mc',
-          label: 'Install Entity MC',
-          moduleId: 'entity-mc',
+      const expiresAt = resolveExpiresAt(input, now, settings);
+      const selectedModules = modulesResolved.modules;
+      const progress: AgentInviteProgressItem[] = input.progress
+        ? [...input.progress]
+        : selectedModules.map((moduleId) => ({
+          stepId: `install-${moduleId}`,
+          label: `Install ${moduleId}`,
+          moduleId,
           status: 'pending' as const,
           updatedAt: now.toISOString(),
-        },
-      ];
+        }));
 
       const created = repo.createInvite({
         token_hash: tokenHash,
@@ -412,7 +460,7 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
         workplane_id: input.workplaneId ?? null,
         task_id: input.taskId ?? null,
         selected_bundle: input.selectedBundle?.trim() || 'default',
-        selected_modules: input.selectedModules ?? ['entity-mc'],
+        selected_modules: selectedModules,
         selected_module_config: input.selectedModuleConfig ?? {},
         permissions_scope: input.permissionsScope ?? [],
         safe_stop_conditions: input.safeStopConditions ?? [
@@ -438,10 +486,24 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
         throw new Error('onboarding_first_run create is out of scope for /api/agents/invites');
       }
       writeCompatibilitySession(rawToken, domain);
+      audit.append({
+        inviteId: domain.id,
+        eventType: 'invite_created',
+        actorId: domain.createdBy,
+        agentName: domain.agentName,
+        status: domain.status,
+        generation: domain.generation,
+        detail: `modules=${selectedModules.join(',')}; expiresAt=${domain.expiresAt}`,
+        createdAt: domain.createdAt,
+      });
       return { ok: true, value: toPublicView(domain, { token: rawToken }) };
     } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error
+        && (error as { code?: string }).code === 'ttl_out_of_range'
+        ? 'ttl_out_of_range' as const
+        : 'invalid_input' as const;
       return fail(
-        'invalid_input',
+        code,
         error instanceof Error ? error.message : String(error),
         400,
       );
@@ -490,6 +552,16 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
       return fail(result.code, result.error, result.code === 'terminal_status' ? 409 : 400);
     }
     persistDomain(repo, result.invite);
+    audit.append({
+      inviteId: result.invite.id,
+      eventType: 'invite_revoked',
+      actorId: options.revokedBy ?? null,
+      agentName: result.invite.agentName,
+      status: result.invite.status,
+      generation: result.invite.generation,
+      detail: `revokedBy=${options.revokedBy ?? 'unknown'}`,
+      createdAt: result.invite.revokedAt ?? now.toISOString(),
+    });
     // Raw token is unknown here; tombstone any session that still matches current hash is
     // impossible without the raw token. Tokenized routes use durable hash lookup.
     return { ok: true, value: toPublicView(result.invite) };
@@ -507,6 +579,7 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
     const current = refreshExpiry(repo, loaded, now);
     const newRaw = mintToken();
     const newHash = hashInviteToken(newRaw);
+    const settings = readSettings();
     let nextExpires = current.expiresAt;
     try {
       nextExpires = resolveExpiresAt(
@@ -516,10 +589,15 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
           expiresAt: options.expiresAt,
         },
         now,
+        settings,
       );
     } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error
+        && (error as { code?: string }).code === 'ttl_out_of_range'
+        ? 'ttl_out_of_range' as const
+        : 'invalid_input' as const;
       return fail(
-        'invalid_input',
+        code,
         error instanceof Error ? error.message : String(error),
         400,
       );
@@ -533,7 +611,16 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
     // Old raw token unknown — mark rotated via previous_token_hash lookup on access.
     // If a caller still has the old token string, tombstone best-effort is N/A without it.
     writeCompatibilitySession(newRaw, result.invite);
-    void options.revokedBy;
+    audit.append({
+      inviteId: result.invite.id,
+      eventType: 'invite_regenerated',
+      actorId: options.revokedBy ?? null,
+      agentName: result.invite.agentName,
+      status: result.invite.status,
+      generation: result.invite.generation,
+      detail: `generation=${result.invite.generation}; expiresAt=${result.invite.expiresAt}`,
+      createdAt: now.toISOString(),
+    });
     return { ok: true, value: toPublicView(result.invite, { token: newRaw }) };
   }
 

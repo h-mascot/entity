@@ -5,6 +5,7 @@ const FileSourcesSettings = lazy(() => import('../components/settings/FileSource
 const EffectiveConfigSettings = lazy(() => import('../components/settings/EffectiveConfigSettings'));
 const VoiceSettings = lazy(() => import('../components/settings/VoiceSettings'));
 const AgentRegistrySettings = lazy(() => import('../components/settings/AgentRegistrySettings'));
+const AdminAgentSettingsPanel = lazy(() => import('../components/settings/AdminAgentSettingsPanel'));
 const TaskMasterSettings = lazy(() => import('../components/TaskMasterSettings'));
 const DocsSettings = lazy(() => import('../components/settings/DocsSettings'));
 const PluginAdminPanel = lazy(() => import('../components/plugins/PluginAdminPanel'));
@@ -137,6 +138,14 @@ function LazyAgentRegistrySettings(props: { apiBase?: string; onRegistryChanged?
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading agents" />}>
       <AgentRegistrySettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyAdminAgentSettingsPanel() {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading agent invite settings" />}>
+      <AdminAgentSettingsPanel />
     </Suspense>
   );
 }
@@ -744,10 +753,13 @@ export default function AdminView({
         )}
 
         {adminSection === 'agents' && (
-          <LazyAgentRegistrySettings
-            apiBase={apiBase}
-            onRegistryChanged={onAgentRegistryChanged}
-          />
+          <div className="space-y-4">
+            <LazyAdminAgentSettingsPanel />
+            <LazyAgentRegistrySettings
+              apiBase={apiBase}
+              onRegistryChanged={onAgentRegistryChanged}
+            />
+          </div>
         )}
 
         {adminSection === 'voice' && (

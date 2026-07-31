@@ -4115,7 +4115,7 @@ export default function App() {
       { key: 'general', title: 'General settings', hint: 'Workspace + security' },
       { key: 'profile', title: 'User profile', hint: 'Name + avatar' },
       { key: 'missionControl', title: 'Mission Control', hint: 'Board + data behavior' },
-      { key: 'agents', title: 'Agent registry', hint: 'Crew + scopes' },
+      { key: 'agents', title: 'Agent settings', hint: 'TTL, modules, revoke audit + registry' },
       { key: 'integrations', title: 'Integrations', hint: 'Gateway + sync' },
       { key: 'plugins', title: 'Plugins', hint: 'Registry + runtime toggles' },
       { key: 'voice', title: 'Voice / TTS', hint: 'TTS provider + settings' },
