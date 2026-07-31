@@ -55,8 +55,12 @@ export interface EvaluatedPresence {
   capabilities: string[];
   cardCompleteness: 'complete' | 'partial' | 'degraded';
   degradedReasons: string[];
-  /** True when row came only from invite binding with no heartbeat. */
-  source: 'heartbeat' | 'invite_missing';
+  /**
+   * heartbeat — real last-seen row
+   * invite_missing — invite bound to workplane, no heartbeat
+   * attachment_missing — explicitly attached (THE-884), no heartbeat
+   */
+  source: 'heartbeat' | 'invite_missing' | 'attachment_missing';
 }
 
 export interface WorkplanePresencePanel {

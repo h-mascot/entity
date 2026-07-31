@@ -11,7 +11,7 @@ import {
   type CardCompleteness,
 } from './agentIdentityCapabilityCard.ts';
 
-export type PresenceSource = 'heartbeat' | 'invite_missing';
+export type PresenceSource = 'heartbeat' | 'invite_missing' | 'attachment_missing';
 
 export interface WorkplanePresenceAgent {
   agentId: string;
@@ -82,7 +82,10 @@ function asCompleteness(value: unknown): CardCompleteness {
 }
 
 function asSource(value: unknown): PresenceSource {
-  return value === 'heartbeat' ? 'heartbeat' : 'invite_missing';
+  if (value === 'heartbeat' || value === 'attachment_missing' || value === 'invite_missing') {
+    return value;
+  }
+  return 'invite_missing';
 }
 
 export function parseWorkplanePresenceAgent(raw: unknown): WorkplanePresenceAgent | null {

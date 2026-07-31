@@ -136,6 +136,7 @@ import {
 import { registerAgentControlRoutes, registerAgentRegistryRoutes } from "./routes/agents";
 import { registerAgentInviteRoutes } from "./routes/agent-invites";
 import { registerAgentPresenceRoutes } from "./routes/agent-presence";
+import { registerWorkplaneAgentRoutes } from "./routes/workplane-agents";
 import { registerActivityRoutes, registerDbModeRoutes, registerRuntimeRoutes } from "./routes/runtime";
 import { registerDocIntelligenceRoutes } from "./routes/doc-intelligence";
 import { registerOperationalStatusRoutes } from "./routes/operational-status";
@@ -204,6 +205,8 @@ registerConfigRoutes(app);
 registerAgentInviteRoutes(app);
 // Heartbeat / Workplane presence before /api/agents/:id* (THE-883 / WP2-B-02).
 registerAgentPresenceRoutes(app);
+// Attach agents to task Workplanes (THE-884 / WP2-B-03).
+registerWorkplaneAgentRoutes(app);
 app.use("/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/search", createSearchRouter({ flags: phase2Flags }));

@@ -13,6 +13,10 @@ import {
   buildAgentIdentityCapabilityCard,
   type AgentPresenceStatus,
 } from '../identity-capability-card';
+import {
+  createWorkplaneAttachStore,
+  type WorkplaneAttachStore,
+} from '../workplane-attach/store';
 import { createAgentPresenceStore, type AgentPresenceStore } from './store';
 import {
   HEARTBEAT_INPUT_STATUSES,
@@ -46,6 +50,8 @@ export type PresenceResult<T> = PresenceSuccess<T> | PresenceFailure;
 export interface PresenceServiceDeps {
   store?: AgentPresenceStore;
   invites?: InviteControls;
+  /** Explicit Workplane attachments (THE-884); optional to avoid inventing membership. */
+  attachments?: WorkplaneAttachStore;
   now?: () => Date;
   staleAfterMs?: number;
 }
@@ -141,10 +147,12 @@ let singleton: PresenceService | null = null;
 export function createPresenceService(deps: PresenceServiceDeps = {}): PresenceService {
   const store = deps.store ?? createAgentPresenceStore();
   const invites = deps.invites ?? createInviteControls();
+  const attachments = deps.attachments ?? createWorkplaneAttachStore();
   const now = deps.now ?? (() => new Date());
   const staleAfterMs = deps.staleAfterMs ?? PRESENCE_STALE_AFTER_MS;
 
   store.ensureSchema();
+  attachments.ensureSchema();
 
   function evaluateRecord(
     record: AgentPresenceRecord,
@@ -247,6 +255,49 @@ export function createPresenceService(deps: PresenceServiceDeps = {}): PresenceS
         (reason) => reason !== 'runtime_unbound' && reason !== 'model_unbound',
       ),
       source: 'invite_missing',
+    };
+  }
+
+  function evaluateMissingAttachment(attachment: {
+    agentId: string;
+    inviteId: string | null;
+    agentName: string;
+    role: string;
+    taskId: number | null;
+    workplaneId: string;
+  }): EvaluatedPresence {
+    const card = buildAgentIdentityCapabilityCard({
+      invite: {
+        id: attachment.inviteId,
+        agentId: attachment.agentId,
+        agentName: attachment.agentName,
+        role: attachment.role,
+        taskId: attachment.taskId,
+        workplaneId: attachment.workplaneId,
+      },
+      nowMs: now().getTime(),
+      staleAfterMs,
+    });
+
+    return {
+      agentId: attachment.agentId,
+      inviteId: attachment.inviteId,
+      agentName: card.agentName,
+      role: card.role,
+      presenceStatus: 'missing',
+      lastSeenAt: null,
+      heartbeatFreshnessLabel: card.heartbeatFreshnessLabel,
+      currentTaskId: card.currentTaskId,
+      currentWorkplaneId: card.currentWorkplaneId,
+      currentWorkLabel: card.currentWorkLabel,
+      runtime: null,
+      sessionId: null,
+      capabilities: [],
+      cardCompleteness: card.cardCompleteness,
+      degradedReasons: card.degradedReasons.filter(
+        (reason) => reason !== 'runtime_unbound' && reason !== 'model_unbound',
+      ),
+      source: 'attachment_missing',
     };
   }
 
@@ -426,7 +477,27 @@ export function createPresenceService(deps: PresenceServiceDeps = {}): PresenceS
               workplaneId: invite.workplaneId,
             }),
           );
+          seenAgentKeys.add(missingKey);
+          seenInviteIds.add(invite.id);
         }
+      }
+
+      // Explicit attachments (THE-884) with no heartbeat → missing, never invent live.
+      for (const attachment of attachments.listByWorkplaneId(id)) {
+        if (seenAgentKeys.has(attachment.agentId)) continue;
+        if (attachment.inviteId && seenInviteIds.has(attachment.inviteId)) continue;
+        agents.push(
+          evaluateMissingAttachment({
+            agentId: attachment.agentId,
+            inviteId: attachment.inviteId,
+            agentName: attachment.agentName,
+            role: attachment.role,
+            taskId: attachment.taskId,
+            workplaneId: attachment.workplaneId,
+          }),
+        );
+        seenAgentKeys.add(attachment.agentId);
+        if (attachment.inviteId) seenInviteIds.add(attachment.inviteId);
       }
 
       agents.sort((a, b) => {
