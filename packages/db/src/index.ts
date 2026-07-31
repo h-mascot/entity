@@ -5578,6 +5578,58 @@ function bootstrap(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_entity_grants_agent ON entity_agent_module_grants(agent_id);
     CREATE INDEX IF NOT EXISTS idx_entity_grants_module ON entity_agent_module_grants(module_id);
     CREATE INDEX IF NOT EXISTS idx_entity_skill_refs_module ON entity_module_skill_refs(module_id);
+
+    CREATE TABLE IF NOT EXISTS agent_invites (
+      id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      generation INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'created',
+      agent_id TEXT,
+      agent_name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'worker',
+      created_at TEXT NOT NULL,
+      opened_at TEXT,
+      completed_at TEXT,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      revoked_by TEXT,
+      created_by TEXT,
+      creation_source TEXT NOT NULL DEFAULT 'agents_invite',
+      workspace_id TEXT,
+      project_id TEXT,
+      workplane_id TEXT,
+      task_id INTEGER,
+      selected_bundle TEXT NOT NULL DEFAULT 'default',
+      selected_modules_json TEXT NOT NULL DEFAULT '[]',
+      selected_module_config_json TEXT NOT NULL DEFAULT '{}',
+      permissions_scope_json TEXT NOT NULL DEFAULT '[]',
+      safe_stop_conditions_json TEXT NOT NULL DEFAULT '[]',
+      provider_profile_id TEXT,
+      chief_routing_mode TEXT NOT NULL DEFAULT 'none',
+      previous_token_hash TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_invites_token_hash ON agent_invites(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_agent_invites_status ON agent_invites(status);
+    CREATE INDEX IF NOT EXISTS idx_agent_invites_created_at ON agent_invites(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_invites_agent_id ON agent_invites(agent_id);
+
+    CREATE TABLE IF NOT EXISTS agent_invite_progress (
+      id TEXT PRIMARY KEY,
+      invite_id TEXT NOT NULL,
+      step_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      module_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      message TEXT,
+      evidence_url TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE(invite_id, step_id),
+      FOREIGN KEY(invite_id) REFERENCES agent_invites(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_invite_progress_invite ON agent_invite_progress(invite_id);
   `);
 
   if (!hasColumn(db, 'tasks', 'brief')) {
@@ -10822,6 +10874,26 @@ export {
   type ChatMessageRecord,
   type ChatThreadRecord,
 } from "./chat";
+
+// Agent invite kit durable foundation (THE-877 / WP2-A-02)
+export {
+  AGENT_INVITE_STATUSES,
+  CHIEF_ROUTING_MODES,
+  INVITE_CREATION_SOURCES,
+  INVITE_PROGRESS_STEP_STATUSES,
+  createAgentInviteRepository,
+  ensureAgentInviteSchema,
+  type AgentInviteProgressRecord,
+  type AgentInviteRecord,
+  type AgentInviteRepository,
+  type AgentInviteStatus,
+  type ChiefRoutingMode,
+  type CreateAgentInviteInput,
+  type CreateAgentInviteProgressInput,
+  type InviteCreationSource,
+  type InviteProgressStepStatus,
+  type UpdateAgentInviteStatusInput,
+} from "./agent-invites";
 
 
 export function getSubscribedCrews(agentSlug: string): CrewRecord[] {
