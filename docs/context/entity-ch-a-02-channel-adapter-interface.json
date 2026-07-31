@@ -1,0 +1,79 @@
+{
+  "code": "CH-A-02",
+  "issue": "THE-918",
+  "parent": "THE-836",
+  "decision": "INTERFACE_DEFINED",
+  "dependencies": ["CH-A-01"],
+  "dependencyIssues": ["THE-917"],
+  "dependencyCommit": "9a0fed4eaf0a010b5333b810f0d0e8afecb64103",
+  "sourceSha256": "84541727830ef8f4018ad2b9fdf587d653dfbba940b38b279ae3f90ca18ba895",
+  "proof": "interface review",
+  "contractVersion": "entity.channel-adapter.v1",
+  "modulePath": "packages/server/src/channels",
+  "files": [
+    "packages/server/src/channels/types.ts",
+    "packages/server/src/channels/adapter.ts",
+    "packages/server/src/channels/registry.ts",
+    "packages/server/src/channels/sanitize.ts",
+    "packages/server/src/channels/index.ts",
+    "packages/server/src/channels/adapter.test.ts",
+    "docs/context/entity-ch-a-02-channel-adapter-interface.md",
+    "docs/context/entity-ch-a-02-channel-adapter-interface.json"
+  ],
+  "directions": {
+    "intake": "external message → ChannelIntakeTaskProposal / ChannelIntakeActivityProposal (host applies)",
+    "notify": "Entity task status → ChannelNotifyResult"
+  },
+  "kinds": [
+    "clickclack",
+    "email",
+    "discord",
+    "slack",
+    "telegram",
+    "agentpush",
+    "webhook",
+    "other"
+  ],
+  "availability": [
+    "available",
+    "degraded",
+    "unavailable",
+    "not_configured"
+  ],
+  "interfaceMethods": [
+    "getAvailability",
+    "parseIntake",
+    "notifyStatus"
+  ],
+  "intakeModes": [
+    "create_task",
+    "append_activity",
+    "link_existing_task"
+  ],
+  "notifyStatuses": [
+    "sent",
+    "failed",
+    "degraded",
+    "skipped"
+  ],
+  "bridges": {
+    "notificationDeliveryAdapter": "asNotificationDeliveryAdapter",
+    "telegramNotificationChannelMapping": "other"
+  },
+  "bootRegistersProductionAdapters": false,
+  "adaptersWriteTaskTruth": false,
+  "nonGoals": [
+    "No Slack/Telegram/Discord/email production integration",
+    "No Doc Hub rebuild",
+    "No Provider Registry duplicate",
+    "No secret exposure",
+    "No Skill Workshop in Entity core"
+  ],
+  "next": {
+    "code": "CH-A-03",
+    "issue": "THE-919",
+    "title": "Implement one reference adapter (Slack or Telegram) behind feature flag"
+  },
+  "relatedInventory": "docs/context/entity-ch-a-01-clickclack-chat-outbound-inventory.md",
+  "grillAuthority": "Q48 — channels are intake/notification adapters for existing work state"
+}
