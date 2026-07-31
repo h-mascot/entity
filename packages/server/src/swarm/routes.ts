@@ -30,6 +30,11 @@ import {
   kickAutoDispatch,
 } from './dispatcher';
 import { SWARM_JOB_STATUSES, SWARM_PRIORITIES, type CreateSwarmJobInput, type UpdateSwarmJobInput } from './types';
+import {
+  createExecutionCallbackIntakeRouter,
+  createExecutionCallbackIntakeService,
+  getValidatedManifestByProvider,
+} from './callback-intake';
 
 function readTrimmedString(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -108,6 +113,22 @@ function buildJobUpdates(body: Record<string, unknown>): UpdateSwarmJobInput {
 
 export function createSwarmRouter(): Router {
   const router = Router();
+
+  // EEPC-A-03 — callback intake → ActivityEvents (does not replace legacy mutation routes).
+  const callbackIntake = createExecutionCallbackIntakeService({
+    getManifest: getValidatedManifestByProvider,
+    getJob: (jobId) => {
+      const job = getSwarmJob(jobId);
+      if (!job) return undefined;
+      return {
+        id: job.id,
+        provider: job.provider,
+        task_id: job.task_id,
+        status: job.status,
+      };
+    },
+  });
+  router.use(createExecutionCallbackIntakeRouter(callbackIntake));
 
   // ── Jobs CRUD ──
 

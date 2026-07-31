@@ -1,0 +1,37 @@
+{
+  "code": "EEPC-A-03",
+  "issue": "THE-891",
+  "title": "Define callback intake for plan/progress/proof/status/blocker → ActivityEvents",
+  "decision": "IMPLEMENTED",
+  "dependencies": ["EEPC-A-02", "WP1-C-02"],
+  "dependencyCommitEepcA02": "714fc02ecaa090c20804f6e331ca82d7b2ef045a",
+  "intakeEvents": ["plan", "progress", "proof", "status", "blocker"],
+  "routes": {
+    "canonical": "POST /api/swarm/jobs/:id/callbacks/:event",
+    "aliases": [
+      "POST /api/swarm/jobs/:id/plan",
+      "POST /api/swarm/jobs/:id/progress",
+      "POST /api/swarm/jobs/:id/blocker"
+    ],
+    "legacyMutationUnchanged": [
+      "POST /api/swarm/jobs/:id/status",
+      "POST /api/swarm/jobs/:id/proof"
+    ]
+  },
+  "activityEventMapping": {
+    "plan": "task_updated",
+    "progress": "task_updated",
+    "proof": "artifact_linked",
+    "status": "status_changed",
+    "blocker": "task_blocked"
+  },
+  "source": [
+    "packages/server/src/swarm/callback-intake/",
+    "docs/context/entity-eepc-a-03-callback-intake-activity-events.md"
+  ],
+  "deferred": [
+    "EEPC-A-04 provider adapters",
+    "EEPC-A-07 callback auth",
+    "EEPC-B-02 Workplane panel wiring"
+  ]
+}
