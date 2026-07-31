@@ -1,13 +1,14 @@
 /**
- * Human-facing durable agent invite controls (THE-880 / WP2-A-05).
+ * Human-facing durable agent invite controls (THE-880 / WP2-A-05 + THE-881 list).
  *
  * POST   /api/agents/invites
+ * GET    /api/agents/invites
  * GET    /api/agents/invites/:inviteId
  * POST   /api/agents/invites/:inviteId/revoke
  * POST   /api/agents/invites/:inviteId/regenerate
  *
  * Tokenized agent consumption remains under /api/onboarding/agent-session/:token/*.
- * Agent Desk UI is WP2-A-06 — intentionally not shipped here.
+ * Agent Desk UI (WP2-A-06) consumes list/get/revoke/regenerate.
  */
 
 import type { Express, Request, Response } from 'express';
@@ -16,7 +17,12 @@ import {
   type CreateDurableInviteInput,
   type InviteControls,
 } from '../agent/invite-kit/controls';
-import type { ChiefRoutingMode, InviteCreationSource } from '../agent/invite-kit/types';
+import type {
+  AgentInviteStatus,
+  ChiefRoutingMode,
+  InviteCreationSource,
+} from '../agent/invite-kit/types';
+import { AGENT_INVITE_STATUSES } from '../agent/invite-kit/types';
 
 export interface RegisterAgentInviteRoutesDeps {
   controls?: InviteControls;
@@ -115,6 +121,17 @@ export function registerAgentInviteRoutes(
       return;
     }
     res.status(201).json(result.value);
+  });
+
+  // List must register before :inviteId.
+  app.get('/api/agents/invites', (req: Request, res: Response) => {
+    const statusRaw = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+    const status = (AGENT_INVITE_STATUSES as readonly string[]).includes(statusRaw)
+      ? statusRaw as AgentInviteStatus
+      : undefined;
+    const limitRaw = typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined;
+    const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) ? limitRaw : undefined;
+    sendControlResult(res, controls.listInvites({ status, limit }));
   });
 
   app.get('/api/agents/invites/:inviteId', (req: Request, res: Response) => {

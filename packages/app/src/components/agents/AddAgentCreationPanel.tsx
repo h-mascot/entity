@@ -15,6 +15,7 @@ import {
   type AddAgentCreationState,
   type AddAgentRole,
   type CreateInviteKitOptions,
+  type InviteKitPreview,
 } from '../../lib/addAgentInviteCreation';
 import {
   INVITE_URL_KEYS,
@@ -26,10 +27,13 @@ import {
   type InvitePromptCopyState,
   type InvitePromptCopyTarget,
 } from '../../lib/addAgentInvitePrompt';
+import { createDurableInviteFromDraft } from '../../lib/agentInviteApi';
 
 export interface AddAgentCreationPanelProps {
   /** Optional override for tests / browser proof error injection. */
   createOptions?: CreateInviteKitOptions;
+  /** Fired after a successful invite kit is ready (durable or local preview). */
+  onInviteCreated?: (invite: InviteKitPreview) => void;
   className?: string;
 }
 
@@ -48,6 +52,7 @@ function statusTone(uiStatus: AddAgentCreationState['uiStatus']): string {
 
 export default function AddAgentCreationPanel({
   createOptions,
+  onInviteCreated,
   className = '',
 }: AddAgentCreationPanelProps) {
   const [state, setState] = useState<AddAgentCreationState>(() => createInitialCreationState());
@@ -102,12 +107,16 @@ export default function AddAgentCreationPanel({
     };
     setState(snapshot);
     const next = await createInviteKit(snapshot, {
+      probeDurableCreate: createDurableInviteFromDraft,
       ...createOptions,
       forceError: createOptions?.forceError ?? forceErrorFromQuery,
     });
     setState(next);
     setShowUrlDetails(true);
     setShowPrompt(true);
+    if (next.uiStatus === 'ready' && next.invite) {
+      onInviteCreated?.(next.invite);
+    }
   };
 
   const onCopy = async (target: InvitePromptCopyTarget) => {
@@ -135,8 +144,9 @@ export default function AddAgentCreationPanel({
         <div>
           <div className="entity-ops-section-title">Add Agent</div>
           <div className="mt-1 text-sm text-[var(--text-secondary)]">
-            Create an invite kit for a new agent. Uses the invite-kit status model
-            (`created` → …); durable invite API is a later ticket.
+            Create an invite kit for a new agent. Prefers durable{' '}
+            <code className="text-[11px]">POST /api/agents/invites</code>; falls back to local
+            preview if unavailable.
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -542,9 +552,9 @@ export default function AddAgentCreationPanel({
                 <div className="font-medium text-[var(--text-primary)]">Next step</div>
                 <p className="mt-1">{state.invite.nextStep}</p>
                 <p className="mt-2 text-[var(--text-muted)]">
-                  Seam: <code>{state.invite.seam}</code>. Does not call{' '}
-                  <code>POST /api/onboarding/agent-session</code> (would mutate global onboarding
-                  state). Durable <code>/api/agents/invites</code> arrives in WP2-A-05.
+                  Seam: <code>{state.invite.seam}</code>. Persistence:{' '}
+                  <code>{state.invite.persistence}</code>. Raw token is show-once — copy URLs now;
+                  Invite desk tracks status/verification without re-emitting tokens.
                 </p>
               </div>
             </div>

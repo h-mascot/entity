@@ -99,6 +99,15 @@ describe('invite-kit durable controls (WP2-A-05)', () => {
     // Audit-safe: GET must not re-emit raw token.
     expect(got.value.token).toBeUndefined();
     expect(got.value.setupPath).toBeUndefined();
+    expect(got.value.progress.length).toBeGreaterThan(0);
+    expect(got.value.rotated).toBe(false);
+
+    const listed = controls.listInvites();
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    expect(listed.value.count).toBe(1);
+    expect(listed.value.invites[0]?.id).toBe(result.value.id);
+    expect(listed.value.invites[0]?.token).toBeUndefined();
   });
 
   it('revokes invite and blocks tokenized access', async () => {
@@ -145,6 +154,7 @@ describe('invite-kit durable controls (WP2-A-05)', () => {
     expect(regenerated.value.token).toBe('newtokenyyyyyyy');
     expect(regenerated.value.generation).toBe(2);
     expect(regenerated.value.status).toBe('created');
+    expect(regenerated.value.rotated).toBe(true);
 
     const oldDenied = controls.resolveTokenizedInviteAccess('oldtokenxxxxxxx');
     expect(oldDenied.kind).toBe('denied');

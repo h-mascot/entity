@@ -53,6 +53,7 @@ export {
   recordToDomain,
   resetInviteControlsForTests,
   type CreateDurableInviteInput,
+  type DurableInviteListView,
   type DurableInviteView,
   type InviteControlFailure,
   type InviteControlResult,

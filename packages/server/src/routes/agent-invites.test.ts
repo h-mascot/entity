@@ -301,8 +301,52 @@ describe('POST/GET /api/agents/invites + revoke/regenerate (WP2-A-05)', () => {
     const created = await createRes.json() as { id: string; token: string };
     const getRes = await server.request(`/api/agents/invites/${created.id}`);
     expect(getRes.status).toBe(200);
-    const body = await getRes.json() as { token?: string; setupPath?: string };
+    const body = await getRes.json() as {
+      token?: string;
+      setupPath?: string;
+      progress?: unknown[];
+      rotated?: boolean;
+    };
     expect(body.token).toBeUndefined();
     expect(body.setupPath).toBeUndefined();
+    expect(Array.isArray(body.progress)).toBe(true);
+    expect(body.rotated).toBe(false);
+  });
+
+  it('GET /api/agents/invites lists durable invites without tokens (WP2-A-06)', async () => {
+    const server = await createServer();
+    const emptyRes = await server.request('/api/agents/invites');
+    expect(emptyRes.status).toBe(200);
+    const emptyBody = await emptyRes.json() as { invites: unknown[]; count: number };
+    expect(emptyBody.count).toBe(0);
+    expect(emptyBody.invites).toEqual([]);
+
+    const createRes = await server.request('/api/agents/invites', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentName: 'Desk Scout', role: 'reviewer' }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json() as { id: string; token: string };
+
+    const listRes = await server.request('/api/agents/invites');
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json() as {
+      invites: Array<{
+        id: string;
+        token?: string;
+        setupPath?: string;
+        progress?: unknown[];
+        agentName: string;
+      }>;
+      count: number;
+    };
+    expect(listBody.count).toBeGreaterThanOrEqual(1);
+    const row = listBody.invites.find((invite) => invite.id === created.id);
+    expect(row).toBeTruthy();
+    expect(row!.agentName).toBe('Desk Scout');
+    expect(row!.token).toBeUndefined();
+    expect(row!.setupPath).toBeUndefined();
+    expect(Array.isArray(row!.progress)).toBe(true);
   });
 });

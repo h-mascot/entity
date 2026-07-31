@@ -251,7 +251,12 @@ export function buildInvitePrompt(input: InvitePromptBuildInput): InvitePromptBu
   }
   if (input.invite.persistence === 'local_preview_not_durable') {
     warnings.push(
-      'Local preview kit — not durable. Tokenized endpoints may 404 until WP2-A-05 wires durable invites.',
+      'Local preview kit — not durable. Prefer Agents → Add Agent durable create when the API is available.',
+    );
+  }
+  if (input.invite.persistence === 'durable') {
+    warnings.push(
+      'Raw invite token is show-once (create/regenerate only). Copy URLs now; GET will not re-emit the token.',
     );
   }
 

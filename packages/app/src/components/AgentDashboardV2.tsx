@@ -3,6 +3,7 @@ import type { ActivityEntry } from '../hooks/useActivityStream';
 import type { TaskBoardTask } from '../hooks/useTaskBoard';
 import AgentManagementSurface from './AgentManagementSurface';
 import AddAgentCreationPanel from './agents/AddAgentCreationPanel';
+import AgentInviteDeskPanel from './agents/AgentInviteDeskPanel';
 import { getAgentRegistryRecord, resolveAgentAvatarUrl } from '../lib/agentRegistry';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
 
@@ -945,6 +946,7 @@ export default function AgentDashboardV2({
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [activitiesError, setActivitiesError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<AgentMetrics | null>(null);
+  const [inviteDeskRefresh, setInviteDeskRefresh] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -1270,7 +1272,10 @@ export default function AgentDashboardV2({
             )}
           </div>
 
-          <AddAgentCreationPanel />
+          <AddAgentCreationPanel
+            onInviteCreated={() => setInviteDeskRefresh((value) => value + 1)}
+          />
+          <AgentInviteDeskPanel refreshToken={inviteDeskRefresh} />
 
           {crewAgents.length === 0 ? (
             <div className="entity-ops-empty px-4 py-8 text-sm">
@@ -1417,7 +1422,10 @@ export default function AgentDashboardV2({
           </div>
         )}
 
-        <AddAgentCreationPanel />
+        <AddAgentCreationPanel
+          onInviteCreated={() => setInviteDeskRefresh((value) => value + 1)}
+        />
+        {/* Invite desk stays on the crew surface; detail view uses the same refresh token after create. */}
 
         <div className="border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3">
           <div className="mb-3 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border-primary)] pb-3">

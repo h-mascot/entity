@@ -2,10 +2,9 @@
  * THE-878 / WP2-A-03 — Add Agent invite-creation UI model.
  *
  * Hosts Agents → Add Agent creation state using the THE-877 invite-kit product
- * statuses. Durable POST /api/agents/invites is intentionally absent (WP2-A-05);
- * createInviteKit uses a bounded local_preview seam and never claims production
- * persistence. Copyable prompt + URL bundle shaping lives in addAgentInvitePrompt
- * (WP2-A-04 / THE-879).
+ * statuses. Durable POST /api/agents/invites is available via probeDurableCreate
+ * (WP2-A-05/06); local_preview remains the offline fallback. Copyable prompt +
+ * URL bundle shaping lives in addAgentInvitePrompt (WP2-A-04 / THE-879).
  */
 
 export const AGENT_INVITE_STATUSES = [
@@ -98,7 +97,7 @@ export interface InviteKitPreview {
   skillPath: string;
   progressPath: string;
   seam: InviteCreationSeam;
-  persistence: 'local_preview_not_durable';
+  persistence: 'local_preview_not_durable' | 'durable';
   nextStep: string;
 }
 

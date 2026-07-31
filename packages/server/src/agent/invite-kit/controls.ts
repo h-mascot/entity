@@ -82,6 +82,8 @@ export interface DurableInviteView {
   revokedAt: string | null;
   revokedBy: string | null;
   generation: number;
+  /** True when a prior token hash exists (operator-visible rotation signal). */
+  rotated: boolean;
   selectedBundle: string;
   selectedModules: string[];
   permissionsScope: string[];
@@ -90,6 +92,8 @@ export interface DurableInviteView {
   workplaneId: string | null;
   taskId: number | null;
   persistence: 'durable';
+  /** Verification checklist / setup progress (audit-safe; no secrets). */
+  progress: AgentInviteProgressItem[];
   /** Raw token — present only on create / regenerate (show-once). */
   token?: string;
   setupPath?: string;
@@ -97,6 +101,11 @@ export interface DurableInviteView {
   bundlePath?: string;
   skillPath?: string;
   progressPath?: string;
+}
+
+export interface DurableInviteListView {
+  invites: DurableInviteView[];
+  count: number;
 }
 
 export type InviteControlFailureCode =
@@ -228,6 +237,7 @@ function toPublicView(
     revokedAt: invite.revokedAt,
     revokedBy: invite.revokedBy,
     generation: invite.generation,
+    rotated: Boolean(invite.previousTokenHash) || invite.generation > 1,
     selectedBundle: invite.selectedBundle,
     selectedModules: [...invite.selectedModules],
     permissionsScope: [...invite.permissionsScope],
@@ -236,6 +246,7 @@ function toPublicView(
     workplaneId: invite.workplaneId,
     taskId: invite.taskId,
     persistence: 'durable',
+    progress: invite.progress.map((step) => ({ ...step })),
   };
   if (!options.token) {
     return base;
@@ -447,6 +458,20 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
     return { ok: true, value: toPublicView(current) };
   }
 
+  function listInvites(options: { limit?: number; status?: AgentInviteStatus } = {}): InviteControlResult<DurableInviteListView> {
+    const now = nowFn();
+    const rows = repo.listInvites({
+      status: options.status,
+      limit: options.limit ?? 100,
+    });
+    const invites = rows.map((record) => {
+      const domain = recordToDomain(record, repo.listProgress(record.id));
+      const current = refreshExpiry(repo, domain, now);
+      return toPublicView(current);
+    });
+    return { ok: true, value: { invites, count: invites.length } };
+  }
+
   function revokeInvite(
     id: string,
     options: { revokedBy?: string | null } = {},
@@ -583,6 +608,7 @@ export function createInviteControls(deps: InviteControlsDeps = {}) {
   return {
     createInvite,
     getInvite,
+    listInvites,
     revokeInvite,
     regenerateInvite,
     resolveTokenizedInviteAccess,
