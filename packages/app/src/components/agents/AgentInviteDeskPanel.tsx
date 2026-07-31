@@ -36,6 +36,7 @@ import {
 import { toErrorMessage } from '../../lib/http';
 import AgentIdentityCapabilityCard from './AgentIdentityCapabilityCard';
 import WorkplaneAttachedAgentsPanel from './WorkplaneAttachedAgentsPanel';
+import WorkplaneChiefRoutingPanel from './WorkplaneChiefRoutingPanel';
 import WorkplanePresencePanel from './WorkplanePresencePanel';
 
 export interface AgentInviteDeskPanelProps {
@@ -363,6 +364,14 @@ export default function AgentInviteDeskPanel({
 
               <WorkplanePresencePanel
                 workplaneId={selected.workplaneId}
+                refreshToken={refreshToken + presenceRefresh}
+              />
+
+              <WorkplaneChiefRoutingPanel
+                workplaneId={selected.workplaneId}
+                taskId={selected.taskId}
+                preferredAgentId={`invite:${selected.id}`}
+                preferredAgentName={selected.agentName}
                 refreshToken={refreshToken + presenceRefresh}
               />
 
