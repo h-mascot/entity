@@ -484,7 +484,7 @@ export function characterizeTaskDetailWorkplaneSeams(sourceSha: string) {
       'WP1-B-03': 'Implement proof bundle panel consuming normalizeProofBundle',
       'WP1-B-04': 'Implement files/docs panel linked to Doc Hub openers',
       'WP1-B-05': 'MissingProofWarningPanel via workplaneMissingProof (THE-866)',
-      'WP1-B-06': 'Lock layout: humans only',
+      'WP1-B-06': 'workplaneLayoutLock — humans own panel nav; agents cannot mutate layout (THE-867)',
       'WP1-C-05': 'Comments/review checklist panel',
     },
   };

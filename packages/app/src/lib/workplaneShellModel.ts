@@ -6,6 +6,7 @@
  * Open Workplane CTA is THE-859.
  * Return href resolution expanded by THE-860 / WP1-A-05.
  * Cold-load refresh restore is THE-861 (`workplaneRefreshRestore`).
+ * Layout lock (humans only) is THE-867 (`workplaneLayoutLock`).
  */
 
 import {
@@ -13,10 +14,16 @@ import {
   type WorkplanePanelId,
 } from '../components/mission-control/taskDetailWorkplaneSeams.ts';
 import {
+  formatWorkplanePanelOrder,
+  getCanonicalWorkplaneLayout,
+  resolveLockedWorkplaneLayout,
+  WORKPLANE_LAYOUT_VERSION,
+  type WorkplaneCanonicalLayout,
+} from './workplaneLayoutLock.ts';
+import {
   resolveWorkplaneReturnDestination,
 } from './workplaneReturnNavigation.ts';
 import {
-  WORKPLANE_PANEL_IDS,
   WORKPLANE_PATH_PREFIX,
   parseWorkplaneUrlState,
   serializeWorkplaneUrlState,
@@ -62,10 +69,17 @@ export interface WorkplaneShellModel {
   serializedHref: string | null;
   /** Explicit degraded message for invalid/missing task id routes. */
   invalidReason: string | null;
+  /** THE-867: layout always locked to canonical v1 panels. */
+  layoutLocked: true;
+  layoutVersion: typeof WORKPLANE_LAYOUT_VERSION;
+  layoutOwner: 'human';
+  panelOrder: string;
+  layout: WorkplaneCanonicalLayout;
 }
 
 function panelPlaceholders(): WorkplanePanelPlaceholder[] {
-  return WORKPLANE_PANEL_IDS.map((id) => {
+  const layout = getCanonicalWorkplaneLayout();
+  return layout.panelIds.map((id) => {
     const seam = WORKPLANE_PANEL_SEAM_MAP[id];
     return {
       id,
@@ -75,6 +89,17 @@ function panelPlaceholders(): WorkplanePanelPlaceholder[] {
       notes: seam.notes,
     };
   });
+}
+
+function layoutFields() {
+  const layout = getCanonicalWorkplaneLayout();
+  return {
+    layoutLocked: true as const,
+    layoutVersion: layout.version,
+    layoutOwner: 'human' as const,
+    panelOrder: formatWorkplanePanelOrder(layout.panelIds),
+    layout,
+  };
 }
 
 function returnView(
@@ -106,8 +131,13 @@ export function isWorkplaneRoutePath(pathname: string): boolean {
  * Resolve the Workplane shell model from location pathname + search.
  * Invalid `/workplane` paths yield `status: 'invalid_route'` (fail-closed), never silent healthy defaults.
  */
-export function resolveWorkplaneShellModel(pathname: string, search = ''): WorkplaneShellModel {
+export function resolveWorkplaneShellModel(
+  pathname: string,
+  search = '',
+  options?: { agentLayoutPayload?: unknown },
+): WorkplaneShellModel {
   const panels = panelPlaceholders();
+  const locked = layoutFields();
   const isWorkplaneRoute = isWorkplaneRoutePath(pathname);
 
   if (!isWorkplaneRoute) {
@@ -124,6 +154,7 @@ export function resolveWorkplaneShellModel(pathname: string, search = ''): Workp
       panels,
       serializedHref: null,
       invalidReason: 'Not a Workplane route.',
+      ...locked,
     };
   }
 
@@ -142,22 +173,35 @@ export function resolveWorkplaneShellModel(pathname: string, search = ''): Workp
       panels,
       serializedHref: null,
       invalidReason: 'Workplane requires a positive integer task id in the path (/workplane/:taskId).',
+      ...locked,
     };
   }
+
+  // THE-867: URL/human active panel wins; agent layout payloads are rejected.
+  const layoutResolve = resolveLockedWorkplaneLayout({
+    activePanel: state.activePanel,
+    agentPayload: options?.agentLayoutPayload,
+  });
+  const activePanel = layoutResolve.activePanel;
+  const lockedState: WorkplaneUrlState = {
+    ...state,
+    activePanel,
+  };
 
   return {
     status: 'ready',
     isWorkplaneRoute: true,
     pathname,
     search,
-    state,
-    taskId: state.taskId,
-    activePanel: state.activePanel,
-    selectedProof: state.selectedProof,
-    returnContext: returnView(state.returnContext, state.taskId),
+    state: lockedState,
+    taskId: lockedState.taskId,
+    activePanel,
+    selectedProof: lockedState.selectedProof,
+    returnContext: returnView(lockedState.returnContext, lockedState.taskId),
     panels,
-    serializedHref: serializeWorkplaneUrlState(state),
+    serializedHref: serializeWorkplaneUrlState(lockedState),
     invalidReason: null,
+    ...locked,
   };
 }
 
@@ -166,9 +210,22 @@ export function buildWorkplanePanelHref(
   state: WorkplaneUrlState,
   panel: WorkplanePanelId,
 ): string {
+  // THE-867: only human panel navigation is accepted into serialized URLs.
+  const nav = resolveLockedWorkplaneLayout({
+    activePanel: state.activePanel,
+    attempts: [
+      {
+        actor: 'human',
+        kind: 'set_active_panel',
+        panelId: panel,
+        activePanel: panel,
+        source: 'buildWorkplanePanelHref',
+      },
+    ],
+  });
   return serializeWorkplaneUrlState({
     ...state,
-    activePanel: panel,
+    activePanel: nav.activePanel,
   });
 }
 

@@ -6,6 +6,7 @@
  * THE-864 / WP1-B-03 — Proof bundle panel with raw/curated/external/unknown kinds.
  * THE-865 / WP1-B-04 — Files/docs panel linked to Doc Hub openers.
  * THE-866 / WP1-B-05 — Missing-proof warning panel (derived from proof bundle).
+ * THE-867 / WP1-B-06 — Layout lock: humans own panel nav; agents cannot mutate layout.
  *
  * Parses/serializes THE-857 URL state. Remaining panel bodies stay placeholders until later WP1-B/C.
  */
@@ -15,8 +16,13 @@ import type { WorkplanePanelId } from '../mission-control/taskDetailWorkplaneSea
 import { navigateWorkplaneReturn } from '../../lib/workplaneReturnNavigation.ts';
 import { restoreWorkplaneAfterRefresh } from '../../lib/workplaneRefreshRestore.ts';
 import {
+  resolveLockedWorkplaneLayout,
+  selectWorkplanePanelAsHuman,
+} from '../../lib/workplaneLayoutLock.ts';
+import {
   buildWorkplanePanelHref,
   buildWorkplaneProofHref,
+  resolveWorkplaneShellModel,
   type WorkplaneShellModel,
 } from '../../lib/workplaneShellModel.ts';
 import {
@@ -75,6 +81,11 @@ export interface WorkplaneShellProps {
   loadFilesDocs?: (taskId: number) => Promise<WorkplaneFilesDocsBundle | null>;
   /** Optional controlled files/docs state (skips fetch when provided). */
   filesDocsState?: WorkplaneFilesDocsLoadState;
+  /**
+   * Optional agent/task payload that may attempt layout mutation (THE-867).
+   * Always fail-closed: canonical panels + human/URL active panel win.
+   */
+  agentLayoutPayload?: unknown;
 }
 
 function readLocation(pathname?: string, search?: string): { pathname: string; search: string } {
@@ -109,6 +120,7 @@ export default function WorkplaneShell({
   proofBundleState: controlledProof,
   loadFilesDocs,
   filesDocsState: controlledFilesDocs,
+  agentLayoutPayload,
 }: WorkplaneShellProps) {
   const [location, setLocation] = useState(() => readLocation(pathnameProp, searchProp));
   const [summaryLoad, setSummaryLoad] = useState<WorkplaneTaskSummaryLoadState>(() =>
@@ -123,6 +135,8 @@ export default function WorkplaneShell({
     createWorkplaneFilesDocsLoadState({ status: 'loading' }),
   );
   const [filesDocsReloadToken, setFilesDocsReloadToken] = useState(0);
+  /** Browser-proof / test fixture for agent layout attacks (never trusted). */
+  const [fixtureAgentLayoutPayload, setFixtureAgentLayoutPayload] = useState<unknown>(null);
 
   useEffect(() => {
     if (pathnameProp !== undefined) {
@@ -141,12 +155,52 @@ export default function WorkplaneShell({
     return () => window.removeEventListener('popstate', sync);
   }, [pathnameProp, searchProp]);
 
-  // THE-861: restore from pathname+search only (same path as hard refresh).
-  const model: WorkplaneShellModel = useMemo(
-    () => restoreWorkplaneAfterRefresh(location.pathname, location.search).model,
-    [location.pathname, location.search],
-  );
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const readFixture = () => {
+      const w = window as Window & {
+        __ENTITY_WORKPLANE_AGENT_LAYOUT_PAYLOAD__?: unknown;
+      };
+      if ('__ENTITY_WORKPLANE_AGENT_LAYOUT_PAYLOAD__' in w) {
+        setFixtureAgentLayoutPayload(w.__ENTITY_WORKPLANE_AGENT_LAYOUT_PAYLOAD__ ?? null);
+      }
+    };
+    const onAttack = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      setFixtureAgentLayoutPayload(detail ?? null);
+    };
+    readFixture();
+    window.addEventListener('entity:workplane-agent-layout-attack', onAttack as EventListener);
+    return () => {
+      window.removeEventListener('entity:workplane-agent-layout-attack', onAttack as EventListener);
+    };
+  }, []);
+
+  const effectiveAgentLayoutPayload = agentLayoutPayload ?? fixtureAgentLayoutPayload;
+
+  // THE-861: restore from pathname+search; THE-867: reject agent layout payloads.
+  const model: WorkplaneShellModel = useMemo(() => {
+    const restored = restoreWorkplaneAfterRefresh(location.pathname, location.search).model;
+    if (!effectiveAgentLayoutPayload) {
+      return restored;
+    }
+    // Re-resolve with agent payload so layout lock rejects smuggled mutations.
+    return resolveWorkplaneShellModel(location.pathname, location.search, {
+      agentLayoutPayload: effectiveAgentLayoutPayload,
+    });
+  }, [location.pathname, location.search, effectiveAgentLayoutPayload]);
   const restoredFromUrl = model.status === 'ready';
+
+  const layoutLockView = useMemo(
+    () =>
+      resolveLockedWorkplaneLayout({
+        activePanel: model.activePanel,
+        agentPayload: effectiveAgentLayoutPayload,
+      }),
+    [model.activePanel, effectiveAgentLayoutPayload],
+  );
 
   const navigate = onNavigate ?? defaultNavigate;
 
@@ -155,7 +209,12 @@ export default function WorkplaneShell({
       if (!model.state) {
         return;
       }
-      const href = buildWorkplanePanelHref(model.state, panel);
+      // THE-867: human panel navigation only; structural/agent mutations never apply here.
+      const nav = selectWorkplanePanelAsHuman(model.activePanel, panel);
+      if (!nav.accepted) {
+        return;
+      }
+      const href = buildWorkplanePanelHref(model.state, nav.activePanel);
       navigate(href, { replace: true, state: { mode: 'workplane', returnHref: model.returnContext.href } });
       if (pathnameProp === undefined) {
         setLocation({
@@ -164,7 +223,7 @@ export default function WorkplaneShell({
         });
       }
     },
-    [model.state, model.returnContext.href, navigate, pathnameProp],
+    [model.state, model.activePanel, model.returnContext.href, navigate, pathnameProp],
   );
 
   const handleReturn = useCallback(() => {
@@ -380,6 +439,14 @@ export default function WorkplaneShell({
         data-workplane-status="invalid_route"
         data-workplane-restored-from-url="false"
         data-workplane-route={model.isWorkplaneRoute ? 'true' : 'false'}
+        data-workplane-layout-locked="true"
+        data-workplane-layout-version={model.layoutVersion}
+        data-workplane-layout-owner="human"
+        data-workplane-panel-order={model.panelOrder}
+        data-workplane-layout-intact="true"
+        data-workplane-agent-layout-rejected={
+          layoutLockView.rejectedAttempts.length > 0 ? 'true' : 'false'
+        }
       >
         <header className="flex items-center justify-between border-b border-[var(--border-primary)] px-4 py-3">
           <h1 className="text-sm font-semibold text-[var(--text-primary)]">Workplane</h1>
@@ -461,6 +528,14 @@ export default function WorkplaneShell({
       data-workplane-missing-proof-status={missingProofView.status}
       data-workplane-missing-proof-warning-visible={
         missingProofView.warningVisible ? 'true' : 'false'
+      }
+      data-workplane-layout-locked="true"
+      data-workplane-layout-version={model.layoutVersion}
+      data-workplane-layout-owner="human"
+      data-workplane-panel-order={model.panelOrder}
+      data-workplane-layout-intact="true"
+      data-workplane-agent-layout-rejected={
+        layoutLockView.rejectedAttempts.length > 0 ? 'true' : 'false'
       }
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-primary)] px-4 py-3">
