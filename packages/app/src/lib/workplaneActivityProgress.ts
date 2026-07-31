@@ -293,6 +293,12 @@ export function countActivityProgressTypes(
 
 /** Human-readable line for an event row (never invents content). */
 export function formatActivityProgressEventSummary(event: ActivityProgressEvent): string {
+  // THE-897 / EEPC-B-02 — prefer nested execution-engine event_body.summary when present.
+  const data = toRecord(event.payload.data);
+  const eventBody = data ? toRecord(data.event_body) ?? toRecord(data.eventBody) : null;
+  const fromJobBody = eventBody ? payloadSummary(eventBody) : null;
+  if (fromJobBody) return fromJobBody;
+
   const fromPayload = payloadSummary(event.payload);
   if (fromPayload) return fromPayload;
   if (event.payloadRef) return event.payloadRef;

@@ -24,6 +24,8 @@ export type ProofBundleItemSource =
   | 'native_document'
   | 'external_document_ref'
   | 'receipt'
+  /** THE-897 / EEPC-B-02 — execution-engine callback / swarm job proof refs. */
+  | 'execution_job_proof'
   | 'unknown';
 
 /** One normalized proof/evidence item. Missing fields stay null — never invented. */

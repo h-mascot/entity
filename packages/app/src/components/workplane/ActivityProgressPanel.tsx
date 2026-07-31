@@ -1,5 +1,7 @@
 /**
  * THE-871 / WP1-C-03 — Workplane activity/progress panel.
+ * THE-897 / EEPC-B-02 — Surfaces execution-engine job proof/status provenance
+ * on activity rows without inventing data or claiming review-ready.
  *
  * Renders typed THE-869 spine events (plan/progress/log/proof/status/blocker)
  * from THE-870 task-scoped storage/API. Explicit empty state; fail-closed for
@@ -16,6 +18,12 @@ import {
   type ActivityProgressSpineType,
   type WorkplaneActivityProgressLoadState,
 } from '../../lib/workplaneActivityProgress.ts';
+import {
+  countJobProofStatusSignals,
+  extractJobProofStatusFromEvent,
+  formatJobAwareActivitySummary,
+  formatJobProofStatusLabel,
+} from '../../lib/workplaneJobProofStatus.ts';
 
 export interface ActivityProgressPanelProps {
   loadState: WorkplaneActivityProgressLoadState;
@@ -59,7 +67,10 @@ function TypeCounts({ bundle }: { bundle: ActivityProgressBundle }) {
 }
 
 function EventRow({ event }: { event: ActivityProgressEvent }) {
-  const summary = formatActivityProgressEventSummary(event);
+  const baseSummary = formatActivityProgressEventSummary(event);
+  const summary = formatJobAwareActivitySummary(event, baseSummary);
+  const jobSignal = extractJobProofStatusFromEvent(event);
+  const jobLabel = jobSignal ? formatJobProofStatusLabel(jobSignal) : null;
   const actorLabel = event.actor.principalId
     ? `${event.actor.type}:${event.actor.principalId}`
     : event.actor.type;
@@ -73,11 +84,25 @@ function EventRow({ event }: { event: ActivityProgressEvent }) {
       data-activity-id={event.id !== null ? String(event.id) : undefined}
       data-activity-actor={event.actor.type}
       data-activity-proof-incomplete={event.proofIncomplete ? 'true' : 'false'}
+      data-activity-job-linked={jobSignal ? 'true' : 'false'}
+      data-activity-job-id={jobSignal?.jobId ?? undefined}
+      data-activity-job-status={jobSignal?.jobStatus ?? undefined}
+      data-activity-job-origin={jobSignal?.origin ?? undefined}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <TypeBadge eventType={event.eventType} />
+            {jobSignal ? (
+              <span
+                className="rounded border border-[var(--border-primary)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-muted)]"
+                data-testid="workplane-activity-job-badge"
+                data-job-origin={jobSignal.origin}
+                data-job-kind={jobSignal.kind ?? event.eventType}
+              >
+                Job
+              </span>
+            ) : null}
             <span
               className="text-[11px] text-[var(--text-muted)]"
               data-testid="workplane-activity-event-sequence"
@@ -103,6 +128,11 @@ function EventRow({ event }: { event: ActivityProgressEvent }) {
                 {event.payloadRef}
               </span>
             ) : null}
+            {jobLabel ? (
+              <span data-testid="workplane-activity-job-label" className="truncate">
+                {jobLabel}
+              </span>
+            ) : null}
           </div>
           {event.proofIncomplete ? (
             <p
@@ -119,6 +149,7 @@ function EventRow({ event }: { event: ActivityProgressEvent }) {
 }
 
 function ReadyBundle({ bundle }: { bundle: ActivityProgressBundle }) {
+  const jobCounts = countJobProofStatusSignals(bundle.events);
   return (
     <div
       data-testid="workplane-activity-progress-ready"
@@ -127,8 +158,19 @@ function ReadyBundle({ bundle }: { bundle: ActivityProgressBundle }) {
       data-activity-count={String(bundle.events.length)}
       data-activity-degraded={bundle.degraded ? 'true' : 'false'}
       data-activity-review-ready="false"
+      data-activity-job-signal-count={String(jobCounts.total)}
+      data-activity-job-proof-count={String(jobCounts.proof)}
+      data-activity-job-status-count={String(jobCounts.status)}
     >
       <TypeCounts bundle={bundle} />
+      {jobCounts.total > 0 ? (
+        <p
+          className="mt-2 text-[11px] text-[var(--text-muted)]"
+          data-testid="workplane-activity-job-signal-summary"
+        >
+          Job signals · proof {jobCounts.proof} · status {jobCounts.status}
+        </p>
+      ) : null}
 
       {bundle.degraded || bundle.warnings.length > 0 ? (
         <div

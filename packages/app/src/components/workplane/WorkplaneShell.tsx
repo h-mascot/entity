@@ -12,6 +12,7 @@
  * THE-873 / WP1-C-05 — Comments/review checklist panel via existing reviewActions.
  * THE-874 / WP1-C-06 — Review gate: missing proof cannot present as review-ready.
  * THE-875 / WP1-C-07 — Slice-1 E2E proof pack (with/without/raw/linked/refresh).
+ * THE-897 / EEPC-B-02 — Wire job proof/status into activity + proof panels.
  *
  * Parses/serializes THE-857 URL state. All Q33 Slice-1 panel bodies are implemented.
  */
@@ -66,6 +67,10 @@ import {
   type WorkplaneCommentsReviewLoadState,
 } from '../../lib/workplaneCommentsReview.ts';
 import { buildMissingProofWarningView } from '../../lib/workplaneMissingProof.ts';
+import {
+  countJobProofStatusSignals,
+  mergeJobProofIntoProofBundle,
+} from '../../lib/workplaneJobProofStatus.ts';
 import {
   applyReviewGateToCommentsReviewLoadState,
   evaluateWorkplaneReviewGate,
@@ -608,10 +613,39 @@ export default function WorkplaneShell({
   ]);
 
   const summaryState = controlledSummary ?? summaryLoad;
-  const proofState = controlledProof ?? proofLoad;
+  const baseProofState = controlledProof ?? proofLoad;
   const filesDocsState = controlledFilesDocs ?? filesDocsLoad;
   const activityState = controlledActivity ?? activityLoad;
   const commentsReviewState = controlledCommentsReview ?? commentsReviewLoad;
+
+  // THE-897 / EEPC-B-02 — merge execution-job proof artifacts from activity into
+  // the proof panel. Status-only job signals stay on the activity panel.
+  const proofState = useMemo((): WorkplaneProofBundleLoadState => {
+    if (baseProofState.status !== 'ready' || !baseProofState.bundle) {
+      return baseProofState;
+    }
+    if (activityState.status !== 'ready' || !activityState.bundle) {
+      return baseProofState;
+    }
+    const merged = mergeJobProofIntoProofBundle(
+      baseProofState.bundle,
+      activityState.bundle.events,
+    );
+    return createWorkplaneProofBundleLoadState({
+      status: 'ready',
+      taskId: merged.taskId ?? baseProofState.taskId,
+      bundle: merged,
+    });
+  }, [baseProofState, activityState]);
+
+  const jobSignalCounts = useMemo(
+    () =>
+      activityState.status === 'ready' && activityState.bundle
+        ? countJobProofStatusSignals(activityState.bundle.events)
+        : { proof: 0, status: 0, total: 0 },
+    [activityState],
+  );
+
   const missingProofView = buildMissingProofWarningView(proofState);
   const reviewGate = evaluateWorkplaneReviewGate({
     missingProof: missingProofView,
@@ -746,6 +780,9 @@ export default function WorkplaneShell({
       data-workplane-files-docs-status={filesDocsState.status}
       data-workplane-activity-status={activityState.status}
       data-workplane-comments-review-status={commentsReviewState.status}
+      data-workplane-job-signal-count={String(jobSignalCounts.total)}
+      data-workplane-job-proof-count={String(jobSignalCounts.proof)}
+      data-workplane-job-status-count={String(jobSignalCounts.status)}
       data-workplane-missing-proof-status={missingProofView.status}
       data-workplane-missing-proof-warning-visible={
         missingProofView.warningVisible ? 'true' : 'false'

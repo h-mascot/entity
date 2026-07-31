@@ -1,5 +1,6 @@
 /**
  * THE-864 / WP1-B-03 — Workplane proof bundle panel.
+ * THE-897 / EEPC-B-02 — Renders execution-job proof items merged from activity.
  *
  * Renders normalized ProofBundle items with raw / curated / external / unknown
  * kinds. Fail-closed for empty, loading, error, and malformed-missing proof.
@@ -86,11 +87,20 @@ function ProofItemRow({
       data-proof-source={item.source}
       data-proof-selected={selected ? 'true' : 'false'}
       data-proof-external={item.external ? 'true' : 'false'}
+      data-proof-job-linked={item.source === 'execution_job_proof' ? 'true' : 'false'}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <KindBadge kind={item.kind} />
+            {item.source === 'execution_job_proof' ? (
+              <span
+                className="rounded border border-[var(--border-primary)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--text-muted)]"
+                data-testid="workplane-proof-job-badge"
+              >
+                Job proof
+              </span>
+            ) : null}
             <span
               className="truncate text-xs font-medium text-[var(--text-primary)]"
               data-testid="workplane-proof-item-title"
