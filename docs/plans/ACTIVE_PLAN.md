@@ -1,7 +1,7 @@
 # ACTIVE PLAN — THE-882 / WP2-B-01 Identity/capability card fields
 
 **Created:** 2026-07-31  
-**Status:** COMPLETE (pending Linear reconcile)  
+**Status:** COMPLETE  
 **Worktree:** `/Users/enterprise/Code/entity-the-882-wp2-b-01`
 
 ## Plan
@@ -10,7 +10,7 @@
 - [x] Step 2: App card model + UI smoke + mount on Agent Desk
 - [x] Step 3: Focused tests + app/server builds
 - [x] Step 4: Browser/DOM proof + book-review
-- [ ] Step 5: Commit + receipts under WP2-B-01/ + Linear Done
+- [x] Step 5: Commit + receipts under WP2-B-01/ + Linear Done
 
 ## Verify
 
