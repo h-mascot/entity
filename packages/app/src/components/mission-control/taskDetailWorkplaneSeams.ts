@@ -82,9 +82,17 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
   },
   activity_progress: {
     panel: 'Activity/progress',
-    sourceSeams: ['normalizeActivity', 'TECHNICAL_ACTIVITY_TYPES', 'DetailTab activity/logs'],
+    sourceSeams: [
+      'normalizeActivity',
+      'TECHNICAL_ACTIVITY_TYPES',
+      'DetailTab activity/logs',
+      'activity-event-spine.ACTIVITY_EVENT_SPINE_TYPES',
+      'activity-event-spine.normalizeActivityEventSpine',
+      'activity-event-spine.classifyActivityEventToSpineType',
+    ],
     status: 'partial',
-    notes: 'Activity exists but is not yet the minimal ActivityEvent spine (plan/progress/log/proof/status/blocker).',
+    notes:
+      'THE-869: spine types plan/progress/log/proof/status/blocker defined in packages/db; Workplane panel + storage/API land in WP1-C-02+.',
   },
   comments_review_checklist: {
     panel: 'Comments/review checklist',

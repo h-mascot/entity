@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import Database from 'better-sqlite3';
+import { ACTIVITY_EVENT_SPINE_TYPES } from './activity-event-spine';
 import { getEntityDatabase } from './entity-db';
 
 export const TASK_COLUMNS = ['backlog', 'todo', 'doing', 'review', 'done'] as const;
@@ -2699,6 +2700,8 @@ export const ACTIVITY_EVENT_TYPES = [
   'permission_denied',
   'integration_degraded',
   'migration_warning',
+  // Workplane minimal ActivityEvent spine (THE-869 / WP1-C-01)
+  ...ACTIVITY_EVENT_SPINE_TYPES,
   'legacy_event_observed',
 ] as const;
 
@@ -11135,6 +11138,21 @@ export {
   type ChatMessageRecord,
   type ChatThreadRecord,
 } from "./chat";
+
+// Workplane ActivityEvent spine (THE-869 / WP1-C-01) — type/schema only; storage in THE-870
+export {
+  ACTIVITY_EVENT_SPINE_TYPES,
+  classifyActivityEventToSpineType,
+  compareActivityEventSpineOrder,
+  isActivityEventSpineType,
+  normalizeActivityEventSpine,
+  normalizeActivityEventSpineType,
+  type ActivityEventSpine,
+  type ActivityEventSpineActor,
+  type ActivityEventSpineActorType,
+  type ActivityEventSpineNormalizeResult,
+  type ActivityEventSpineType,
+} from './activity-event-spine';
 
 
 export function getSubscribedCrews(agentSlug: string): CrewRecord[] {
