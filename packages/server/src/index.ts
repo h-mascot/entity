@@ -13,6 +13,7 @@ import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   addTaskProject,
+  createActivityEventSpineRepository,
   createActivityRepository,
   createCrew,
   createDocumentObjectRepository,
@@ -36,6 +37,7 @@ import {
   getTaskHistory,
   getTaskProjects,
   removeTaskProject,
+  replaceTaskProjects,
   updateRoadmapItem,
   validateTaskDoneReviewGateState,
   type UpdateRoadmapItemInput,
@@ -69,6 +71,7 @@ import {
 } from "./task-dedupe";
 import {
   buildTaskProjectLabel,
+  deriveTaskWorkDomain,
   syncTaskProjectAssignments,
   taskHasProjectName,
 } from "./task-projects";
@@ -90,6 +93,7 @@ import {
   registerPluginRuntimeModules,
 } from "./plugins/registry";
 import { registerPluginManagementRoutes } from "./plugins/routes";
+import { runInferenceProviderMigrations } from "./provider-registry/migrations";
 import { registerCrewRoutes } from "./crews-routes";
 import { registerChatRoutes } from "./routes/chat";
 import { createClickClackBridge } from "./clickclack/bridge";
@@ -142,6 +146,7 @@ import { registerWorkplaneChiefRoutingRoutes } from "./routes/workplane-chief-ro
 import { registerWorkplaneAskRoutes } from "./routes/workplane-asks";
 import { registerActivityRoutes, registerDbModeRoutes, registerRuntimeRoutes } from "./routes/runtime";
 import { registerDocIntelligenceRoutes } from "./routes/doc-intelligence";
+import { createBusinessOnboardingRouter, createTaskSyncLayerRepoFactory } from "./routes/business-onboarding";
 import { registerOperationalStatusRoutes } from "./routes/operational-status";
 import { registerSetupClawLeadRoutes } from "./routes/setupclaw";
 import { createActivityLogger } from "./routes/activity-log";
@@ -160,6 +165,10 @@ import {
   createActivityEventService,
 } from "./activity-events";
 import {
+  createActivitySpineEventRouter,
+  createActivitySpineEventService,
+} from "./activity-spine-events";
+import {
   createTaskMasterClaimRouter,
   createTaskMasterClaimService,
 } from "./task-master-claims";
@@ -167,8 +176,10 @@ import { completeTaskWithReceipt } from "./receipt-writer";
 import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
+import { listSwarmJobs } from "./swarm/db";
 import { normalizeTaskOutputLinks } from "./task-output-links";
 import { registerNodeOperationsRoutes } from "./node-operations";
+import { registerDocHubTelemetryRoute } from "./doc-hub-telemetry";
 import {
   setApiNoStoreHeaders,
 } from "./static-cache";
@@ -287,7 +298,13 @@ const moduleRegistryRepo = createModuleRegistryRepository();
 const workspaceRepo = createWorkspaceScopeRepository();
 const documentObjectRepository = createDocumentObjectRepository();
 const evidenceArtifactRepository = createEvidenceArtifactRepository();
+const taskSyncLayer = createTaskSyncLayer();
 app.use("/api", createWorkspaceRouter({ workspaceRepo }));
+app.use("/api", createBusinessOnboardingRouter({
+  workspaceRepo,
+  agentRegistryRepo,
+  taskRepoFactory: createTaskSyncLayerRepoFactory(taskSyncLayer),
+}));
 app.use("/api", createAgentRegistryRouter({ agentRegistryRepo, moduleRegistryRepo }));
 app.use("/api/document-objects", createDocumentObjectRouter({
   documentRepo: documentObjectRepository,
@@ -329,13 +346,21 @@ function broadcast(data: unknown) {
   });
 }
 
-const taskSyncLayer = createTaskSyncLayer();
 const activityRepository = createActivityRepository();
+const activityEventSpineRepository = createActivityEventSpineRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
 const activityEventService = createActivityEventService({
   activityRepository,
   getTask: (taskId) => taskSyncLayer.getTask(taskId),
+});
+const activitySpineEventService = createActivitySpineEventService({
+  spineRepository: activityEventSpineRepository,
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+  // THE-872 / WP1-C-04 — read-path adapters (no mutation / no Engineering import).
+  listActivityEventsForTask: (taskId, limit) =>
+    activityRepository.listActivitiesByTaskId(taskId, limit),
+  listSwarmJobsForTask: (taskId) => listSwarmJobs({ task_id: taskId }),
 });
 const taskMasterClaimService = createTaskMasterClaimService({
   taskSyncLayer,
@@ -358,6 +383,10 @@ const runtimeConfig = applyRuntimeConfigSeeds({ db: entityDb, fileSourceReposito
 const runtimeConfigBaseDir = path.dirname(process.env.ENTITY_CONFIG || path.resolve(process.cwd(), 'entity.config.yaml'));
 ensurePluginSettingsTable(entityDb);
 ensurePluginMigrationTable(entityDb);
+runInferenceProviderMigrations({
+  db: entityDb,
+  logger: console,
+});
 const pluginHooks = new PluginHookEmitter(console);
 const startupEffectiveConfig = buildEffectiveConfig({ db: entityDb });
 const pluginRegistry = new PluginRegistry({
@@ -465,7 +494,7 @@ const taskRouteDeps = {
   capitalizeColumn, commentMentionResponder, completeTaskWithReceipt,
   createProject, createRoadmap, createRoadmapItem,
   deleteProject, deleteRoadmap, deleteRoadmapItem,
-  enrichTasksWithSubtaskSummary, findTaskDuplicateCandidates,
+  deriveTaskWorkDomain, enrichTasksWithSubtaskSummary, findTaskDuplicateCandidates,
   getPrimaryReviewReason, getProjects, getRoadmaps,
   getTaskActorFromRequest: (req: Request) => getTaskActorFromRequest(req, getDefaultTaskActor()),
   getTaskHistory, getTaskProjects, hasAssignedOwner,
@@ -473,12 +502,13 @@ const taskRouteDeps = {
   normalizeBlockedInput, normalizeTaskOutputLinks, paginateTasks,
   parsePositiveId, parseTaskId, parsePositiveIdList,
   parseTaskAccountabilityForCreate, parseTaskAccountabilityUpdates,
-  parseTaskPaginationQuery, readParentTaskId, removeTaskProject,
+  parseTaskPaginationQuery, readParentTaskId, removeTaskProject, replaceTaskProjects,
   shouldValidateReviewEntryOnTransition, statusForStrategicError,
   syncTaskProjectAssignments, taskAgent, taskCommentRepository,
   taskHasProjectName, taskSyncLayer, updateRoadmapItem,
   validateReviewCompletion, validateReviewEntry,
   validateTaskAccountability, validateTaskDoneReviewGateState,
+  workspaceRepo,
 };
 registerDbModeRoutes(app, "", { normalizeDbMode, taskSyncLayer });
 registerDbModeRoutes(app, "/api", { normalizeDbMode, taskSyncLayer });
@@ -500,6 +530,8 @@ registerDocIntelligenceRoutes(app, "");
 registerDocIntelligenceRoutes(app, "/api");
 app.use(createActivityEventRouter(activityEventService));
 app.use("/api", createActivityEventRouter(activityEventService));
+app.use(createActivitySpineEventRouter(activitySpineEventService));
+app.use("/api", createActivitySpineEventRouter(activitySpineEventService));
 app.use(createTaskMasterClaimRouter(taskMasterClaimService));
 app.use("/api", createTaskMasterClaimRouter(taskMasterClaimService));
 registerActivityRoutes(app, "", { activityRepository });
@@ -555,6 +587,7 @@ registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge });
 
 // TTS routes
 registerTtsRoutes({ app, db: entityDb });
+registerDocHubTelemetryRoute(app);
 
 const agentStatusInterval = registerOperationalStatusRoutes(app, {
   activityRepository,

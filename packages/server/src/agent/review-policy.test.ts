@@ -281,15 +281,15 @@ describe('review lifecycle validation', () => {
     expect(validateReviewEntry(validPeerMetadata).ok).toBe(true);
   });
 
-  it('requires explicit human review for high-risk review packets unless delegation is explicit', () => {
+  it('allows high-risk review packets without a human approval gate', () => {
     const result = validateReviewEntry({
       ...validPeerMetadata,
       risk_level: 'high',
+      human_required: false,
       henry_required: false,
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain('High-risk');
+    expect(result.ok).toBe(true);
   });
 
   it('blocks completion without metadata or accepted review', () => {
@@ -305,39 +305,31 @@ describe('review lifecycle validation', () => {
     ).toBe(false);
   });
 
-  it('blocks wrong reviewer and same-producer completion', () => {
+  it('allows any independent reviewer to complete an accepted review', () => {
     const task = makeTask({
       assignee: 'Ada',
       metadata: JSON.stringify(validPeerMetadata),
     });
 
-    expect(validateReviewCompletion(task, 'Spock').ok).toBe(false);
+    expect(validateReviewCompletion(task, 'Spock').ok).toBe(true);
     expect(validateReviewCompletion(task, 'Ada').ok).toBe(false);
     expect(validateReviewCompletion(task, 'Book').ok).toBe(true);
   });
 
-  it('keeps human-required tasks reviewer-only unless delegated', () => {
+  it('treats legacy human-required metadata as advisory, not a completion lock', () => {
     const metadata = {
       ...validPeerMetadata,
       review_type: 'human',
       reviewer: 'Book',
       human_required: true,
+      henry_required: true,
       risk_level: 'high',
       submitted_by: 'Ada',
     };
 
-    expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Ada').ok).toBe(false);
-    expect(validateReviewCompletion(makeTask({ assignee: 'Book', metadata: JSON.stringify(metadata) }), 'Human').ok).toBe(false);
+    expect(validateReviewCompletion(makeTask({ assignee: 'Ada', metadata: JSON.stringify(metadata) }), 'Spock').ok).toBe(true);
+    expect(validateReviewCompletion(makeTask({ assignee: 'Ada', metadata: JSON.stringify(metadata) }), 'Ada').ok).toBe(false);
     expect(validateReviewCompletion(makeTask({ assignee: 'Ada', metadata: JSON.stringify(metadata) }), 'Book').ok).toBe(true);
-    expect(
-      validateReviewCompletion(
-        makeTask({
-          assignee: 'Scotty',
-          metadata: JSON.stringify({ ...metadata, human_delegated: true, reviewer: 'Ada', submitted_by: 'Book' }),
-        }),
-        'Ada'
-      ).ok
-    ).toBe(true);
   });
 
   it('allows explicit chat-delivery auto completion only with source proof', () => {

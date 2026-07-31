@@ -1,26 +1,22 @@
-# ACTIVE PLAN — THE-892 / EEPC-A-04 Swarm provider adapter
+# ACTIVE PLAN — THE-897 / EEPC-B-02 Wire job proof/status into Workplane panels
 
 **Created:** 2026-07-31  
-**Status:** COMPLETE  
-**Worktree:** `/Users/enterprise/Code/entity-the-892-eepc-a-04`
+**Status:** IN PROGRESS  
+**Worktree:** `/Users/enterprise/Code/entity-the-897-eepc-b-02`  
+**Branch:** `runner/the-897-eepc-b-02-20260731T101024Z`
 
-## Plan
+## Goal
 
-- [x] Step 1: Implement `createSwarmContractAdapter` + public health/status/proof mapping
-- [x] Step 2: Manifest-driven builtin bootstrap; wire dispatcher
-- [x] Step 3: Focused adapter tests (success + fail-closed/secret-safe)
-- [x] Step 4: Docs + inventory note; server build + full vitest
-- [x] Step 5: Commit + EEPC-A-04 receipts + Linear Done
+Wire execution-engine job proof/status (EEPC-A-03 callback ActivityEvents) into Workplane activity/proof panels (WP1-C-03).
 
-## Verify
+## Steps
 
-```bash
-cd packages/server && npm run build && npx vitest run
-# Test Files 121 passed / Tests 840 passed
-cd packages/server && npx vitest run src/swarm/providers/contract-adapter.test.ts
-# 14 passed
-```
+- [x] Step 1: Merge WP1-C-07 dependency lane into EEPC worktree
+- [ ] Step 2: Implement app wiring for job proof/status in activity + proof panels
+- [ ] Step 3: Focused tests + app build
+- [ ] Step 4: Browser/DOM/screenshot proof
+- [ ] Step 5: Commit + receipts + Linear Done
 
 ## Resume
 
-Finish commit + receipts + Linear Done if Step 5 unchecked.
+Continue from first unchecked step. Do not edit canonical `/Users/enterprise/Code/Entity`.

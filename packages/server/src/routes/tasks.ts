@@ -1,8 +1,118 @@
 import type { Express, Request, Response } from "express";
-import type { TaskRecord, UpdateRoadmapItemInput } from "../../../db/src";
+import type {
+  TaskRecord,
+  UpdateRoadmapItemInput,
+  WorkspaceScopeRepository,
+} from "../../../db/src";
 import { asyncHandler } from "../middleware/async-handler";
+import { orderTaskProjectIdsWithPrimary } from "../task-projects";
 
 type RegisterTaskRoutesDeps = Record<string, any>;
+
+export type TaskCreateScope = {
+  org_id?: string;
+  team_id?: string;
+  project_id?: number;
+};
+
+export function parseTaskCreateScope(
+  body: Record<string, unknown>,
+): TaskCreateScope | { error: string } {
+  const scope: TaskCreateScope = {};
+  for (const key of ["org_id", "team_id"] as const) {
+    const value = body[key];
+    if (typeof value === "undefined") continue;
+    if (typeof value !== "string" || !value.trim()) {
+      return { error: `${key} must be a non-empty string` };
+    }
+    scope[key] = value.trim();
+  }
+
+  if (typeof body.project_id !== "undefined") {
+    const projectId =
+      typeof body.project_id === "number"
+        ? body.project_id
+        : typeof body.project_id === "string" && body.project_id.trim()
+          ? Number(body.project_id)
+          : Number.NaN;
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      return { error: "project_id must be a positive integer" };
+    }
+    scope.project_id = projectId;
+  }
+
+  return scope;
+}
+
+export function scopeTasksForCreateDedupe(
+  tasks: TaskRecord[],
+  scope: TaskCreateScope,
+): TaskRecord[] {
+  if (!scope.org_id && !scope.team_id) return tasks;
+  return tasks.filter((task) => {
+    if (scope.org_id && task.org_id !== scope.org_id) return false;
+    if (scope.team_id && task.team_id !== scope.team_id) return false;
+    return true;
+  });
+}
+
+type TaskCreateScopeRepository = Pick<
+  WorkspaceScopeRepository,
+  "getOrg" | "getTeam" | "getProject"
+>;
+
+export type TaskCreateScopeValidation =
+  | { ok: true }
+  | { ok: false; statusCode: number; error: string };
+
+export function validateTaskCreateScope(
+  scope: TaskCreateScope,
+  workspaceRepo: TaskCreateScopeRepository,
+): TaskCreateScopeValidation {
+  if (!scope.org_id && !scope.team_id && !scope.project_id) return { ok: true };
+  if (!scope.org_id) {
+    return {
+      ok: false,
+      statusCode: 400,
+      error: "org_id is required when team_id or project_id is provided",
+    };
+  }
+  if (!scope.team_id) {
+    return {
+      ok: false,
+      statusCode: 400,
+      error: "team_id is required when org_id is provided",
+    };
+  }
+  if (!workspaceRepo.getOrg(scope.org_id)) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: `org ${scope.org_id} not found`,
+    };
+  }
+  if (scope.team_id && !workspaceRepo.getTeam(
+    { orgId: scope.org_id },
+    scope.team_id,
+  )) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: `team ${scope.team_id} not found in org ${scope.org_id}`,
+    };
+  }
+  if (scope.project_id && !workspaceRepo.getProject(
+    { orgId: scope.org_id, teamId: scope.team_id },
+    scope.project_id,
+  )) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: `project ${scope.project_id} not found in requested workspace scope`,
+    };
+  }
+  return { ok: true };
+}
 
 export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: RegisterTaskRoutesDeps): void {
   const {
@@ -10,14 +120,12 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     WORKSPACE,
     activityEventService,
     activityRepository,
-    addTaskProject,
     broadcast,
     buildMergeAuditNote,
     buildOwnerAccountabilityInbox,
     buildTaskMutationActivityEvent,
     buildTaskPaginationMeta,
     buildTaskPreview,
-    buildTaskProjectLabel,
     capitalizeColumn,
     commentMentionResponder,
     completeTaskWithReceipt,
@@ -27,6 +135,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     deleteProject,
     deleteRoadmap,
     deleteRoadmapItem,
+    deriveTaskWorkDomain,
     deriveSubtaskBreakdown,
     enrichTasksWithSubtaskSummary,
     evidenceArtifactRepository,
@@ -36,7 +145,6 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     getRoadmaps,
     getTaskActorFromRequest,
     getTaskHistory,
-    getTaskProjects,
     hasAssignedOwner,
     isActiveTaskColumn,
     isReviewGatedTask,
@@ -58,7 +166,6 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     pluginHooks,
     readParentTaskId,
     registerCrewRoutes,
-    removeTaskProject,
     shouldValidateReviewEntryOnTransition,
     statusForStrategicError,
     syncTaskProjectAssignments,
@@ -71,6 +178,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     validateReviewEntry,
     validateTaskAccountability,
     validateTaskDoneReviewGateState,
+    workspaceRepo,
     withReceiptArtifactRef,
   } = deps;
   const tasksBase = `${prefix}/tasks`;
@@ -122,9 +230,25 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     if ("error" in pagination) {
       return res.status(400).json({ error: pagination.error });
     }
+    const rawWorkDomainFilter = req.query.work_domain;
+    const workDomainFilter =
+      typeof rawWorkDomainFilter === "undefined" ? null : rawWorkDomainFilter;
+    if (
+      workDomainFilter !== null &&
+      (typeof workDomainFilter !== "string" ||
+        workDomainFilter.length > 64 ||
+        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(workDomainFilter))
+    ) {
+      return res.status(400).json({
+        error: "work_domain must be a normalized lowercase slug (1-64 characters)",
+      });
+    }
 
     try {
-      let tasks = await taskSyncLayer.listTasks();
+      let tasks = (await taskSyncLayer.listTasks()).map((task: any) => ({
+        ...task,
+        ...deriveTaskWorkDomain(task),
+      }));
       // Support ?column=X filtering (single column)
       const columnFilter =
         typeof req.query.column === "string"
@@ -168,6 +292,11 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
           : null;
       if (projectFilter && projectFilter !== "all") {
         tasks = tasks.filter((task: any) => taskHasProjectName(task, projectFilter));
+      }
+      if (workDomainFilter) {
+        tasks = tasks.filter(
+          (task: any) => task.work_domain === workDomainFilter,
+        );
       }
 
       const enrichedTasks = enrichTasksWithSubtaskSummary(tasks);
@@ -302,6 +431,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
   }));
 
   app.post(tasksBase, asyncHandler(async (req, res) => {
+    const taskBackend = taskSyncLayer.getActiveAdapter?.() ?? taskSyncLayer;
     const {
       name,
       description,
@@ -362,6 +492,20 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       return res.status(400).json({ error: "name required" });
     }
 
+    const taskScope = parseTaskCreateScope(req.body as Record<string, unknown>);
+    if ("error" in taskScope) {
+      return res.status(400).json(taskScope);
+    }
+    if ((taskScope.org_id || taskScope.team_id || taskScope.project_id) && !workspaceRepo) {
+      return res.status(500).json({ error: "workspace scope repository unavailable" });
+    }
+    if (workspaceRepo) {
+      const scopeValidation = validateTaskCreateScope(taskScope, workspaceRepo);
+      if (!scopeValidation.ok) {
+        return res.status(scopeValidation.statusCode).json({ error: scopeValidation.error });
+      }
+    }
+
     const accountability = parseTaskAccountabilityForCreate(
       req.body as Record<string, unknown>,
       getTaskActorFromRequest(req),
@@ -404,24 +548,6 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
           });
         }
         requestedProjectIds = parsedProjectIds;
-
-        const availableProjects = getProjects();
-        const availableProjectIds = new Set(
-          availableProjects.map((candidate: any) => candidate.id),
-        );
-        for (const candidateId of requestedProjectIds!) {
-          if (!availableProjectIds.has(candidateId)) {
-            return res
-              .status(404)
-              .json({ error: `project ${candidateId} not found` });
-          }
-        }
-
-        requestedProjectLabel = buildTaskProjectLabel(
-          requestedProjectIds,
-          availableProjects,
-          "General",
-        );
       }
 
       const normalizedDueDate =
@@ -431,8 +557,11 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
             ? due_at
             : undefined;
       const normalizedOutput = normalizeTaskOutputLinks(output) ?? undefined;
-      const existingTasks = await taskSyncLayer.listTasks();
-      const dedupeCandidates = findTaskDuplicateCandidates(name, existingTasks);
+      const existingTasks = await taskBackend.listTasks();
+      const dedupeCandidates = findTaskDuplicateCandidates(
+        name,
+        scopeTasksForCreateDedupe(existingTasks, taskScope),
+      );
       const exactDuplicate =
         dedupeCandidates.find((candidate: any) => candidate.exact) ?? null;
       if (!createAnywayOverride && dedupeCandidates.length > 0) {
@@ -485,7 +614,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
           });
         }
       }
-      const task = await taskSyncLayer.createTask({
+      const task = await taskBackend.createTask({
+        ...taskScope,
         name,
         description,
         column,
@@ -508,16 +638,10 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         model,
         worktype,
         policy_inputs_json,
+        projectIds: requestedProjectIds,
       });
 
-      let responseTask = task;
-      if (requestedProjectIds !== undefined) {
-        syncTaskProjectAssignments(task.id, [], requestedProjectIds, {
-          addTaskProject,
-          removeTaskProject,
-        });
-        responseTask = (await taskSyncLayer.getTask(task.id)) ?? task;
-      }
+      const responseTask = task;
 
       const activityEvent = buildTaskMutationActivityEvent({
         action: "create",
@@ -567,6 +691,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     if (!id) {
       return res.status(400).json({ error: "invalid task id" });
     }
+    const taskBackend = taskSyncLayer.getActiveAdapter?.() ?? taskSyncLayer;
 
     const {
       name,
@@ -624,7 +749,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       createAnyway?: unknown;
     };
     try {
-      const existingTask = await taskSyncLayer.getTask(id);
+      const existingTask = await taskBackend.getTask(id);
       if (!existingTask) {
         return res.status(404).json({ error: "task not found" });
       }
@@ -642,24 +767,6 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
           });
         }
         requestedProjectIds = parsedProjectIds;
-
-        const availableProjects = getProjects();
-        const availableProjectIds = new Set(
-          availableProjects.map((candidate: any) => candidate.id),
-        );
-        for (const candidateId of requestedProjectIds!) {
-          if (!availableProjectIds.has(candidateId)) {
-            return res
-              .status(404)
-              .json({ error: `project ${candidateId} not found` });
-          }
-        }
-
-        requestedProjectLabel = buildTaskProjectLabel(
-          requestedProjectIds,
-          availableProjects,
-          "General",
-        );
       }
 
       const normalizedDueDate =
@@ -676,7 +783,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       // WIP Limit: max 10 tasks in Doing at a time
       const WIP_LIMIT = 10;
       if (column === "doing" && existingTask.column !== "doing") {
-        const allTasks = await taskSyncLayer.listTasks();
+        const allTasks = await taskBackend.listTasks();
         const doingCount = allTasks.filter((t: any) => t.column === "doing").length;
         if (doingCount >= WIP_LIMIT) {
           return res.status(409).json({
@@ -700,7 +807,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       const candidateName =
         typeof name === "string" ? name.trim() : existingTask.name;
       if (candidateName) {
-        const allTasks = await taskSyncLayer.listTasks();
+        const allTasks = await taskBackend.listTasks();
         const dedupeCandidates = findTaskDuplicateCandidates(
           candidateName,
           allTasks,
@@ -881,6 +988,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         model,
         worktype,
         policy_inputs_json,
+        projectIds: requestedProjectIds,
       };
 
       let receiptArtifactId: string | null = null;
@@ -909,35 +1017,20 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
               storageRoot: WORKSPACE,
               artifactRepository: evidenceArtifactRepository,
               activityRepository,
-              updateTask: (taskId: any, updates: any) => taskSyncLayer.updateTask(taskId, updates),
+              updateTask: (taskId: any, updates: any) => taskBackend.updateTask(taskId, updates),
             },
           ).then((result: any) => {
             receiptArtifactId = result.artifact.id;
             receiptContentHash = result.artifact.content_hash;
             return result.task;
           }))
-        : await taskSyncLayer.updateTask(id, taskUpdates);
+        : await taskBackend.updateTask(id, taskUpdates);
 
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
 
-      let responseTask = task;
-      if (requestedProjectIds !== undefined) {
-        const currentProjectIds = getTaskProjects(task.id).map(
-          (currentProject: any) => currentProject.id,
-        );
-        syncTaskProjectAssignments(
-          task.id,
-          currentProjectIds,
-          requestedProjectIds,
-          {
-            addTaskProject,
-            removeTaskProject,
-          },
-        );
-        responseTask = (await taskSyncLayer.getTask(task.id)) ?? task;
-      }
+      const responseTask = task;
 
       const becameDone =
         existingTask.column !== "done" && responseTask.column === "done";
@@ -1645,8 +1738,6 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
 
 export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps: RegisterTaskRoutesDeps): void {
   const {
-    addTaskProject,
-    buildTaskProjectLabel,
     createCrew,
     createProject,
     createRoadmap,
@@ -1660,12 +1751,10 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
     getSubscribersForCrew,
     getSubscriptionsForAgent,
     getTaskHistory,
-    getTaskProjects,
     parsePositiveId,
     parsePositiveIdList,
     parseTaskId,
     registerCrewRoutes,
-    removeTaskProject,
     statusForStrategicError,
     subscribeToCrew,
     taskSyncLayer,
@@ -2036,19 +2125,19 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
   });
 
   app.get(`${tasksBase}/:taskId/projects`, asyncHandler(async (req, res) => {
+    const taskBackend = taskSyncLayer.getActiveAdapter?.() ?? taskSyncLayer;
     const taskId = parseTaskId(req.params.taskId);
     if (!taskId) {
       return res.status(400).json({ error: "invalid task id" });
     }
 
     try {
-      const task = await taskSyncLayer.getTask(taskId);
+      const task = await taskBackend.getTask(taskId);
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
 
-      const projects = getTaskProjects(taskId);
-      return res.json(projects);
+      return res.json(task.projects ?? []);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return res
@@ -2058,6 +2147,7 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
   }));
 
   app.post(`${tasksBase}/:taskId/projects`, asyncHandler(async (req, res) => {
+    const taskBackend = taskSyncLayer.getActiveAdapter?.() ?? taskSyncLayer;
     const taskId = parseTaskId(req.params.taskId);
     if (!taskId) {
       return res.status(400).json({ error: "invalid task id" });
@@ -2068,14 +2158,10 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       projectIds?: unknown;
     };
 
-    const task = await taskSyncLayer.getTask(taskId);
+    const task = await taskBackend.getTask(taskId);
     if (!task) {
       return res.status(404).json({ error: "task not found" });
     }
-
-    const allProjectIds = new Set<number>(
-      getProjects().map((project: any) => project.id),
-    );
 
     if (typeof projectIds !== "undefined") {
       const parsedProjectIds = parsePositiveIdList(projectIds);
@@ -2085,42 +2171,14 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
           .json({ error: "projectIds must be an array of positive integers" });
       }
 
-      for (const candidateId of parsedProjectIds) {
-        if (!allProjectIds.has(candidateId)) {
-          return res
-            .status(404)
-            .json({ error: `project ${candidateId} not found` });
-        }
-      }
-
       try {
-        const currentProjects = getTaskProjects(taskId);
-        const currentIds = new Set(
-          currentProjects.map((project: any) => project.id),
-        );
-        const nextIds = new Set(parsedProjectIds);
-
-        for (const currentId of currentIds) {
-          if (!nextIds.has(currentId)) {
-            removeTaskProject(taskId, currentId);
-          }
-        }
-
-        for (const nextId of nextIds) {
-          if (!currentIds.has(nextId)) {
-            addTaskProject(taskId, nextId);
-          }
-        }
-
-        const projects = getTaskProjects(taskId);
-        await taskSyncLayer.updateTask(taskId, {
-          project: buildTaskProjectLabel(
-            projects.map((project: any) => project.id),
-            getProjects(),
-            "General",
-          ),
+        const updatedTask = await taskBackend.updateTask(taskId, {
+          projectIds: parsedProjectIds,
         });
-        return res.json(projects);
+        if (!updatedTask) {
+          return res.status(404).json({ error: "task not found" });
+        }
+        return res.json(updatedTask?.projects ?? []);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
         return res
@@ -2136,21 +2194,18 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
         .json({ error: "project_id must be a positive integer" });
     }
 
-    if (!allProjectIds.has(projectId)) {
-      return res.status(404).json({ error: "project not found" });
-    }
-
     try {
-      addTaskProject(taskId, projectId);
-      const projects = getTaskProjects(taskId);
-      await taskSyncLayer.updateTask(taskId, {
-        project: buildTaskProjectLabel(
-          projects.map((project: any) => project.id),
-          getProjects(),
-          "General",
-        ),
+      const currentIds = orderTaskProjectIdsWithPrimary(task);
+      const nextProjectIds = currentIds.includes(projectId)
+        ? currentIds
+        : [...currentIds, projectId];
+      const updatedTask = await taskBackend.updateTask(taskId, {
+        projectIds: nextProjectIds,
       });
-      return res.status(201).json(projects);
+      if (!updatedTask) {
+        return res.status(404).json({ error: "task not found" });
+      }
+      return res.status(201).json(updatedTask?.projects ?? []);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return res
@@ -2160,6 +2215,7 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
   }));
 
   app.delete(`${tasksBase}/:taskId/projects`, asyncHandler(async (req, res) => {
+    const taskBackend = taskSyncLayer.getActiveAdapter?.() ?? taskSyncLayer;
     const taskId = parseTaskId(req.params.taskId);
     if (!taskId) {
       return res.status(400).json({ error: "invalid task id" });
@@ -2173,25 +2229,24 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
     }
 
     try {
-      const task = await taskSyncLayer.getTask(taskId);
+      const task = await taskBackend.getTask(taskId);
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
 
-      const removed = removeTaskProject(taskId, projectId);
-      if (!removed) {
+      const currentProjectIds = orderTaskProjectIdsWithPrimary(task);
+      if (!currentProjectIds.includes(projectId)) {
         return res.status(404).json({ error: "task project link not found" });
       }
-
-      const projects = getTaskProjects(taskId);
-      await taskSyncLayer.updateTask(taskId, {
-        project: buildTaskProjectLabel(
-          projects.map((project: any) => project.id),
-          getProjects(),
-          "General",
+      const updatedTask = await taskBackend.updateTask(taskId, {
+        projectIds: currentProjectIds.filter(
+          (currentId: number) => currentId !== projectId,
         ),
       });
-      return res.json(projects);
+      if (!updatedTask) {
+        return res.status(404).json({ error: "task not found" });
+      }
+      return res.json(updatedTask?.projects ?? []);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return res

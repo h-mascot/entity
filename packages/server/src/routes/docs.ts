@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { buildDocsRootCandidates } from '../docs-paths';
 import { createFileSourceRepository } from '../../../db/src/file-sources';
 import { createFileSourceAdapter } from '../fs/adapters/registry';
+import { resolveFrontendDist } from '../static-cache';
 
 const HOME_DIR = process.env.HOME?.trim() || os.homedir();
 // Public-safe default: use ~/entity-workspace as generic workspace root.
@@ -225,6 +226,14 @@ function splitSourceDocsPath(filePath: string): { sourceId: string; sourcePath: 
   return { sourceId, sourcePath };
 }
 
+function hasDocsTraversalSegment(filePath: string): boolean {
+  return filePath
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .some((segment) => segment === '..' || segment === '~');
+}
+
 function validateDocsRequestShape(
   root: string,
   filePath: string,
@@ -235,7 +244,7 @@ function validateDocsRequestShape(
       return { ok: false, status: 400, payload: { error: 'Source id and path are required' } };
     }
 
-    if (sourceDoc.sourcePath.includes('..') || sourceDoc.sourcePath.includes('~')) {
+    if (hasDocsTraversalSegment(sourceDoc.sourcePath)) {
       return { ok: false, status: 403, payload: { error: 'Path traversal not allowed' } };
     }
 
@@ -272,11 +281,6 @@ function sourceRelativePathForDocsRoot(root: string, filePath: string): string |
   }
 
   return null;
-}
-
-function rawSourceFileUrl(sourceId: string, sourcePath: string): string {
-  const params = new URLSearchParams({ source: sourceId, path: sourcePath });
-  return `/api/file/raw?${params.toString()}`;
 }
 
 async function readDocsDocument(root: string, filePath: string): Promise<DocsDocument | null> {
@@ -493,20 +497,16 @@ export function registerDocsRoute(app: any) {
       return res.status(400).json({ error: 'Source id and path are required' });
     }
 
-    if (sourcePath.includes('..') || sourcePath.includes('~')) {
+    if (hasDocsTraversalSegment(sourcePath)) {
       return res.status(403).json({ error: 'Path traversal not allowed' });
     }
 
-    if (isAllowedDocsFile(sourcePath)) {
-      return next();
-    }
-
-    return res.redirect(302, rawSourceFileUrl(sourceId, sourcePath));
+    return next();
   });
 
   app.get('/docs/*', (_req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-cache');
-    res.sendFile(path.resolve(process.cwd(), 'packages/app/dist/index.html'));
+    res.sendFile(path.join(resolveFrontendDist(), 'index.html'));
   });
 }
 

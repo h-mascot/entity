@@ -1730,6 +1730,33 @@ describe('ActivityRepository', () => {
     );
   });
 
+  it('registers Workplane ActivityEvent spine types (THE-869 / WP1-C-01) as first-class ActivityEventTypes', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+
+    expect(dbMod.ACTIVITY_EVENT_SPINE_TYPES).toEqual([
+      'plan',
+      'progress',
+      'log',
+      'proof',
+      'status',
+      'blocker',
+    ]);
+    for (const spineType of dbMod.ACTIVITY_EVENT_SPINE_TYPES) {
+      expect(dbMod.ACTIVITY_EVENT_TYPES).toContain(spineType);
+    }
+    expect(dbMod.isActivityEventSpineType('proof')).toBe(true);
+    expect(dbMod.classifyActivityEventToSpineType('receipt_failed')).toBe('proof');
+    expect(dbMod.normalizeActivityEventSpine({
+      task_id: 9,
+      event_type: 'status',
+      sequence: 1,
+      actor_type: 'system',
+    })).toMatchObject({
+      ok: true,
+      event: { taskId: 9, eventType: 'status', sequence: 1 },
+    });
+  });
+
   it('should create and list activities', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createActivityRepository();
@@ -3363,10 +3390,33 @@ describe('Strategic Repository (Roadmaps, Projects, History)', () => {
 
     const defaultOrg = workspaceRepo.listOrgs().find((org) => org.id === dbMod.DEFAULT_WORKSPACE_ORG_ID);
     expect(defaultOrg?.name).toBe('Default Workspace');
+    expect(defaultOrg).toMatchObject({
+      mission: null,
+      domains_json: '[]',
+      blueprint_json: null,
+    });
     expect(workspaceRepo.listTeams({ orgId: dbMod.DEFAULT_WORKSPACE_ORG_ID })[0]?.id)
       .toBe(dbMod.DEFAULT_WORKSPACE_TEAM_ID);
 
-    const orgA = workspaceRepo.createOrg({ id: 'org-a', name: 'Org A' });
+    const orgA = workspaceRepo.createOrg({
+      id: 'org-a',
+      name: 'Org A',
+      mission: 'Coordinate Curacel-shaped teams.',
+      domains_json: JSON.stringify(['product', 'finance']),
+    });
+    expect(orgA).toMatchObject({
+      mission: 'Coordinate Curacel-shaped teams.',
+      domains_json: JSON.stringify(['product', 'finance']),
+      blueprint_json: null,
+    });
+    const updatedOrgA = workspaceRepo.updateOrg(orgA.id, {
+      blueprint_json: JSON.stringify({ schemaVersion: 1, domains: ['product', 'finance'] }),
+    });
+    expect(updatedOrgA).toMatchObject({
+      mission: 'Coordinate Curacel-shaped teams.',
+      domains_json: JSON.stringify(['product', 'finance']),
+      blueprint_json: JSON.stringify({ schemaVersion: 1, domains: ['product', 'finance'] }),
+    });
     const orgB = workspaceRepo.createOrg({ id: 'org-b', name: 'Org B' });
     const teamA = workspaceRepo.createTeam({ orgId: orgA.id }, { id: 'team-a', name: 'Team A' });
     const teamB = workspaceRepo.createTeam({ orgId: orgB.id }, { id: 'team-b', name: 'Team B' });

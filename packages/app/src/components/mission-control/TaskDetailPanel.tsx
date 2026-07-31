@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
 import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
@@ -31,6 +31,19 @@ import {
   buildExternalDocumentPreviewView,
   type ExternalDocumentPreviewView,
 } from './utils/externalDocumentPreview';
+import {
+  TASK_OUTPUT_LINK_PATTERN,
+  deriveMissingEvidenceState,
+  extractTaskOutputLinks,
+  hasReviewMetadata,
+  normalizeTaskOutputHref,
+  receiptStatusTone,
+  splitTaskOutputLinkToken,
+} from './taskDetailWorkplaneSeams';
+import {
+  buildOpenWorkplaneHref,
+  navigateToWorkplane,
+} from '../../lib/openWorkplaneFromTaskDetail';
 
 const TaskChatContextPanel = lazy(() => import('./TaskChatContextPanel'));
 
@@ -59,6 +72,8 @@ interface TaskDetailPanelProps {
   apiBase?: string;
   onClose: () => void;
   onDocsLinkNavigate?: (href: string) => boolean;
+  /** THE-860 — Mission Control board/tab to preserve in Workplane return context. */
+  returnBoard?: string | null;
 }
 
 interface TaskDependency {
@@ -875,91 +890,6 @@ function formatDateTime(value: string): string {
   });
 }
 
-const TASK_OUTPUT_DOCUMENT_EXT = String.raw`(?:md|markdown|txt|log|json|jsonl|ya?ml|csv|tsv)`;
-const TASK_OUTPUT_LINK_PATTERN = new RegExp(
-  String.raw`(?:https?:\/\/[^\s<>()]+|\/(?:docs|task|tasks)\/[^\s<>()]+|(?:docs|notes|output|memory|workspace|projects|zora|spock)\/[^\s<>()]+\.${TASK_OUTPUT_DOCUMENT_EXT}(?:[?#][^\s<>()]+)?|(?:~|\/(?:Users|home)\/[^\s<>()]+)\/clawd(?:-[^\/\s<>()]+)?\/(?:output|memory|projects|docs|notes|[^\s<>()]*\.md[^\s<>()]*))`,
-  'g'
-);
-
-function splitTaskOutputLinkToken(rawHref: string): { href: string; suffix: string } {
-  const match = rawHref.match(/^(.*?)([,.;!]+)$/);
-  if (!match) {
-    return { href: rawHref, suffix: '' };
-  }
-
-  return { href: match[1] ?? rawHref, suffix: match[2] ?? '' };
-}
-
-function normalizeTaskOutputHref(rawHref: string): string | null {
-  const href = rawHref.trim();
-  if (!href) {
-    return null;
-  }
-
-  const normalized = href.replace(/\\/g, '/');
-
-  const entityDocsUrlMatch = normalized.match(/^https?:\/\/[^/\s<>()]+\/docs\/(output|memory|workspace|projects|zora|spock)\/(.+)$/i);
-  if (entityDocsUrlMatch) {
-    const [, root, rest] = entityDocsUrlMatch;
-    return `/docs/${root.toLowerCase()}/${rest}`;
-  }
-
-  const legacyDocsUrlMatch = normalized.match(/^https?:\/\/[^\s<>()]+(?::(?:3000|8788))?\/(output|memory|workspace|projects|zora|spock)\/(.+)$/i);
-  if (legacyDocsUrlMatch) {
-    const [, root, rest] = legacyDocsUrlMatch;
-    return `/docs/${root.toLowerCase()}/${rest}`;
-  }
-
-  const legacyWorkspaceUrlMatch = normalized.match(/^https?:\/\/[^\s<>()]+(?::(?:3000|8788))?\/(docs|notes)\/(.+)$/i);
-  if (legacyWorkspaceUrlMatch) {
-    const [, root, rest] = legacyWorkspaceUrlMatch;
-    return `/docs/workspace/${root.toLowerCase()}/${rest}`;
-  }
-
-  if (/^https?:\/\//i.test(href)) {
-    return href;
-  }
-
-  const taskMatch = normalized.match(/^\/(?:task|tasks)\/(\d+)(?:\/)?$/i);
-  if (taskMatch) {
-    return `/task/${taskMatch[1]}`;
-  }
-
-  if (normalized.startsWith('/docs/')) {
-    const docsPath = normalized.slice('/docs/'.length);
-    if (/^(?:docs|notes)\//i.test(docsPath)) {
-      return `/docs/workspace/${docsPath}`;
-    }
-    return normalized;
-  }
-
-  if (/^(?:output|memory|workspace|projects|zora|spock)\//i.test(normalized)) {
-    return `/docs/${normalized.replace(/^\/+/, '')}`;
-  }
-
-  if (/^(?:docs|notes)\//i.test(normalized)) {
-    return `/docs/workspace/${normalized.replace(/^\/+/, '')}`;
-  }
-
-  const absoluteMatchers: Array<{ root: string; pattern: RegExp }> = [
-    { root: 'output', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/output\/(.+)$/i },
-    { root: 'memory', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/memory\/(.+)$/i },
-    { root: 'projects', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/projects\/(.+)$/i },
-    { root: 'zora', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-zora\/output\/(.+)$/i },
-    { root: 'spock', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd-spock\/output\/(.+)$/i },
-    { root: 'workspace', pattern: /^(?:~|\/(?:Users|home)\/[^/]+)\/clawd\/(.+)$/i },
-  ];
-
-  for (const matcher of absoluteMatchers) {
-    const match = normalized.match(matcher.pattern);
-    if (match?.[1]) {
-      return `/docs/${matcher.root}/${match[1].replace(/^\/+/, '')}`;
-    }
-  }
-
-  return null;
-}
-
 // Heuristic: does the task output contain markdown worth rendering as a document?
 // Logs / plain URLs stay in the raw linkified view; structured markdown gets the
 // same rich renderer as the DocHub document view.
@@ -1046,33 +976,6 @@ function renderLinkedText(text: string, onDocsLinkNavigate?: (href: string) => b
   return nodes;
 }
 
-function extractTaskOutputLinks(text: string): Array<{ label: string; href: string; external: boolean }> {
-  if (!text) {
-    return [];
-  }
-
-  const links: Array<{ label: string; href: string; external: boolean }> = [];
-  const seen = new Set<string>();
-
-  for (const match of text.matchAll(TASK_OUTPUT_LINK_PATTERN)) {
-    const rawHref = match[0];
-    const { href: linkText } = splitTaskOutputLinkToken(rawHref);
-    const href = normalizeTaskOutputHref(linkText);
-    if (!href || seen.has(href)) {
-      continue;
-    }
-
-    seen.add(href);
-    links.push({
-      label: linkText,
-      href,
-      external: /^https?:\/\//i.test(href),
-    });
-  }
-
-  return links;
-}
-
 function parseHoursInput(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -1118,17 +1021,6 @@ function buildMetadataPatch(
   }
 
   return JSON.stringify(nextRecord);
-}
-
-function hasReviewMetadata(metadata: Record<string, unknown>): boolean {
-  return Boolean(
-    readFirstString(metadata.review_type, metadata.review_class) ||
-      readFirstString(metadata.reviewer, metadata.review_owner) ||
-      readFirstString(metadata.review_decision) ||
-      normalizeBoolean(metadata.henry_required ?? metadata.requires_henry) ||
-      parseJsonRecord(metadata.review_packet) ||
-      parseJsonRecord(metadata.review_brief)
-  );
 }
 
 function reviewField(value: unknown, fallback = 'Not set'): string {
@@ -1527,31 +1419,6 @@ function formatReceiptToken(value: unknown, fallback = 'Unknown'): string {
   return text.replace(/[_-]+/g, ' ');
 }
 
-function receiptStatusTone(status: string, integrityState: string, availabilityState: string): ReceiptProofView['statusTone'] {
-  const normalizedStatus = status.toLowerCase();
-  const normalizedIntegrity = integrityState.toLowerCase();
-  const normalizedAvailability = availabilityState.toLowerCase();
-  if (
-    normalizedStatus.includes('failed') ||
-    normalizedStatus.includes('missing') ||
-    normalizedStatus.includes('integrity') ||
-    normalizedIntegrity !== 'valid' ||
-    (normalizedAvailability !== 'available' && normalizedAvailability !== 'unknown')
-  ) {
-    return 'error';
-  }
-
-  if (normalizedStatus.includes('pending') || normalizedStatus.includes('unknown') || normalizedAvailability === 'unknown') {
-    return 'warning';
-  }
-
-  if (normalizedStatus.includes('not required')) {
-    return 'muted';
-  }
-
-  return 'ok';
-}
-
 function receiptToneClass(tone: ReceiptProofView['statusTone']): string {
   if (tone === 'ok') {
     return 'border-[var(--accent)]/25 bg-[var(--surface-accent)] text-[var(--accent)]';
@@ -1680,22 +1547,18 @@ function buildReceiptProofView(
     ...link,
     meta: link.external ? 'external output' : 'Entity output',
   }));
-  const evidenceSummary = readFirstString(
-    metadata.evidence_summary,
-    receipt?.evidence_summary,
-    reviewPacket?.evidence_summary,
-    reviewPacket?.evidence,
-    reviewPacket?.requested_outcome,
-    outputLinks.length > 0 ? 'Output links are attached.' : null
-  ) ?? 'No evidence summary recorded.';
-  const missingEvidenceReason = readFirstString(
-    metadata.missing_evidence_reason,
-    receipt?.missing_evidence_reason,
-    reviewPacket?.missing_evidence_reason
-  );
-  const missingEvidence = normalizeBoolean(metadata.missing_evidence ?? receipt?.missing_evidence) ||
-    Boolean(missingEvidenceReason) ||
-    (task.column === 'done' && evidenceLinks.length === 0 && outputLinks.length === 0 && evidenceSummary === 'No evidence summary recorded.');
+  const {
+    missingEvidence,
+    missingEvidenceReason,
+    evidenceSummary,
+  } = deriveMissingEvidenceState({
+    column: task.column,
+    metadata,
+    receipt,
+    reviewPacket,
+    evidenceLinkCount: evidenceLinks.length,
+    outputLinkCount: outputLinks.length,
+  });
   const degradedMessages = [
     doneWithoutReceipt ? 'Completed task has no canonical receipt metadata.' : null,
     missingEvidence ? missingEvidenceReason ?? 'No evidence links or output artifacts were recorded.' : null,
@@ -1852,7 +1715,13 @@ function findDependencyName(dependency: TaskDependency, boardTasks: TaskBoardTas
   return match?.name ?? `Task #${dependency.id}`;
 }
 
-export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsLinkNavigate }: TaskDetailPanelProps) {
+export default function TaskDetailPanel({
+  taskId,
+  apiBase = '',
+  onClose,
+  onDocsLinkNavigate,
+  returnBoard = null,
+}: TaskDetailPanelProps) {
   const [userProfile] = useUserProfile();
   const [activeAgentNames, setActiveAgentNames] = useState<string[]>([]);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -3037,6 +2906,27 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
     )
   );
 
+  // THE-859 / WP1-A-04 — Open Workplane deep link with return context from detail.
+  // THE-860 / WP1-A-05 — include returnBoard when Mission Control board context is known.
+  const openWorkplaneHref = useMemo(
+    () =>
+      buildOpenWorkplaneHref({
+        taskId,
+        currentPathname:
+          typeof window !== 'undefined' ? window.location.pathname : `/task/${taskId}`,
+        returnBoard,
+      }),
+    [taskId, returnBoard],
+  );
+
+  const handleOpenWorkplane = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    navigateToWorkplane(openWorkplaneHref);
+  };
+
   return (
     <div className="fixed inset-0 z-[85] pointer-events-none">
       <div
@@ -3108,9 +2998,20 @@ export default function TaskDetailPanel({ taskId, apiBase = '', onClose, onDocsL
             </div>
 
             <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+              <a
+                href={openWorkplaneHref}
+                data-testid="open-workplane-action"
+                data-workplane-href={openWorkplaneHref}
+                className="mc-shell-btn mc-shell-btn-active px-3 py-2 text-xs font-medium max-md:min-h-[44px] max-md:text-base"
+                aria-label="Open Workplane for this task"
+                title="Open Workplane"
+                onClick={handleOpenWorkplane}
+              >
+                Open Workplane
+              </a>
               <button
                 type="button"
-                className="mc-shell-btn mc-shell-btn-active inline-flex h-9 w-9 items-center justify-center px-0 text-base font-semibold text-[var(--text-primary)] max-md:min-h-[44px] max-md:min-w-[44px] max-md:text-base"
+                className="mc-shell-btn inline-flex h-9 w-9 items-center justify-center px-0 text-base font-semibold text-[var(--text-primary)] max-md:min-h-[44px] max-md:min-w-[44px] max-md:text-base"
                 onClick={() => void handleFollowUp()}
                 disabled={!task || busyAction !== null}
                 aria-label="Create follow-up task"

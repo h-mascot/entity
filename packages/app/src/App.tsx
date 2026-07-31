@@ -21,6 +21,9 @@ import type { NewCommentPopoverAnchor } from './components/NewCommentPopover';
 import { ToastViewport } from './components/Toast';
 import type { DocsTtsSettings } from './components/MarkdownAudioControls';
 import TaskBoard from './components/TaskBoard';
+import MCEngineeringEntry, {
+  ENGINEERING_TASKS_REFRESH_EVENT,
+} from './components/mission-control/MCEngineeringEntry';
 import type { MobileTab } from './components/MobileBottomNav';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -41,9 +44,46 @@ import {
   resolveAgentAvatarUrl,
 } from './lib/agentRegistry';
 import { readUserProfile, useUserProfile } from './lib/userProfile';
-import { buildApiCandidates, requestJsonWithFallback } from './lib/http';
+import { buildApiCandidates, HttpRequestError, requestJsonWithFallback } from './lib/http';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
+import { buildFileLoadKey } from './lib/fileLoadIdentity';
+import {
+  getDocumentShellCollapseState,
+  startDocHubFragmentTargetRetry,
+} from './lib/documentShellState';
+import {
+  buildDocHubExitPath,
+  buildDocHubRoutePath,
+  buildActivatedDocHubToolRoute,
+  buildCanonicalLocalDocHubUrl,
+  buildSynchronizedDocHubRoute,
+  parseDocHubRouteState,
+  reduceActiveDocHubToolNavigation,
+  resolveDocHubRailFocus,
+  resolveDocHubFragmentScrollIntent,
+  resolveDocHubRouteSynchronization,
+  resolveDocHubRouteTarget,
+  resolveDocHubRouteSelection,
+  resolvePaneRelativeDocHubNavigation,
+  resolveRelativeDocHubNavigation,
+  resolveWorkspaceTabRoute,
+  shouldRestoreLastDocHubFile,
+  type RelativeDocHubNavigation,
+  type DocHubRouteTarget,
+  type DocHubTool,
+} from './lib/docHubRoute';
 import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
+import { shouldBypassGatesForWorkplaneDeepLink } from './lib/workplaneRefreshRestore';
+import { isWorkplaneRoutePath } from './lib/workplaneShellModel';
+import { mobileCommentsPermissionMessage } from './lib/mobileCommentsState';
+import { emitDocHubTelemetry } from './lib/docHubTelemetry';
+import {
+  BUILTIN_MC_BOARD_TABS,
+  getMCBoardTabLabel,
+  isBuiltInMCBoardTab,
+  normalizeStoredMCBoardTab,
+  type MCBoardTab,
+} from './lib/mcBoardTabs';
 import {
   buildOpenFileTab,
   buildOpenFileTabKey,
@@ -80,6 +120,7 @@ const FileHistoryPanel = lazy(() => import('./components/FileHistoryPanel'));
 const ActivityStream = lazy(() => import('./components/ActivityStream'));
 const BottomTerminalPanel = lazy(() => import('./components/BottomTerminalPanel'));
 const OnboardingFlow = lazy(() => import('./components/OnboardingFlow'));
+const BusinessOnboardingFlow = lazy(() => import('./components/BusinessOnboardingFlow'));
 const PluginSubViewSlot = lazy(() => import('./components/plugins/PluginSubViewSlot'));
 const PluginTopLevelSlot = lazy(() => import('./components/plugins/PluginTopLevelSlot'));
 const MCStrategicView = lazy(() => import('./components/mission-control/MCStrategicView'));
@@ -91,8 +132,8 @@ const NewCommentPopover = lazy(() => import('./components/NewCommentPopover').th
 const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
 const MCCreateTaskModal = lazy(() => import('./components/mission-control/MCCreateTaskModal'));
 const ShowClawFeaturedPage = lazy(() => import('./ShowClawFeaturedPage'));
+const WorkplaneShell = lazy(() => import('./components/workplane/WorkplaneShell'));
 const AdminView = lazy(() => import('./views/AdminView'));
-const DocsRouteView = lazy(() => import('./views/DocsRouteView'));
 const MobileView = lazy(() => import('./views/MobileView'));
 const FilesView = lazy(() => import('./views/FilesView'));
 
@@ -100,11 +141,10 @@ const LOGIN_REQUIRED_KEY = 'entity.auth.login-required.v1';
 const AUTH_SESSION_KEY = 'entity.auth.session.v1';
 const DOCUMENTS_AUTH_KEY = 'entity.documents.auth.v1';
 const MC_SHOW_ARCHIVE_KEY = 'mc_showArchive';
-const SIDEBAR_COLLAPSED_KEY = 'entity.sidebar.collapsed.v1';
-const RIGHT_SIDEBAR_COLLAPSED_KEY = 'entity.rightSidebar.collapsed.v1';
 const THEME_KEY = 'entity.theme.v1';
 const DEFAULT_LOGIN_PASSWORD = 'mission';
 const ENTERPRISE_ADMIN_URL = '';
+const BUSINESS_ONBOARDING_ROUTE = '/onboarding/business';
 
 type DocumentsAuthOrigin = 'dev-runtime' | 'user';
 type DocumentsAuth = DocumentsClientAuth & { origin?: DocumentsAuthOrigin };
@@ -172,6 +212,22 @@ function LazyOnboardingFlow(props: ComponentProps<typeof OnboardingFlow>) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading onboarding" />}>
       <OnboardingFlow {...props} />
+    </Suspense>
+  );
+}
+
+function LazyBusinessOnboardingFlow(props: ComponentProps<typeof BusinessOnboardingFlow>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading business onboarding" />}>
+      <BusinessOnboardingFlow {...props} />
+    </Suspense>
+  );
+}
+
+function LazyWorkplaneShell(props: ComponentProps<typeof WorkplaneShell>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading Workplane" />}>
+      <WorkplaneShell {...props} />
     </Suspense>
   );
 }
@@ -289,6 +345,10 @@ interface AuthSession {
 }
 
 type WorkspaceTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'admin';
+type CurrentFileLoadState =
+  | { status: 'idle' }
+  | { status: 'loading' | 'ready'; fileKey: string }
+  | { status: 'error'; fileKey: string; message: string };
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -441,10 +501,6 @@ function SidebarActivityGroup({ group, onFileSelect, onTaskSelect }: {
   );
 }
 
-const BUILTIN_MC_BOARD_TABS = ['kanban', 'strategic', 'insights'] as const;
-
-type BuiltInMCBoardTab = (typeof BUILTIN_MC_BOARD_TABS)[number];
-type MCBoardTab = BuiltInMCBoardTab | string;
 type MCRuntimeBoard = 'ops' | 'strategic' | 'agents';
 type MCAssigneeFilter = string;
 const PROJECT_FILTER_OPTIONS = ['all', 'Soteria', 'Curacel', 'Personal', 'Moltbot'] as const;
@@ -482,19 +538,6 @@ type DocsTtsProviderOption = {
   label: string;
   hint: string;
 };
-
-function isBuiltInMCBoardTab(value: string): value is BuiltInMCBoardTab {
-  return (BUILTIN_MC_BOARD_TABS as readonly string[]).includes(value);
-}
-
-function normalizeStoredMCBoardTab(value: string | null): MCBoardTab {
-  const normalized = value?.trim() ?? '';
-  if (!normalized) {
-    return 'kanban';
-  }
-
-  return normalized === 'ops' ? 'kanban' : normalized;
-}
 
 const FALLBACK_MODULE_LABELS: Record<string, string> = {
   chat: 'Chat',
@@ -1040,6 +1083,15 @@ function persistAuthSession(session: AuthSession | null) {
   window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
 }
 
+function replaceBrowserPath(path: string, state: unknown = null): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.history.replaceState(state, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate', { state }));
+}
+
 function readDocumentsAuth(): DocumentsAuth | null {
   if (typeof window === 'undefined') {
     return null;
@@ -1168,38 +1220,6 @@ function persistArchivePreference(value: boolean) {
     return;
   }
   window.localStorage.setItem(MC_SHOW_ARCHIVE_KEY, value ? 'true' : 'false');
-}
-
-function readSidebarCollapsed(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
-}
-
-function persistSidebarCollapsed(value: boolean) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, value ? 'true' : 'false');
-}
-
-function readRightSidebarCollapsed(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  return window.localStorage.getItem(RIGHT_SIDEBAR_COLLAPSED_KEY) === 'true';
-}
-
-function persistRightSidebarCollapsed(value: boolean) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, value ? 'true' : 'false');
 }
 
 function normalizeTheme(value: string | null): AppTheme {
@@ -1349,31 +1369,11 @@ function createLazyDocumentsApiClient(options: { apiBase?: string; auth?: Docume
   };
 }
 
-interface DocsApiResponse {
-  content?: string;
-  path?: string;
-  filename?: string;
-}
-
 function normalizeDocsRoutePath(value: string): string {
   return value
     .split('/')
     .map((segment) => segment.trim())
     .filter(Boolean)
-    .join('/');
-}
-
-function decodeDocsRoutePath(value: string): string {
-  return value
-    .split('/')
-    .filter((segment) => segment.length > 0)
-    .map((segment) => {
-      try {
-        return decodeURIComponent(segment);
-      } catch {
-        return segment;
-      }
-    })
     .join('/');
 }
 
@@ -1385,34 +1385,6 @@ function encodeDocsRoutePath(value: string): string {
     .join('/');
 }
 
-const KNOWN_DOCS_ROOTS = ['output', 'memory', 'workspace'];
-
-function parseDocsPathFromPathname(pathname: string): string | null {
-  if (pathname.startsWith('/docs/')) {
-    const rawPath = pathname.slice('/docs/'.length);
-    const normalized = normalizeDocsRoutePath(decodeDocsRoutePath(rawPath));
-    return normalized || null;
-  }
-
-  // Support bare root paths like /output/foo.md → output/foo.md
-  const segments = pathname.split('/').filter(Boolean);
-  if (segments.length >= 2 && KNOWN_DOCS_ROOTS.includes(segments[0])) {
-    const normalized = normalizeDocsRoutePath(decodeDocsRoutePath(segments.join('/')));
-    return normalized || null;
-  }
-
-  return null;
-}
-
-function docsFilenameFromPath(pathname: string | null): string {
-  if (!pathname) {
-    return 'Document';
-  }
-
-  const parts = normalizeDocsRoutePath(pathname).split('/').filter(Boolean);
-  return parts[parts.length - 1] ?? 'Document';
-}
-
 function filePathSegments(filePath: string | null): string[] {
   return filePath?.split('/').filter(Boolean) ?? [];
 }
@@ -1422,37 +1394,51 @@ function filenameFromFilePath(filePath: string | null): string {
   return segments[segments.length - 1] ?? 'Document';
 }
 
-function buildDocsApiUrls(docPath: string): string[] {
-  const encodedDocPath = encodeDocsRoutePath(docPath);
-  return buildApiCandidates(`/docs/${encodedDocPath}`, runtime.apiBase).filter((url) => url.includes('/api/'));
+function normalizedDocHubFragment(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}\s_-]/gu, '')
+    .replace(/[\s_]+/g, '-')
+    .replace(/-+/g, '-');
 }
 
-function resolveDocsPathFromHref(href: string, currentDocsPath: string | null): string | null {
-  if (typeof window === 'undefined') {
+function findDocHubFragmentTarget(hash: string): HTMLElement | null {
+  if (!hash.startsWith('#') || hash.length < 2) {
     return null;
   }
 
-  const trimmed = href.trim();
-  if (!trimmed || trimmed.startsWith('#')) {
-    return null;
-  }
-
-  const baseUrl = currentDocsPath
-    ? `${window.location.origin}/docs/${encodeDocsRoutePath(currentDocsPath)}`
-    : `${window.location.origin}/docs/`;
-
+  let fragment: string;
   try {
-    const resolved = new URL(trimmed, baseUrl);
-    if (resolved.hostname !== window.location.hostname || !resolved.pathname.startsWith('/docs/')) {
-      return null;
-    }
-
-    return parseDocsPathFromPathname(resolved.pathname);
+    fragment = decodeURIComponent(hash.slice(1));
   } catch {
     return null;
   }
-}
 
+  const exactMatches = Array.from(
+    document.querySelectorAll<HTMLElement>('[id]'),
+  ).filter((element) => element.id === fragment);
+  const exact =
+    exactMatches.find((element) => element.getClientRects().length > 0)
+    ?? exactMatches[0];
+  if (exact) {
+    return exact;
+  }
+
+  const normalizedFragment = normalizedDocHubFragment(fragment);
+  if (!normalizedFragment) {
+    return null;
+  }
+
+  const normalizedMatches = Array.from(
+    document.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'),
+  ).filter(
+    (heading) => normalizedDocHubFragment(heading.textContent ?? '') === normalizedFragment,
+  );
+  return normalizedMatches.find((heading) => heading.getClientRects().length > 0)
+    ?? normalizedMatches[0]
+    ?? null;
+}
 
 export default function App() {
   if (typeof window !== 'undefined' && window.location.pathname === '/showclaw/entity-featured') {
@@ -1462,35 +1448,42 @@ export default function App() {
       </Suspense>
     );
   }
+  const initialDocHubTarget =
+    typeof window === 'undefined'
+      ? null
+      : resolveDocHubRouteSelection(
+          window.location.pathname,
+          window.location.search,
+          runtime.fsMultiSourceEnabled,
+        );
+  const initialDocHubRouteState =
+    typeof window === 'undefined'
+      ? null
+      : parseDocHubRouteState(window.location.pathname, window.location.search);
   const initialDocumentsAuth = readDocumentsAuth();
-  const [docsPath, setDocsPath] = useState<string | null>(() => {
-    if (typeof window === 'undefined') {
-      return null;
-    }
-    return parseDocsPathFromPathname(window.location.pathname);
-  });
-  const [docsContent, setDocsContent] = useState('');
-  const [docsFilename, setDocsFilename] = useState<string>(() => {
-    if (typeof window === 'undefined') {
-      return 'Document';
-    }
-    return docsFilenameFromPath(parseDocsPathFromPathname(window.location.pathname));
-  });
-  const [docsLoading, setDocsLoading] = useState(false);
-  const [docsError, setDocsError] = useState<string | null>(null);
   const [currentFile, setCurrentFile] = useState<string | null>(() => {
     if (typeof window === 'undefined') {
       return null;
     }
-    const params = new URLSearchParams(window.location.search);
-    return params.get('file') || window.localStorage.getItem('entity.last.file') || null;
+    if (initialDocHubTarget) {
+      return initialDocHubTarget.path;
+    }
+    return shouldRestoreLastDocHubFile(window.location.pathname, window.location.search)
+      ? window.localStorage.getItem('entity.last.file') || null
+      : null;
   });
   const [currentSourceId, setCurrentSourceId] = useState<string | null>(() => {
     if (typeof window === 'undefined') {
       return null;
     }
-    const params = new URLSearchParams(window.location.search);
-    return params.get('source') || window.localStorage.getItem('entity.last.source') || null;
+    if (initialDocHubTarget) {
+      return initialDocHubTarget.sourceId;
+    }
+    const savedFile = shouldRestoreLastDocHubFile(window.location.pathname, window.location.search)
+      ? window.localStorage.getItem('entity.last.file')
+      : null;
+    return window.localStorage.getItem('entity.last.source') ||
+      (savedFile && runtime.fsMultiSourceEnabled ? 'workspace' : null);
   });
   const [splitMode, setSplitMode] = useState<false | 'horizontal'>(false);
   const [rightPaneFile, setRightPaneFile] = useState<string | null>(null);
@@ -1500,6 +1493,8 @@ export default function App() {
   const [rightPanePreviewMeta, setRightPanePreviewMeta] = useState<FilePreviewMeta>(() => defaultFilePreviewMeta());
   const [rightPaneCacheMeta, setRightPaneCacheMeta] = useState<FileCacheMeta>(() => defaultFileCacheMeta());
   const [rightPaneContent, setRightPaneContent] = useState('');
+  const [rightPaneLoadState, setRightPaneLoadState] = useState<CurrentFileLoadState>({ status: 'idle' });
+  const [rightPaneLoadRevision, setRightPaneLoadRevision] = useState(0);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [splitResizing, setSplitResizing] = useState(false);
   const [currentFileReadOnly, setCurrentFileReadOnly] = useState(false);
@@ -1510,23 +1505,55 @@ export default function App() {
     if (typeof window === 'undefined') {
       return [];
     }
-    const params = new URLSearchParams(window.location.search);
-    const file = params.get('file') || window.localStorage.getItem('entity.last.file');
-    const source = params.get('source') || window.localStorage.getItem('entity.last.source');
+    const file = initialDocHubTarget?.path ||
+      (shouldRestoreLastDocHubFile(window.location.pathname, window.location.search)
+        ? window.localStorage.getItem('entity.last.file')
+        : null);
+    const source = initialDocHubTarget
+      ? initialDocHubTarget.sourceId
+      : window.localStorage.getItem('entity.last.source') ||
+        (runtime.fsMultiSourceEnabled ? 'workspace' : null);
     if (!file) {
       return [];
     }
     return [buildOpenFileTab(source, file)];
   });
-  const [docIntelligenceFocus, setDocIntelligenceFocus] = useState<'intelligence' | 'comments' | 'ask' | 'notes' | 'versions' | null>(null);
+  const [docIntelligenceFocus, setDocIntelligenceFocus] = useState<
+    'intelligence' | 'comments' | 'ask' | 'notes' | 'versions' | null
+  >(() => resolveDocHubRailFocus(initialDocHubRouteState?.tool));
+  const [activeDocHubTool, setActiveDocHubTool] = useState<DocHubTool | null>(
+    () => initialDocHubRouteState?.tool ?? null,
+  );
+  // THE-859/THE-861: track Workplane route for Open Workplane + cold-load refresh restore.
+  const [workplaneRouteActive, setWorkplaneRouteActive] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      shouldBypassGatesForWorkplaneDeepLink(window.location.pathname),
+  );
   const [fileContent, setFileContent] = useState('');
+  const [currentFileLoadState, setCurrentFileLoadState] = useState<CurrentFileLoadState>({ status: 'idle' });
+  const [currentFileLoadRevision, setCurrentFileLoadRevision] = useState(0);
+  const currentFileKey = currentFile ? buildFileLoadKey(currentSourceId, currentFile) : null;
+  const rightPaneFileKey = rightPaneFile ? buildFileLoadKey(rightPaneSourceId, rightPaneFile) : null;
+  const activeCurrentFileLoadState: CurrentFileLoadState = !currentFileKey
+    ? { status: 'idle' }
+    : currentFileLoadState.status !== 'idle' && currentFileLoadState.fileKey === currentFileKey
+      ? currentFileLoadState
+      : { status: 'loading', fileKey: currentFileKey };
+  const activeRightPaneLoadState: CurrentFileLoadState = !rightPaneFileKey
+    ? { status: 'idle' }
+    : rightPaneLoadState.status !== 'idle' && rightPaneLoadState.fileKey === rightPaneFileKey
+      ? rightPaneLoadState
+      : { status: 'loading', fileKey: rightPaneFileKey };
   const [authorshipRanges, setAuthorshipRanges] = useState<DocumentAuthorshipRangeRecord[]>([]);
   const [manualAuthorshipAuthor, setManualAuthorshipAuthor] = useState<DocumentAuthorshipActor>('human');
   const [sidebarTab, setSidebarTab] = useState<WorkspaceTab>(() => {
+    if (initialDocHubTarget) {
+      return 'files';
+    }
     if (typeof window !== 'undefined') {
-      const requestedTab = new URLSearchParams(window.location.search).get('tab') as WorkspaceTab | null;
-      const validTabs: readonly string[] = ['files', 'agents', 'tasks', 'services', 'chat', 'admin'];
-      if (requestedTab && validTabs.includes(requestedTab)) {
+      const requestedTab = resolveWorkspaceTabRoute(window.location.pathname, window.location.search);
+      if (requestedTab) {
         return requestedTab;
       }
     }
@@ -1553,21 +1580,76 @@ export default function App() {
       return;
     }
 
+    // THE-858: Workplane owns `/workplane/:taskId` URL state; do not rewrite to Doc Hub.
+    if (isWorkplaneRoutePath(window.location.pathname)) {
+      return;
+    }
+
     const url = new URL(window.location.href);
-    if (currentFile && currentSourceId) {
-      url.searchParams.set('file', currentFile);
-      url.searchParams.set('source', currentSourceId);
+    const pathnameTarget = resolveDocHubRouteTarget(url.pathname, '');
+    if (currentFile) {
+      const sourceId = currentSourceId || (runtime.fsMultiSourceEnabled ? 'workspace' : null);
+      const routeSelection = resolveDocHubRouteSelection(
+        url.pathname,
+        url.search,
+        runtime.fsMultiSourceEnabled,
+      );
+      const routeMatchesSelectedDocument =
+        routeSelection?.sourceId === sourceId && routeSelection.path === currentFile;
       window.localStorage.setItem('entity.last.file', currentFile);
-      window.localStorage.setItem('entity.last.source', currentSourceId);
+      if (sourceId) {
+        window.localStorage.setItem('entity.last.source', sourceId);
+      } else {
+        window.localStorage.removeItem('entity.last.source');
+      }
+
+      if (sourceId) {
+        const synchronizedRoute = new URL(
+          buildSynchronizedDocHubRoute(
+            routeMatchesSelectedDocument ? url.pathname : buildDocHubRoutePath({ sourceId, path: currentFile }),
+            routeMatchesSelectedDocument ? url.search : '',
+            { sourceId, path: currentFile },
+          ),
+          url.origin,
+        );
+        url.pathname = synchronizedRoute.pathname;
+        url.search = synchronizedRoute.search;
+      } else {
+        const synchronizedRoute = new URL(buildCanonicalLocalDocHubUrl(
+          currentFile,
+          routeMatchesSelectedDocument ? url.pathname : '/',
+          routeMatchesSelectedDocument ? url.search : '?tab=files',
+          url.origin,
+        ));
+        url.pathname = synchronizedRoute.pathname;
+        url.search = synchronizedRoute.search;
+      }
     } else {
       url.searchParams.delete('file');
       url.searchParams.delete('source');
-      window.localStorage.removeItem('entity.last.file');
-      window.localStorage.removeItem('entity.last.source');
+      if (pathnameTarget || shouldRestoreLastDocHubFile(url.pathname, url.search)) {
+        window.localStorage.removeItem('entity.last.file');
+        window.localStorage.removeItem('entity.last.source');
+      }
+      if (pathnameTarget) {
+        url.pathname = '/';
+        url.search = '';
+      }
     }
 
+    const synchronizedTool = reduceActiveDocHubToolNavigation(null, {
+      type: currentFile ? 'file-selected' : 'programmatic-route',
+      pathname: url.pathname,
+      search: url.search,
+    });
+    setActiveDocHubTool(synchronizedTool);
+    setDocIntelligenceFocus(resolveDocHubRailFocus(synchronizedTool ?? undefined));
+
     if (url.toString() !== window.location.href) {
-      window.history.replaceState(null, '', url.toString());
+      const previousState = window.history.state && typeof window.history.state === 'object'
+        ? window.history.state
+        : {};
+      window.history.replaceState(currentFile ? { ...previousState, mode: 'docs' } : null, '', url.toString());
     }
   }, [currentFile, currentSourceId]);
 
@@ -1595,6 +1677,11 @@ export default function App() {
   );
   const documentsAuthRef = useRef<DocumentsAuth | null>(initialDocumentsAuth);
   const [commentThreads, setCommentThreads] = useState<DocumentCommentThread[]>([]);
+  const [commentsLoadState, setCommentsLoadState] = useState<
+    'unavailable' | 'loading' | 'loaded' | 'error'
+  >('unavailable');
+  const [commentsLoadMessage, setCommentsLoadMessage] = useState<string | null>(null);
+  const [commentsLoadRevision, setCommentsLoadRevision] = useState(0);
   const [suggestions, setSuggestions] = useState<DocumentSuggestionUiRecord[]>([]);
   const [reviewRun, setReviewRun] = useState<DocumentReviewRunRecord | null>(null);
   const [reviewFindings, setReviewFindings] = useState<DocumentReviewFinding[]>([]);
@@ -1690,14 +1777,18 @@ export default function App() {
 
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [createTaskModalOpen, setCreateTaskModalOpen] = useState(false);
+  const [createTaskWorkDomain, setCreateTaskWorkDomain] = useState<'engineering' | null>(null);
   const [adminSection, setAdminSection] = useState<AdminSection>('general');
   const [enterpriseFrameNonce, setEnterpriseFrameNonce] = useState(0);
   const [enterpriseFrameReady, setEnterpriseFrameReady] = useState(false);
   const [enterpriseFrameTimedOut, setEnterpriseFrameTimedOut] = useState(false);
   const [appTheme, setAppTheme] = useState<AppTheme>(() => readThemePreference());
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => readSidebarCollapsed());
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState<boolean>(() => readRightSidebarCollapsed());
+  const [, refreshBrowserRoute] = useState(0);
+  const initialDocumentShellCollapseState = getDocumentShellCollapseState(currentFileKey);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(initialDocumentShellCollapseState.left);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(initialDocumentShellCollapseState.right);
+  const documentShellFileKeyRef = useRef(currentFileKey);
   const [isOffline, setIsOffline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? !navigator.onLine : false));
   const [offlineQueuePending, setOfflineQueuePending] = useState(0);
   const [offlineQueueItems, setOfflineQueueItems] = useState<OfflineQueueSnapshotItem[]>([]);
@@ -1739,6 +1830,10 @@ export default function App() {
   } = useFileSources({ apiBase: runtime.apiBase, enabled: runtime.fsMultiSourceEnabled });
   const { label: syncStatusLabel, refreshStatus } = useSyncStatus({ apiBase: runtime.apiBase });
   const loginLocked = loginGateArmedOnLoad && loginRequired && !authSession;
+  const leaveBusinessOnboarding = useCallback(() => {
+    replaceBrowserPath('/', { mode: 'app' });
+    refreshBrowserRoute((version) => version + 1);
+  }, []);
   const presenceStatusRef = useRef<Record<string, Record<string, string>>>({});
   const currentDocIdRef = useRef<string | null>(null);
   const documentsReadyRef = useRef(false);
@@ -1748,8 +1843,6 @@ export default function App() {
   const reviewPollAbortRef = useRef<AbortController | null>(null);
   const reviewPollRunIdRef = useRef<string | null>(null);
   const lastBuildHashToastRef = useRef<string | null>(null);
-  const docsModeActive = Boolean(docsPath);
-  const docsBreadcrumbSegments = useMemo(() => (docsPath ? docsPath.split('/').filter(Boolean) : []), [docsPath]);
   const showOfflineSyncBar = isOffline || offlineQueuePending > 0 || syncingNow;
   const currentFileCachedAgeLabel = currentFileCacheMeta.cached ? formatElapsedMs(currentFileCacheMeta.cacheAgeMs) : null;
   const rightPaneCachedAgeLabel = rightPaneCacheMeta.cached ? formatElapsedMs(rightPaneCacheMeta.cacheAgeMs) : null;
@@ -1848,6 +1941,26 @@ export default function App() {
     }
   }, [refreshOfflineQueueState, refreshStatus, reloadTasks, syncingNow]);
 
+  const openDocHubTarget = useCallback((target: {
+    sourceId: string | null;
+    path: string;
+  }) => {
+    setSidebarTab('files');
+    setMobileTab('files');
+    setTabletSidebarOpen(false);
+    setCurrentSourceId(target.sourceId);
+    setCurrentFile(target.path);
+    setCurrentFileReadOnly(false);
+    setCurrentFileUpdatedAt(null);
+    setCurrentFilePreviewMeta(defaultFilePreviewMeta());
+    setCurrentFileCacheMeta(defaultFileCacheMeta());
+    setEditMode(false);
+    setEditorCollabMode('editing');
+    setReloadPrompt(null);
+    setHighlightTaskId(null);
+    setOpenFileTabs((previous) => upsertOpenFileTab(previous, buildOpenFileTab(target.sourceId, target.path)));
+  }, []);
+
   const navigateToDocsPath = useCallback(
     (nextPath: string, replace = false, returnTaskId?: number | null): boolean => {
       if (typeof window === 'undefined') {
@@ -1859,106 +1972,176 @@ export default function App() {
         return false;
       }
 
-      // Preserve the originating task across doc→doc navigation unless a new
-      // origin is explicitly provided, so "back" can return to the task detail.
+      const explicitTarget = resolveDocHubRouteTarget(`/docs/${encodeDocsRoutePath(normalized)}`, '');
+      const configuredTarget = resolveTaskOutputDocTarget(
+        normalized,
+        fileSources,
+        runtime.fsMultiSourceEnabled,
+      );
+      const target = explicitTarget ?? (configuredTarget.kind === 'source' ? configuredTarget : null);
+      if (!target) {
+        return false;
+      }
+
       const existingState = window.history.state as { returnTaskId?: unknown } | null;
       const inheritedReturnTaskId =
         existingState && typeof existingState.returnTaskId === 'number' ? existingState.returnTaskId : null;
       const nextReturnTaskId = returnTaskId !== undefined ? returnTaskId : inheritedReturnTaskId;
       const docsState = { mode: 'docs', returnTaskId: nextReturnTaskId };
 
-      const nextPathname = `/docs/${encodeDocsRoutePath(normalized)}`;
-      if (window.location.pathname !== nextPathname) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.pathname = buildDocHubRoutePath(target);
+      nextUrl.search = '';
+      if (window.location.pathname !== nextUrl.pathname || window.location.search) {
         if (replace) {
-          window.history.replaceState(docsState, '', nextPathname);
+          window.history.replaceState(docsState, '', nextUrl.toString());
         } else {
-          window.history.pushState(docsState, '', nextPathname);
+          window.history.pushState(docsState, '', nextUrl.toString());
         }
       } else {
-        window.history.replaceState(docsState, '', nextPathname);
+        window.history.replaceState(docsState, '', nextUrl.toString());
       }
 
-      setDocsPath(normalized);
+      const synchronized = resolveDocHubRouteSynchronization(
+        nextUrl.pathname,
+        nextUrl.search,
+        runtime.fsMultiSourceEnabled,
+      );
+      setActiveDocHubTool(synchronized.activeTool);
+      setDocIntelligenceFocus(resolveDocHubRailFocus(synchronized.activeTool ?? undefined));
+      openDocHubTarget(target);
       return true;
     },
-    []
+    [fileSources, openDocHubTarget]
   );
 
-  const handleDocsBackToHome = useCallback(() => {
-    const state =
-      typeof window !== 'undefined' && window.history.state && typeof window.history.state === 'object'
-        ? (window.history.state as { returnTaskId?: unknown })
-        : null;
-    const returnTaskId = state && typeof state.returnTaskId === 'number' ? state.returnTaskId : null;
-
-    setDocsPath(null);
-    setDocsError(null);
-    setDocsLoading(false);
-    setDocsContent('');
-    setDocsFilename('Document');
-
-    if (returnTaskId !== null) {
-      // Return to the task detail the doc was opened from.
-      if (typeof window !== 'undefined') {
-        const nextUrl = new URL(window.location.href);
-        nextUrl.pathname = '/task/' + returnTaskId;
-        nextUrl.searchParams.delete('file');
-        nextUrl.searchParams.delete('source');
-        window.history.pushState({ mode: 'task', taskId: returnTaskId }, '', nextUrl.toString());
+  const navigateToResolvedDocHub = useCallback(
+    (navigation: RelativeDocHubNavigation, replace = false, returnTaskId?: number | null): boolean => {
+      if (typeof window === 'undefined') {
+        return false;
       }
-      setCurrentSourceId(null);
-      setCurrentFile(null);
-      setMcBoardTab('kanban');
-      setSidebarTab('tasks');
-      setMobileTab('tasks');
-      setHighlightTaskId(returnTaskId);
-      return;
-    }
 
-    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
-      window.history.pushState({ mode: 'app' }, '', '/');
-    }
-  }, []);
+      const existingState = window.history.state as { returnTaskId?: unknown } | null;
+      const inheritedReturnTaskId =
+        existingState && typeof existingState.returnTaskId === 'number' ? existingState.returnTaskId : null;
+      const nextReturnTaskId = returnTaskId !== undefined ? returnTaskId : inheritedReturnTaskId;
+      const docsState = { mode: 'docs', returnTaskId: nextReturnTaskId };
+      const nextUrl = new URL(navigation.route, window.location.origin);
+      const fragmentScrollIntent = resolveDocHubFragmentScrollIntent(
+        window.location.pathname,
+        window.location.search,
+        navigation.route,
+      );
+
+      if (replace) {
+        window.history.replaceState(docsState, '', nextUrl.toString());
+      } else {
+        window.history.pushState(docsState, '', nextUrl.toString());
+      }
+
+      const synchronized = resolveDocHubRouteSynchronization(
+        nextUrl.pathname,
+        nextUrl.search,
+        runtime.fsMultiSourceEnabled,
+      );
+      setActiveDocHubTool(synchronized.activeTool);
+      setDocIntelligenceFocus(resolveDocHubRailFocus(synchronized.activeTool ?? undefined));
+      openDocHubTarget(navigation.target);
+      if (fragmentScrollIntent?.timing === 'immediate') {
+        window.requestAnimationFrame(() => {
+          findDocHubFragmentTarget(fragmentScrollIntent.hash)?.scrollIntoView({ block: 'start' });
+        });
+      }
+      return true;
+    },
+    [openDocHubTarget],
+  );
 
   const handleMarkdownDocsNavigation = useCallback(
-    (href: string): boolean => {
-      const resolved = resolveDocsPathFromHref(href, docsPath);
+    (
+      href: string,
+      paneTarget?: { sourceId: string | null; path: string },
+    ): boolean => {
+      if (typeof window === 'undefined') {
+        return false;
+      }
+      const resolved = paneTarget
+        ? resolvePaneRelativeDocHubNavigation(
+            window.location.pathname,
+            window.location.search,
+            paneTarget,
+            href,
+            runtime.fsMultiSourceEnabled,
+            window.location.origin,
+          )
+        : resolveRelativeDocHubNavigation(
+            window.location.pathname,
+            window.location.search,
+            href,
+            runtime.fsMultiSourceEnabled,
+            window.location.origin,
+          );
       if (!resolved) {
         return false;
       }
 
-      return navigateToDocsPath(resolved);
+      return navigateToResolvedDocHub(resolved);
     },
-    [docsPath, navigateToDocsPath]
+    [navigateToResolvedDocHub]
   );
 
-  // Opening an output doc from a task: prefer the Doc Hub (files tab) so the
-  // document opens as a workspace tab with the full Doc Hub chrome. Docs paths
-  // look like "<root>/<path>"; when the root matches a configured file source
-  // we open it there, otherwise fall back to the standalone /docs route.
+  // Task output links use the same canonical Doc Hub route as every other
+  // document and media entry point.
   const handleTaskOutputDocsNavigation = useCallback(
     (href: string): boolean => {
-      const resolved = resolveDocsPathFromHref(href, docsPath);
+      if (typeof window === 'undefined') {
+        return false;
+      }
+      const resolved = resolveRelativeDocHubNavigation(
+        window.location.pathname,
+        window.location.search,
+        href,
+        runtime.fsMultiSourceEnabled,
+        window.location.origin,
+      );
       if (!resolved) {
         return false;
       }
-
-      const target = resolveTaskOutputDocTarget(resolved, fileSources, runtime.fsMultiSourceEnabled);
-      if (target.kind === 'source') {
-        // Leave the /task/<id> route before opening the doc so the URL (and a
-        // later reload) reflects the files workspace rather than the task.
-        if (typeof window !== 'undefined' && extractTaskRouteId(window.location.pathname) !== null) {
-          window.history.pushState({ mode: 'app' }, '', '/');
-        }
-        handleSourceFileSelect(target.sourceId, target.path);
-        return true;
-      }
-
-      return navigateToDocsPath(resolved, false, highlightTaskId);
+      return navigateToResolvedDocHub(resolved, false, highlightTaskId);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSourceFileSelect is re-created per render
-    [docsPath, fileSources, highlightTaskId, navigateToDocsPath, watchMode]
+    [highlightTaskId, navigateToResolvedDocHub]
   );
+
+  const pendingDeepLinkRestorationRef = useRef<{
+    fileKey: string;
+    contentClass: 'source' | 'workspace';
+    hasTool: boolean;
+  } | null>(null);
+  const completeDeepLinkRestoration = useCallback((
+    fileKey: string,
+    outcome: 'success' | 'failure',
+  ) => {
+    const pending = pendingDeepLinkRestorationRef.current;
+    if (!pending || pending.fileKey !== fileKey) return;
+    pendingDeepLinkRestorationRef.current = null;
+    if (outcome === 'success') {
+      emitDocHubTelemetry({
+        name: 'doc_hub.deep_link_restoration.success',
+        properties: {
+          contentClass: pending.contentClass,
+          hasTool: pending.hasTool,
+        },
+      });
+      return;
+    }
+    emitDocHubTelemetry({
+      name: 'doc_hub.deep_link_restoration.failure',
+      properties: {
+        reason: 'load-failed',
+        recoverable: true,
+      },
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1966,17 +2149,77 @@ export default function App() {
     }
 
     const syncRouteState = () => {
-      const nextPath = parseDocsPathFromPathname(window.location.pathname);
+      // THE-858/THE-859/THE-861: Workplane shell owns deep-link + refresh restore.
+      // Skip Doc Hub/task sync; keep route flag so client navigation remounts the shell.
+      const onWorkplane = shouldBypassGatesForWorkplaneDeepLink(window.location.pathname);
+      setWorkplaneRouteActive(onWorkplane);
+      if (onWorkplane) {
+        return;
+      }
+      const synchronized = resolveDocHubRouteSynchronization(
+        window.location.pathname,
+        window.location.search,
+        runtime.fsMultiSourceEnabled,
+      );
+      const target = synchronized.target;
       const routeTaskId = extractTaskRouteId(window.location.pathname);
-      setDocsPath(nextPath);
-
-      if (routeTaskId !== null) {
+      const historyRecord =
+        window.history.state && typeof window.history.state === 'object'
+          ? (window.history.state as Record<string, unknown>)
+          : null;
+      const historyBoard =
+        typeof historyRecord?.board === 'string' ? historyRecord.board.trim() : '';
+      setActiveDocHubTool(synchronized.activeTool);
+      if (target) {
+        pendingDeepLinkRestorationRef.current = {
+          fileKey: buildFileLoadKey(target.sourceId, target.path),
+          contentClass: target.sourceId === null ? 'workspace' : 'source',
+          hasTool: synchronized.activeTool !== null,
+        };
+        setDocIntelligenceFocus(resolveDocHubRailFocus(synchronized.activeTool ?? undefined));
+        openDocHubTarget(target);
+      } else if (routeTaskId !== null) {
+        setDocIntelligenceFocus(null);
         setCurrentSourceId(null);
         setCurrentFile(null);
         setSidebarTab('tasks');
         setMobileTab('tasks');
-        setMcBoardTab('kanban');
+        // THE-860: restore board tab from return navigation history state when present.
+        setMcBoardTab(historyBoard ? normalizeStoredMCBoardTab(historyBoard) : 'kanban');
         setHighlightTaskId(routeTaskId);
+      } else if (
+        window.location.pathname === '/tasks' ||
+        (window.location.pathname === '/' &&
+          new URLSearchParams(window.location.search).get('tab') === 'tasks')
+      ) {
+        // THE-860: board/list return lands on tasks workspace (not Doc Hub).
+        setDocIntelligenceFocus(null);
+        setCurrentSourceId(null);
+        setCurrentFile(null);
+        setSidebarTab('tasks');
+        setMobileTab('tasks');
+        if (historyBoard) {
+          setMcBoardTab(normalizeStoredMCBoardTab(historyBoard));
+        }
+        setHighlightTaskId(null);
+      } else {
+        if (window.location.pathname === '/docs' || window.location.pathname.startsWith('/docs/')) {
+          emitDocHubTelemetry({
+            name: 'doc_hub.deep_link_restoration.failure',
+            properties: {
+              reason: 'invalid-route',
+              recoverable: true,
+            },
+          });
+        }
+        setDocIntelligenceFocus(null);
+        setCurrentSourceId(null);
+        setCurrentFile(null);
+        const workspaceTab = resolveWorkspaceTabRoute(window.location.pathname, window.location.search);
+        if (workspaceTab) {
+          setSidebarTab(workspaceTab);
+          setMobileTab(workspaceTab);
+        }
       }
     };
 
@@ -1984,52 +2227,22 @@ export default function App() {
 
     window.addEventListener('popstate', syncRouteState);
     return () => window.removeEventListener('popstate', syncRouteState);
+  }, [openDocHubTarget]);
+
+  const activateMobileDocHubTool = useCallback((tool: DocHubTool) => {
+    if (typeof window === 'undefined') return;
+    const nextRoute = buildActivatedDocHubToolRoute(
+      window.location.pathname,
+      window.location.search,
+      tool,
+      window.location.hash,
+    );
+    const previousState = window.history.state && typeof window.history.state === 'object'
+      ? window.history.state
+      : {};
+    window.history.replaceState({ ...previousState, mode: 'docs' }, '', nextRoute);
+    setActiveDocHubTool(tool);
   }, []);
-
-  useEffect(() => {
-    if (!docsPath) {
-      return;
-    }
-
-    let cancelled = false;
-    setDocsLoading(true);
-    setDocsError(null);
-
-    requestJsonWithFallback<DocsApiResponse>({
-      urls: buildDocsApiUrls(docsPath),
-      fallbackError: 'Failed to load document.',
-    })
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-
-        const filenameCandidate =
-          typeof response.filename === 'string' && response.filename.trim()
-            ? response.filename.trim()
-            : docsFilenameFromPath(docsPath);
-        setDocsContent(typeof response.content === 'string' ? response.content : '');
-        setDocsFilename(filenameCandidate);
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-
-        setDocsContent('');
-        setDocsFilename(docsFilenameFromPath(docsPath));
-        setDocsError(error instanceof Error ? error.message : 'Failed to load document.');
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setDocsLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [docsPath]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2247,12 +2460,15 @@ export default function App() {
   }, [showArchiveColumn]);
 
   useEffect(() => {
-    persistSidebarCollapsed(sidebarCollapsed);
-  }, [sidebarCollapsed]);
+    if (documentShellFileKeyRef.current === currentFileKey) {
+      return;
+    }
 
-  useEffect(() => {
-    persistRightSidebarCollapsed(rightSidebarCollapsed);
-  }, [rightSidebarCollapsed]);
+    const nextState = getDocumentShellCollapseState(currentFileKey);
+    setSidebarCollapsed(nextState.left);
+    setRightSidebarCollapsed(nextState.right);
+    documentShellFileKeyRef.current = currentFileKey;
+  }, [currentFileKey]);
 
   useEffect(() => {
     persistThemePreference(appTheme);
@@ -2623,8 +2839,18 @@ export default function App() {
 
   // Fetch file content
   useEffect(() => {
-    if (!currentFile) return;
+    if (!currentFile) {
+      setCurrentFileLoadState({ status: 'idle' });
+      return;
+    }
+    const fileKey = buildFileLoadKey(currentSourceId, currentFile);
     let cancelled = false;
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = undefined;
+    }
+    setCurrentFileLoadState({ status: 'loading', fileKey });
+    setFileContent('');
 
     if (runtime.fsMultiSourceEnabled && currentSourceId) {
       fetchSourceFile(currentSourceId, currentFile)
@@ -2654,6 +2880,8 @@ export default function App() {
           });
           lastContentRef.current = data.content || '';
           setLastSaved(Date.now());
+          setCurrentFileLoadState({ status: 'ready', fileKey });
+          completeDeepLinkRestoration(fileKey, 'success');
         })
         .catch((err) => {
           if (cancelled) {
@@ -2663,6 +2891,12 @@ export default function App() {
           setCurrentFileReadOnly(true);
           setCurrentFilePreviewMeta(defaultFilePreviewMeta());
           setCurrentFileCacheMeta(defaultFileCacheMeta());
+          setCurrentFileLoadState({
+            status: 'error',
+            fileKey,
+            message: err instanceof Error ? err.message : 'Failed to load file.',
+          });
+          completeDeepLinkRestoration(fileKey, 'failure');
         });
       return () => {
         cancelled = true;
@@ -2690,23 +2924,62 @@ export default function App() {
         setCurrentFileCacheMeta(defaultFileCacheMeta());
         lastContentRef.current = d.content || '';
         setLastSaved(Date.now());
+        setCurrentFileLoadState({ status: 'ready', fileKey });
+        completeDeepLinkRestoration(fileKey, 'success');
       })
       .catch((err) => {
         if (!cancelled) {
           console.error(err);
           setCurrentFilePreviewMeta(defaultFilePreviewMeta());
           setCurrentFileCacheMeta(defaultFileCacheMeta());
+          setCurrentFileLoadState({
+            status: 'error',
+            fileKey,
+            message: err instanceof Error ? err.message : 'Failed to load file.',
+          });
+          completeDeepLinkRestoration(fileKey, 'failure');
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [currentFile, currentSourceId, fetchSourceFile]);
+  }, [
+    completeDeepLinkRestoration,
+    currentFile,
+    currentFileLoadRevision,
+    currentSourceId,
+    fetchSourceFile,
+  ]);
+
+  const handleRetryCurrentFile = useCallback(() => {
+    setCurrentFileLoadRevision((revision) => revision + 1);
+  }, []);
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined'
+      || activeCurrentFileLoadState.status !== 'ready'
+      || !window.location.hash
+    ) {
+      return;
+    }
+
+    const hash = window.location.hash;
+    const cancelRetry = startDocHubFragmentTargetRetry({
+      findTarget: () => findDocHubFragmentTarget(hash),
+      schedule: (retry) => {
+        window.requestAnimationFrame(retry);
+      },
+      onFound: (target) => target.scrollIntoView({ block: 'start' }),
+    });
+    return cancelRetry;
+  }, [activeCurrentFileLoadState.status, currentFile, fileContent]);
 
   // Fetch right pane file content (split view)
   useEffect(() => {
     if (!rightPaneFile) {
+      setRightPaneLoadState({ status: 'idle' });
       setRightPaneContent('');
       setRightPaneReadOnly(false);
       setRightPaneUpdatedAt(null);
@@ -2716,12 +2989,16 @@ export default function App() {
       return;
     }
 
+    const fileKey = buildFileLoadKey(rightPaneSourceId, rightPaneFile);
+
     if (rightSaveTimeoutRef.current) {
       clearTimeout(rightSaveTimeoutRef.current);
       rightSaveTimeoutRef.current = undefined;
     }
 
     let cancelled = false;
+    setRightPaneLoadState({ status: 'loading', fileKey });
+    setRightPaneContent('');
     if (runtime.fsMultiSourceEnabled && rightPaneSourceId) {
       fetchSourceFile(rightPaneSourceId, rightPaneFile)
         .then((data) => {
@@ -2750,6 +3027,7 @@ export default function App() {
             cacheAgeMs: data.cached === true ? cacheAgeMs : null,
           });
           rightLastContentRef.current = nextContent;
+          setRightPaneLoadState({ status: 'ready', fileKey });
         })
         .catch((err) => {
           if (cancelled) {
@@ -2759,6 +3037,11 @@ export default function App() {
           setRightPaneReadOnly(true);
           setRightPanePreviewMeta(defaultFilePreviewMeta());
           setRightPaneCacheMeta(defaultFileCacheMeta());
+          setRightPaneLoadState({
+            status: 'error',
+            fileKey,
+            message: err instanceof Error ? err.message : 'Failed to load file.',
+          });
         });
       return () => {
         cancelled = true;
@@ -2786,23 +3069,38 @@ export default function App() {
         });
         setRightPaneCacheMeta(defaultFileCacheMeta());
         rightLastContentRef.current = nextContent;
+        setRightPaneLoadState({ status: 'ready', fileKey });
       })
       .catch((err) => {
         if (!cancelled) {
           console.error(err);
           setRightPanePreviewMeta(defaultFilePreviewMeta());
           setRightPaneCacheMeta(defaultFileCacheMeta());
+          setRightPaneLoadState({
+            status: 'error',
+            fileKey,
+            message: err instanceof Error ? err.message : 'Failed to load file.',
+          });
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [fetchSourceFile, rightPaneFile, rightPaneSourceId]);
+  }, [fetchSourceFile, rightPaneFile, rightPaneLoadRevision, rightPaneSourceId]);
+
+  const handleRetryRightPaneFile = useCallback(() => {
+    setRightPaneLoadRevision((revision) => revision + 1);
+  }, []);
 
   // Auto-save with debounce
   const scheduleAutoSave = useCallback((content: string) => {
-    if (currentSourceId) {
+    if (
+      currentSourceId ||
+      !currentFileKey ||
+      activeCurrentFileLoadState.status !== 'ready' ||
+      activeCurrentFileLoadState.fileKey !== currentFileKey
+    ) {
       return;
     }
 
@@ -2823,10 +3121,15 @@ export default function App() {
         setLastSaved(Date.now());
       }
     }, 2000);
-  }, [currentFile, currentSourceId]);
+  }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentSourceId]);
 
   const scheduleRightPaneAutoSave = useCallback((content: string) => {
-    if (rightPaneSourceId) {
+    if (
+      rightPaneSourceId ||
+      !rightPaneFileKey ||
+      activeRightPaneLoadState.status !== 'ready' ||
+      activeRightPaneLoadState.fileKey !== rightPaneFileKey
+    ) {
       return;
     }
 
@@ -2846,18 +3149,24 @@ export default function App() {
         rightLastContentRef.current = content;
       }
     }, 2000);
-  }, [rightPaneFile, rightPaneSourceId]);
+  }, [activeRightPaneLoadState, rightPaneFile, rightPaneFileKey, rightPaneSourceId]);
 
   // Handle content changes
   const handleContentChange = useCallback((newContent: string) => {
+    if (activeCurrentFileLoadState.status !== 'ready') {
+      return;
+    }
     setFileContent(newContent);
     scheduleAutoSave(newContent);
-  }, [scheduleAutoSave]);
+  }, [activeCurrentFileLoadState.status, scheduleAutoSave]);
 
   const handleRightPaneContentChange = useCallback((newContent: string) => {
+    if (activeRightPaneLoadState.status !== 'ready') {
+      return;
+    }
     setRightPaneContent(newContent);
     scheduleRightPaneAutoSave(newContent);
-  }, [scheduleRightPaneAutoSave]);
+  }, [activeRightPaneLoadState.status, scheduleRightPaneAutoSave]);
 
   const handleManualAttribution = useCallback(
     (selection: EditorSelectionRange) => {
@@ -2907,7 +3216,12 @@ export default function App() {
 
   // Handle @mention - send to OpenClaw
   const handleSave = useCallback(async () => {
-    if (!currentFile) return;
+    if (
+      !currentFile ||
+      !currentFileKey ||
+      activeCurrentFileLoadState.status !== 'ready' ||
+      activeCurrentFileLoadState.fileKey !== currentFileKey
+    ) return;
 
     // Save source files via the source write API
     if (currentSourceId) {
@@ -2959,13 +3273,14 @@ export default function App() {
     );
     lastContentRef.current = fileContent;
     setLastSaved(Date.now());
-  }, [currentFile, currentSourceId, fileContent, writeSourceFile]);
+  }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentSourceId, fileContent, writeSourceFile]);
 
   const handleFileSelect = (path: string) => {
+    const sourceId = runtime.fsMultiSourceEnabled ? 'workspace' : null;
     setSidebarTab('files');
     setMobileTab('files');
     setTabletSidebarOpen(false);
-    setCurrentSourceId(null);
+    setCurrentSourceId(sourceId);
     setCurrentFile(path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -2975,7 +3290,7 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
-    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(null, path)));
+    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(sourceId, path)));
   };
 
   const handleSourceFileSelect = (sourceId: string, path: string) => {
@@ -3046,7 +3361,7 @@ export default function App() {
   }, []);
 
   const handleWatchModeAutoOpenFile = useCallback((path: string) => {
-    setCurrentSourceId(null);
+    setCurrentSourceId(runtime.fsMultiSourceEnabled ? 'workspace' : null);
     setCurrentFile(path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -3059,6 +3374,23 @@ export default function App() {
   }, []);
 
   const handleBackToDashboard = () => {
+    if (typeof window !== 'undefined') {
+      const returnTaskId = window.history.state && typeof window.history.state === 'object'
+        ? window.history.state.returnTaskId
+        : null;
+      const exitPath = buildDocHubExitPath(returnTaskId);
+      window.history.pushState(null, '', exitPath);
+      if (exitPath !== '/') {
+        setSidebarTab('tasks');
+        setMobileTab('tasks');
+        setMcBoardTab('kanban');
+        setHighlightTaskId(extractTaskRouteId(exitPath));
+      } else {
+        setHighlightTaskId(null);
+      }
+    } else {
+      setHighlightTaskId(null);
+    }
     exitSplitMode();
     setCurrentSourceId(null);
     setCurrentFile(null);
@@ -3069,7 +3401,6 @@ export default function App() {
     setEditMode(false);
     setEditorCollabMode('editing');
     setReloadPrompt(null);
-    setHighlightTaskId(null);
   };
 
   const activeFileTabKey = useMemo(() => {
@@ -3098,7 +3429,7 @@ export default function App() {
     setSidebarTab('files');
     setMobileTab('files');
     setTabletSidebarOpen(false);
-    setCurrentSourceId(null);
+    setCurrentSourceId(runtime.fsMultiSourceEnabled ? 'workspace' : null);
     setCurrentFile(tab.path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -3138,7 +3469,10 @@ export default function App() {
     setDocIntelligenceFocus('comments');
   }, []);
 
-  const handleTaskSelect = (taskId: number) => {
+  const handleTaskSelect = (
+    taskId: number,
+    preferredBoardTab: MCBoardTab = 'kanban',
+  ) => {
     if (typeof window !== 'undefined') {
       const nextUrl = new URL(window.location.href);
       nextUrl.pathname = '/task/' + taskId;
@@ -3151,7 +3485,7 @@ export default function App() {
 
     setCurrentSourceId(null);
     setCurrentFile(null);
-    setMcBoardTab('kanban');
+    setMcBoardTab(preferredBoardTab);
     setSidebarTab('tasks');
     setMobileTab('tasks');
     setTabletSidebarOpen(false);
@@ -3163,6 +3497,30 @@ export default function App() {
   };
 
   const handleSidebarTabChange = (tab: WorkspaceTab) => {
+    if (typeof window !== 'undefined' && (tab !== 'files' || !currentFile)) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.pathname = '/';
+      nextUrl.search = '';
+      if (tab !== 'files') {
+        nextUrl.searchParams.set('tab', tab);
+      }
+      if (nextUrl.toString() !== window.location.href) {
+        window.history.pushState({ mode: tab }, '', nextUrl.toString());
+      }
+    }
+    if (tab !== 'files' && currentFile) {
+      exitSplitMode();
+      setCurrentSourceId(null);
+      setCurrentFile(null);
+      setCurrentFileReadOnly(false);
+      setCurrentFileUpdatedAt(null);
+      setCurrentFilePreviewMeta(defaultFilePreviewMeta());
+      setCurrentFileCacheMeta(defaultFileCacheMeta());
+      setEditMode(false);
+      setEditorCollabMode('editing');
+      setReloadPrompt(null);
+      setHighlightTaskId(null);
+    }
     setSidebarTab(tab);
     setMobileTab(tab);
     setTabletSidebarOpen(false);
@@ -3188,8 +3546,9 @@ export default function App() {
   }, [agents, followingAgent]);
 
   const openMissionControlModal = useCallback(() => {
+    setCreateTaskWorkDomain(mcBoardTab === 'engineering' ? 'engineering' : null);
     setCreateTaskModalOpen(true);
-  }, []);
+  }, [mcBoardTab]);
 
   const applyArchiveVisibility = useCallback((visible: boolean) => {
     const runtimeFn = (window as unknown as Record<string, unknown>).setArchiveVisibility;
@@ -3578,7 +3937,8 @@ export default function App() {
     cursor: followCursor,
     debounceMs: 100,
   });
-  const canEditCurrentFile = Boolean(currentFile) && !currentFileReadOnly;
+  const canEditCurrentFile =
+    Boolean(currentFile) && activeCurrentFileLoadState.status === 'ready' && !currentFileReadOnly;
   const authorshipStats = useMemo(
     () => buildAuthorshipStats(fileContent.length, authorshipRanges),
     [authorshipRanges, fileContent.length]
@@ -3598,18 +3958,11 @@ export default function App() {
   const rightSidebarHasComments = documentsReady || commentThreads.length > 0;
   const rightSidebarHasSuggestions = suggestions.length > 0;
   const rightSidebarHasReview = reviewFindings.length > 0 || Boolean(reviewRun);
-  const rightSidebarHasPanels = rightSidebarHasComments || rightSidebarHasSuggestions || rightSidebarHasReview;
-  const rightSidebarIsCollapsed = rightSidebarCollapsed || !rightSidebarHasPanels;
+  const rightSidebarIsCollapsed = rightSidebarCollapsed;
   const activeTasks = tasks.filter((task) => task.column === 'doing');
   const onlineAgents = agents.filter((agent) => agent.status === 'online').length;
   const workspaceTab = isMobile ? mobileTab : sidebarTab;
   const enterpriseFrameSrc = ENTERPRISE_ADMIN_URL;
-
-  useEffect(() => {
-    if (currentDocId && rightSidebarHasPanels) {
-      setRightSidebarCollapsed(false);
-    }
-  }, [currentDocId, rightSidebarHasPanels]);
 
   useEffect(() => {
     documentsReadyRef.current = documentsReady;
@@ -3811,14 +4164,31 @@ export default function App() {
     if (!documentsReady || !currentDocId) {
       return;
     }
+    setCommentsLoadRevision((revision) => revision + 1);
+  }, [currentDocId, documentsReady]);
 
-    try {
-      const response = await documentsClient.getComments(currentDocId);
-      setCommentThreads(response.threads);
-    } catch (error) {
-      pushToast(error instanceof Error ? error.message : 'Failed to refresh comments.', 'error');
+  const createMobileComment = useCallback(async (text: string) => {
+    const requestedDocId = currentDocIdRef.current;
+    if (!documentsReadyRef.current || !requestedDocId) {
+      throw new Error('Comments are unavailable for this document.');
     }
-  }, [currentDocId, documentsClient, documentsReady, pushToast]);
+
+    const response = await documentsClient.postComment(requestedDocId, {
+      from: 0,
+      to: 0,
+      text,
+      selectedText: null,
+    });
+    if (
+      currentDocIdRef.current !== requestedDocId
+      || response.docId !== requestedDocId
+    ) {
+      return;
+    }
+    setCommentThreads(response.threads);
+    setCommentsLoadState('loaded');
+    setCommentsLoadMessage(null);
+  }, [documentsClient]);
 
   const refreshSuggestions = useCallback(async () => {
     if (!documentsReady || !currentDocId) {
@@ -3888,6 +4258,54 @@ export default function App() {
   useEffect(() => {
     if (!documentsReady || !documentsAuthHydrated || !currentDocId) {
       setCommentThreads([]);
+      setCommentsLoadState('unavailable');
+      setCommentsLoadMessage(null);
+      return;
+    }
+
+    const requestedDocId = currentDocId;
+    const controller = new AbortController();
+    setCommentThreads([]);
+    setCommentsLoadState('loading');
+    setCommentsLoadMessage(null);
+
+    void documentsClient.getComments(requestedDocId, { signal: controller.signal })
+      .then((response) => {
+        if (
+          controller.signal.aborted
+          || currentDocIdRef.current !== requestedDocId
+          || response.docId !== requestedDocId
+        ) {
+          return;
+        }
+        setCommentThreads(response.threads);
+        setCommentsLoadState('loaded');
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || currentDocIdRef.current !== requestedDocId) {
+          return;
+        }
+        const status = error instanceof HttpRequestError ? error.status : undefined;
+        setCommentThreads([]);
+        setCommentsLoadState('error');
+        setCommentsLoadMessage(
+          status
+            ? mobileCommentsPermissionMessage(status) ?? 'Comments could not be loaded. Try again.'
+            : 'Comments could not be loaded. Try again.',
+        );
+      });
+
+    return () => controller.abort();
+  }, [
+    commentsLoadRevision,
+    currentDocId,
+    documentsAuthHydrated,
+    documentsClient,
+    documentsReady,
+  ]);
+
+  useEffect(() => {
+    if (!documentsReady || !documentsAuthHydrated || !currentDocId) {
       setSuggestions([]);
       setReviewRun(null);
       setReviewFindings([]);
@@ -3901,16 +4319,14 @@ export default function App() {
     const requestAuth = documentsAuthRef.current;
     (async () => {
       try {
-        const [state, comments, suggestionsResponse] = await Promise.all([
+        const [state, suggestionsResponse] = await Promise.all([
           documentsClient.getState(currentDocId),
-          documentsClient.getComments(currentDocId),
           documentsClient.getSuggestions(currentDocId),
         ]);
         if (cancelled) return;
 
         applyPresenceSeed(currentDocId, state.presence);
         setAuthorshipRanges(state.collaboration.authorship_ranges);
-        setCommentThreads(comments.threads);
         setSuggestions(suggestionsResponse.suggestions);
 
         const latest = state.reviewSummary.latestRun;
@@ -4412,11 +4828,12 @@ export default function App() {
                 key={board}
                 type="button"
                 onClick={() => setMcBoardTab(board)}
+                aria-pressed={mcBoardTab === board}
 	                className={`mc-shell-btn entity-context-tab px-3 py-1 text-xs font-medium capitalize ${
                   mcBoardTab === board ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
                 }`}
               >
-                {board === 'kanban' ? 'Kanban' : board}
+                {getMCBoardTabLabel(board)}
               </button>
             ))}
             {taskModulePlugins.map((plugin) => (
@@ -4424,6 +4841,7 @@ export default function App() {
                 key={plugin.id}
                 type="button"
                 onClick={() => setMcBoardTab(plugin.id)}
+                aria-pressed={mcBoardTab === plugin.id}
 	                className={`mc-shell-btn entity-context-tab px-3 py-1 text-xs font-medium ${
                   mcBoardTab === plugin.id ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
                 }`}
@@ -4436,6 +4854,10 @@ export default function App() {
             {activeTaskSubViewPlugin ? (
               <span className="mc-shell-pill px-3 py-1 text-xs text-[var(--text-secondary)]">
                 Plugin view · {activeTaskSubViewPlugin.name}
+              </span>
+            ) : mcBoardTab === 'engineering' ? (
+              <span className="mc-shell-pill px-3 py-1 text-xs text-[var(--text-secondary)]">
+                Entity Engineering · dedicated workspace
               </span>
             ) : (
               <>
@@ -4842,7 +5264,31 @@ export default function App() {
   const renderSidebar = (showCloseButton: boolean, allowCollapse = false, forceCollapsed = false) => (
     <div className="flex h-full min-h-0 flex-col">
       {allowCollapse && (sidebarCollapsed || forceCollapsed) ? (
-        <div className="flex min-h-0 flex-1 flex-col items-center py-2">
+        // Collapsed rail: a clear expand chevron at the top, and the rail
+        // itself is clickable — the affordance was previously easy to miss.
+        <div
+          className="flex min-h-0 flex-1 cursor-e-resize flex-col items-center py-2"
+          onClick={forceCollapsed ? undefined : () => setSidebarCollapsed(false)}
+          role={forceCollapsed ? undefined : 'button'}
+          aria-label={forceCollapsed ? undefined : 'Expand sidebar'}
+          title={forceCollapsed ? undefined : 'Expand sidebar'}
+        >
+          {!forceCollapsed && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setSidebarCollapsed(false);
+              }}
+              className="mc-shell-btn mb-2 inline-flex h-9 w-9 items-center justify-center px-0 py-0 text-base text-[var(--text-primary)]"
+              aria-label="Expand sidebar"
+              title="Expand sidebar"
+            >
+              »
+            </button>
+          )}
+          {/* Clicks bubble to the rail so empty space expands; the mini-panel
+              buttons run their own action first and expanding alongside is fine. */}
           <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pb-2">
             {renderCollapsedContextMiniPanel()}
           </div>
@@ -4859,7 +5305,7 @@ export default function App() {
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            <span>{sidebarCollapsed ? '»' : '«'}</span>
+            <span>{sidebarCollapsed ? '» Expand' : '«'}</span>
           </button>
         </div>
       )}
@@ -4872,6 +5318,19 @@ export default function App() {
         <div className="flex-1 min-h-0">
           {activeTaskSubViewPlugin ? (
             <LazyPluginSubViewSlot apiBase={runtime.apiBase} module="tasks" pluginId={activeTaskSubViewPlugin.id} />
+          ) : mcBoardTab === 'engineering' ? (
+            <MCEngineeringEntry
+              viewport={viewport}
+              apiBase={runtime.mcOrigin}
+              searchQuery={taskSearchQuery}
+              highlightTaskId={highlightTaskId}
+              onCloseTask={handleCloseTaskDetail}
+              onCreateTask={openMissionControlModal}
+              onDocsLinkNavigate={handleTaskOutputDocsNavigation}
+              showArchiveColumn={showArchiveColumn}
+              onArchiveColumnVisibilityChange={setShowArchiveColumn}
+              returnBoard="engineering"
+            />
           ) : mcBoardTab === 'strategic' ? (
             <LazyMCStrategicView />
           ) : (
@@ -4891,6 +5350,7 @@ export default function App() {
               tasks={filteredBoardTasks}
               loading={tasksLoading}
               error={tasksError}
+              returnBoard={mcBoardTab}
             />
           )}
         </div>
@@ -4928,6 +5388,10 @@ export default function App() {
             onAddOpenFileTab={handleAddOpenFileTab}
             onGoHome={handleBackToDashboard}
             showDocHubTts={shouldRenderMarkdownPreview(currentFile, currentFilePreviewMeta.contentType) && !currentFilePreviewMeta.isBinary}
+            onOpenVoiceSettings={() => {
+              handleSidebarTabChange('admin');
+              setAdminSection('voice');
+            }}
             filesContextBarProps={{
               runtime,
               currentFile,
@@ -4973,6 +5437,8 @@ export default function App() {
             }}
             currentSourceId={currentSourceId}
             fileContent={fileContent}
+            currentFileLoadState={activeCurrentFileLoadState}
+            handleRetryCurrentFile={handleRetryCurrentFile}
             setFileContent={setFileContent}
             editMode={editMode}
             setEditMode={setEditMode}
@@ -4992,6 +5458,8 @@ export default function App() {
             setQuickSwitcherOpen={setQuickSwitcherOpen}
             exitSplitMode={exitSplitMode}
             rightPaneContent={rightPaneContent}
+            rightPaneLoadState={activeRightPaneLoadState}
+            handleRetryRightPaneFile={handleRetryRightPaneFile}
             handleRightPaneContentChange={handleRightPaneContentChange}
             rightPanePreviewMeta={rightPanePreviewMeta}
             rightPaneRawFileUrl={rightPaneRawFileUrl}
@@ -5039,7 +5507,6 @@ export default function App() {
             handleMarkdownDocsNavigation={handleMarkdownDocsNavigation}
             docsTtsSettings={docsTtsSettings}
             handleDocsTtsSettingsChange={handleDocsTtsSettingsChange}
-            rightSidebarHasPanels={rightSidebarHasPanels}
             rightSidebarIsCollapsed={rightSidebarIsCollapsed}
             rightSidebarHasComments={rightSidebarHasComments}
             rightSidebarHasSuggestions={rightSidebarHasSuggestions}
@@ -5139,37 +5606,48 @@ export default function App() {
     );
   };
 
-  if (docsModeActive && docsPath) {
-    const docsBackState =
-      typeof window !== 'undefined' && window.history.state && typeof window.history.state === 'object'
-        ? (window.history.state as { returnTaskId?: unknown })
-        : null;
-    const docsBackTaskId =
-      docsBackState && typeof docsBackState.returnTaskId === 'number' ? docsBackState.returnTaskId : null;
-    return (
-      <Suspense fallback={<LazySurfaceFallback label="Loading document" />}>
-        <DocsRouteView
-          docsPath={docsPath}
-          docsFilename={docsFilename || docsFilenameFromPath(docsPath)}
-          docsBreadcrumbSegments={docsBreadcrumbSegments}
-          docsError={docsError}
-          docsContent={docsContent}
-          docsLoading={docsLoading}
-          docsTtsSettings={docsTtsSettings}
-          docsBackTaskId={docsBackTaskId}
-          onBackToHome={handleDocsBackToHome}
-          onDocsLinkNavigate={handleMarkdownDocsNavigation}
-          onDocsTtsSettingsChange={handleDocsTtsSettingsChange}
-          onToast={(msg, type) => pushToast(msg, type === 'success' ? 'success' : type === 'error' ? 'error' : 'info')}
-          renderOfflineSyncBar={renderOfflineSyncBar}
-        />
-      </Suspense>
-    );
-  }
-
   const onboardingToken = typeof window !== 'undefined' ? window.location.pathname.match(/^\/onboard\/agent\/([^/]+)$/)?.[1] ?? null : null;
   const onboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === '/onboarding';
+  const businessOnboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === BUSINESS_ONBOARDING_ROUTE;
   const shouldShowOnboarding = Boolean(onboardingToken) || onboardingRouteActive || onboardingCompleted === false;
+
+  // THE-858 / WP1-A-03 — Workplane route + shell (URL state from THE-857).
+  // THE-859 — workplaneRouteActive updates on Open Workplane pushState/popstate.
+  // THE-861 — cold load / hard refresh must restore Workplane ahead of onboarding gates.
+  if (workplaneRouteActive) {
+    return <LazyWorkplaneShell />;
+  }
+
+  if (businessOnboardingRouteActive) {
+    if (onboardingCompleted === null) {
+      return <LazySurfaceFallback label="Checking onboarding gate" />;
+    }
+
+    if (onboardingCompleted === false) {
+      return (
+        <LazyOnboardingFlow
+          apiBase={runtime.apiBase}
+          routeToken={null}
+          userProfile={userProfile}
+          appTheme={appTheme}
+          onThemeChange={setAppTheme}
+          onProfileSave={saveUserProfile}
+          onComplete={() => {
+            setOnboardingCompleted(true);
+            replaceBrowserPath(BUSINESS_ONBOARDING_ROUTE);
+          }}
+        />
+      );
+    }
+
+    return (
+      <LazyBusinessOnboardingFlow
+        apiBase={runtime.apiBase}
+        onBackToWorkspace={leaveBusinessOnboarding}
+        onComplete={leaveBusinessOnboarding}
+      />
+    );
+  }
 
   if (shouldShowOnboarding) {
     return (
@@ -5183,7 +5661,7 @@ export default function App() {
         onComplete={() => {
           setOnboardingCompleted(true);
           if (typeof window !== 'undefined' && (window.location.pathname === '/onboarding' || onboardingToken)) {
-            window.history.replaceState(null, '', '/');
+            replaceBrowserPath(BUSINESS_ONBOARDING_ROUTE);
           }
         }}
       />
@@ -5363,6 +5841,11 @@ export default function App() {
             setFocusRange={setFocusRange}
             documentsClient={documentsClient}
             currentDocId={currentDocId}
+            commentThreads={commentThreads}
+            commentsLoadState={commentsLoadState}
+            commentsLoadMessage={commentsLoadMessage}
+            onRetryMobileComments={refreshComments}
+            onCreateMobileComment={createMobileComment}
             setSuggestions={setSuggestions}
             pushToast={pushToast}
             currentSourceId={currentSourceId}
@@ -5386,6 +5869,7 @@ export default function App() {
             setSelectedAgent={setSelectedAgent}
             activeTaskSubViewPlugin={activeTaskSubViewPlugin}
             mcBoardTab={mcBoardTab}
+            setMcBoardTab={setMcBoardTab}
             highlightTaskId={highlightTaskId}
             handleTaskSelect={handleTaskSelect}
             handleCloseTaskDetail={handleCloseTaskDetail}
@@ -5405,6 +5889,7 @@ export default function App() {
             setTabletSidebarOpen={setTabletSidebarOpen}
             setMobileTab={setMobileTab}
             setSidebarTab={setSidebarTab}
+            openMissionControlModal={openMissionControlModal}
             renderOfflineSyncBar={renderOfflineSyncBar}
             renderAdminWorkspace={renderAdminWorkspace}
             adminSection={adminSection}
@@ -5413,6 +5898,8 @@ export default function App() {
             agentsError={agentsError}
             followingAgent={followingAgent}
             setFollowingAgent={setFollowingAgent}
+            activeDocHubTool={activeDocHubTool}
+            onMobileDocHubToolActivated={activateMobileDocHubTool}
           />
         </Suspense>
       ) : null}
@@ -5422,10 +5909,20 @@ export default function App() {
           <MCCreateTaskModal
             open
             apiBase={runtime.apiBase}
-            onClose={() => setCreateTaskModalOpen(false)}
+            onClose={() => {
+              setCreateTaskModalOpen(false);
+              setCreateTaskWorkDomain(null);
+            }}
             onCreateTask={createTask}
+            defaultWorkDomain={createTaskWorkDomain}
             onCreated={(task) => {
-              handleTaskSelect(task.id);
+              if (createTaskWorkDomain === 'engineering') {
+                window.dispatchEvent(new Event(ENGINEERING_TASKS_REFRESH_EVENT));
+              }
+              handleTaskSelect(
+                task.id,
+                createTaskWorkDomain === 'engineering' ? 'engineering' : 'kanban',
+              );
             }}
           />
         </Suspense>

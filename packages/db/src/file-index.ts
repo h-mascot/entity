@@ -70,6 +70,7 @@ export interface FileIndexRepository {
   upsertRecord: (input: UpsertFileIndexInput) => FileIndexRecord;
   search: (query: string, filters?: FileIndexSearchFilters) => FileIndexRecord[];
   deleteBySourcePathPrefix: (sourceId: string, pathPrefix: string) => number;
+  reconcileSourcePaths: (sourceId: string, currentPaths: readonly string[]) => number;
   listBySource: (sourceId: string, limit?: number) => FileIndexRecord[];
   startSyncRun: (sourceId: string) => FileSyncRunRecord;
   finishSyncRun: (
@@ -226,6 +227,8 @@ export function createFileIndexRepository(): FileIndexRepository {
     WHERE source_id = ?
       AND (path = ? OR (substr(path, 1, ?) = ? AND substr(path, ?, 1) = '/'))
   `);
+  const listSourcePathsStmt = db.prepare('SELECT path FROM file_index WHERE source_id = ?');
+  const deleteSourcePathStmt = db.prepare('DELETE FROM file_index WHERE source_id = ? AND path = ?');
   const listBySourceStmt = db.prepare('SELECT * FROM file_index WHERE source_id = ? ORDER BY indexed_at DESC LIMIT ?');
   const getSyncRunStmt = db.prepare('SELECT * FROM file_sync_runs WHERE id = ?');
   const latestSyncRunStmt = db.prepare(
@@ -357,6 +360,30 @@ export function createFileIndexRepository(): FileIndexRepository {
         normalized.length + 1
       );
       return Number(result.changes ?? 0);
+    },
+
+    reconcileSourcePaths: (sourceId: string, currentPaths: readonly string[]) => {
+      const normalizedSourceId = sourceId.trim();
+      if (!normalizedSourceId) {
+        return 0;
+      }
+
+      const currentPathSet = new Set(currentPaths);
+      const indexedPaths = listSourcePathsStmt.all(normalizedSourceId) as Array<{ path: string }>;
+      const stalePaths = indexedPaths
+        .map((row) => String(row.path))
+        .filter((indexedPath) => !currentPathSet.has(indexedPath));
+
+      const deleteStalePaths = db.transaction((paths: readonly string[]) => {
+        let deleted = 0;
+        for (const stalePath of paths) {
+          const result = deleteSourcePathStmt.run(normalizedSourceId, stalePath);
+          deleted += Number(result.changes ?? 0);
+        }
+        return deleted;
+      });
+
+      return deleteStalePaths(stalePaths);
     },
 
     listBySource: (sourceId: string, limit = 100) => {

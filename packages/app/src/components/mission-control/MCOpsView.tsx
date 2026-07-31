@@ -5,6 +5,7 @@ import type { MCTab } from './MCHeader';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
 import { buildBookmarkMetadata, formatTaskProjectSummary, isTaskBookmarked } from './utils/taskHelpers';
 import { toErrorMessage } from '../../lib/http';
+import { resolveScopedTaskDetailId } from '../../lib/taskLoadingGuards';
 import { readUserProfile } from '../../lib/userProfile';
 import {
   fetchWorktypeRegistry,
@@ -37,6 +38,9 @@ interface MCOpsViewProps {
   onCloseTask?: () => void;
   onDocsLinkNavigate?: (href: string) => boolean;
   showArchiveColumn?: boolean;
+  scopeTaskDetailsToTasks?: boolean;
+  /** THE-860 — board/tab key preserved into Workplane return context. */
+  returnBoard?: string | null;
 }
 
 type BoardColumn = TaskColumn | 'archive';
@@ -184,6 +188,8 @@ export default function MCOpsView({
   onCloseTask,
   onDocsLinkNavigate,
   showArchiveColumn = true,
+  scopeTaskDetailsToTasks = false,
+  returnBoard = null,
 }: MCOpsViewProps) {
   const { updateTask } = useTaskBoard({ apiBase, autoLoad: false });
   const shouldShowInsights = showInsights || !compactShell;
@@ -390,6 +396,17 @@ export default function MCOpsView({
 
     setSelectedTaskId(highlightTaskId);
   }, [highlightTaskId]);
+
+  useEffect(() => {
+    const nextSelectedTaskId = resolveScopedTaskDetailId(
+      tasks.map((task) => task.id),
+      selectedTaskId,
+      scopeTaskDetailsToTasks,
+    );
+    if (nextSelectedTaskId !== selectedTaskId) {
+      setSelectedTaskId(nextSelectedTaskId);
+    }
+  }, [scopeTaskDetailsToTasks, selectedTaskId, tasks]);
 
   const handleMoveTask = useCallback(async (taskId: number, column: BoardColumn) => {
     if (column === 'archive') {
@@ -740,6 +757,7 @@ export default function MCOpsView({
             taskId={activeTaskDetailId}
             onClose={handleCloseTask}
             onDocsLinkNavigate={onDocsLinkNavigate}
+            returnBoard={returnBoard}
           />
         </Suspense>
       ) : null}

@@ -172,6 +172,10 @@ describe('file routes', () => {
       expect(workspaceFile.status).toBe(200);
       await expect(workspaceFile.json()).resolves.toMatchObject({ readOnly: false, content: '# Demo\n' });
 
+      const missingFile = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=deleted.md`);
+      expect(missingFile.status).toBe(404);
+      await expect(missingFile.json()).resolves.toMatchObject({ error: expect.stringContaining('no such file') });
+
       const workspaceWrite = await fetch(`${baseUrl}/api/fs/file`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

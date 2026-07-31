@@ -31,6 +31,9 @@ describe('securityHeaders', () => {
     expect(headers.get('Content-Security-Policy')).toContain("default-src 'self'");
     expect(headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
     expect(headers.get('Content-Security-Policy')).toContain(
+      "script-src 'self' 'unsafe-inline' blob:",
+    );
+    expect(headers.get('Content-Security-Policy')).toContain(
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     );
     expect(headers.get('Content-Security-Policy')).toContain("font-src 'self' data: https://fonts.gstatic.com");

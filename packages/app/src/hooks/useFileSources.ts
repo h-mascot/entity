@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
 import { cacheApiPayload, readCachedApiPayloadEntry } from '../lib/offline';
+import { shouldUseOfflineFileCache } from '../lib/fileCacheFallback';
 import type {
   FileSource,
   SourceFileResponse,
@@ -241,11 +242,14 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
         ...buildApiOnlyUrls(path, apiBase),
       ]);
       let lastError: Error | null = null;
+      let cacheFallbackAllowed = true;
 
       for (const url of urls) {
         try {
           const response = await fetch(url, { method: 'GET' });
           if (!response.ok) {
+            cacheFallbackAllowed =
+              cacheFallbackAllowed && shouldUseOfflineFileCache(response.status);
             throw new Error(`Request failed (${response.status})`);
           }
 
@@ -270,14 +274,16 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
         }
       }
 
-      const cachedEntry = await readCachedApiPayloadEntry<SourceFileResponse>(urls);
-      if (cachedEntry) {
-        return {
-          ...cachedEntry.payload,
-          cached: true,
-          cachedAt: new Date(cachedEntry.updatedAt).toISOString(),
-          cacheAgeMs: Math.max(0, Date.now() - cachedEntry.updatedAt),
-        };
+      if (cacheFallbackAllowed) {
+        const cachedEntry = await readCachedApiPayloadEntry<SourceFileResponse>(urls);
+        if (cachedEntry) {
+          return {
+            ...cachedEntry.payload,
+            cached: true,
+            cachedAt: new Date(cachedEntry.updatedAt).toISOString(),
+            cacheAgeMs: Math.max(0, Date.now() - cachedEntry.updatedAt),
+          };
+        }
       }
 
       throw lastError ?? new Error('Failed to load source file.');

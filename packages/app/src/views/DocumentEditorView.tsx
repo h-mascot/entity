@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from 'react';
+import { shouldShowDocumentRightRail } from '../lib/documentShellState';
 import { isMarkdownFilePath, shouldRenderMarkdownPreview } from '../lib/markdownFile';
 
 const CodeMirrorEditor = lazy(() => import('../components/CodeMirrorEditor'));
@@ -50,11 +51,31 @@ function LazyDocIntelligencePanel(props: any) {
   );
 }
 
+function FileLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex h-full min-h-[16rem] items-center justify-center p-6">
+      <div
+        className="max-w-md rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-5 text-center"
+        role="alert"
+      >
+        <div className="text-3xl" aria-hidden="true">⚠️</div>
+        <h2 className="mt-3 text-base font-semibold text-[var(--text-primary)]">Couldn’t open this file</h2>
+        <p className="mt-2 text-sm text-[var(--text-muted)]">{message}</p>
+        <button type="button" onClick={onRetry} className="mc-shell-btn mt-4 px-3 py-2 text-sm">
+          Retry
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function DocumentEditorView(props: any) {
   const {
     currentFile,
     currentSourceId,
     fileContent,
+    currentFileLoadState,
+    handleRetryCurrentFile,
     setFileContent,
     editMode,
     setEditMode,
@@ -74,6 +95,8 @@ export default function DocumentEditorView(props: any) {
     setQuickSwitcherOpen,
     exitSplitMode,
     rightPaneContent,
+    rightPaneLoadState,
+    handleRetryRightPaneFile,
     handleRightPaneContentChange,
     rightPanePreviewMeta,
     rightPaneRawFileUrl,
@@ -137,20 +160,35 @@ export default function DocumentEditorView(props: any) {
     fileHistoryPanelOpen,
   } = props;
 
-  const [editorViewGetter, setEditorViewGetter] = useState<{ getView: () => any } | null>(null);
+  const [editorViewGetter, setEditorViewGetter] = useState<{ fileKey: string; getView: () => any } | null>(null);
   const isMarkdownDoc = isMarkdownFilePath(currentFile);
   const editorIsWritable =
-    editMode && editorCollabMode !== 'viewing' && !watchMode && !(editorCollabMode === 'editing' && currentFileReadOnly);
+    currentFileLoadState.status === 'ready' &&
+    editMode &&
+    editorCollabMode !== 'viewing' &&
+    !watchMode &&
+    !(editorCollabMode === 'editing' && currentFileReadOnly);
+  const showDocumentRightRail = shouldShowDocumentRightRail({
+    agentNativeEditorEnabled: runtime.agentNativeEditorEnabled,
+    documentsReady,
+  });
 
   const renderPrimaryEditorContent = () => (
     <div className="flex min-h-0 flex-1 flex-col">
-      {editorIsWritable && editorViewGetter ? (
+      {editorIsWritable &&
+      currentFileLoadState.status === 'ready' &&
+      editorViewGetter &&
+      editorViewGetter.fileKey === currentFileLoadState.fileKey ? (
         <Suspense fallback={null}>
           <EditorFormattingToolbar getView={editorViewGetter.getView} />
         </Suspense>
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto">
-      {editMode ? (
+      {currentFileLoadState.status === 'loading' ? (
+        <LazySurfaceFallback label="Loading file" />
+      ) : currentFileLoadState.status === 'error' ? (
+        <FileLoadError message={currentFileLoadState.message} onRetry={handleRetryCurrentFile} />
+      ) : editMode ? (
         <div
           className={`h-full w-full ${props.followGlowClassName} ${props.followTypingPulseActive ? 'agent-typing' : ''} ${
             props.fileTransitionActive ? 'mc-file-switch-anim' : ''
@@ -162,7 +200,11 @@ export default function DocumentEditorView(props: any) {
             onSave={handleSave}
             readOnly={editorCollabMode === 'viewing' || watchMode || (editorCollabMode === 'editing' && currentFileReadOnly)}
             hideGutter={isMarkdownDoc}
-            onViewReady={(getView: () => any) => setEditorViewGetter({ getView })}
+            onViewReady={(getView: () => any) => {
+              if (currentFileLoadState.status === 'ready') {
+                setEditorViewGetter({ fileKey: currentFileLoadState.fileKey, getView });
+              }
+            }}
             shortcutsEnabled={runtime.agentNativeEditorEnabled}
             collabMode={editorCollabMode}
             onSuggestingEdit={documentsReady ? handleSuggestingEdit : undefined}
@@ -365,7 +407,11 @@ export default function DocumentEditorView(props: any) {
 
             <div className="min-h-0 flex-1 overflow-auto">
               {rightPaneFile ? (
-                editMode ? (
+                rightPaneLoadState.status === 'loading' ? (
+                  <LazySurfaceFallback label="Loading file" />
+                ) : rightPaneLoadState.status === 'error' ? (
+                  <FileLoadError message={rightPaneLoadState.message} onRetry={handleRetryRightPaneFile} />
+                ) : editMode ? (
                   <div className="h-full w-full">
                     <LazyCodeMirrorEditor
                       content={rightPaneContent}
@@ -381,7 +427,10 @@ export default function DocumentEditorView(props: any) {
                       ttsSettings={docsTtsSettings}
                       onTtsSettingsChange={handleDocsTtsSettingsChange}
                       onToast={pushToast}
-                      onDocsLinkNavigate={handleMarkdownDocsNavigation}
+                      onDocsLinkNavigate={(href: string) => handleMarkdownDocsNavigation(href, {
+                        sourceId: rightPaneSourceId,
+                        path: rightPaneFile,
+                      })}
                       tts="none"
                     />
                   ) : (
@@ -422,7 +471,7 @@ export default function DocumentEditorView(props: any) {
         </div>
       )}
 
-      {runtime.agentNativeEditorEnabled && documentsReady && (
+      {showDocumentRightRail && (
         <LazyDocIntelligencePanel
           collapsed={rightSidebarIsCollapsed}
           setCollapsed={setRightSidebarCollapsed}

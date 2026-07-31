@@ -3,6 +3,8 @@ import os from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import Database from 'better-sqlite3';
+import { ACTIVITY_EVENT_SPINE_TYPES } from './activity-event-spine';
+import { ensureActivityEventSpineStoreSchema } from './activity-event-spine-store';
 import { getEntityDatabase } from './entity-db';
 
 export const TASK_COLUMNS = ['backlog', 'todo', 'doing', 'review', 'done'] as const;
@@ -400,6 +402,7 @@ export interface CreateTaskInput {
   org_id?: string;
   team_id?: string;
   project_id?: number | null;
+  projectIds?: number[];
   created_by_principal_id?: string;
   initiator_principal_id?: string;
   initiator_type?: string;
@@ -575,6 +578,7 @@ export interface UpdateTaskInput {
   org_id?: string;
   team_id?: string;
   project_id?: number | null;
+  projectIds?: number[];
   created_by_principal_id?: string;
   initiator_principal_id?: string;
   initiator_type?: string;
@@ -619,7 +623,12 @@ export interface TaskRepository {
   listSubtasks: (parentTaskId: number) => TaskRecord[];
   getTask: (id: number) => TaskRecord | undefined;
   createTask: (input: CreateTaskInput) => TaskRecord;
+  createTaskWithProjects?: (input: CreateTaskInput) => TaskRecord;
   updateTask: (id: number, updates: UpdateTaskInput) => TaskRecord | undefined;
+  updateTaskWithProjects?: (
+    id: number,
+    updates: UpdateTaskInput,
+  ) => TaskRecord | undefined;
   claimTaskForTaskMaster: (id: number, input?: ClaimTaskForTaskMasterInput) => TaskMasterClaimResult;
   moveTask: (id: number, nextColumn: string) => TaskRecord | undefined;
   deleteTask: (id: number) => boolean;
@@ -2692,6 +2701,8 @@ export const ACTIVITY_EVENT_TYPES = [
   'permission_denied',
   'integration_degraded',
   'migration_warning',
+  // Workplane minimal ActivityEvent spine (THE-869 / WP1-C-01)
+  ...ACTIVITY_EVENT_SPINE_TYPES,
   'legacy_event_observed',
 ] as const;
 
@@ -2877,6 +2888,8 @@ export interface ProjectRecord {
   name: string;
   color: string | null;
   lifecycle_state?: string;
+  project_key: string | null;
+  work_domain: string | null;
   created_at: string;
 }
 
@@ -2886,12 +2899,16 @@ export interface CreateProjectInput {
   name: string;
   color?: string;
   lifecycle_state?: string;
+  project_key?: string | null;
+  work_domain?: string | null;
 }
 
 export interface UpdateProjectInput {
   name?: string;
   color?: string | null;
   lifecycle_state?: string;
+  project_key?: string | null;
+  work_domain?: string | null;
 }
 
 export interface OrgRecord {
@@ -2900,6 +2917,9 @@ export interface OrgRecord {
   slug: string;
   status: string;
   deployment_mode: string;
+  mission: string | null;
+  domains_json: string;
+  blueprint_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2910,6 +2930,9 @@ export interface CreateOrgInput {
   slug?: string;
   status?: string;
   deployment_mode?: string;
+  mission?: string | null;
+  domains_json?: string;
+  blueprint_json?: string | null;
 }
 
 export interface UpdateOrgInput {
@@ -2917,6 +2940,9 @@ export interface UpdateOrgInput {
   slug?: string;
   status?: string;
   deployment_mode?: string;
+  mission?: string | null;
+  domains_json?: string;
+  blueprint_json?: string | null;
 }
 
 export interface TeamRecord {
@@ -3484,6 +3510,25 @@ function normalizeWorkspaceId(value: unknown, fallback?: string): string {
   throw new Error('org context is required');
 }
 
+function normalizeProjectClassificationSlug(
+  value: unknown,
+  field: 'project_key' | 'work_domain',
+): string | null {
+  if (value === null || typeof value === 'undefined') {
+    return null;
+  }
+  if (
+    typeof value !== 'string' ||
+    value !== value.trim() ||
+    value.length < 1 ||
+    value.length > 64 ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+  ) {
+    throw new Error(`${field} must be a normalized lowercase slug (1-64 characters)`);
+  }
+  return value;
+}
+
 function normalizeOrgQueryContext(context: OrgQueryContext): Required<OrgQueryContext> {
   const orgId = normalizeWorkspaceId(context?.orgId);
   const teamId = normalizeWorkspaceId(context?.teamId, DEFAULT_WORKSPACE_TEAM_ID);
@@ -3499,6 +3544,21 @@ function normalizeJsonObjectString(value: unknown): string {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? JSON.stringify(parsed) : '{}';
   } catch {
     return '{}';
+  }
+}
+
+function normalizeJsonArrayString(value: unknown): string {
+  if (Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return '[]';
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? JSON.stringify(parsed) : '[]';
+  } catch {
+    return '[]';
   }
 }
 
@@ -4978,6 +5038,9 @@ function bootstrap(db: Database.Database): void {
       slug TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL DEFAULT 'active',
       deployment_mode TEXT NOT NULL DEFAULT 'saas',
+      mission TEXT,
+      domains_json TEXT NOT NULL DEFAULT '[]',
+      blueprint_json TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -5269,6 +5332,8 @@ function bootstrap(db: Database.Database): void {
       name TEXT NOT NULL,
       color TEXT,
       lifecycle_state TEXT NOT NULL DEFAULT 'active',
+      project_key TEXT,
+      work_domain TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -5768,6 +5833,9 @@ function bootstrap(db: Database.Database): void {
 
   db.exec('CREATE INDEX IF NOT EXISTS idx_activities_event_type ON activities(activity_event_type)');
 
+  // THE-870 / WP1-C-02 — additive task-scoped ActivityEvent spine storage
+  ensureActivityEventSpineStoreSchema(db);
+
   seedDefaultMissionControlProjects(db);
   seedEntityRegistryDefaults(db);
 }
@@ -5873,9 +5941,21 @@ function ensureTaskSchema(db: Database.Database): void {
 }
 
 function ensureWorkspaceScopeSchema(db: Database.Database): void {
+  if (!hasColumn(db, 'orgs', 'mission')) {
+    db.exec('ALTER TABLE orgs ADD COLUMN mission TEXT');
+  }
+
+  if (!hasColumn(db, 'orgs', 'domains_json')) {
+    db.exec("ALTER TABLE orgs ADD COLUMN domains_json TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  if (!hasColumn(db, 'orgs', 'blueprint_json')) {
+    db.exec('ALTER TABLE orgs ADD COLUMN blueprint_json TEXT');
+  }
+
   db.prepare(`
-    INSERT OR IGNORE INTO orgs (id, name, slug, status, deployment_mode)
-    VALUES (?, ?, ?, 'active', 'saas')
+    INSERT OR IGNORE INTO orgs (id, name, slug, status, deployment_mode, domains_json)
+    VALUES (?, ?, ?, 'active', 'saas', '[]')
   `).run(DEFAULT_WORKSPACE_ORG_ID, 'Default Workspace', 'default');
 
   db.prepare(`
@@ -5973,6 +6053,14 @@ function ensureWorkspaceScopeSchema(db: Database.Database): void {
 
   if (!hasColumn(db, 'projects', 'lifecycle_state')) {
     db.exec("ALTER TABLE projects ADD COLUMN lifecycle_state TEXT DEFAULT 'active'");
+  }
+
+  if (!hasColumn(db, 'projects', 'project_key')) {
+    db.exec('ALTER TABLE projects ADD COLUMN project_key TEXT');
+  }
+
+  if (!hasColumn(db, 'projects', 'work_domain')) {
+    db.exec('ALTER TABLE projects ADD COLUMN work_domain TEXT');
   }
 
   if (!hasColumn(db, 'task_projects', 'org_id')) {
@@ -6084,8 +6172,45 @@ function ensureWorkspaceScopeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_tasks_team_updated_at ON tasks(team_id, updated_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_projects_org_team ON projects(org_id, team_id, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_org_team_project_key
+      ON projects(org_id, team_id, project_key)
+      WHERE project_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_projects_org_team_work_domain
+      ON projects(org_id, team_id, work_domain, lifecycle_state, id);
     CREATE INDEX IF NOT EXISTS idx_task_projects_org_task_id ON task_projects(org_id, task_id);
   `);
+}
+
+function seedEntityEngineeringProject(db: Database.Database): void {
+  db.prepare(`
+    INSERT INTO projects (
+      org_id,
+      team_id,
+      name,
+      color,
+      lifecycle_state,
+      project_key,
+      work_domain,
+      created_at
+    )
+    SELECT ?, ?, ?, NULL, 'active', ?, ?, CURRENT_TIMESTAMP
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM projects
+      WHERE org_id = ?
+        AND team_id = ?
+        AND project_key = ?
+    )
+  `).run(
+    DEFAULT_WORKSPACE_ORG_ID,
+    DEFAULT_WORKSPACE_TEAM_ID,
+    'Entity Engineering',
+    'entity-engineering',
+    'engineering',
+    DEFAULT_WORKSPACE_ORG_ID,
+    DEFAULT_WORKSPACE_TEAM_ID,
+    'entity-engineering',
+  );
 }
 
 function openEntityDatabase(): Database.Database {
@@ -6093,6 +6218,7 @@ function openEntityDatabase(): Database.Database {
     bootstrap(db);
     ensureTaskSchema(db);
     ensureWorkspaceScopeSchema(db);
+    seedEntityEngineeringProject(db);
   });
 }
 
@@ -7754,6 +7880,8 @@ function mapProjectRow(row: Record<string, unknown>): ProjectRecord {
     name: String(row.name ?? ''),
     color: normalizeBlockerReason(row.color),
     lifecycle_state: normalizeBlockerReason(row.lifecycle_state) ?? 'active',
+    project_key: normalizeBlockerReason(row.project_key),
+    work_domain: normalizeBlockerReason(row.work_domain),
     created_at: normalizeTimestamp(String(row.created_at ?? '')),
   };
 }
@@ -7765,6 +7893,9 @@ function mapOrgRow(row: Record<string, unknown>): OrgRecord {
     slug: String(row.slug ?? ''),
     status: String(row.status ?? 'active'),
     deployment_mode: String(row.deployment_mode ?? 'saas'),
+    mission: normalizeBlockerReason(row.mission),
+    domains_json: normalizeJsonArrayString(row.domains_json),
+    blueprint_json: normalizeBlockerReason(row.blueprint_json),
     created_at: normalizeTimestamp(String(row.created_at ?? '')),
     updated_at: normalizeTimestamp(String(row.updated_at ?? row.created_at ?? '')),
   };
@@ -7822,6 +7953,8 @@ function loadProjectsByTaskIds(db: Database.Database, taskIds: readonly number[]
       p.name,
       p.color,
       p.lifecycle_state,
+      p.project_key,
+      p.work_domain,
       p.created_at
     FROM task_projects tp
     INNER JOIN projects p ON p.id = tp.project_id
@@ -7889,6 +8022,8 @@ function loadProjectsByTaskIdsForOrg(
       p.name,
       p.color,
       p.lifecycle_state,
+      p.project_key,
+      p.work_domain,
       p.created_at
     FROM task_projects tp
     INNER JOIN projects p ON p.id = tp.project_id AND p.org_id = tp.org_id
@@ -8220,10 +8355,14 @@ export function createTaskRepository(): TaskRepository {
   const deleteTaskCommentsStmt = db.prepare('DELETE FROM task_comments WHERE task_id = ?');
   const deleteTaskProjectsByTaskStmt = db.prepare('DELETE FROM task_projects WHERE task_id = ?');
   const deleteTaskActivitiesStmt = db.prepare('DELETE FROM activities WHERE task_id = ?');
+  const deleteTaskSpineEventsStmt = db.prepare(
+    'DELETE FROM task_activity_spine_events WHERE task_id = ?',
+  );
   const deleteTaskWithChildren = db.transaction((id: number) => {
     deleteTaskCommentsStmt.run(id);
     deleteTaskProjectsByTaskStmt.run(id);
     deleteTaskActivitiesStmt.run(id);
+    deleteTaskSpineEventsStmt.run(id);
     return deleteStmt.run(id);
   });
 
@@ -9405,14 +9544,17 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
       slug,
       status,
       deployment_mode,
+      mission,
+      domains_json,
+      blueprint_json,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const getOrgStmt = db.prepare('SELECT * FROM orgs WHERE id = ?');
   const updateOrgStmt = db.prepare(`
     UPDATE orgs
-    SET name = ?, slug = ?, status = ?, deployment_mode = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, slug = ?, status = ?, deployment_mode = ?, mission = ?, domains_json = ?, blueprint_json = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `);
   const listTeamsStmt = db.prepare(`
@@ -9449,17 +9591,21 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
       name,
       color,
       lifecycle_state,
+      project_key,
+      work_domain,
       created_at
-    ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
   const getProjectStmt = db.prepare('SELECT * FROM projects WHERE id = ? AND org_id = ?');
   const getProjectInTeamStmt = db.prepare('SELECT * FROM projects WHERE id = ? AND org_id = ? AND team_id = ?');
   const updateProjectStmt = db.prepare(`
     UPDATE projects
-    SET name = ?, color = ?, lifecycle_state = ?
+    SET name = ?, color = ?, lifecycle_state = ?, project_key = ?, work_domain = ?
     WHERE id = ? AND org_id = ? AND (? IS NULL OR team_id = ?)
   `);
-  const getTaskInOrgStmt = db.prepare('SELECT id FROM tasks WHERE id = ? AND org_id = ?');
+  const getTaskInScopeStmt = db.prepare(
+    'SELECT id FROM tasks WHERE id = ? AND org_id = ? AND team_id = ?',
+  );
   const listTaskProjectsStmt = db.prepare(`
     SELECT
       p.id,
@@ -9468,23 +9614,40 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
       p.name,
       p.color,
       p.lifecycle_state,
+      p.project_key,
+      p.work_domain,
       p.created_at
     FROM task_projects tp
+    INNER JOIN tasks t
+      ON t.id = tp.task_id
+      AND t.org_id = tp.org_id
     INNER JOIN projects p ON p.id = tp.project_id AND p.org_id = tp.org_id
     WHERE tp.task_id = ?
       AND tp.org_id = ?
+      AND t.team_id = ?
+      AND p.team_id = ?
     ORDER BY p.name COLLATE NOCASE ASC, p.id ASC
   `);
   const addTaskProjectStmt = db.prepare(`
     INSERT OR IGNORE INTO task_projects (task_id, org_id, project_id)
     SELECT t.id, ?, p.id
     FROM tasks t
-    INNER JOIN projects p ON p.id = ? AND p.org_id = ?
-    WHERE t.id = ? AND t.org_id = ?
+    INNER JOIN projects p ON p.id = ? AND p.org_id = ? AND p.team_id = ?
+    WHERE t.id = ? AND t.org_id = ? AND t.team_id = ?
   `);
   const removeTaskProjectStmt = db.prepare(`
     DELETE FROM task_projects
     WHERE task_id = ? AND project_id = ? AND org_id = ?
+      AND EXISTS (
+        SELECT 1
+        FROM tasks t
+        INNER JOIN projects p ON p.id = task_projects.project_id
+        WHERE t.id = task_projects.task_id
+          AND t.org_id = task_projects.org_id
+          AND p.org_id = task_projects.org_id
+          AND t.team_id = ?
+          AND p.team_id = ?
+      )
   `);
 
   return {
@@ -9511,7 +9674,10 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
         name,
         normalizeSlug(input.slug, name),
         normalizeBlockerReason(input.status) ?? 'active',
-        normalizeBlockerReason(input.deployment_mode) ?? 'saas'
+        normalizeBlockerReason(input.deployment_mode) ?? 'saas',
+        normalizeBlockerReason(input.mission),
+        normalizeJsonArrayString(input.domains_json),
+        normalizeBlockerReason(input.blueprint_json)
       );
       const row = getOrgStmt.get(id) as Record<string, unknown> | undefined;
       if (!row) {
@@ -9538,6 +9704,9 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
         typeof updates.slug === 'string' ? normalizeSlug(updates.slug, name) : current.slug,
         normalizeBlockerReason(updates.status) ?? current.status,
         normalizeBlockerReason(updates.deployment_mode) ?? current.deployment_mode,
+        typeof updates.mission === 'undefined' ? current.mission : normalizeBlockerReason(updates.mission),
+        typeof updates.domains_json === 'undefined' ? current.domains_json : normalizeJsonArrayString(updates.domains_json),
+        typeof updates.blueprint_json === 'undefined' ? current.blueprint_json : normalizeBlockerReason(updates.blueprint_json),
         id
       );
       const row = getOrgStmt.get(id) as Record<string, unknown> | undefined;
@@ -9633,10 +9802,12 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
       const lifecycleState = normalizeBlockerReason(input.lifecycle_state) ?? 'active';
       const result = createProjectStmt.run(
         orgId,
-        normalizeWorkspaceId(input.team_id, teamId),
+        teamId,
         name,
         normalizeBlockerReason(input.color),
-        lifecycleState
+        lifecycleState,
+        normalizeProjectClassificationSlug(input.project_key, 'project_key'),
+        normalizeProjectClassificationSlug(input.work_domain, 'work_domain'),
       );
       const row = getProjectStmt.get(result.lastInsertRowid as number, orgId) as Record<string, unknown> | undefined;
       if (!row) {
@@ -9669,6 +9840,12 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
         name,
         typeof updates.color === 'undefined' ? current.color : normalizeBlockerReason(updates.color),
         normalizeBlockerReason(updates.lifecycle_state) ?? current.lifecycle_state ?? 'active',
+        typeof updates.project_key === 'undefined'
+          ? current.project_key
+          : normalizeProjectClassificationSlug(updates.project_key, 'project_key'),
+        typeof updates.work_domain === 'undefined'
+          ? current.work_domain
+          : normalizeProjectClassificationSlug(updates.work_domain, 'work_domain'),
         safeProjectId,
         orgId,
         teamId ?? null,
@@ -9681,23 +9858,23 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
     },
 
     getTaskProjects: (context: OrgQueryContext, taskId: number) => {
-      const { orgId } = normalizeOrgQueryContext(context);
+      const { orgId, teamId } = normalizeOrgQueryContext(context);
       const safeTaskId = normalizePositiveInteger(taskId);
       if (!safeTaskId) {
         throw new Error('task id must be a positive integer');
       }
 
-      const task = getTaskInOrgStmt.get(safeTaskId, orgId) as { id: number } | undefined;
+      const task = getTaskInScopeStmt.get(safeTaskId, orgId, teamId) as { id: number } | undefined;
       if (!task) {
         return [];
       }
 
-      const rows = listTaskProjectsStmt.all(safeTaskId, orgId) as Array<Record<string, unknown>>;
+      const rows = listTaskProjectsStmt.all(safeTaskId, orgId, teamId, teamId) as Array<Record<string, unknown>>;
       return rows.map(mapProjectRow);
     },
 
     addTaskProject: (context: OrgQueryContext, taskId: number, projectId: number) => {
-      const { orgId } = normalizeOrgQueryContext(context);
+      const { orgId, teamId } = normalizeOrgQueryContext(context);
       const safeTaskId = normalizePositiveInteger(taskId);
       if (!safeTaskId) {
         throw new Error('task id must be a positive integer');
@@ -9708,12 +9885,20 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
         throw new Error('project id must be a positive integer');
       }
 
-      const result = addTaskProjectStmt.run(orgId, safeProjectId, orgId, safeTaskId, orgId);
+      const result = addTaskProjectStmt.run(
+        orgId,
+        safeProjectId,
+        orgId,
+        teamId,
+        safeTaskId,
+        orgId,
+        teamId,
+      );
       return result.changes > 0;
     },
 
     removeTaskProject: (context: OrgQueryContext, taskId: number, projectId: number) => {
-      const { orgId } = normalizeOrgQueryContext(context);
+      const { orgId, teamId } = normalizeOrgQueryContext(context);
       const safeTaskId = normalizePositiveInteger(taskId);
       if (!safeTaskId) {
         throw new Error('task id must be a positive integer');
@@ -9724,7 +9909,7 @@ export function createWorkspaceScopeRepository(): WorkspaceScopeRepository {
         throw new Error('project id must be a positive integer');
       }
 
-      const result = removeTaskProjectStmt.run(safeTaskId, safeProjectId, orgId);
+      const result = removeTaskProjectStmt.run(safeTaskId, safeProjectId, orgId, teamId, teamId);
       return result.changes > 0;
     },
   };
@@ -10254,6 +10439,7 @@ interface StrategicRepository {
   getTaskProjects: (taskId: number) => ProjectRecord[];
   addTaskProject: (taskId: number, projectId: number) => boolean;
   removeTaskProject: (taskId: number, projectId: number) => boolean;
+  replaceTaskProjects: (taskId: number, projectIds: readonly number[]) => ProjectRecord[];
   getTaskHistory: (taskId: number) => TaskHistoryRecord[];
   addTaskHistory: (
     taskId: number,
@@ -10327,13 +10513,41 @@ function createStrategicRepository(): StrategicRepository {
       name,
       color,
       lifecycle_state,
+      project_key,
+      work_domain,
       created_at
-    ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
   const deleteTaskProjectsByProjectStmt = db.prepare('DELETE FROM task_projects WHERE project_id = ?');
+  const listTasksAffectedByProjectDeleteStmt = db.prepare(`
+    SELECT task_id AS id FROM task_projects WHERE project_id = ?
+    UNION
+    SELECT id FROM tasks WHERE project_id = ?
+  `);
+  const clearDeletedPrimaryProjectStmt = db.prepare(
+    'UPDATE tasks SET project_id = NULL WHERE project_id = ?',
+  );
+  const listRemainingTaskProjectNamesStmt = db.prepare(`
+    SELECT p.name
+    FROM task_projects tp
+    INNER JOIN projects p ON p.id = tp.project_id AND p.org_id = tp.org_id
+    WHERE tp.task_id = ?
+    ORDER BY p.name COLLATE NOCASE ASC, p.id ASC
+  `);
+  const updateTaskProjectLabelStmt = db.prepare('UPDATE tasks SET project = ? WHERE id = ?');
   const deleteProjectStmt = db.prepare('DELETE FROM projects WHERE id = ?');
   const deleteProjectTx = db.transaction((projectId: number) => {
+    const affectedTasks = listTasksAffectedByProjectDeleteStmt.all(
+      projectId,
+      projectId,
+    ) as Array<{ id: number }>;
     deleteTaskProjectsByProjectStmt.run(projectId);
+    clearDeletedPrimaryProjectStmt.run(projectId);
+    for (const task of affectedTasks) {
+      const remainingProjects = listRemainingTaskProjectNamesStmt.all(task.id) as Array<{ name: string }>;
+      const label = remainingProjects.map((project) => project.name.trim()).filter(Boolean).join(', ') || 'General';
+      updateTaskProjectLabelStmt.run(label, task.id);
+    }
     return deleteProjectStmt.run(projectId);
   });
 
@@ -10365,9 +10579,15 @@ function createStrategicRepository(): StrategicRepository {
       p.name,
       p.color,
       p.lifecycle_state,
+      p.project_key,
+      p.work_domain,
       p.created_at
     FROM task_projects tp
-    INNER JOIN projects p ON p.id = tp.project_id
+    INNER JOIN tasks t ON t.id = tp.task_id AND t.org_id = tp.org_id
+    INNER JOIN projects p
+      ON p.id = tp.project_id
+      AND p.org_id = tp.org_id
+      AND p.team_id = t.team_id
     WHERE tp.task_id = ?
     ORDER BY p.name COLLATE NOCASE ASC, p.id ASC
   `);
@@ -10375,10 +10595,61 @@ function createStrategicRepository(): StrategicRepository {
     INSERT OR IGNORE INTO task_projects (task_id, org_id, project_id)
     SELECT t.id, t.org_id, p.id
     FROM tasks t
-    INNER JOIN projects p ON p.id = ? AND p.org_id = t.org_id
+    INNER JOIN projects p
+      ON p.id = ?
+      AND p.org_id = t.org_id
+      AND p.team_id = t.team_id
     WHERE t.id = ?
   `);
   const removeTaskProjectStmt = db.prepare('DELETE FROM task_projects WHERE task_id = ? AND project_id = ?');
+  const getTaskProjectScopeStmt = db.prepare(
+    'SELECT org_id, team_id FROM tasks WHERE id = ?',
+  );
+  const deleteTaskProjectsByTaskStmt = db.prepare('DELETE FROM task_projects WHERE task_id = ?');
+  const insertTaskProjectLinkStmt = db.prepare(
+    'INSERT INTO task_projects (task_id, org_id, project_id) VALUES (?, ?, ?)',
+  );
+  const updateTaskPrimaryProjectStmt = db.prepare(
+    'UPDATE tasks SET project_id = ? WHERE id = ?',
+  );
+  const replaceTaskProjectsTx = db.transaction((taskId: number, projectIds: readonly number[]) => {
+    const task = getTaskProjectScopeStmt.get(taskId) as
+      | { org_id: string; team_id: string }
+      | undefined;
+    if (!task) {
+      throw new Error('task not found');
+    }
+
+    let projects: ProjectRecord[] = [];
+    if (projectIds.length > 0) {
+      const placeholders = projectIds.map(() => '?').join(', ');
+      const rows = db.prepare(`
+        SELECT *
+        FROM projects
+        WHERE id IN (${placeholders})
+          AND org_id = ?
+          AND team_id = ?
+      `).all(...projectIds, task.org_id, task.team_id) as Array<Record<string, unknown>>;
+      projects = rows.map(mapProjectRow);
+      if (projects.length !== projectIds.length) {
+        throw new Error('projects must belong to the task org and team');
+      }
+    }
+
+    deleteTaskProjectsByTaskStmt.run(taskId);
+    for (const projectId of projectIds) {
+      insertTaskProjectLinkStmt.run(taskId, task.org_id, projectId);
+    }
+
+    const projectsById = new Map(projects.map((project) => [project.id, project]));
+    const orderedProjects = projectIds
+      .map((projectId) => projectsById.get(projectId))
+      .filter((project): project is ProjectRecord => Boolean(project));
+    const label = orderedProjects.map((project) => project.name).join(', ') || 'General';
+    updateTaskPrimaryProjectStmt.run(projectIds[0] ?? null, taskId);
+    updateTaskProjectLabelStmt.run(label, taskId);
+    return orderedProjects;
+  });
 
   const listTaskHistoryStmt = db.prepare(
     'SELECT * FROM task_history WHERE task_id = ? ORDER BY datetime(changed_at) DESC, id DESC'
@@ -10597,7 +10868,9 @@ function createStrategicRepository(): StrategicRepository {
         normalizeWorkspaceId(input.team_id, DEFAULT_WORKSPACE_TEAM_ID),
         name,
         normalizeBlockerReason(input.color),
-        normalizeBlockerReason(input.lifecycle_state) ?? 'active'
+        normalizeBlockerReason(input.lifecycle_state) ?? 'active',
+        normalizeProjectClassificationSlug(input.project_key, 'project_key'),
+        normalizeProjectClassificationSlug(input.work_domain, 'work_domain'),
       );
       const row = getProjectStmt.get(result.lastInsertRowid as number) as Record<string, unknown> | undefined;
       if (!row) {
@@ -10722,6 +10995,21 @@ function createStrategicRepository(): StrategicRepository {
 
       const result = removeTaskProjectStmt.run(safeTaskId, safeProjectId);
       return result.changes > 0;
+    },
+
+    replaceTaskProjects: (taskId: number, projectIds: readonly number[]) => {
+      const safeTaskId = normalizePositiveInteger(taskId);
+      if (!safeTaskId) {
+        throw new Error('task id must be a positive integer');
+      }
+      const normalizedProjectIds = Array.from(new Set(projectIds.map((projectId) => {
+        const safeProjectId = normalizePositiveInteger(projectId);
+        if (!safeProjectId) {
+          throw new Error('project ids must be positive integers');
+        }
+        return safeProjectId;
+      })));
+      return replaceTaskProjectsTx(safeTaskId, normalizedProjectIds);
     },
 
     getTaskHistory: (taskId: number) => {
@@ -10852,6 +11140,42 @@ export function removeTaskProject(taskId: number, projectId: number): boolean {
   return getStrategicRepository().removeTaskProject(taskId, projectId);
 }
 
+export function createTaskWithProjects(
+  input: CreateTaskInput,
+  taskRepository: TaskRepository = createTaskRepository(),
+): TaskRecord {
+  const db = getEntityDatabase();
+  return db.transaction(() => {
+    const task = taskRepository.createTask(input);
+    if (input.projectIds !== undefined) {
+      replaceTaskProjects(task.id, input.projectIds);
+    }
+    return taskRepository.getTask(task.id) ?? task;
+  })();
+}
+
+export function updateTaskWithProjects(
+  taskId: number,
+  updates: UpdateTaskInput,
+  taskRepository: TaskRepository = createTaskRepository(),
+): TaskRecord | undefined {
+  const db = getEntityDatabase();
+  return db.transaction(() => {
+    const task = taskRepository.updateTask(taskId, updates);
+    if (!task) {
+      return undefined;
+    }
+    if (updates.projectIds !== undefined) {
+      replaceTaskProjects(task.id, updates.projectIds);
+    }
+    return taskRepository.getTask(task.id) ?? task;
+  })();
+}
+
+export function replaceTaskProjects(taskId: number, projectIds: readonly number[]): ProjectRecord[] {
+  return getStrategicRepository().replaceTaskProjects(taskId, projectIds);
+}
+
 export function getTaskHistory(taskId: number): TaskHistoryRecord[] {
   return getStrategicRepository().getTaskHistory(taskId);
 }
@@ -10894,6 +11218,32 @@ export {
   type InviteProgressStepStatus,
   type UpdateAgentInviteStatusInput,
 } from "./agent-invites";
+
+// Workplane ActivityEvent spine (THE-869 / WP1-C-01) — type/schema
+export {
+  ACTIVITY_EVENT_SPINE_TYPES,
+  classifyActivityEventToSpineType,
+  compareActivityEventSpineOrder,
+  isActivityEventSpineType,
+  normalizeActivityEventSpine,
+  normalizeActivityEventSpineType,
+  type ActivityEventSpine,
+  type ActivityEventSpineActor,
+  type ActivityEventSpineActorType,
+  type ActivityEventSpineNormalizeResult,
+  type ActivityEventSpineType,
+} from './activity-event-spine';
+
+// Workplane ActivityEvent spine storage (THE-870 / WP1-C-02) — task-scoped append/query
+export {
+  createActivityEventSpineRepository,
+  ensureActivityEventSpineStoreSchema,
+  type ActivityEventSpineRepository,
+  type AppendActivityEventSpineInput,
+  type AppendActivityEventSpineResult,
+  type ListActivityEventSpineResult,
+  type StoredActivityEventSpine,
+} from './activity-event-spine-store';
 
 
 export function getSubscribedCrews(agentSlug: string): CrewRecord[] {

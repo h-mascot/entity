@@ -5,6 +5,11 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { visit } from 'unist-util-visit';
 import type { Root, Text } from 'mdast';
+import {
+  createMarkdownHeadingIdFactory,
+  resolveMarkdownDocsLinkCandidate,
+  shouldInterceptMarkdownDocsClick,
+} from '../lib/markdownFile';
 import 'highlight.js/styles/github-dark.css';
 
 const htmlSchema = {
@@ -46,6 +51,12 @@ const htmlSchema = {
     font: [...(defaultSchema.attributes?.font ?? []), 'color'],
     a: [...(defaultSchema.attributes?.a ?? []), 'href'],
     img: [...(defaultSchema.attributes?.img ?? []), 'src', 'alt'],
+    h1: [...(defaultSchema.attributes?.h1 ?? []), 'dataAuthoredHeadingId'],
+    h2: [...(defaultSchema.attributes?.h2 ?? []), 'dataAuthoredHeadingId'],
+    h3: [...(defaultSchema.attributes?.h3 ?? []), 'dataAuthoredHeadingId'],
+    h4: [...(defaultSchema.attributes?.h4 ?? []), 'dataAuthoredHeadingId'],
+    h5: [...(defaultSchema.attributes?.h5 ?? []), 'dataAuthoredHeadingId'],
+    h6: [...(defaultSchema.attributes?.h6 ?? []), 'dataAuthoredHeadingId'],
   },
 };
 
@@ -53,6 +64,7 @@ interface MarkdownPreviewProps {
   content: string;
   loading?: boolean;
   onDocsLinkNavigate?: (href: string) => boolean;
+  hasDocumentLinkBase?: boolean;
   /**
    * Compact variant for embedding the shared doc renderer inside dense surfaces
    * (e.g. the task Output section) rather than the full-width docs page.
@@ -62,12 +74,16 @@ interface MarkdownPreviewProps {
 
 // Shared prose overrides (colors, code, tables, blockquotes) applied in both variants
 // so embedded renders stay visually consistent with the full DocHub document view.
-const SHARED_PROSE_CLASSES = `prose-headings:text-[var(--text-primary)]
+// break-words + [overflow-wrap:anywhere] keep long unbroken tokens (e.g. SOPS ENC[...]
+// blobs, hashes, URLs) wrapping inside the content card instead of clipping past its
+// right edge; prose-pre:whitespace-pre-wrap extends the same guarantee to code blocks.
+const SHARED_PROSE_CLASSES = `break-words [overflow-wrap:anywhere]
+      prose-headings:text-[var(--text-primary)]
       prose-p:text-[var(--text-secondary)]
       prose-a:text-[var(--accent)] prose-a:no-underline hover:prose-a:underline
       prose-strong:text-[var(--text-primary)]
       prose-code:text-[var(--text-secondary)] prose-code:bg-[var(--bg-secondary)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-code:border prose-code:border-[var(--border-primary)]
-      prose-pre:bg-[var(--bg-secondary)] prose-pre:border prose-pre:border-[var(--bg-tertiary)] prose-pre:rounded-lg
+      prose-pre:bg-[var(--bg-secondary)] prose-pre:border prose-pre:border-[var(--bg-tertiary)] prose-pre:rounded-lg prose-pre:whitespace-pre-wrap prose-pre:break-words prose-pre:[overflow-wrap:anywhere]
       prose-blockquote:border-[var(--border-secondary)] prose-blockquote:bg-[var(--bg-tertiary)] prose-blockquote:rounded-r-lg
       prose-li:text-[var(--text-secondary)]
       prose-table:border-collapse
@@ -195,7 +211,63 @@ function remarkEntityAutolink() {
   };
 }
 
-export default function MarkdownPreview({ content, loading, onDocsLinkNavigate, compact }: MarkdownPreviewProps) {
+function rehypeCaptureAuthoredHeadingIds() {
+  return (tree: any) => {
+    visit(tree, 'element', (node: any) => {
+      if (typeof node?.tagName !== 'string' || !/^h[1-6]$/.test(node.tagName)) {
+        return;
+      }
+      const authoredId = node.properties?.id;
+      if (typeof authoredId === 'string' && authoredId.trim()) {
+        node.properties = {
+          ...(node.properties ?? {}),
+          dataAuthoredHeadingId: authoredId,
+        };
+      }
+    });
+  };
+}
+
+function rehypeHeadingIds() {
+  const headingId = createMarkdownHeadingIdFactory();
+  const textContent = (node: any): string => {
+    if (node?.type === 'text') {
+      return typeof node.value === 'string' ? node.value : '';
+    }
+    return Array.isArray(node?.children)
+      ? node.children.map(textContent).join('')
+      : '';
+  };
+
+  return (tree: any) => {
+    visit(tree, 'element', (node: any) => {
+      if (typeof node?.tagName !== 'string' || !/^h[1-6]$/.test(node.tagName)) {
+        return;
+      }
+      const authoredId =
+        typeof node.properties?.dataAuthoredHeadingId === 'string'
+          ? node.properties.dataAuthoredHeadingId
+          : undefined;
+      if (node.properties) {
+        delete node.properties.dataAuthoredHeadingId;
+      }
+      const existingId =
+        authoredId ?? (typeof node.properties?.id === 'string' ? node.properties.id : undefined);
+      const id = headingId(textContent(node), existingId);
+      if (id) {
+        node.properties = { ...(node.properties ?? {}), id };
+      }
+    });
+  };
+}
+
+export default function MarkdownPreview({
+  content,
+  loading,
+  onDocsLinkNavigate,
+  hasDocumentLinkBase = false,
+  compact,
+}: MarkdownPreviewProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16 text-[var(--text-muted)]">
@@ -231,13 +303,23 @@ export default function MarkdownPreview({ content, loading, onDocsLinkNavigate, 
       ) : null}
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkEntityAutolink]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, htmlSchema], rehypeHighlight]}
+        rehypePlugins={[
+          rehypeRaw,
+          rehypeCaptureAuthoredHeadingIds,
+          [rehypeSanitize, htmlSchema],
+          rehypeHeadingIds,
+          rehypeHighlight,
+        ]}
         components={{
           a: ({ href, children, ref: _ref, node: _node, ...props }) => {
             const originalHref = typeof href === 'string' ? href.trim() : '';
             const entityDocsHref = originalHref ? toEntityDocsHref(originalHref) : null;
-            const resolvedHref = entityDocsHref ?? originalHref;
-            const docsHref = Boolean(entityDocsHref);
+            const docsLinkCandidate = entityDocsHref
+              ?? resolveMarkdownDocsLinkCandidate(originalHref, {
+                hasDocumentBase: hasDocumentLinkBase,
+              });
+            const resolvedHref = docsLinkCandidate ?? originalHref;
+            const docsHref = Boolean(docsLinkCandidate);
             const hashHref = resolvedHref.startsWith('#');
             const externalHref = Boolean(resolvedHref) && !docsHref && !hashHref;
             const originalOnClick = props.onClick;
@@ -253,7 +335,12 @@ export default function MarkdownPreview({ content, loading, onDocsLinkNavigate, 
                     originalOnClick(event);
                   }
 
-                  if (event.defaultPrevented || !docsHref || !resolvedHref || !onDocsLinkNavigate) {
+                  if (
+                    !shouldInterceptMarkdownDocsClick(event)
+                    || !docsHref
+                    || !resolvedHref
+                    || !onDocsLinkNavigate
+                  ) {
                     return;
                   }
 

@@ -18,6 +18,7 @@ export interface TaskAdapter {
 
 export interface TaskSyncLayer {
   getMode: () => DbMode;
+  getActiveAdapter?: () => TaskAdapter;
   setMode: (mode: DbMode | null) => void;
   hasCloudAdapter: () => boolean;
   listTasks: () => Promise<TaskRecord[]>;
@@ -147,6 +148,7 @@ export function createTaskSyncLayer(options: TaskSyncLayerOptions = {}): TaskSyn
 
   return {
     getMode: () => resolveMode(),
+    getActiveAdapter: () => getAdapter(),
     setMode: (mode: DbMode | null) => {
       runtimeModeOverride = mode;
     },

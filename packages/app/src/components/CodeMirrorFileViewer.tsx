@@ -791,7 +791,7 @@ export default function CodeMirrorFileViewer({
             </button>
           </div>
           <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
-            {htmlView === 'preview' ? <span title="Rendered in a sandboxed frame: no scripts, no app access.">Sandboxed · scripts off</span> : null}
+            {htmlView === 'preview' ? <span title="Rendered in a sandboxed frame with scripts enabled by default and isolated from the app session.">Sandboxed · scripts on</span> : null}
             {formattedSize ? <span>{formattedSize}</span> : null}
             {rawFileUrl ? (
               <a href={rawFileUrl} download={fileName} className="mc-shell-btn px-2 py-0.5 text-[11px]">
@@ -802,11 +802,12 @@ export default function CodeMirrorFileViewer({
         </div>
         {htmlView === 'preview' ? (
           <div className="min-h-0 flex-1 overflow-hidden bg-white">
-            {/* srcDoc + empty sandbox: renders markup/styles with no scripts and a null
-                origin, so workspace HTML can't touch the app session (XSS-safe). */}
+            {/* Keep the preview sandboxed, but allow scripts by default so exported
+                agent HTML reports and demos run while remaining on an opaque origin
+                with no same-origin access to the Entity app session. */}
             <iframe
               srcDoc={content}
-              sandbox=""
+              sandbox="allow-scripts allow-forms allow-popups allow-top-navigation-by-user-activation"
               title={`HTML preview for ${fileName}`}
               className="h-full w-full border-0"
             />

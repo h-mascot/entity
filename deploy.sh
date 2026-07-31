@@ -44,6 +44,7 @@ SKIP_RESTART="${ENTITY_DEPLOY_SKIP_RESTART:-0}"
 RELEASE_SHA="${ENTITY_RELEASE_SHA:-}"
 RELEASE_BRANCH="${ENTITY_RELEASE_BRANCH:-}"
 RELEASE_ENVIRONMENT="${ENTITY_RELEASE_ENVIRONMENT:-sandbox-or-prod-agnostic}"
+MIN_TASKS="${ENTITY_DEPLOY_MIN_TASKS:-10}"
 if [[ -z "$PROD_HTTP_HOST" ]]; then
   PROD_BASE_URL=""
 elif [[ "$PROD_HTTP_HOST" == http://* || "$PROD_HTTP_HOST" == https://* ]]; then
@@ -93,6 +94,10 @@ if ((${#missing[@]} > 0)); then
   error "Deploy is not configured. Set required environment variables: ${missing[*]}. Refusing to use public repo defaults for a production target or DB." 78
 fi
 
+if [[ ! "${MIN_TASKS}" =~ ^[0-9]+$ ]]; then
+  error "ENTITY_DEPLOY_MIN_TASKS must be numeric, got: ${MIN_TASKS}"
+fi
+
 if [[ "$PRINT_CONFIG" == "1" && "$DRY_RUN" == "1" ]]; then
   log "Dry-run config check complete; no deploy performed."
   exit 0
@@ -120,8 +125,8 @@ if [[ ! "${TASK_COUNT}" =~ ^[0-9]+$ ]]; then
   error "Production DB count was not numeric: ${TASK_COUNT}"
 fi
 
-if [[ "$TASK_COUNT" -lt 10 ]]; then
-  error "Production DB looks wrong (only ${TASK_COUNT} tasks). Aborting before sync."
+if [[ "$TASK_COUNT" -lt "$MIN_TASKS" ]]; then
+  error "Production DB looks wrong (only ${TASK_COUNT} tasks, minimum ${MIN_TASKS}). Aborting before sync."
 fi
 
 BACKUP_TS=$(date +%Y%m%d_%H%M%S)

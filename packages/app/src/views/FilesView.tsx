@@ -62,9 +62,12 @@ export default function FilesView(props: any) {
           onGoHome={onGoHome}
           showTts={Boolean(showDocHubTts && currentFile)}
           docsPath={currentFile ?? ''}
+          currentSourceId={props.currentSourceId}
+          fsMultiSourceEnabled={runtime.fsMultiSourceEnabled}
           fileContent={props.fileContent}
           docsTtsSettings={props.docsTtsSettings}
           onDocsTtsSettingsChange={props.handleDocsTtsSettingsChange}
+          onOpenVoiceSettings={props.onOpenVoiceSettings}
           pushToast={props.pushToast}
           filesContextBarProps={filesContextBarProps}
         />

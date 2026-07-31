@@ -1,0 +1,127 @@
+{
+  "generated_at": "2026-07-30T03:31:08.454175+00:00",
+  "parent": "THE-725",
+  "source_sha256": "4eaafc6815db1d731b0683ae4bf54096e64cc30e91a2b89d984fccc520ebd733",
+  "worktree_head": "2ad32ee47889ad69bb37efba4712dac7d8a084ea",
+  "linear_mcp": "needsAuth",
+  "actions": [
+    {
+      "identifier": "THE-745",
+      "code": "PR-B-01",
+      "title": "Define provider kinds, capabilities, errors, and safe DTOs",
+      "intended_state": "In Review",
+      "comment_summary": "Phase B implementation complete in worktree; proof under output/runner/provider-registry-phase-b/; await codex-governed review before Done.",
+      "proof_paths": [
+        "output/runner/provider-registry-phase-b/phase-b-final-report.md",
+        "output/runner/provider-registry-phase-b/phase-b-test-receipt.md"
+      ],
+      "linear_update": "deferred_to_wrapper",
+      "note": "Linear MCP needsAuth in this environment; wrapper/manager posts proof comments."
+    },
+    {
+      "identifier": "THE-746",
+      "code": "PR-B-02",
+      "title": "Implement profile repository interface",
+      "intended_state": "In Review",
+      "comment_summary": "Phase B implementation complete in worktree; proof under output/runner/provider-registry-phase-b/; await codex-governed review before Done.",
+      "proof_paths": [
+        "output/runner/provider-registry-phase-b/phase-b-final-report.md",
+        "output/runner/provider-registry-phase-b/phase-b-test-receipt.md"
+      ],
+      "linear_update": "deferred_to_wrapper",
+      "note": "Linear MCP needsAuth in this environment; wrapper/manager posts proof comments."
+    },
+    {
+      "identifier": "THE-747",
+      "code": "PR-B-03",
+      "title": "Add additive registry schema migration",
+      "intended_state": "In Review",
+      "comment_summary": "Phase B implementation complete in worktree; proof under output/runner/provider-registry-phase-b/; await codex-governed review before Done.",
+      "proof_paths": [
+        "output/runner/provider-registry-phase-b/phase-b-final-report.md",
+        "output/runner/provider-registry-phase-b/phase-b-test-receipt.md"
+      ],
+      "linear_update": "deferred_to_wrapper",
+      "note": "Linear MCP needsAuth in this environment; wrapper/manager posts proof comments."
+    },
+    {
+      "identifier": "THE-748",
+      "code": "PR-B-04",
+      "title": "Implement models, capabilities, defaults, and bindings repositories",
+      "intended_state": "In Review",
+      "comment_summary": "Phase B implementation complete in worktree; proof under output/runner/provider-registry-phase-b/; await codex-governed review before Done.",
+      "proof_paths": [
+        "output/runner/provider-registry-phase-b/phase-b-final-report.md",
+        "output/runner/provider-registry-phase-b/phase-b-test-receipt.md"
+      ],
+      "linear_update": "deferred_to_wrapper",
+      "note": "Linear MCP needsAuth in this environment; wrapper/manager posts proof comments."
+    },
+    {
+      "identifier": "THE-749",
+      "code": "PR-B-05",
+      "title": "Implement health-check repository",
+      "intended_state": "In Review",
+      "comment_summary": "Phase B implementation complete in worktree; proof under output/runner/provider-registry-phase-b/; await codex-governed review before Done.",
+      "proof_paths": [
+        "output/runner/provider-registry-phase-b/phase-b-final-report.md",
+        "output/runner/provider-registry-phase-b/phase-b-test-receipt.md"
+      ],
+      "linear_update": "deferred_to_wrapper",
+      "note": "Linear MCP needsAuth in this environment; wrapper/manager posts proof comments."
+    },
+    {
+      "identifier": "THE-750",
+      "code": "PR-B-06",
+      "title": "Implement optimistic concurrency",
+      "intended_state": "In Review",
+      "comment_summary": "Phase B implementation complete in worktree; proof under output/runner/provider-registry-phase-b/; await codex-governed review before Done.",
+      "proof_paths": [
+        "output/runner/provider-registry-phase-b/phase-b-final-report.md",
+        "output/runner/provider-registry-phase-b/phase-b-test-receipt.md"
+      ],
+      "linear_update": "deferred_to_wrapper",
+      "note": "Linear MCP needsAuth in this environment; wrapper/manager posts proof comments."
+    },
+    {
+      "identifier": "THE-751",
+      "code": "PR-B-07",
+      "title": "Implement safe profile serializer",
+      "intended_state": "In Review",
+      "comment_summary": "Phase B implementation complete in worktree; proof under output/runner/provider-registry-phase-b/; await codex-governed review before Done.",
+      "proof_paths": [
+        "output/runner/provider-registry-phase-b/phase-b-final-report.md",
+        "output/runner/provider-registry-phase-b/phase-b-test-receipt.md"
+      ],
+      "linear_update": "deferred_to_wrapper",
+      "note": "Linear MCP needsAuth in this environment; wrapper/manager posts proof comments."
+    },
+    {
+      "identifier": "THE-752",
+      "code": "PR-B-08",
+      "title": "Implement audit-event adapter using existing framework or approved fallback",
+      "intended_state": "In Review",
+      "comment_summary": "Phase B implementation complete in worktree; proof under output/runner/provider-registry-phase-b/; await codex-governed review before Done.",
+      "proof_paths": [
+        "output/runner/provider-registry-phase-b/phase-b-final-report.md",
+        "output/runner/provider-registry-phase-b/phase-b-test-receipt.md"
+      ],
+      "linear_update": "deferred_to_wrapper",
+      "note": "Linear MCP needsAuth in this environment; wrapper/manager posts proof comments."
+    },
+    {
+      "identifier": "THE-753",
+      "code": "PR-B-09",
+      "title": "Verify old code starts against additive schema",
+      "intended_state": "In Review",
+      "comment_summary": "Phase B implementation complete in worktree; proof under output/runner/provider-registry-phase-b/; await codex-governed review before Done.",
+      "proof_paths": [
+        "output/runner/provider-registry-phase-b/phase-b-final-report.md",
+        "output/runner/provider-registry-phase-b/phase-b-test-receipt.md"
+      ],
+      "linear_update": "deferred_to_wrapper",
+      "note": "Linear MCP needsAuth in this environment; wrapper/manager posts proof comments."
+    }
+  ],
+  "commit_status": "uncommitted_ready_for_reviewer"
+}
