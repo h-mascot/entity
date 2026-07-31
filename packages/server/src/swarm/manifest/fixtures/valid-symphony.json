@@ -1,0 +1,119 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "execution-engine",
+  "identity": {
+    "id": "swarm.symphony",
+    "name": "symphony",
+    "label": "Symphony (Entity-native)",
+    "version": "1.0.0",
+    "category": "orchestration",
+    "description": "Pull-based orchestrator; runners claim jobs via Swarm tracker callbacks."
+  },
+  "execution": {
+    "mode": "pull",
+    "acceptsDispatch": true,
+    "entityPollsProvider": false,
+    "expectsClaimCallbacks": true
+  },
+  "lifecycle": {
+    "dispatch": true,
+    "status": true,
+    "cancel": true,
+    "collectProof": true,
+    "claimCallback": true,
+    "releaseCallback": true,
+    "proofCallback": true,
+    "completeCallback": true,
+    "failCallback": true
+  },
+  "callbacks": {
+    "intake": [
+      {
+        "event": "claim",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/claim",
+        "activityEventKind": "status",
+        "authRequired": true,
+        "idempotent": false
+      },
+      {
+        "event": "release",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/release",
+        "activityEventKind": "status",
+        "authRequired": true,
+        "idempotent": true
+      },
+      {
+        "event": "status",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/status",
+        "activityEventKind": "status",
+        "authRequired": true,
+        "idempotent": true
+      },
+      {
+        "event": "proof",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/proof",
+        "activityEventKind": "proof",
+        "authRequired": true,
+        "idempotent": false
+      },
+      {
+        "event": "complete",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/complete",
+        "activityEventKind": "status",
+        "authRequired": true,
+        "idempotent": true
+      },
+      {
+        "event": "fail",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/fail",
+        "activityEventKind": "blocker",
+        "authRequired": true,
+        "idempotent": true
+      }
+    ]
+  },
+  "statusMapping": {
+    "afterDispatch": "queued",
+    "runStateToJobStatus": {
+      "queued": "queued",
+      "running": "running",
+      "completed": "proof",
+      "failed": "failed",
+      "cancelled": "cancelled"
+    }
+  },
+  "health": {
+    "publicFields": ["available", "latencyMs", "message"],
+    "privateFields": ["apiUrl"],
+    "allowUrlsInPublicMessage": false,
+    "allowPathsInPublicMessage": false
+  },
+  "config": {
+    "bindings": [
+      {
+        "key": "SYMPHONY_API_URL",
+        "source": "env",
+        "required": false,
+        "secret": false,
+        "description": "Symphony dashboard URL for private health diagnostics"
+      },
+      {
+        "key": "SYMPHONY_API_KEY",
+        "source": "env",
+        "required": false,
+        "secret": true,
+        "description": "Optional Authorization bearer for Symphony health — never public"
+      }
+    ]
+  },
+  "dangerousActions": [],
+  "activityEvents": {
+    "emits": ["plan", "progress", "status", "proof", "blocker", "log"]
+  }
+}

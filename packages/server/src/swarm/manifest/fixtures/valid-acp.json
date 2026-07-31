@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "execution-engine",
+  "identity": {
+    "id": "swarm.acp",
+    "name": "acp",
+    "label": "Geordi (ACP/Codex on Mac)",
+    "version": "1.0.0",
+    "category": "orchestration",
+    "description": "Push-based ACP HTTP runner; Entity polls status and collects proof."
+  },
+  "execution": {
+    "mode": "push",
+    "acceptsDispatch": true,
+    "entityPollsProvider": true,
+    "expectsClaimCallbacks": false
+  },
+  "lifecycle": {
+    "dispatch": true,
+    "status": true,
+    "cancel": true,
+    "collectProof": true,
+    "claimCallback": false,
+    "releaseCallback": false,
+    "proofCallback": false,
+    "completeCallback": false,
+    "failCallback": false
+  },
+  "callbacks": {
+    "intake": []
+  },
+  "statusMapping": {
+    "afterDispatch": "running",
+    "runStateToJobStatus": {
+      "queued": "queued",
+      "running": "running",
+      "completed": "proof",
+      "failed": "failed",
+      "cancelled": "cancelled"
+    }
+  },
+  "health": {
+    "publicFields": ["available", "latencyMs", "message"],
+    "privateFields": ["baseUrl"],
+    "allowUrlsInPublicMessage": false,
+    "allowPathsInPublicMessage": false
+  },
+  "config": {
+    "bindings": [
+      {
+        "key": "ACP_BASE_URL",
+        "source": "env",
+        "required": false,
+        "secret": false,
+        "description": "ACP base URL (private diagnostic; not public health)"
+      }
+    ]
+  },
+  "dangerousActions": [],
+  "activityEvents": {
+    "emits": ["status", "proof", "log"]
+  }
+}
