@@ -13,6 +13,7 @@ import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   addTaskProject,
+  createActivityEventSpineRepository,
   createActivityRepository,
   createCrew,
   createDocumentObjectRepository,
@@ -157,6 +158,10 @@ import {
   createActivityEventRouter,
   createActivityEventService,
 } from "./activity-events";
+import {
+  createActivitySpineEventRouter,
+  createActivitySpineEventService,
+} from "./activity-spine-events";
 import {
   createTaskMasterClaimRouter,
   createTaskMasterClaimService,
@@ -323,10 +328,15 @@ function broadcast(data: unknown) {
 }
 
 const activityRepository = createActivityRepository();
+const activityEventSpineRepository = createActivityEventSpineRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
 const activityEventService = createActivityEventService({
   activityRepository,
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+});
+const activitySpineEventService = createActivitySpineEventService({
+  spineRepository: activityEventSpineRepository,
   getTask: (taskId) => taskSyncLayer.getTask(taskId),
 });
 const taskMasterClaimService = createTaskMasterClaimService({
@@ -497,6 +507,8 @@ registerDocIntelligenceRoutes(app, "");
 registerDocIntelligenceRoutes(app, "/api");
 app.use(createActivityEventRouter(activityEventService));
 app.use("/api", createActivityEventRouter(activityEventService));
+app.use(createActivitySpineEventRouter(activitySpineEventService));
+app.use("/api", createActivitySpineEventRouter(activitySpineEventService));
 app.use(createTaskMasterClaimRouter(taskMasterClaimService));
 app.use("/api", createTaskMasterClaimRouter(taskMasterClaimService));
 registerActivityRoutes(app, "", { activityRepository });

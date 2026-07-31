@@ -89,10 +89,12 @@ export const WORKPLANE_PANEL_SEAM_MAP: Record<
       'activity-event-spine.ACTIVITY_EVENT_SPINE_TYPES',
       'activity-event-spine.normalizeActivityEventSpine',
       'activity-event-spine.classifyActivityEventToSpineType',
+      'activity-event-spine-store.createActivityEventSpineRepository',
+      'GET/POST /tasks/:id/activity-spine-events',
     ],
     status: 'partial',
     notes:
-      'THE-869: spine types plan/progress/log/proof/status/blocker defined in packages/db; Workplane panel + storage/API land in WP1-C-02+.',
+      'THE-870: task-scoped spine storage/API append+query ready (empty state explicit); Workplane activity/progress panel UI is THE-871.',
   },
   comments_review_checklist: {
     panel: 'Comments/review checklist',

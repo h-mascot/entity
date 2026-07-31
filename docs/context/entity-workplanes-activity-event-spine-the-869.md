@@ -27,7 +27,7 @@ Define the minimal Workplane ActivityEvent spine vocabulary — `plan`, `progres
 
 ## Non-goals honored
 
-- No storage/API append+query (THE-870 / WP1-C-02)
+- No storage/API append+query (landed later as THE-870 / WP1-C-02)
 - No Workplane activity/progress panel UI
 - No review-gate enforcement / comments checklist
 - No runner-specific event models

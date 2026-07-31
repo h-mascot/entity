@@ -4,6 +4,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import Database from 'better-sqlite3';
 import { ACTIVITY_EVENT_SPINE_TYPES } from './activity-event-spine';
+import { ensureActivityEventSpineStoreSchema } from './activity-event-spine-store';
 import { getEntityDatabase } from './entity-db';
 
 export const TASK_COLUMNS = ['backlog', 'todo', 'doing', 'review', 'done'] as const;
@@ -5780,6 +5781,9 @@ function bootstrap(db: Database.Database): void {
 
   db.exec('CREATE INDEX IF NOT EXISTS idx_activities_event_type ON activities(activity_event_type)');
 
+  // THE-870 / WP1-C-02 — additive task-scoped ActivityEvent spine storage
+  ensureActivityEventSpineStoreSchema(db);
+
   seedDefaultMissionControlProjects(db);
   seedEntityRegistryDefaults(db);
 }
@@ -8299,10 +8303,14 @@ export function createTaskRepository(): TaskRepository {
   const deleteTaskCommentsStmt = db.prepare('DELETE FROM task_comments WHERE task_id = ?');
   const deleteTaskProjectsByTaskStmt = db.prepare('DELETE FROM task_projects WHERE task_id = ?');
   const deleteTaskActivitiesStmt = db.prepare('DELETE FROM activities WHERE task_id = ?');
+  const deleteTaskSpineEventsStmt = db.prepare(
+    'DELETE FROM task_activity_spine_events WHERE task_id = ?',
+  );
   const deleteTaskWithChildren = db.transaction((id: number) => {
     deleteTaskCommentsStmt.run(id);
     deleteTaskProjectsByTaskStmt.run(id);
     deleteTaskActivitiesStmt.run(id);
+    deleteTaskSpineEventsStmt.run(id);
     return deleteStmt.run(id);
   });
 
@@ -11139,7 +11147,7 @@ export {
   type ChatThreadRecord,
 } from "./chat";
 
-// Workplane ActivityEvent spine (THE-869 / WP1-C-01) — type/schema only; storage in THE-870
+// Workplane ActivityEvent spine (THE-869 / WP1-C-01) — type/schema
 export {
   ACTIVITY_EVENT_SPINE_TYPES,
   classifyActivityEventToSpineType,
@@ -11153,6 +11161,17 @@ export {
   type ActivityEventSpineNormalizeResult,
   type ActivityEventSpineType,
 } from './activity-event-spine';
+
+// Workplane ActivityEvent spine storage (THE-870 / WP1-C-02) — task-scoped append/query
+export {
+  createActivityEventSpineRepository,
+  ensureActivityEventSpineStoreSchema,
+  type ActivityEventSpineRepository,
+  type AppendActivityEventSpineInput,
+  type AppendActivityEventSpineResult,
+  type ListActivityEventSpineResult,
+  type StoredActivityEventSpine,
+} from './activity-event-spine-store';
 
 
 export function getSubscribedCrews(agentSlug: string): CrewRecord[] {

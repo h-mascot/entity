@@ -2,8 +2,8 @@
  * THE-869 / WP1-C-01 — Minimal Workplane ActivityEvent spine types.
  *
  * Defines the shared plan/progress/log/proof/status/blocker vocabulary for
- * Workplane activity/progress (grill Q38/Q46). Additive domain/schema only —
- * storage/API append+query lands in THE-870 / WP1-C-02.
+ * Workplane activity/progress (grill Q38/Q46). Additive domain/schema —
+ * storage/API append+query is THE-870 (`activity-event-spine-store`).
  *
  * Do not invent runner-specific event models; OpenClaw/agent signals map into
  * this spine over time via classifyActivityEventToSpineType.
