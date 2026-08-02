@@ -236,7 +236,7 @@ fi
 ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; UID_NUM=\$(id -u); if [[ -n '${RUNTIME_LAUNCHD_SERVICE}' ]] && launchctl print \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\" >/dev/null 2>&1; then launchctl kickstart -k \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\"; else lsof -i :'${PROD_PORT}' -t 2>/dev/null | xargs kill -9 2>/dev/null || true; sleep 2; mkdir -p \"\$(dirname '${RUNTIME_LOG_PATH}')\"; cd '${ENTITY_DIR}' && ${REMOTE_ENV} nohup node '${RUNTIME_NODE_ENTRY}' > '${RUNTIME_LOG_PATH}' 2>&1 & fi"
 sleep 4
 
-NEW_COUNT=$(curl -s "${PROD_BASE_URL}/api/tasks" | python3 -c "import sys, json; raw = sys.stdin.read().strip(); payload = json.loads(raw) if raw else {}; print(len(payload) if isinstance(payload, list) else payload.get('total', len(payload.get('tasks', [])) if isinstance(payload.get('tasks'), list) else 0))" 2>/dev/null || echo "0")
+NEW_COUNT=$(curl --noproxy "*" -sS "${PROD_BASE_URL}/api/tasks" | python3 -c "import sys, json; raw = sys.stdin.read().strip(); payload = json.loads(raw) if raw else {}; print(len(payload) if isinstance(payload, list) else payload.get('total', len(payload.get('tasks', [])) if isinstance(payload.get('tasks'), list) else 0))" 2>/dev/null || echo "0")
 NEW_COUNT=$(printf '%s' "${NEW_COUNT}" | tr -d '[:space:]')
 log "Post-deploy: ${NEW_COUNT} tasks (was ${TASK_COUNT})"
 
