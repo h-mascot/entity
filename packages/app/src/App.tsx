@@ -498,6 +498,11 @@ type AdminSection =
   | 'general'
   | 'profile'
   | 'missionControl'
+  | 'engineering'
+  | 'workplanes'
+  | 'strategicRoadmap'
+  | 'scopedSearch'
+  | 'channels'
   | 'agents'
   | 'integrations'
   | 'tts'
@@ -510,6 +515,11 @@ const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   general: 'General',
   profile: 'User Profile',
   missionControl: 'Mission Control',
+  engineering: 'Engineering',
+  workplanes: 'Workplanes',
+  strategicRoadmap: 'Strategic Roadmap',
+  scopedSearch: 'Scoped Search',
+  channels: 'Channels',
   agents: 'Agent Registry',
   integrations: 'Integrations',
   tts: 'Listen / TTS',
@@ -4480,6 +4490,11 @@ export default function App() {
       { key: 'general', title: 'General settings', hint: 'Workspace + security' },
       { key: 'profile', title: 'User profile', hint: 'Name + avatar' },
       { key: 'missionControl', title: 'Mission Control', hint: 'Board + data behavior' },
+      { key: 'engineering', title: 'Engineering', hint: 'Domain board + import gates' },
+      { key: 'workplanes', title: 'Workplanes', hint: 'Task cockpit + proof panels' },
+      { key: 'strategicRoadmap', title: 'Strategic roadmap', hint: 'Roadmap data + ordering' },
+      { key: 'scopedSearch', title: 'Scoped search', hint: 'Docs/task/proof search' },
+      { key: 'channels', title: 'Channels', hint: 'Adapter intake + notifications' },
       { key: 'agents', title: 'Agent registry', hint: 'Crew + scopes' },
       { key: 'integrations', title: 'Integrations', hint: 'Gateway + sync' },
       { key: 'plugins', title: 'Plugins', hint: 'Registry + runtime toggles' },
@@ -4701,6 +4716,21 @@ export default function App() {
             </button>
             <button type="button" onClick={() => setAdminSection('missionControl')} className="mc-shell-btn px-2 py-1 text-xs">
               Mission Control
+            </button>
+            <button type="button" onClick={() => setAdminSection('engineering')} className="mc-shell-btn px-2 py-1 text-xs">
+              Engineering
+            </button>
+            <button type="button" onClick={() => setAdminSection('workplanes')} className="mc-shell-btn px-2 py-1 text-xs">
+              Workplanes
+            </button>
+            <button type="button" onClick={() => setAdminSection('strategicRoadmap')} className="mc-shell-btn px-2 py-1 text-xs">
+              Strategic
+            </button>
+            <button type="button" onClick={() => setAdminSection('scopedSearch')} className="mc-shell-btn px-2 py-1 text-xs">
+              Search
+            </button>
+            <button type="button" onClick={() => setAdminSection('channels')} className="mc-shell-btn px-2 py-1 text-xs">
+              Channels
             </button>
             <button type="button" onClick={() => setAdminSection('agents')} className="mc-shell-btn px-2 py-1 text-xs">
               Agents
@@ -5155,6 +5185,11 @@ export default function App() {
         { key: 'general', icon: '🧩', label: 'General settings' },
         { key: 'profile', icon: '👤', label: 'User profile' },
         { key: 'missionControl', icon: '📋', label: 'Mission Control' },
+        { key: 'engineering', icon: '🛠️', label: 'Engineering' },
+        { key: 'workplanes', icon: '🧾', label: 'Workplanes' },
+        { key: 'strategicRoadmap', icon: '🗺️', label: 'Strategic roadmap' },
+        { key: 'scopedSearch', icon: '🔎', label: 'Scoped search' },
+        { key: 'channels', icon: '📣', label: 'Channels' },
         { key: 'integrations', icon: '🔌', label: 'Integrations' },
         { key: 'plugins', icon: '🧠', label: 'Plugins' },
         { key: 'voice', icon: '🎙️', label: 'Voice / TTS' },

@@ -14,6 +14,11 @@ type AdminSection =
   | 'general'
   | 'profile'
   | 'missionControl'
+  | 'engineering'
+  | 'workplanes'
+  | 'strategicRoadmap'
+  | 'scopedSearch'
+  | 'channels'
   | 'integrations'
   | 'tts'
   | 'plugins'
@@ -88,6 +93,38 @@ interface AdminViewProps {
   onInstallApp?: () => void;
   installPromptAvailable?: boolean;
   pwaInstalled?: boolean;
+}
+
+function FeatureSettingsCard({
+  title,
+  status,
+  body,
+  bullets,
+}: {
+  title: string;
+  status: string;
+  body: string;
+  bullets: string[];
+}) {
+  return (
+    <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-[var(--text-primary)]">{title}</div>
+          <div className="mt-1 text-xs text-[var(--text-muted)]">{body}</div>
+        </div>
+        <span className="mc-shell-pill px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">{status}</span>
+      </div>
+      <ul className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
+        {bullets.map((bullet) => (
+          <li key={bullet} className="flex gap-2">
+            <span aria-hidden="true">-</span>
+            <span>{bullet}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
@@ -462,6 +499,126 @@ export default function AdminView({
                 Refresh task cache
               </button>
             </div>
+          </div>
+        )}
+
+
+
+        {adminSection === 'engineering' && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <FeatureSettingsCard
+              title="Engineering board"
+              status="enabled"
+              body="Dedicated Mission Control domain board for Entity Engineering work."
+              bullets={[
+                'Create-task defaults fail closed unless an Engineering project/domain is available.',
+                'Imported backlog work uses idempotent title keys and backup receipts.',
+                'Current runtime shows the Engineering empty state cleanly when there are no scoped tasks.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Import gates"
+              status="guarded"
+              body="Controls are intentionally gated through receipts/backups rather than a blind UI button."
+              bullets={[
+                'Dry-run before write is required for roadmap/todo import lanes.',
+                'Approved import writes preserve a backup receipt and no-prod boundary.',
+              ]}
+            />
+          </div>
+        )}
+
+        {adminSection === 'workplanes' && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <FeatureSettingsCard
+              title="Task Workplanes"
+              status="enabled"
+              body="Deep task cockpit for task summary, proof, files, activity, comments, subtasks, and outputs."
+              bullets={[
+                'Layout is human-owned; agent layout mutation attempts must be rejected.',
+                'Missing proof must not present as review-ready.',
+                'Deep-link and return-to-board state are part of acceptance.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="ActivityEvent spine"
+              status="enabled"
+              body="Plan/progress/log/proof/status/blocker events feed receipts, reviews, routing, and notification history."
+              bullets={[
+                'Activity consumers are canonicalized through the ActivityEvent APIs.',
+                'Degraded/malformed events remain visible instead of disappearing.',
+              ]}
+            />
+          </div>
+        )}
+
+        {adminSection === 'strategicRoadmap' && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <FeatureSettingsCard
+              title="Strategic roadmap view"
+              status="enabled"
+              body="Renders roadmap, recurring tasks, and backlog/future ordering from Mission Control task state."
+              bullets={[
+                'Roadmaps and recurring tasks have explicit empty states.',
+                'Backlog/future items are visible without mutating task state.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Dependency-aware ordering"
+              status="read-only"
+              body="Strategic view exposes ordering and links without becoming a second task source of truth."
+              bullets={[
+                'Linear/roadmap links belong as references, not alternate status stores.',
+                'Promotions back into Ops should go through Mission Control task APIs.',
+              ]}
+            />
+          </div>
+        )}
+
+        {adminSection === 'scopedSearch' && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <FeatureSettingsCard
+              title="Scoped search"
+              status="enabled"
+              body="Search covers docs, task/proof surfaces, and degraded-index visibility."
+              bullets={[
+                'Doc Hub search supports source/type/origin/agent filters.',
+                'Task/proof search should show empty and degraded states rather than silent misses.',
+                'Search is a discovery layer; source-backed files remain the document truth.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Index health"
+              status="visible in Files/Docs"
+              body="Index problems should surface in the UI and QA receipts."
+              bullets={[
+                'File-source access errors must remain visible and not block unrelated sources.',
+                'Degraded index results are acceptable only when clearly labeled.',
+              ]}
+            />
+          </div>
+        )}
+
+        {adminSection === 'channels' && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <FeatureSettingsCard
+              title="Channel adapters"
+              status="feature-flagged"
+              body="Inbound channel messages map to tasks/ActivityEvents; outbound status maps back to channels."
+              bullets={[
+                'Adapters must never become alternate task truth stores.',
+                'Reference adapter is behind a feature flag and should publish proof/status, not hidden state.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Notification safety"
+              status="guarded"
+              body="Channel delivery is intentionally separated from task authority."
+              bullets={[
+                'Adapter failures should degrade to visible status/proof instead of blocking core Mission Control.',
+                'External posting still requires the appropriate channel/operator boundary.',
+              ]}
+            />
           </div>
         )}
 

@@ -138,6 +138,11 @@ function applyEnvOverrides(_config: EntityConfig): Partial<EntityConfig> {
   if (process.env.PORT) server.port = Number(process.env.PORT);
   if (process.env.WORKSPACE) server.workspaceRoot = process.env.WORKSPACE;
   if (process.env.ENTITY_PUBLIC_BASE_URL) server.publicBaseUrl = process.env.ENTITY_PUBLIC_BASE_URL;
+  if (process.env.ENTITY_API_BASE_URL) server.apiBaseUrl = process.env.ENTITY_API_BASE_URL;
+  else if (process.env.ENTITY_CLOUD_API_BASE) server.apiBaseUrl = process.env.ENTITY_CLOUD_API_BASE;
+  else if (process.env.VITE_ENTITY_API_BASE) server.apiBaseUrl = process.env.VITE_ENTITY_API_BASE;
+  if (process.env.ENTITY_WS_BASE_URL) server.wsBaseUrl = process.env.ENTITY_WS_BASE_URL;
+  else if (process.env.VITE_ENTITY_WS_URL) server.wsBaseUrl = process.env.VITE_ENTITY_WS_URL;
   const out: Record<string, unknown> = {};
   if (Object.keys(server).length > 0) out.server = server;
   return out as Partial<EntityConfig>;
