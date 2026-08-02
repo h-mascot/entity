@@ -497,6 +497,8 @@ type MCProjectFilter = (typeof PROJECT_FILTER_OPTIONS)[number];
 type AdminSection =
   | 'general'
   | 'profile'
+  | 'accessControl'
+  | 'businessOnboarding'
   | 'missionControl'
   | 'engineering'
   | 'workplanes'
@@ -514,6 +516,8 @@ type AdminSection =
 const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   general: 'General',
   profile: 'User Profile',
+  accessControl: 'Access Control',
+  businessOnboarding: 'Business Onboarding',
   missionControl: 'Mission Control',
   engineering: 'Engineering',
   workplanes: 'Workplanes',
@@ -4489,6 +4493,8 @@ export default function App() {
     const items: Array<{ key: AdminSection; title: string; hint: string }> = [
       { key: 'general', title: 'General settings', hint: 'Workspace + security' },
       { key: 'profile', title: 'User profile', hint: 'Name + avatar' },
+      { key: 'accessControl', title: 'Access control', hint: 'Auth + RBAC posture' },
+      { key: 'businessOnboarding', title: 'Business onboarding', hint: 'Setup flow + modules' },
       { key: 'missionControl', title: 'Mission Control', hint: 'Board + data behavior' },
       { key: 'engineering', title: 'Engineering', hint: 'Domain board + import gates' },
       { key: 'workplanes', title: 'Workplanes', hint: 'Task cockpit + proof panels' },
@@ -4713,6 +4719,12 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => setAdminSection('general')} className="mc-shell-btn px-2 py-1 text-xs">
               General
+            </button>
+            <button type="button" onClick={() => setAdminSection('accessControl')} className="mc-shell-btn px-2 py-1 text-xs">
+              Access
+            </button>
+            <button type="button" onClick={() => setAdminSection('businessOnboarding')} className="mc-shell-btn px-2 py-1 text-xs">
+              Onboarding
             </button>
             <button type="button" onClick={() => setAdminSection('missionControl')} className="mc-shell-btn px-2 py-1 text-xs">
               Mission Control
@@ -5184,6 +5196,8 @@ export default function App() {
       const miniItems: Array<{ key: AdminSection; icon: string; label: string }> = [
         { key: 'general', icon: '🧩', label: 'General settings' },
         { key: 'profile', icon: '👤', label: 'User profile' },
+        { key: 'accessControl', icon: '🔐', label: 'Access control' },
+        { key: 'businessOnboarding', icon: '🏢', label: 'Business onboarding' },
         { key: 'missionControl', icon: '📋', label: 'Mission Control' },
         { key: 'engineering', icon: '🛠️', label: 'Engineering' },
         { key: 'workplanes', icon: '🧾', label: 'Workplanes' },

@@ -13,6 +13,8 @@ const OfflineAwareChat = lazy(() => import('../components/OfflineAwareChat'));
 type AdminSection =
   | 'general'
   | 'profile'
+  | 'accessControl'
+  | 'businessOnboarding'
   | 'missionControl'
   | 'engineering'
   | 'workplanes'
@@ -466,6 +468,94 @@ export default function AdminView({
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+
+
+        {adminSection === 'accessControl' && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <FeatureSettingsCard
+              title="Login gate"
+              status={loginRequired ? 'required' : 'optional'}
+              body="Workspace-level auth posture for the browser app. Changes to the login gate remain controlled from General settings."
+              bullets={[
+                authSession ? `Current session: ${authSession.username}` : 'No active browser login session.',
+                'Document API credentials are configured under Integrations and enforce document scopes separately.',
+                'Agent registry module scopes are configured under Agent registry.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="RBAC / principal posture"
+              status="visible"
+              body="Role, principal, and scope enforcement exists in server permission envelopes and request headers."
+              bullets={[
+                'Supported roles include viewer, contributor, manager, and admin in request permission context.',
+                'Object access decisions return safe envelopes with required/effective role information.',
+                'This panel is an Admin map of the posture; dedicated grant editing remains a follow-up hardening task.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Agent/module scopes"
+              status="editable in Agent registry"
+              body="Agent-level enablement, permissions, and module scope labels live in the Agent registry settings page."
+              bullets={[
+                'Use Agent registry to enable/disable agents and review module scopes.',
+                'Disabling preserves records; deletion removes them from the registry.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Documents API access"
+              status="editable in Integrations"
+              body="Bearer/service token setup for comments, suggestions, and reviews is under Integrations."
+              bullets={[
+                'Requires documents:read plus write scopes for comments/suggestions/reviews.',
+                'Service tokens require an explicit X-Entity-Actor value.',
+              ]}
+            />
+          </div>
+        )}
+
+        {adminSection === 'businessOnboarding' && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <FeatureSettingsCard
+              title="Business onboarding route"
+              status="enabled"
+              body="Business onboarding is available as the first-run/setup flow and can be reached from /onboarding/business or the setup gate."
+              bullets={[
+                'Catalog covers claims, engineering/devops, product, sales/BD, marketing, finance, customer success, people ops, health business, AI ops, and other.',
+                'The flow seeds teams, projects, agent assignments, and starter operating tasks.',
+                'Completion returns the user to the workspace and persists onboarding state.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Onboarding module registry"
+              status="guarded"
+              body="Agent/module onboarding manifests are resolved server-side with required/recommended/optional/admin risk levels."
+              bullets={[
+                'Default bundle includes Entity contracts, file sources, Mission Control, and Entity linker modules.',
+                'Admin-only or high-risk modules are reported as warnings instead of silently installing.',
+                'Dry-run plans enumerate writes, downloads, install, verify, rollback, and context export steps.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Business setup safety"
+              status="fail-closed"
+              body="Business onboarding writes through workspace/team/project/task APIs and validates inputs before mutation."
+              bullets={[
+                'Unknown domains and malformed payloads fail with explicit API errors.',
+                'Named agent assignments only attach when matching registry records exist or can be safely represented.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Admin coverage status"
+              status="covered"
+              body="This Admin page now gives operators a dedicated place to inspect the business onboarding feature posture."
+              bullets={[
+                'Deeper controls like resetting onboarding state or editing domain catalogs should be separate explicit admin actions.',
+                'No production data mutation is exposed from this posture page.',
+              ]}
+            />
           </div>
         )}
 
