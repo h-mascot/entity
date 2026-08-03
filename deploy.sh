@@ -140,6 +140,7 @@ if [[ -z "${REMOTE_NODE_BIN}" ]]; then
 fi
 [[ -n "${REMOTE_NODE_BIN}" ]] || error "Remote Node.js path is empty for ${PROD_HOST}"
 [[ "${REMOTE_NODE_BIN}" =~ ^/[A-Za-z0-9._/+@-]+$ ]] || error "Remote Node.js path contains unsupported characters: ${REMOTE_NODE_BIN}"
+[[ "${ENTITY_DIR}" =~ ^/[A-Za-z0-9._/+@-]+$ ]] || error "Remote Entity path contains unsupported characters: ${ENTITY_DIR}"
 
 log "Pre-flight: checking production DB on ${PROD_HOST}..."
 TASK_COUNT=$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "sqlite3 '${PROD_DB}' 'select count(*) from tasks;'" 2>/dev/null || echo "0")
@@ -192,7 +193,7 @@ fi
 
 log "Syncing generated OpenWiki documentation and release metadata writer."
 rsync -avz --delete -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/openwiki/" "${PROD_HOST}:${ENTITY_DIR}/openwiki/"
-rsync -avz -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/scripts/entity-release-info.mjs" "${PROD_HOST}:${ENTITY_DIR}/scripts/entity-release-info.mjs"
+rsync -avz -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/scripts/entity-release-info.mjs" "${MAC_ENTITY_DIR}/scripts/entity-release-info-stdin.mjs" "${PROD_HOST}:${ENTITY_DIR}/scripts/"
 
 if [[ -n "$RELEASE_SHA" ]]; then
   log "Syncing runtime dependencies into immutable release..."
@@ -220,7 +221,7 @@ print(json.dumps({
 }))
 PY
 )"
-  printf '%s' "${RELEASE_METADATA_PAYLOAD}" | ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "'${REMOTE_NODE_BIN}' -e 'const fs=require("node:fs");const cp=require("node:child_process");const p=JSON.parse(fs.readFileSync(0,"utf8"));const r=cp.spawnSync(process.execPath,[p.script,"--root",p.root,"--sha",p.sha,"--branch",p.branch,"--environment",p.environment,"--write"],{stdio:"inherit"});process.exit(r.status??1);'" >/dev/null
+  printf '%s' "${RELEASE_METADATA_PAYLOAD}" | ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "'${REMOTE_NODE_BIN}' '${ENTITY_DIR}/scripts/entity-release-info-stdin.mjs'" >/dev/null
 fi
 
 log "Writing server runtime .env for configured TTS providers..."

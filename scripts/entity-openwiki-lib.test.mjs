@@ -306,10 +306,37 @@ test("deploy gate verifies the exact source checkout and fails closed", async ()
   assert.doesNotMatch(deploySource, /nohup node '\$\{RUNTIME_NODE_ENTRY\}'/);
   assert.doesNotMatch(deploySource, /ENTITY_REMOTE_NODE_BIN:-\/opt\/homebrew/);
   assert.match(deploySource, /RELEASE_METADATA_PAYLOAD=.*python3/s);
-  assert.match(deploySource, /JSON\.parse\(fs\.readFileSync\(0/);
+  assert.match(deploySource, /entity-release-info-stdin\.mjs/);
+  assert.doesNotMatch(deploySource, / -e 'const fs=require/);
   assert.doesNotMatch(deploySource, /--branch '\$\{RELEASE_BRANCH\}'/);
   assert.doesNotMatch(deploySource, /node "\$\{SCRIPT_DIR\}\/scripts\/entity-release-info\.mjs" --root "\$\{ENTITY_DIR\}"/);
   assert.match(releaseCheckSource, /REPO_ROOT=.*\$\{1:-/);
+});
+
+test("release metadata stdin wrapper preserves metacharacters without a shell", async () => {
+  const root = await fixture();
+  const outputPath = path.join(root, "captured.json");
+  const recorderPath = path.join(root, "recorder.mjs");
+  await writeFile(recorderPath, `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(process.argv.slice(2)));\n`);
+  const payload = {
+    script: recorderPath,
+    root: "/tmp/entity path/with'quote",
+    sha: "abc123",
+    branch: "review-$(touch-never-runs)'quoted",
+    environment: "sandbox;still-data",
+  };
+  const wrapped = spawnSync(process.execPath, [fileURLToPath(new URL("./entity-release-info-stdin.mjs", import.meta.url))], {
+    input: JSON.stringify(payload),
+    encoding: "utf8",
+  });
+  assert.equal(wrapped.status, 0, wrapped.stderr);
+  assert.deepEqual(JSON.parse(await readFile(outputPath, "utf8")), [
+    "--root", payload.root,
+    "--sha", payload.sha,
+    "--branch", payload.branch,
+    "--environment", payload.environment,
+    "--write",
+  ]);
 });
 
 test("deploy rejects source subdirectories, dirty bypasses, and branch mismatches before network access", async () => {
