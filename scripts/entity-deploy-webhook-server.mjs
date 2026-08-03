@@ -131,7 +131,7 @@ if [ ! -d "${sourceDir}/.git" ]; then
   git clone https://github.com/${allowedRepo}.git "${sourceDir}"
 fi
 cd "${sourceDir}"
-git fetch --prune origin main
+git fetch --prune origin +refs/heads/main:refs/remotes/origin/main
 git checkout --detach "${sha}"
 git clean -fdx
 npm ci
@@ -144,6 +144,8 @@ ENTITY_PROD_LOG_PATH="${prodLogPath}" \
 ENTITY_PROD_LAUNCHD_SERVICE="${prodLaunchdService}" \
 ENTITY_PROD_NODE_ENTRY="${prodNodeEntry}" \
 ENTITY_SOURCE_DIR="${sourceDir}" \
+ENTITY_RELEASE_SHA="${sha}" \
+ENTITY_RELEASE_BRANCH="main" \
 ./deploy.sh --all
 `;
 

@@ -1,22 +1,20 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, readFile, readdir, readlink, stat, writeFile } from "node:fs/promises";
+import { lstat, readFile, readdir, readlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const OPENWIKI_VERSION = "0.2.5";
 export const OPENWIKI_MINIMUM_RELEASE_AGE_MINUTES = 10080;
 export const OPENWIKI_METADATA_PATH = "openwiki/.entity-openwiki.json";
 
-const EXCLUDED_DIRECTORIES = new Set([
-  ".git", ".tmp", ".claude", "artifacts", "build", "data", "dist", "logs", "memory", "node_modules", "openwiki", "output", "run-state", "var",
-]);
+const FALLBACK_EXCLUDED_DIRECTORY_NAMES = new Set([".git", ".next", ".tmp", "coverage", "node_modules"]);
 const EXCLUDED_SOURCE_PREFIXES = [
-  ".claude/", ".cursor/run-state/", "artifacts/", "docs/internal/", "memory/", "openwiki/", "output/", "var/",
+  ".claude/", ".cursor/run-state/", ".next/", ".tmp/", "artifacts/", "build/", "coverage/", "data/", "dist/", "docs/internal/", "logs/", "memory/", "node_modules/", "openwiki/", "output/", "var/",
 ];
 const INCLUDED_OPENWIKI_INPUTS = new Set(["openwiki/INSTRUCTIONS.md"]);
 const EXCLUDED_FILE_PATTERN = /(?:^|\/)(?:[^/]*\.db(?:-|$)|[^/]*\.sqlite(?:3)?(?:-|$)|[^/]*\.log$)/;
 const SAFE_ENV_TEMPLATE_NAMES = new Set([".env.example", ".env.sample", ".env.template"]);
-const BASE_ENVIRONMENT_KEYS = ["HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "SHELL", "TMPDIR", "TMP", "TEMP", "USER"];
+const BASE_ENVIRONMENT_KEYS = ["LANG", "LC_ALL", "LOGNAME", "PATH", "SHELL", "TMPDIR", "TMP", "TEMP", "USER"];
 const PROXY_ENVIRONMENT_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
 const CHATGPT_CREDENTIAL_KEYS = [
   "OPENAI_CHATGPT_ACCESS_TOKEN", "OPENAI_CHATGPT_REFRESH_TOKEN", "OPENAI_CHATGPT_EXPIRES_AT", "OPENAI_CHATGPT_ACCOUNT_ID",
@@ -43,6 +41,7 @@ const PROVIDER_CREDENTIAL_KEYS = {
   "openai-compatible": ["OPENAI_COMPATIBLE_API_KEY", "OPENAI_COMPATIBLE_BASE_URL"],
   openrouter: ["OPENROUTER_API_KEY", "OPENWIKI_OPENROUTER_PROVIDER_ONLY"],
 };
+export const SUPPORTED_OPENWIKI_PROVIDERS = new Set(Object.keys(PROVIDER_CREDENTIAL_KEYS));
 const REQUIRED_OPENWIKI_IGNORE_PATTERNS = [
   ".env",
   "*.db",
@@ -54,11 +53,16 @@ const REQUIRED_OPENWIKI_IGNORE_PATTERNS = [
   "/.cursor/run-state/",
 ];
 
-export function buildCredentialFreeEnvironment(processEnvironment = process.env) {
+export function buildCredentialFreeEnvironment(processEnvironment = process.env, { isolatedHome } = {}) {
   const environment = Object.fromEntries(BASE_ENVIRONMENT_KEYS.flatMap((key) => {
     const value = processEnvironment[key];
     return typeof value === "string" && value.length > 0 ? [[key, value]] : [];
   }));
+  if (isolatedHome) {
+    environment.HOME = isolatedHome;
+    environment.XDG_CONFIG_HOME = path.join(isolatedHome, ".config");
+    environment.NPM_CONFIG_USERCONFIG = path.join(isolatedHome, ".npmrc");
+  }
   for (const key of PROXY_ENVIRONMENT_KEYS) {
     const value = processEnvironment[key];
     if (typeof value !== "string" || value.length === 0) continue;
@@ -76,9 +80,16 @@ export function buildCredentialFreeEnvironment(processEnvironment = process.env)
   return environment;
 }
 
-export function buildOpenWikiEnvironment(processEnvironment, { provider, model, authEnvironment = {} }) {
+export function validateOpenWikiProvider(provider) {
+  if (!SUPPORTED_OPENWIKI_PROVIDERS.has(provider)) {
+    throw new Error(`Unsupported OpenWiki provider: ${provider}`);
+  }
+}
+
+export function buildOpenWikiEnvironment(processEnvironment, { provider, model, authEnvironment = {}, isolatedHome } = {}) {
+  validateOpenWikiProvider(provider);
   const environment = {
-    ...buildCredentialFreeEnvironment(processEnvironment),
+    ...buildCredentialFreeEnvironment(processEnvironment, { isolatedHome }),
     OPENWIKI_PROVIDER: provider,
     OPENWIKI_MODEL_ID: model,
     OPENWIKI_TELEMETRY_DISABLED: "1",
@@ -91,9 +102,11 @@ export function buildOpenWikiEnvironment(processEnvironment, { provider, model, 
     const value = processEnvironment[key];
     if (typeof value === "string" && value.length > 0) environment[key] = value;
   }
-  for (const key of CHATGPT_CREDENTIAL_KEYS) {
-    const value = authEnvironment[key];
-    if (typeof value === "string" && value.length > 0) environment[key] = value;
+  if (provider === "openai-chatgpt") {
+    for (const key of CHATGPT_CREDENTIAL_KEYS) {
+      const value = authEnvironment[key];
+      if (typeof value === "string" && value.length > 0) environment[key] = value;
+    }
   }
   return environment;
 }
@@ -131,7 +144,7 @@ function sourcePathIsIncluded(relativePath) {
   const baseName = path.posix.basename(normalizedPath);
   if ((baseName === ".env" || baseName.startsWith(".env.")) && !SAFE_ENV_TEMPLATE_NAMES.has(baseName)) return false;
   if (EXCLUDED_FILE_PATTERN.test(normalizedPath)) return false;
-  return !normalizedPath.split("/").some((part) => EXCLUDED_DIRECTORIES.has(part));
+  return true;
 }
 
 async function collectFiles(root, relativePath, files) {
@@ -140,13 +153,13 @@ async function collectFiles(root, relativePath, files) {
   const absolutePath = path.join(root, relativePath);
   let entryStat;
   try {
-    entryStat = await stat(absolutePath);
+    entryStat = await lstat(absolutePath);
   } catch (error) {
     if (error?.code === "ENOENT") return;
     throw error;
   }
 
-  if (entryStat.isFile()) {
+  if (entryStat.isFile() || entryStat.isSymbolicLink()) {
     files.push(normalizedPath);
     return;
   }
@@ -154,7 +167,7 @@ async function collectFiles(root, relativePath, files) {
 
   const entries = await readdir(absolutePath, { withFileTypes: true });
   for (const entry of entries) {
-    if (entry.isDirectory() && EXCLUDED_DIRECTORIES.has(entry.name)) continue;
+    if (entry.isDirectory() && FALLBACK_EXCLUDED_DIRECTORY_NAMES.has(entry.name)) continue;
     await collectFiles(root, path.join(relativePath, entry.name), files);
   }
 }
@@ -236,13 +249,13 @@ export function codexAuthToOpenWikiEnv(auth) {
   };
 }
 
-export async function writeGenerationMetadata(root, { provider, model, sourceSha }) {
+export async function writeGenerationMetadata(root, { provider, model }) {
   const metadataPath = path.join(root, OPENWIKI_METADATA_PATH);
   const sourceFingerprint = await computeSourceFingerprint(root);
   try {
     const existing = JSON.parse(await readFile(metadataPath, "utf8"));
     if (
-      existing.schemaVersion === 1 &&
+      existing.schemaVersion === 2 &&
       existing.openwikiVersion === OPENWIKI_VERSION &&
       existing.sourceFingerprint === sourceFingerprint &&
       existing.provider === provider &&
@@ -255,10 +268,9 @@ export async function writeGenerationMetadata(root, { provider, model, sourceSha
   }
 
   const metadata = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     openwikiVersion: OPENWIKI_VERSION,
     sourceFingerprint,
-    sourceSha,
     provider,
     model,
     generatedAt: new Date().toISOString(),
@@ -303,6 +315,12 @@ export async function verifyGeneratedWiki(root) {
   }
 
   const metadata = JSON.parse(metadataText);
+  if (metadata.schemaVersion !== 2) {
+    throw new Error(`OpenWiki metadata schema version ${metadata.schemaVersion} does not match required 2`);
+  }
+  if (Object.hasOwn(metadata, "sourceSha")) {
+    throw new Error("OpenWiki metadata must not claim an unverifiable source commit");
+  }
   if (metadata.openwikiVersion !== OPENWIKI_VERSION) {
     throw new Error(`OpenWiki metadata version ${metadata.openwikiVersion} does not match pinned ${OPENWIKI_VERSION}`);
   }

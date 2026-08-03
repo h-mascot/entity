@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -14,6 +14,7 @@ import {
   generatedWikiStatusIsClean,
   normalizeOpenWikiBootstrapText,
   shouldRunOpenWiki,
+  validateOpenWikiProvider,
   verifyGeneratedWiki,
   writeGenerationMetadata,
 } from "./entity-openwiki-lib.mjs";
@@ -60,6 +61,7 @@ if (requestedMode === "prepare") {
 
 const provider = process.env.OPENWIKI_PROVIDER || "openai-chatgpt";
 const model = process.env.OPENWIKI_MODEL_ID || "gpt-5.4-mini";
+validateOpenWikiProvider(provider);
 let authEnvironment = {};
 if (provider === "openai-chatgpt" && !process.env.OPENAI_CHATGPT_ACCESS_TOKEN) {
   const authPath = path.join(os.homedir(), ".codex", "auth.json");
@@ -75,25 +77,36 @@ if (provider === "openai-chatgpt" && !process.env.OPENAI_CHATGPT_ACCESS_TOKEN) {
       .flatMap((key) => typeof process.env[key] === "string" ? [[key, process.env[key]]] : []),
   );
 }
-const installEnvironment = buildCredentialFreeEnvironment(process.env);
-const environment = buildOpenWikiEnvironment(process.env, { provider, model, authEnvironment });
+const isolatedHome = await mkdtemp(path.join(os.tmpdir(), "entity-openwiki-home-"));
+try {
+  await mkdir(path.join(isolatedHome, ".config"), { recursive: true });
+  await writeFile(path.join(isolatedHome, ".npmrc"), "");
+  const installEnvironment = { ...buildCredentialFreeEnvironment(process.env, { isolatedHome }), CI: "true" };
+  const environment = buildOpenWikiEnvironment(process.env, { provider, model, authEnvironment, isolatedHome });
 
-const installResult = spawnSync("pnpm", buildPnpmInstallArgs(), {
-  cwd: root,
-  env: installEnvironment,
-  stdio: "inherit",
-});
-if (installResult.error) throw installResult.error;
-if (installResult.status !== 0) process.exit(installResult.status ?? 1);
+  const installResult = spawnSync("pnpm", buildPnpmInstallArgs(), {
+    cwd: root,
+    env: installEnvironment,
+    stdio: "inherit",
+  });
+  if (installResult.error) throw installResult.error;
+  if (installResult.status !== 0) {
+    throw new Error(`pnpm install failed with status ${installResult.status ?? "unknown"}`);
+  }
 
-const openwikiBinary = path.join(root, "tools", "openwiki", "node_modules", ".bin", "openwiki");
-const result = spawnSync(openwikiBinary, buildOpenWikiArgs(mode, userMessage), {
-  cwd: root,
-  env: environment,
-  stdio: "inherit",
-});
-if (result.error) throw result.error;
-if (result.status !== 0) process.exit(result.status ?? 1);
+  const openwikiBinary = path.join(root, "tools", "openwiki", "node_modules", ".bin", "openwiki");
+  const result = spawnSync(openwikiBinary, buildOpenWikiArgs(mode, userMessage), {
+    cwd: root,
+    env: environment,
+    stdio: "inherit",
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`OpenWiki failed with status ${result.status ?? "unknown"}`);
+  }
+} finally {
+  await rm(isolatedHome, { recursive: true, force: true });
+}
 
 for (const bootstrapName of ["AGENTS.md", "CLAUDE.md"]) {
   const bootstrapPath = path.join(root, bootstrapName);
@@ -106,12 +119,9 @@ for (const bootstrapName of ["AGENTS.md", "CLAUDE.md"]) {
   }
 }
 
-const shaResult = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
-if (shaResult.status !== 0) process.exit(shaResult.status ?? 1);
 await writeGenerationMetadata(root, {
   provider,
   model,
-  sourceSha: shaResult.stdout.trim(),
 });
 const metadata = await verifyGeneratedWiki(root);
 console.log(`[entity-openwiki] generated and verified ${metadata.sourceFingerprint}`);

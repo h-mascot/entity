@@ -278,7 +278,7 @@ async function deploySha(sha) {
     await run('git', ['clone', `https://github.com/${config.repo}.git`, config.sourceDir]);
   }
 
-  await run('git', ['fetch', '--prune', 'origin', config.branch], { cwd: config.sourceDir });
+  await run('git', ['fetch', '--prune', 'origin', `+refs/heads/${config.branch}:refs/remotes/origin/${config.branch}`], { cwd: config.sourceDir });
   await run('git', ['checkout', '--detach', sha], { cwd: config.sourceDir });
   await run('git', ['clean', '-fdx'], { cwd: config.sourceDir });
   await run('npm', ['ci'], { cwd: config.sourceDir });

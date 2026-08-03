@@ -25,7 +25,7 @@ STATUS_OUTPUT="$(git -C "${REPO_ROOT}" status --short --untracked-files=normal)"
 if [[ -n "${STATUS_OUTPUT}" ]]; then
   echo "[release-check] Refusing deploy from dirty worktree at ${REPO_ROOT}" >&2
   echo "[release-check] Branch: ${BRANCH_NAME} @ ${HEAD_SHA}" >&2
-  echo "[release-check] Commit or stash changes, or rerun with ENTITY_ALLOW_DIRTY_DEPLOY=1 if you really mean it" >&2
+  echo "[release-check] Commit or stash changes; dirty deploys are not permitted" >&2
   echo "${STATUS_OUTPUT}" >&2
   exit 1
 fi
