@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileSourceRecord, FileSourceRepository } from "../../../db/src/file-sources";
-import { isInlineSafeContentType, parseByteRange, registerLegacyFileRoutes } from "./legacy-files";
+import { isInlineSafeContentType, parseByteRange, pathIsCoveredByReadOnlyLocalSource, registerLegacyFileRoutes } from "./legacy-files";
 
 const tempRoots: string[] = [];
 
@@ -35,11 +35,16 @@ function sourceFor(basePath: string): FileSourceRecord {
   };
 }
 
-async function withLegacyFileServer(workspaceRoot: string, run: (baseUrl: string) => Promise<void>): Promise<void> {
+async function withLegacyFileServer(
+  workspaceRoot: string,
+  run: (baseUrl: string) => Promise<void>,
+  configuredSources?: FileSourceRecord[],
+): Promise<void> {
   const source = sourceFor(workspaceRoot);
+  const sources = configuredSources ?? [source];
   const sourceRepo: FileSourceRepository = {
-    listSources: vi.fn(() => [source]),
-    getSource: vi.fn((id: string) => (id === source.id ? source : undefined)),
+    listSources: vi.fn(() => sources),
+    getSource: vi.fn((id: string) => sources.find((entry) => entry.id === id)),
     createSource: vi.fn(() => source),
     updateSource: vi.fn(() => source),
     setEnabled: vi.fn(() => source),
@@ -109,6 +114,48 @@ describe("isInlineSafeContentType", () => {
     expect(isInlineSafeContentType("text/javascript")).toBe(false);
     expect(isInlineSafeContentType("application/xml")).toBe(false);
     expect(isInlineSafeContentType("text/xml")).toBe(false);
+  });
+});
+
+describe("legacy read-only source protection", () => {
+  it("detects workspace paths covered by read-only local sources", () => {
+    const readOnly = { ...sourceFor("/workspace/wiki"), capabilities: JSON.stringify({ readOnly: true }) };
+    const writable = sourceFor("/workspace/editable");
+    expect(pathIsCoveredByReadOnlyLocalSource("/workspace/wiki/page.md", [readOnly, writable])).toBe(true);
+    expect(pathIsCoveredByReadOnlyLocalSource("/workspace/editable/page.md", [readOnly, writable])).toBe(false);
+    expect(pathIsCoveredByReadOnlyLocalSource("/workspace/other/page.md", [readOnly, writable])).toBe(false);
+  });
+
+  it("rejects legacy writes into a nested read-only source", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const wikiRoot = path.join(workspaceRoot, "wiki");
+    const target = path.join(wikiRoot, "page.md");
+    const wikiAlias = path.join(workspaceRoot, "wiki-alias");
+    await fs.promises.mkdir(wikiRoot, { recursive: true });
+    await fs.promises.writeFile(target, "original", "utf8");
+    await fs.promises.symlink(wikiRoot, wikiAlias, "dir");
+    const workspace = sourceFor(workspaceRoot);
+    const wiki = {
+      ...sourceFor(wikiRoot),
+      id: "entity-wiki",
+      capabilities: JSON.stringify({ readOnly: true, source: "entity.config.yaml" }),
+    };
+
+    await withLegacyFileServer(workspaceRoot, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/file?path=wiki/page.md`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "mutated" }),
+      });
+      expect(response.status).toBe(403);
+      const aliasResponse = await fetch(`${baseUrl}/api/file?path=wiki-alias/page.md`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "mutated-through-alias" }),
+      });
+      expect(aliasResponse.status).toBe(403);
+      expect(await fs.promises.readFile(target, "utf8")).toBe("original");
+    }, [workspace, wiki]);
   });
 });
 

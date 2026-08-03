@@ -2,7 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+DEFAULT_REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+REPO_ROOT="$(cd -- "${1:-${DEFAULT_REPO_ROOT}}" 2>/dev/null && pwd -P)" || {
+  echo "[release-check] source checkout does not exist: ${1:-${DEFAULT_REPO_ROOT}}" >&2
+  exit 1
+}
 
 if ! command -v git >/dev/null 2>&1; then
   echo "[release-check] git is required for deploy safety checks" >&2
@@ -21,7 +25,7 @@ STATUS_OUTPUT="$(git -C "${REPO_ROOT}" status --short --untracked-files=normal)"
 if [[ -n "${STATUS_OUTPUT}" ]]; then
   echo "[release-check] Refusing deploy from dirty worktree at ${REPO_ROOT}" >&2
   echo "[release-check] Branch: ${BRANCH_NAME} @ ${HEAD_SHA}" >&2
-  echo "[release-check] Commit or stash changes, or rerun with ENTITY_ALLOW_DIRTY_DEPLOY=1 if you really mean it" >&2
+  echo "[release-check] Commit or stash changes; dirty deploys are not permitted" >&2
   echo "${STATUS_OUTPUT}" >&2
   exit 1
 fi

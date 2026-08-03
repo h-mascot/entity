@@ -25,14 +25,13 @@ The real gaps are in **keeping the public-facing surface honest as the product s
 
 ## Adoption status — loops #001 and #008 set up (2026-07-01)
 
-Loops **#001 (docs sweep)** and **#008 (nightly changelog)** are now set up as
-opt-in Cursor cloud-agent automations. `#025` remains deferred.
+Loops **#001 (Entity OpenWiki)** and **#008 (nightly changelog)** are set up as reviewable automations. OpenWiki replaced the original Cursor docs-sweep implementation so feature documentation is linked, source-fingerprinted, and refreshed after successful main deploy handoffs. `#025` remains deferred.
 
 - **Automation:** each loop is a committed prompt + restricted CLI permission
   profile under [`.cursor/loops/`](../.cursor/loops/README.md), run by a scheduled
   GitHub Actions workflow that launches `cursor-agent` in restricted-autonomy
   mode (the agent only edits files; a deterministic step opens the PR).
-  - `#001` → [`.github/workflows/loop-docs-sweep.yml`](../.github/workflows/loop-docs-sweep.yml) (weekly + manual).
+  - `#001` → [`.github/workflows/loop-docs-sweep.yml`](../.github/workflows/loop-docs-sweep.yml) (after successful main deploy handoff + weekly + manual), using pinned OpenWiki and GitHub Copilot.
   - `#008` → [`.github/workflows/loop-nightly-changelog.yml`](../.github/workflows/loop-nightly-changelog.yml) (nightly + manual), fed by the deterministic `scripts/changelog-window.mjs`.
 - **Opt-in:** merging changes nothing on a schedule. Activate by adding the
   `CURSOR_API_KEY` secret and setting `ENTITY_LOOPS_ENABLED=true`; manual

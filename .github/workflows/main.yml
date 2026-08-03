@@ -20,7 +20,15 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run scan:private-defaults -- --enforce
+      - run: node --test scripts/entity-openwiki-lib.test.mjs
       - run: npm test || echo "Tests skipped (MVP mode)"
+      - name: Check out PR head for generated-doc freshness
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: npm run docs:wiki:verify
 
   deploy:
     name: Deploy Handoff

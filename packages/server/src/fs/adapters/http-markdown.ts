@@ -1,7 +1,7 @@
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { assertAllowedRemoteUrl, normalizeSourceRelativePath } from '../security';
-import type { FileSourceAdapter, SourceCapability, SourceNode } from './types';
+import type { FileSourceAdapter, SourceCapability, SourceNode, SourceFileRawResult } from './types';
 
 function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, '');
@@ -101,5 +101,28 @@ export class HttpMarkdownFileSourceAdapter implements FileSourceAdapter {
 
   async mkdir(_relativePath: string): Promise<void> {
     throw new Error('HTTP markdown source is read-only.');
+  }
+
+  async readRaw(relativePath: string): Promise<SourceFileRawResult> {
+    const normalized = normalizeSourceRelativePath(relativePath);
+
+    const targetUrl = normalized ? joinUrl(this.baseUrl, normalized) : this.baseUrl;
+    assertAllowedRemoteUrl(targetUrl);
+
+    const response = await fetch(targetUrl);
+    if (!response.ok) {
+      throw new Error(`Unable to read remote resource (${response.status}).`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const content = Buffer.from(arrayBuffer);
+    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() || 'application/octet-stream';
+
+    return {
+      content,
+      contentType,
+      updatedAt: response.headers.get('last-modified') || undefined,
+      size: content.length,
+    };
   }
 }

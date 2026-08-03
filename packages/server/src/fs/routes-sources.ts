@@ -1,3 +1,4 @@
+import path from 'path';
 import type { Express, Request, Response } from 'express';
 import { Router } from 'express';
 import {
@@ -14,6 +15,7 @@ import { localSourceCapabilitiesJson } from './adapters/local';
 import { createFileSourceAdapter } from './adapters/registry';
 import { FileIndexRunner } from './index-runner';
 import { recordFsOperation } from './metrics';
+import { resolvePathThroughNearestExistingAncestor } from './security';
 import { assertAllowedLocalSourceBasePath } from './source-root-guard';
 
 interface SourcePayload {
@@ -112,9 +114,73 @@ function toSourceResponse(source: FileSourceRecord) {
   };
 }
 
-function capabilitiesForStorage(type: FileSourceType, rawCapabilities: unknown, basePath?: string | null): string | undefined {
+function parseCapabilities(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function sourceIsConfigManaged(capabilities: unknown): boolean {
+  return parseCapabilities(capabilities).source === 'entity.config.yaml';
+}
+
+export function localSourceOverlapsReadOnlyRoot(
+  candidateBasePath: string,
+  sources: Array<Pick<FileSourceRecord, 'type' | 'base_path' | 'capabilities'>>,
+): boolean {
+  const candidateRoot = resolvePathThroughNearestExistingAncestor(candidateBasePath);
+  const isContained = (relative: string) =>
+    relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  return sources.some((source) => {
+    if (source.type !== 'local' || !source.base_path || parseCapabilities(source.capabilities).readOnly !== true) return false;
+    const protectedRoot = resolvePathThroughNearestExistingAncestor(source.base_path);
+    return isContained(path.relative(protectedRoot, candidateRoot)) || isContained(path.relative(candidateRoot, protectedRoot));
+  });
+}
+
+export function sourceCanBeDeleted(capabilities: unknown): boolean {
+  return !sourceIsConfigManaged(capabilities);
+}
+
+export function sourceTypeCanBeChanged(
+  capabilities: unknown,
+  currentType: FileSourceType,
+  nextType: FileSourceType,
+): boolean {
+  return !sourceIsConfigManaged(capabilities) || currentType === nextType;
+}
+
+export function capabilitiesForStorage(
+  type: FileSourceType,
+  rawCapabilities: unknown,
+  basePath?: string | null,
+  existingCapabilities?: unknown,
+  forceReadOnly = false,
+): string | undefined {
   if (type === 'local') {
-    return localSourceCapabilitiesJson(basePath);
+    const existing = parseCapabilities(existingCapabilities);
+    const candidate = parseCapabilities(rawCapabilities ?? existingCapabilities);
+    const configManaged = existing.source === 'entity.config.yaml';
+    const readOnly = configManaged ? existing.readOnly === true : forceReadOnly || candidate.readOnly === true;
+    const derived = JSON.parse(localSourceCapabilitiesJson(basePath, { readOnly })) as Record<string, unknown>;
+    if (configManaged) {
+      derived.source = 'entity.config.yaml';
+      if (Array.isArray(existing.agentBindings)) derived.agentBindings = existing.agentBindings;
+    }
+    return JSON.stringify(derived);
+  }
+  const existing = parseCapabilities(existingCapabilities);
+  if (existing.source === 'entity.config.yaml') {
+    const candidate = parseCapabilities(rawCapabilities ?? existingCapabilities);
+    candidate.source = 'entity.config.yaml';
+    if (Array.isArray(existing.agentBindings)) candidate.agentBindings = existing.agentBindings;
+    return JSON.stringify(candidate);
   }
   return typeof rawCapabilities === 'string' ? rawCapabilities : undefined;
 }
@@ -203,7 +269,13 @@ export function registerSourceRoutes(app: Express): void {
         auth_ref: payload.authRef?.trim() || undefined,
         enabled: typeof payload.enabled === 'undefined' ? true : toBoolean(payload.enabled),
         icon: payload.icon?.trim() || undefined,
-        capabilities: capabilitiesForStorage(type, payload.capabilities, basePath),
+        capabilities: capabilitiesForStorage(
+          type,
+          payload.capabilities,
+          basePath,
+          undefined,
+          type === 'local' && Boolean(basePath) && localSourceOverlapsReadOnlyRoot(basePath!, repo.listSources(true)),
+        ),
       });
 
       // Kick off an index run for the created source (async; status is reflected via /api/fs/metrics).
@@ -237,6 +309,9 @@ export function registerSourceRoutes(app: Express): void {
         return res.status(404).json({ error: 'source not found.' });
       }
       const nextType = payload.type ? parseSourceType(payload.type) ?? existing.type : existing.type;
+      if (!sourceTypeCanBeChanged(existing.capabilities, existing.type, nextType)) {
+        return res.status(403).json({ error: 'Config-managed source types cannot be changed through the API.' });
+      }
       const basePath = nextType === 'local' && (typeof payload.type !== 'undefined' || typeof payload.basePath !== 'undefined')
         ? await assertAllowedLocalSourceBasePath(payload.basePath ?? existing.base_path)
         : payload.basePath;
@@ -251,7 +326,17 @@ export function registerSourceRoutes(app: Express): void {
         auth_ref: payload.authRef,
         enabled: typeof payload.enabled === 'undefined' ? undefined : toBoolean(payload.enabled),
         icon: payload.icon,
-        capabilities: shouldUpdateCapabilities ? capabilitiesForStorage(nextType, payload.capabilities, storageBasePath) : undefined,
+        capabilities: shouldUpdateCapabilities
+          ? capabilitiesForStorage(
+              nextType,
+              payload.capabilities,
+              storageBasePath,
+              existing.capabilities,
+              nextType === 'local' &&
+                Boolean(storageBasePath) &&
+                localSourceOverlapsReadOnlyRoot(storageBasePath!, repo.listSources(true)),
+            )
+          : undefined,
         health: payload.health ? parseHealth(payload.health) ?? undefined : undefined,
         last_synced_at: payload.lastSyncedAt,
       });
@@ -297,11 +382,14 @@ export function registerSourceRoutes(app: Express): void {
     }
 
     try {
-      const deleted = repo.deleteSource(id);
-      if (!deleted) {
+      const existing = repo.getSource(id);
+      if (!existing) {
         return res.status(404).json({ error: 'source not found.' });
       }
-
+      if (!sourceCanBeDeleted(existing.capabilities)) {
+        return res.status(403).json({ error: 'Config-managed sources cannot be deleted through the API.' });
+      }
+      repo.deleteSource(id);
       return res.status(204).send();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';

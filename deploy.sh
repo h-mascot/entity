@@ -44,6 +44,7 @@ SKIP_RESTART="${ENTITY_DEPLOY_SKIP_RESTART:-0}"
 RELEASE_SHA="${ENTITY_RELEASE_SHA:-}"
 RELEASE_BRANCH="${ENTITY_RELEASE_BRANCH:-}"
 RELEASE_ENVIRONMENT="${ENTITY_RELEASE_ENVIRONMENT:-sandbox-or-prod-agnostic}"
+REMOTE_NODE_BIN="${ENTITY_REMOTE_NODE_BIN:-}"
 MIN_TASKS="${ENTITY_DEPLOY_MIN_TASKS:-10}"
 if [[ -z "$PROD_HTTP_HOST" ]]; then
   PROD_BASE_URL=""
@@ -108,13 +109,38 @@ if [[ "$DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
-if [[ "${ENTITY_ALLOW_DIRTY_DEPLOY:-0}" != "1" ]]; then
-  if [[ -x "${RELEASE_CHECK_SCRIPT}" ]]; then
-    "${RELEASE_CHECK_SCRIPT}"
-  else
-    warn "Release safety check script not found; continuing."
-  fi
+[[ -x "${RELEASE_CHECK_SCRIPT}" ]] || error "Required release safety check is missing or not executable: ${RELEASE_CHECK_SCRIPT}"
+[[ -d "${MAC_ENTITY_DIR}" ]] || error "Configured source checkout does not exist: ${MAC_ENTITY_DIR}"
+SOURCE_ROOT="$(git -C "${MAC_ENTITY_DIR}" rev-parse --show-toplevel 2>/dev/null)" || error "Configured source is not a git checkout: ${MAC_ENTITY_DIR}"
+SOURCE_DIR_REAL="$(cd "${MAC_ENTITY_DIR}" && pwd -P)"
+SOURCE_ROOT_REAL="$(cd "${SOURCE_ROOT}" && pwd -P)"
+[[ "${SOURCE_DIR_REAL}" == "${SOURCE_ROOT_REAL}" ]] || error "ENTITY_SOURCE_DIR must be the exact checkout root: configured ${SOURCE_DIR_REAL}, git root ${SOURCE_ROOT_REAL}"
+SOURCE_SHA="$(git -C "${MAC_ENTITY_DIR}" rev-parse HEAD 2>/dev/null)" || error "Cannot determine source SHA: ${MAC_ENTITY_DIR}"
+SOURCE_BRANCH="$(git -C "${MAC_ENTITY_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null)" || error "Cannot determine source branch: ${MAC_ENTITY_DIR}"
+if [[ -n "${RELEASE_SHA}" && "${RELEASE_SHA}" != "${SOURCE_SHA}" ]]; then
+  error "ENTITY_RELEASE_SHA ${RELEASE_SHA} does not match configured source checkout ${SOURCE_SHA}"
 fi
+if [[ "${SOURCE_BRANCH}" == "HEAD" ]]; then
+  [[ -n "${RELEASE_BRANCH}" ]] || error "Detached source checkout requires ENTITY_RELEASE_BRANCH for truthful release identity"
+  git check-ref-format --branch "${RELEASE_BRANCH}" >/dev/null 2>&1 || error "Invalid ENTITY_RELEASE_BRANCH: ${RELEASE_BRANCH}"
+  RELEASE_BRANCH_SHA="$(git -C "${MAC_ENTITY_DIR}" rev-parse --verify "refs/remotes/origin/${RELEASE_BRANCH}^{commit}" 2>/dev/null || git -C "${MAC_ENTITY_DIR}" rev-parse --verify "refs/heads/${RELEASE_BRANCH}^{commit}" 2>/dev/null)" || error "Detached source SHA ${SOURCE_SHA} cannot be resolved at branch ${RELEASE_BRANCH}"
+  [[ "${RELEASE_BRANCH_SHA}" == "${SOURCE_SHA}" ]] || error "Detached source SHA ${SOURCE_SHA} does not match branch ${RELEASE_BRANCH} tip ${RELEASE_BRANCH_SHA}"
+else
+  if [[ -n "${RELEASE_BRANCH}" && "${RELEASE_BRANCH}" != "${SOURCE_BRANCH}" ]]; then
+    error "ENTITY_RELEASE_BRANCH ${RELEASE_BRANCH} does not match configured source branch ${SOURCE_BRANCH}"
+  fi
+  RELEASE_BRANCH="${SOURCE_BRANCH}"
+fi
+RELEASE_SHA="${SOURCE_SHA}"
+"${RELEASE_CHECK_SCRIPT}" "${MAC_ENTITY_DIR}"
+log "Verifying generated OpenWiki documentation against exact deploy source..."
+(cd "${MAC_ENTITY_DIR}" && npm run docs:wiki:verify) || error "OpenWiki verification failed for ${MAC_ENTITY_DIR}"
+if [[ -z "${REMOTE_NODE_BIN}" ]]; then
+  REMOTE_NODE_BIN="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" 'for candidate in /opt/homebrew/opt/node@22/bin/node /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do if [ -x "$candidate" ]; then printf "%s\n" "$candidate"; exit 0; fi; done; command -v node')" || error "Could not resolve Node.js on remote target ${PROD_HOST}"
+fi
+[[ -n "${REMOTE_NODE_BIN}" ]] || error "Remote Node.js path is empty for ${PROD_HOST}"
+[[ "${REMOTE_NODE_BIN}" =~ ^/[A-Za-z0-9._/+@-]+$ ]] || error "Remote Node.js path contains unsupported characters: ${REMOTE_NODE_BIN}"
+[[ "${ENTITY_DIR}" =~ ^/[A-Za-z0-9._/+@-]+$ ]] || error "Remote Entity path contains unsupported characters: ${ENTITY_DIR}"
 
 log "Pre-flight: checking production DB on ${PROD_HOST}..."
 TASK_COUNT=$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "sqlite3 '${PROD_DB}' 'select count(*) from tasks;'" 2>/dev/null || echo "0")
@@ -153,7 +179,7 @@ if [[ "$MODE" == "--all" || "$MODE" == "--frontend-only" ]]; then
 fi
 
 log "Syncing built files to configured target; DB files are excluded."
-ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; mkdir -p '${ENTITY_DIR}/packages/server/src/plugins' '${ENTITY_DIR}/packages/db/dist' '${SERVER_DIST}' '${FRONTEND_DIST}'"
+ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; mkdir -p '${ENTITY_DIR}/packages/server/src/plugins' '${ENTITY_DIR}/packages/db/dist' '${SERVER_DIST}' '${FRONTEND_DIST}' '${ENTITY_DIR}/openwiki' '${ENTITY_DIR}/scripts'"
 if [[ "$MODE" == "--all" || "$MODE" == "--server-only" ]]; then
   rsync -avz -e "ssh ${SSH_OPTS[*]}" --delete --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/server/src/plugins/" "${PROD_HOST}:${ENTITY_DIR}/packages/server/src/plugins/"
   rsync -avz -e "ssh ${SSH_OPTS[*]}" --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/db/dist/" "${PROD_HOST}:${ENTITY_DIR}/packages/db/dist/"
@@ -164,6 +190,10 @@ fi
 if [[ "$MODE" == "--all" || "$MODE" == "--frontend-only" ]]; then
   rsync -avz --delete -e "ssh ${SSH_OPTS[*]}" --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/app/dist/" "${PROD_HOST}:${FRONTEND_DIST}/"
 fi
+
+log "Syncing generated OpenWiki documentation and release metadata writer."
+rsync -avz --delete -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/openwiki/" "${PROD_HOST}:${ENTITY_DIR}/openwiki/"
+rsync -avz -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/scripts/entity-release-info.mjs" "${MAC_ENTITY_DIR}/scripts/entity-release-info-stdin.mjs" "${PROD_HOST}:${ENTITY_DIR}/scripts/"
 
 if [[ -n "$RELEASE_SHA" ]]; then
   log "Syncing runtime dependencies into immutable release..."
@@ -177,8 +207,21 @@ if [[ "$SYMLINK_TARGET" != "$PROD_DB" ]]; then
 fi
 
 if [[ -n "$RELEASE_SHA" ]]; then
-  log "Writing release identity metadata for ${RELEASE_SHA}..."
-  node "${SCRIPT_DIR}/scripts/entity-release-info.mjs" --root "${ENTITY_DIR}" --sha "${RELEASE_SHA}" --branch "${RELEASE_BRANCH}" --environment "${RELEASE_ENVIRONMENT}" --write >/dev/null
+  log "Writing release identity metadata for ${RELEASE_SHA} on ${PROD_HOST}..."
+  RELEASE_METADATA_PAYLOAD="$(python3 - "${ENTITY_DIR}" "${RELEASE_SHA}" "${RELEASE_BRANCH}" "${RELEASE_ENVIRONMENT}" <<'PY'
+import json
+import sys
+root, sha, branch, environment = sys.argv[1:]
+print(json.dumps({
+    "script": f"{root}/scripts/entity-release-info.mjs",
+    "root": root,
+    "sha": sha,
+    "branch": branch,
+    "environment": environment,
+}))
+PY
+)"
+  printf '%s' "${RELEASE_METADATA_PAYLOAD}" | ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "'${REMOTE_NODE_BIN}' '${ENTITY_DIR}/scripts/entity-release-info-stdin.mjs'" >/dev/null
 fi
 
 log "Writing server runtime .env for configured TTS providers..."
@@ -233,7 +276,7 @@ if [[ -n "$RUNTIME_WORKSPACE" ]]; then
   REMOTE_ENV="${REMOTE_ENV} WORKSPACE='${RUNTIME_WORKSPACE}'"
 fi
 
-ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; UID_NUM=\$(id -u); if [[ -n '${RUNTIME_LAUNCHD_SERVICE}' ]] && launchctl print \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\" >/dev/null 2>&1; then launchctl kickstart -k \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\"; else lsof -i :'${PROD_PORT}' -t 2>/dev/null | xargs kill -9 2>/dev/null || true; sleep 2; mkdir -p \"\$(dirname '${RUNTIME_LOG_PATH}')\"; cd '${ENTITY_DIR}' && ${REMOTE_ENV} nohup node '${RUNTIME_NODE_ENTRY}' > '${RUNTIME_LOG_PATH}' 2>&1 & fi"
+ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; UID_NUM=\$(id -u); if [[ -n '${RUNTIME_LAUNCHD_SERVICE}' ]] && launchctl print \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\" >/dev/null 2>&1; then launchctl kickstart -k \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\"; else lsof -i :'${PROD_PORT}' -t 2>/dev/null | xargs kill -9 2>/dev/null || true; sleep 2; mkdir -p \"\$(dirname '${RUNTIME_LOG_PATH}')\"; cd '${ENTITY_DIR}' && ${REMOTE_ENV} nohup '${REMOTE_NODE_BIN}' '${RUNTIME_NODE_ENTRY}' > '${RUNTIME_LOG_PATH}' 2>&1 & fi"
 sleep 4
 
 NEW_COUNT=$(curl --noproxy "*" -sS "${PROD_BASE_URL}/api/tasks" | python3 -c "import sys, json; raw = sys.stdin.read().strip(); payload = json.loads(raw) if raw else {}; print(len(payload) if isinstance(payload, list) else payload.get('total', len(payload.get('tasks', [])) if isinstance(payload.get('tasks'), list) else 0))" 2>/dev/null || echo "0")

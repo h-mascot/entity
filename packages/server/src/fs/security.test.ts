@@ -10,6 +10,7 @@ import {
   assertSourceEnabled,
   assertRealpathContained,
   assertWriteTargetRealpathContained,
+  resolvePathThroughNearestExistingAncestor,
 } from './security';
 
 const tempRoots: string[] = [];
@@ -95,6 +96,19 @@ describe('resolveLocalPath', () => {
   it('should allow paths within base even with dots', () => {
     const result = resolveLocalPath('/home/user/data', 'subdir/../other/file.md');
     expect(result).toBe('/home/user/data/other/file.md');
+  });
+});
+
+describe('canonical path resolution', () => {
+  it('resolves symlinked ancestors for targets that do not exist yet', async () => {
+    const root = await makeTempRoot();
+    const actual = path.join(root, 'actual');
+    const alias = path.join(root, 'alias');
+    await fs.promises.mkdir(actual);
+    await fs.promises.symlink(actual, alias, 'dir');
+    expect(resolvePathThroughNearestExistingAncestor(path.join(alias, 'nested', 'new.md'))).toBe(
+      path.join(fs.realpathSync.native(actual), 'nested', 'new.md'),
+    );
   });
 });
 

@@ -35,6 +35,9 @@ export function applyBootstrapRuntimeEnv(cwd = process.cwd()): EntityConfig {
   const databasePath = expandPathTokens(config.server.databasePath, config, configBaseDir);
   const workspaceRoot = expandPathTokens(config.server.workspaceRoot, config, configBaseDir);
   const logPath = expandPathTokens(config.server.logPath, config, configBaseDir);
+  const configuredLocalSourceRoots = config.fileSources
+    .filter((source) => source.type === 'local' && source.basePath)
+    .map((source) => expandPathTokens(source.basePath as string, config, configBaseDir));
 
   // Only export the task DB path when an explicit config file set it. On pure
   // built-in defaults, leave ENTITY_TASK_DB_PATH unset so the db package's own
@@ -51,6 +54,9 @@ export function applyBootstrapRuntimeEnv(cwd = process.cwd()): EntityConfig {
     fs.mkdirSync(path.dirname(effectiveDbPath), { recursive: true });
   }
   process.env.WORKSPACE = process.env.WORKSPACE || workspaceRoot;
+  if (!process.env.ENTITY_FS_LOCAL_SOURCE_ROOTS && configuredLocalSourceRoots.length > 0) {
+    process.env.ENTITY_FS_LOCAL_SOURCE_ROOTS = configuredLocalSourceRoots.join(',');
+  }
   process.env.PORT = process.env.PORT || String(config.server.port);
   process.env.ENTITY_PUBLIC_BASE_URL = process.env.ENTITY_PUBLIC_BASE_URL || config.server.publicBaseUrl;
   process.env.ENTITY_CLOUD_API_BASE = process.env.ENTITY_CLOUD_API_BASE || config.server.apiBaseUrl || config.server.publicBaseUrl;
@@ -119,6 +125,7 @@ function toCapabilities(source: EntityConfig['fileSources'][number]): string {
   return JSON.stringify({
     source: 'entity.config.yaml',
     agentBindings: source.agentBindings,
+    readOnly: source.readOnly,
   });
 }
 

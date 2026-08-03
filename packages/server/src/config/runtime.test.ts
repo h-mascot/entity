@@ -21,6 +21,7 @@ const RUNTIME_ENV_KEYS = [
   'VITE_MC_ORIGIN',
   'VITE_ENTITY_WS_URL',
   'ENTITY_SERVER_LOG_PATH',
+  'ENTITY_FS_LOCAL_SOURCE_ROOTS',
 ];
 
 function clearRuntimeEnv() {
@@ -119,6 +120,25 @@ server:
     expect(process.env.ENTITY_SERVER_LOG_PATH).toBe(path.join(repo, 'logs', 'runtime.log'));
     expect(fs.existsSync(path.join(repo, 'data'))).toBe(true);
     expect(fs.existsSync(path.join(home, 'workspace'))).toBe(true);
+  });
+
+  it('allowlists trusted local file sources declared in runtime config', () => {
+    clearRuntimeEnv();
+    const { cwd, repo } = makeRepoFixture(`
+version: 1
+server:
+  workspaceRoot: ./workspace
+fileSources:
+  - id: entity-wiki
+    displayName: Entity Wiki
+    type: local
+    basePath: ./openwiki
+    readOnly: true
+`);
+
+    applyBootstrapRuntimeEnv(cwd);
+
+    expect(process.env.ENTITY_FS_LOCAL_SOURCE_ROOTS).toBe(path.join(repo, 'openwiki'));
   });
 
   it('does not set ENTITY_TASK_DB_PATH when no config file provides one, so the prod DB symlink wins', () => {

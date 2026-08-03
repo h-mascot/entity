@@ -39,6 +39,7 @@ else
 fi
 
 cd "$ROOT"
+npm run docs:wiki:verify
 ./deploy.sh --all
 if [[ "$ENTITY_PROD_HTTP_HOST" == http://* || "$ENTITY_PROD_HTTP_HOST" == https://* ]]; then
   SANDBOX_BASE_URL="${ENTITY_PROD_HTTP_HOST%/}"

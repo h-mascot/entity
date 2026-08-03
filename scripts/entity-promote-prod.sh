@@ -32,6 +32,7 @@ export ENTITY_PROD_LAUNCHD_SERVICE="${ENTITY_PROD_LAUNCHD_SERVICE:-}"
 export ENTITY_RUNTIME_WORKSPACE="${ENTITY_RUNTIME_WORKSPACE:-}"
 
 cd "$ROOT"
+npm run docs:wiki:verify
 ./deploy.sh --all
 if [[ "$ENTITY_PROD_HTTP_HOST" == http://* || "$ENTITY_PROD_HTTP_HOST" == https://* ]]; then
   PROD_BASE_URL="${ENTITY_PROD_HTTP_HOST%/}"

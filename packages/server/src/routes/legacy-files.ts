@@ -3,9 +3,9 @@ import fs from "fs";
 import path from "path";
 import type { Express, Request, Response } from "express";
 import type { ActivityType } from "../../../db/src";
-import type { FileSourceRepository } from "../../../db/src/file-sources";
+import type { FileSourceRecord, FileSourceRepository } from "../../../db/src/file-sources";
 import { createFileSourceAdapter } from "../fs/adapters/registry";
-import { assertSourceEnabled, assertWriteTargetRealpathContained, normalizeSourceRelativePath } from "../fs/security";
+import { assertSourceEnabled, assertWriteTargetRealpathContained, normalizeSourceRelativePath, resolvePathThroughNearestExistingAncestor } from "../fs/security";
 import { detectContentType, normalizeContentType } from "../file-types";
 import { asyncHandler } from "../middleware/async-handler";
 import { resolveWorkspaceReadPath } from "../workspace-paths";
@@ -66,6 +66,26 @@ export function parseByteRange(
     start,
     end: Math.min(end, size - 1),
   };
+}
+
+export function pathIsCoveredByReadOnlyLocalSource(
+  targetPath: string,
+  sources: FileSourceRecord[],
+): boolean {
+  const resolvedTarget = resolvePathThroughNearestExistingAncestor(targetPath);
+  return sources.some((source) => {
+    if (source.type !== "local" || !source.base_path) return false;
+    let readOnly = false;
+    try {
+      readOnly = (JSON.parse(source.capabilities) as { readOnly?: unknown }).readOnly === true;
+    } catch {
+      return false;
+    }
+    if (!readOnly) return false;
+    const sourceRoot = resolvePathThroughNearestExistingAncestor(source.base_path);
+    const relative = path.relative(sourceRoot, resolvedTarget);
+    return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+  });
 }
 
 export function isInlineSafeContentType(contentType: string): boolean {
@@ -146,6 +166,14 @@ export function registerLegacyFileRoutes(
       "File mutation path must stay inside the workspace.",
     );
 
+    return resolvedPath;
+  }
+
+  async function resolveWorkspaceWritePath(rawPath: string): Promise<string> {
+    const resolvedPath = await resolveWorkspaceMutationPath(rawPath);
+    if (pathIsCoveredByReadOnlyLocalSource(resolvedPath, fileSourceRepository.listSources(true))) {
+      throw new Error("File source is read-only.");
+    }
     return resolvedPath;
   }
 
@@ -329,7 +357,7 @@ export function registerLegacyFileRoutes(
       return 400;
     }
 
-    if (normalized.includes("disabled")) {
+    if (normalized.includes("disabled") || normalized.includes("read-only")) {
       return 403;
     }
 
@@ -629,7 +657,7 @@ export function registerLegacyFileRoutes(
     const author = normalizeVersionAuthor(req.body?.author);
     const requestSummary = normalizeVersionSummary(req.body?.summary);
     try {
-      const resolvedFilePath = await resolveWorkspaceMutationPath(filePath);
+      const resolvedFilePath = await resolveWorkspaceWritePath(filePath);
       // Auto-save a version snapshot before overwriting.
       try {
         const previousContent = await fs.promises.readFile(resolvedFilePath, "utf-8");
@@ -683,7 +711,7 @@ export function registerLegacyFileRoutes(
     }
 
     try {
-      const resolvedFilePath = await resolveWorkspaceMutationPath(filePath);
+      const resolvedFilePath = await resolveWorkspaceWritePath(filePath);
       await fs.promises.mkdir(path.dirname(resolvedFilePath), { recursive: true });
       await fs.promises.writeFile(
         resolvedFilePath,
@@ -719,7 +747,7 @@ export function registerLegacyFileRoutes(
     }
 
     try {
-      const resolvedFilePath = await resolveWorkspaceMutationPath(filePath);
+      const resolvedFilePath = await resolveWorkspaceWritePath(filePath);
       await fs.promises.unlink(resolvedFilePath);
       fileVersionsByPath.delete(resolvedFilePath);
       const relativePath = toWorkspaceRelativePath(resolvedFilePath);
@@ -747,8 +775,8 @@ export function registerLegacyFileRoutes(
     }
 
     try {
-      const resolvedFrom = await resolveWorkspaceMutationPath(from);
-      const resolvedTo = await resolveWorkspaceMutationPath(to);
+      const resolvedFrom = await resolveWorkspaceWritePath(from);
+      const resolvedTo = await resolveWorkspaceWritePath(to);
       await fs.promises.rename(resolvedFrom, resolvedTo);
       const existingVersions = fileVersionsByPath.get(resolvedFrom);
       if (existingVersions) {
