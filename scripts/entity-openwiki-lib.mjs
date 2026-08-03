@@ -1,32 +1,48 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, readFile, readdir, readlink, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const OPENWIKI_VERSION = "0.2.5";
 export const OPENWIKI_MINIMUM_RELEASE_AGE_MINUTES = 10080;
 export const OPENWIKI_METADATA_PATH = "openwiki/.entity-openwiki.json";
 
-const SOURCE_ROOTS = [
-  "package.json",
-  "README.md",
-  "AGENTS.md",
-  "CLAUDE.md",
-  "CONTEXT.md",
-  ".openwikiignore",
-  ".github/workflows",
-  ".cursor/loops/README.md",
-  "openwiki/INSTRUCTIONS.md",
-  "entity.config.example.yaml",
-  "deploy.sh",
-  "docs",
-  "packages",
-  "electron",
-  "scripts",
-  "tools/openwiki",
+const EXCLUDED_DIRECTORIES = new Set([
+  ".git", ".tmp", ".claude", "artifacts", "build", "data", "dist", "logs", "memory", "node_modules", "openwiki", "output", "run-state", "var",
+]);
+const EXCLUDED_SOURCE_PREFIXES = [
+  ".claude/", ".cursor/run-state/", "artifacts/", "docs/internal/", "memory/", "openwiki/", "output/", "var/",
 ];
-const EXCLUDED_DIRECTORIES = new Set([".git", ".tmp", "build", "data", "dist", "logs", "node_modules", "openwiki", "output"]);
-const EXCLUDED_SOURCE_PREFIXES = ["docs/internal/"];
-const EXCLUDED_FILE_PATTERN = /(?:\.db(?:-|$)|\.sqlite(?:3)?(?:-|$)|\.log$)/;
+const INCLUDED_OPENWIKI_INPUTS = new Set(["openwiki/INSTRUCTIONS.md"]);
+const EXCLUDED_FILE_PATTERN = /(?:^|\/)(?:[^/]*\.db(?:-|$)|[^/]*\.sqlite(?:3)?(?:-|$)|[^/]*\.log$)/;
+const SAFE_ENV_TEMPLATE_NAMES = new Set([".env.example", ".env.sample", ".env.template"]);
+const BASE_ENVIRONMENT_KEYS = ["HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "SHELL", "TMPDIR", "TMP", "TEMP", "USER"];
+const PROXY_ENVIRONMENT_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"];
+const CHATGPT_CREDENTIAL_KEYS = [
+  "OPENAI_CHATGPT_ACCESS_TOKEN", "OPENAI_CHATGPT_REFRESH_TOKEN", "OPENAI_CHATGPT_EXPIRES_AT", "OPENAI_CHATGPT_ACCOUNT_ID",
+];
+const PROVIDER_CREDENTIAL_KEYS = {
+  anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+  baseten: ["BASETEN_API_KEY", "BASETEN_BASE_URL"],
+  bedrock: [
+    "BEDROCK_AWS_ACCESS_KEY_ID", "BEDROCK_AWS_SECRET_ACCESS_KEY", "BEDROCK_AWS_SESSION_TOKEN", "BEDROCK_AWS_REGION",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE",
+    "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_BEARER_TOKEN_BEDROCK",
+  ],
+  copilot: ["COPILOT_API_KEY", "COPILOT_BASE_URL"],
+  fireworks: ["FIREWORKS_API_KEY", "FIREWORKS_BASE_URL"],
+  gemini: ["GEMINI_API_KEY"],
+  "gemini-enterprise": [
+    "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS",
+    "OPENWIKI_GOOGLE_ACCESS_TOKEN", "OPENWIKI_GOOGLE_CLIENT_ID", "OPENWIKI_GOOGLE_CLIENT_SECRET", "OPENWIKI_GOOGLE_REFRESH_TOKEN",
+  ],
+  nebius: ["NEBIUS_API_KEY"],
+  nvidia: ["NVIDIA_API_KEY", "NVIDIA_BASE_URL"],
+  openai: ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+  "openai-chatgpt": [],
+  "openai-compatible": ["OPENAI_COMPATIBLE_API_KEY", "OPENAI_COMPATIBLE_BASE_URL"],
+  openrouter: ["OPENROUTER_API_KEY", "OPENWIKI_OPENROUTER_PROVIDER_ONLY"],
+};
 const REQUIRED_OPENWIKI_IGNORE_PATTERNS = [
   ".env",
   "*.db",
@@ -37,6 +53,50 @@ const REQUIRED_OPENWIKI_IGNORE_PATTERNS = [
   "/.claude/",
   "/.cursor/run-state/",
 ];
+
+export function buildCredentialFreeEnvironment(processEnvironment = process.env) {
+  const environment = Object.fromEntries(BASE_ENVIRONMENT_KEYS.flatMap((key) => {
+    const value = processEnvironment[key];
+    return typeof value === "string" && value.length > 0 ? [[key, value]] : [];
+  }));
+  for (const key of PROXY_ENVIRONMENT_KEYS) {
+    const value = processEnvironment[key];
+    if (typeof value !== "string" || value.length === 0) continue;
+    if (key.toLowerCase() === "no_proxy") {
+      environment[key] = value;
+      continue;
+    }
+    try {
+      const proxyUrl = new URL(value);
+      if (!proxyUrl.username && !proxyUrl.password) environment[key] = value;
+    } catch {
+      // Invalid or credential-bearing proxy values are not forwarded to third-party tooling.
+    }
+  }
+  return environment;
+}
+
+export function buildOpenWikiEnvironment(processEnvironment, { provider, model, authEnvironment = {} }) {
+  const environment = {
+    ...buildCredentialFreeEnvironment(processEnvironment),
+    OPENWIKI_PROVIDER: provider,
+    OPENWIKI_MODEL_ID: model,
+    OPENWIKI_TELEMETRY_DISABLED: "1",
+  };
+  const retryAttempts = processEnvironment.OPENWIKI_PROVIDER_RETRY_ATTEMPTS;
+  if (typeof retryAttempts === "string" && retryAttempts.length > 0) {
+    environment.OPENWIKI_PROVIDER_RETRY_ATTEMPTS = retryAttempts;
+  }
+  for (const key of PROVIDER_CREDENTIAL_KEYS[provider] ?? []) {
+    const value = processEnvironment[key];
+    if (typeof value === "string" && value.length > 0) environment[key] = value;
+  }
+  for (const key of CHATGPT_CREDENTIAL_KEYS) {
+    const value = authEnvironment[key];
+    if (typeof value === "string" && value.length > 0) environment[key] = value;
+  }
+  return environment;
+}
 
 export function validateOpenWikiIgnore(contents) {
   const patterns = new Set(contents.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#")));
@@ -64,9 +124,19 @@ export function buildOpenWikiArgs(mode = "update", userMessage = "") {
   return args;
 }
 
+function sourcePathIsIncluded(relativePath) {
+  const normalizedPath = relativePath.split(path.sep).join("/").replace(/^\.\//, "");
+  if (INCLUDED_OPENWIKI_INPUTS.has(normalizedPath)) return true;
+  if (EXCLUDED_SOURCE_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix))) return false;
+  const baseName = path.posix.basename(normalizedPath);
+  if ((baseName === ".env" || baseName.startsWith(".env.")) && !SAFE_ENV_TEMPLATE_NAMES.has(baseName)) return false;
+  if (EXCLUDED_FILE_PATTERN.test(normalizedPath)) return false;
+  return !normalizedPath.split("/").some((part) => EXCLUDED_DIRECTORIES.has(part));
+}
+
 async function collectFiles(root, relativePath, files) {
   const normalizedPath = relativePath.split(path.sep).join("/");
-  if (EXCLUDED_SOURCE_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix))) return;
+  if (normalizedPath !== "." && !sourcePathIsIncluded(normalizedPath)) return;
   const absolutePath = path.join(root, relativePath);
   let entryStat;
   try {
@@ -77,7 +147,7 @@ async function collectFiles(root, relativePath, files) {
   }
 
   if (entryStat.isFile()) {
-    if (!EXCLUDED_FILE_PATTERN.test(relativePath)) files.push(relativePath);
+    files.push(normalizedPath);
     return;
   }
   if (!entryStat.isDirectory()) return;
@@ -90,14 +160,35 @@ async function collectFiles(root, relativePath, files) {
 }
 
 export async function computeSourceFingerprint(root) {
-  const files = [];
-  for (const sourceRoot of SOURCE_ROOTS) await collectFiles(root, sourceRoot, files);
-  files.sort();
+  let files = [];
+  const tracked = spawnSync("git", ["-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { encoding: "utf8" });
+  if (!tracked.error && tracked.status === 0) {
+    files = tracked.stdout.split("\0").filter(Boolean).filter(sourcePathIsIncluded);
+  } else {
+    await collectFiles(root, ".", files);
+  }
+  for (const includedPath of INCLUDED_OPENWIKI_INPUTS) {
+    if (!files.includes(includedPath)) await collectFiles(root, includedPath, files);
+  }
+  files = [...new Set(files)].sort();
   const hash = createHash("sha256");
   for (const relativePath of files) {
+    const absolutePath = path.join(root, relativePath);
+    let entryStat;
+    try {
+      entryStat = await lstat(absolutePath);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
     hash.update(relativePath);
     hash.update("\0");
-    hash.update(await readFile(path.join(root, relativePath)));
+    if (entryStat.isSymbolicLink()) {
+      hash.update("symlink\0");
+      hash.update(await readlink(absolutePath));
+    } else {
+      hash.update(await readFile(absolutePath));
+    }
     hash.update("\0");
   }
   return hash.digest("hex");

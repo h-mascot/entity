@@ -108,13 +108,22 @@ if [[ "$DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
-if [[ "${ENTITY_ALLOW_DIRTY_DEPLOY:-0}" != "1" ]]; then
-  if [[ -x "${RELEASE_CHECK_SCRIPT}" ]]; then
-    "${RELEASE_CHECK_SCRIPT}"
-  else
-    warn "Release safety check script not found; continuing."
-  fi
+[[ -x "${RELEASE_CHECK_SCRIPT}" ]] || error "Required release safety check is missing or not executable: ${RELEASE_CHECK_SCRIPT}"
+[[ -d "${MAC_ENTITY_DIR}" ]] || error "Configured source checkout does not exist: ${MAC_ENTITY_DIR}"
+SOURCE_SHA="$(git -C "${MAC_ENTITY_DIR}" rev-parse HEAD 2>/dev/null)" || error "Configured source is not a git checkout: ${MAC_ENTITY_DIR}"
+SOURCE_BRANCH="$(git -C "${MAC_ENTITY_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null)" || error "Cannot determine source branch: ${MAC_ENTITY_DIR}"
+if [[ -n "${RELEASE_SHA}" && "${RELEASE_SHA}" != "${SOURCE_SHA}" ]]; then
+  error "ENTITY_RELEASE_SHA ${RELEASE_SHA} does not match configured source checkout ${SOURCE_SHA}"
 fi
+RELEASE_SHA="${SOURCE_SHA}"
+RELEASE_BRANCH="${RELEASE_BRANCH:-${SOURCE_BRANCH}}"
+if [[ "${ENTITY_ALLOW_DIRTY_DEPLOY:-0}" != "1" ]]; then
+  "${RELEASE_CHECK_SCRIPT}" "${MAC_ENTITY_DIR}"
+else
+  warn "ENTITY_ALLOW_DIRTY_DEPLOY=1 bypasses only the clean-worktree check; wiki verification still runs."
+fi
+log "Verifying generated OpenWiki documentation against exact deploy source..."
+(cd "${MAC_ENTITY_DIR}" && npm run docs:wiki:verify) || error "OpenWiki verification failed for ${MAC_ENTITY_DIR}"
 
 log "Pre-flight: checking production DB on ${PROD_HOST}..."
 TASK_COUNT=$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "sqlite3 '${PROD_DB}' 'select count(*) from tasks;'" 2>/dev/null || echo "0")

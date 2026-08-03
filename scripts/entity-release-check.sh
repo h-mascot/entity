@@ -2,7 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+DEFAULT_REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+REPO_ROOT="$(cd -- "${1:-${DEFAULT_REPO_ROOT}}" 2>/dev/null && pwd -P)" || {
+  echo "[release-check] source checkout does not exist: ${1:-${DEFAULT_REPO_ROOT}}" >&2
+  exit 1
+}
 
 if ! command -v git >/dev/null 2>&1; then
   echo "[release-check] git is required for deploy safety checks" >&2

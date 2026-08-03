@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import {
+  buildCredentialFreeEnvironment,
   buildOpenWikiArgs,
+  buildOpenWikiEnvironment,
   buildPnpmInstallArgs,
   codexAuthToOpenWikiEnv,
   generatedWikiStatusIsClean,
@@ -58,25 +60,27 @@ if (requestedMode === "prepare") {
 
 const provider = process.env.OPENWIKI_PROVIDER || "openai-chatgpt";
 const model = process.env.OPENWIKI_MODEL_ID || "gpt-5.4-mini";
-const environment = {
-  ...process.env,
-  OPENWIKI_PROVIDER: provider,
-  OPENWIKI_MODEL_ID: model,
-  OPENWIKI_TELEMETRY_DISABLED: process.env.OPENWIKI_TELEMETRY_DISABLED || "1",
-};
-if (provider === "openai-chatgpt" && !environment.OPENAI_CHATGPT_ACCESS_TOKEN) {
+let authEnvironment = {};
+if (provider === "openai-chatgpt" && !process.env.OPENAI_CHATGPT_ACCESS_TOKEN) {
   const authPath = path.join(os.homedir(), ".codex", "auth.json");
   try {
     const auth = JSON.parse(await readFile(authPath, "utf8"));
-    Object.assign(environment, codexAuthToOpenWikiEnv(auth));
+    authEnvironment = codexAuthToOpenWikiEnv(auth);
   } catch (error) {
     throw new Error(`OpenWiki requires a valid Codex OAuth login at ${authPath}: ${error.message}`);
   }
+} else if (provider === "openai-chatgpt") {
+  authEnvironment = Object.fromEntries(
+    ["OPENAI_CHATGPT_ACCESS_TOKEN", "OPENAI_CHATGPT_REFRESH_TOKEN", "OPENAI_CHATGPT_EXPIRES_AT", "OPENAI_CHATGPT_ACCOUNT_ID"]
+      .flatMap((key) => typeof process.env[key] === "string" ? [[key, process.env[key]]] : []),
+  );
 }
+const installEnvironment = buildCredentialFreeEnvironment(process.env);
+const environment = buildOpenWikiEnvironment(process.env, { provider, model, authEnvironment });
 
 const installResult = spawnSync("pnpm", buildPnpmInstallArgs(), {
   cwd: root,
-  env: environment,
+  env: installEnvironment,
   stdio: "inherit",
 });
 if (installResult.error) throw installResult.error;
