@@ -1,0 +1,43 @@
+# Dependencies, generated output, and VCS internals
+.git/
+node_modules/
+**/node_modules/
+**/dist/
+**/build/
+.tmp/
+output/
+.loop-cache/
+
+# Runtime state, databases, logs, and credentials
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+logs/
+data/
+**/data/
+**/credentials/
+**/secrets/
+**/receipts/
+
+# Private deployment/operator material is not documentation input
+docs/internal/
+entity.config.yaml
+*.pem
+*.key
+
+# Voluminous proof and browser artifacts
+e2e/artifacts/
+playwright-report/
+test-results/
+
+# Local runtime, agent memory, and private proof state
+/var/
+/memory/
+/artifacts/
+/.claude/
+/.cursor/run-state/

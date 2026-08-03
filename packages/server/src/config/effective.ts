@@ -111,11 +111,20 @@ function loadDbAgents(db: Database.Database): Array<Record<string, unknown>> {
   }));
 }
 
+function readOnlyFromCapabilities(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  try {
+    return (JSON.parse(value) as { readOnly?: unknown }).readOnly === true;
+  } catch {
+    return false;
+  }
+}
+
 function loadDbFileSources(db: Database.Database): Array<Record<string, unknown>> {
   if (!tableExists(db, 'file_sources')) return [];
   const rows = db
     .prepare(`
-      SELECT id, display_name, type, base_url, base_path, enabled, icon
+      SELECT id, display_name, type, base_url, base_path, enabled, icon, capabilities
       FROM file_sources
       ORDER BY datetime(updated_at) DESC, id DESC
     `)
@@ -128,6 +137,7 @@ function loadDbFileSources(db: Database.Database): Array<Record<string, unknown>
     basePath: row.base_path === null ? null : String(row.base_path ?? ''),
     baseUrl: row.base_url === null ? null : String(row.base_url ?? ''),
     enabled: row.enabled === 1 || row.enabled === true,
+    readOnly: readOnlyFromCapabilities(row.capabilities),
     icon: row.icon === null ? null : String(row.icon ?? ''),
     agentBindings: [],
   }));

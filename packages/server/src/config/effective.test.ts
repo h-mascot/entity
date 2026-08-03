@@ -52,6 +52,45 @@ describe('settings-backed effective config', () => {
     vi.unstubAllEnvs();
   });
 
+  it('preserves read-only file-source capabilities from the database', () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE file_sources (
+        id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        base_url TEXT,
+        base_path TEXT,
+        enabled INTEGER NOT NULL,
+        icon TEXT,
+        capabilities TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO file_sources (
+        id, display_name, type, base_path, enabled, icon, capabilities, updated_at
+      ) VALUES (
+        'entity-wiki', 'Entity Wiki', 'local', '/tmp/openwiki', 1, 'book-open',
+        '{"readOnly":true}', '2026-08-03T00:00:00.000Z'
+      );
+    `);
+
+    const result = buildEffectiveConfig({
+      db,
+      loaded: {
+        defaults: EntityConfigSchema.parse({}),
+        profile: null,
+        config: null,
+        configPath: '/tmp/entity.config.yaml',
+        profilePath: null,
+        warnings: [],
+      },
+    });
+
+    expect((result.settings as any).fileSources).toContainEqual(
+      expect.objectContaining({ id: 'entity-wiki', readOnly: true }),
+    );
+  });
+
   it('redacts secret-looking fields', () => {
     const result = buildEffectiveConfig({
       loaded: {

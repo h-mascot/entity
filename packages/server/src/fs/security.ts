@@ -35,6 +35,23 @@ export function resolveLocalPath(basePath: string, relativePath: string): string
   return resolvedTarget;
 }
 
+export function resolvePathThroughNearestExistingAncestor(inputPath: string): string {
+  let current = path.resolve(inputPath);
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      return path.join(fs.realpathSync.native(current), ...suffix.reverse());
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== 'ENOENT') throw err;
+      const parent = path.dirname(current);
+      if (parent === current) throw err;
+      suffix.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 export function isContainedPath(root: string, target: string): boolean {
   const relativePath = path.relative(root, target);
   return (

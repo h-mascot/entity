@@ -47,6 +47,16 @@ fileSources:
     icon: null
     agentBindings:
       - assistant
+  - id: entity-wiki
+    displayName: Entity Wiki
+    type: local
+    basePath: ./openwiki
+    baseUrl: null
+    enabled: true
+    readOnly: true
+    icon: book-open
+    agentBindings:
+      - assistant
 tasks:
   columns:
     - todo
