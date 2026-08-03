@@ -153,7 +153,7 @@ if [[ "$MODE" == "--all" || "$MODE" == "--frontend-only" ]]; then
 fi
 
 log "Syncing built files to configured target; DB files are excluded."
-ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; mkdir -p '${ENTITY_DIR}/packages/server/src/plugins' '${ENTITY_DIR}/packages/db/dist' '${SERVER_DIST}' '${FRONTEND_DIST}'"
+ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; mkdir -p '${ENTITY_DIR}/packages/server/src/plugins' '${ENTITY_DIR}/packages/db/dist' '${SERVER_DIST}' '${FRONTEND_DIST}' '${ENTITY_DIR}/openwiki'"
 if [[ "$MODE" == "--all" || "$MODE" == "--server-only" ]]; then
   rsync -avz -e "ssh ${SSH_OPTS[*]}" --delete --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/server/src/plugins/" "${PROD_HOST}:${ENTITY_DIR}/packages/server/src/plugins/"
   rsync -avz -e "ssh ${SSH_OPTS[*]}" --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/db/dist/" "${PROD_HOST}:${ENTITY_DIR}/packages/db/dist/"
@@ -164,6 +164,9 @@ fi
 if [[ "$MODE" == "--all" || "$MODE" == "--frontend-only" ]]; then
   rsync -avz --delete -e "ssh ${SSH_OPTS[*]}" --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/app/dist/" "${PROD_HOST}:${FRONTEND_DIST}/"
 fi
+
+log "Syncing generated OpenWiki documentation."
+rsync -avz --delete -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/openwiki/" "${PROD_HOST}:${ENTITY_DIR}/openwiki/"
 
 if [[ -n "$RELEASE_SHA" ]]; then
   log "Syncing runtime dependencies into immutable release..."

@@ -85,6 +85,7 @@ export const EntityConfigSchema = z.object({
     basePath: NullableString.default(null),
     baseUrl: NullableString.default(null),
     enabled: z.boolean().default(true),
+    readOnly: z.boolean().default(false),
     icon: NullableString.default(null),
     agentBindings: StringArray.default([]),
   })).default([]),

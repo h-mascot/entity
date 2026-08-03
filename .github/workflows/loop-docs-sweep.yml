@@ -1,72 +1,38 @@
-name: Loop 001 — Docs sweep
+name: Loop 001 — Entity OpenWiki Guard
 
-# Loop #001 "The docs sweep" (Forward Future Loop Library), adopted per
-# docs/loop-library-adoption.md. A Cursor cloud agent reconciles Markdown docs
-# with the implementation, then a deterministic step opens a PR.
-#
-# Activation (opt-in, so merging this never auto-starts scheduled agents):
-#   1. Add repository secret CURSOR_API_KEY (Cursor dashboard API key).
-#   2. Set repository variable ENTITY_LOOPS_ENABLED = "true" to enable the cron.
-#   Manual `workflow_dispatch` runs work without the variable (still need the key).
-#   Optional: repository variable ENTITY_LOOP_MODEL to override the model.
-
+# Generation runs on Enterprise during sandbox shipping, where Codex OAuth is
+# available without copying model credentials into GitHub. This workflow audits
+# every successful CI run and the weekly schedule for stale generated docs.
 on:
-  schedule:
-    - cron: '17 6 * * 1' # Mondays 06:17 UTC (weekly)
   workflow_dispatch:
-
-concurrency:
-  group: loop-docs-sweep
-  cancel-in-progress: false
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_run:
+    workflows: ['CI/CD Pipeline']
+    types: [completed]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
-  docs-sweep:
-    name: Docs sweep
+  verify-openwiki:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && vars.ENTITY_LOOPS_ENABLED == 'true') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENTITY_LOOPS_ENABLED == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          fetch-depth: 0
+          node-version: '22'
 
-      - name: Require CURSOR_API_KEY
-        env:
-          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-        run: |
-          if [ -z "$CURSOR_API_KEY" ]; then
-            echo "::error::CURSOR_API_KEY secret is not set. Add it to enable the docs sweep loop."
-            exit 1
-          fi
+      - name: Test OpenWiki integration
+        run: node --test scripts/entity-openwiki-lib.test.mjs
 
-      - name: Install Cursor CLI
-        run: |
-          curl https://cursor.com/install -fsS | bash
-          echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
-
-      - name: Install restricted permission profile
-        run: |
-          mkdir -p "$HOME/.cursor"
-          cp .cursor/loops/permissions/docs-sweep.cli.json "$HOME/.cursor/cli-config.json"
-
-      - name: Run docs sweep (edits Markdown only)
-        env:
-          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-          ENTITY_LOOP_MODEL: ${{ vars.ENTITY_LOOP_MODEL || 'gpt-5' }}
-        run: |
-          AGENT="$(command -v cursor-agent || command -v agent)"
-          "$AGENT" -p --force --output-format text \
-            --model "$ENTITY_LOOP_MODEL" \
-            "$(cat .cursor/loops/001-docs-sweep.md)"
-
-      - name: Open PR if docs changed (deterministic)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          bash scripts/loops/open-loop-pr.sh \
-            "docs-sweep" \
-            "docs: reconcile documentation with implementation (loop 001)" \
-            "docs: docs sweep (loop 001)"
+      - name: Verify generated docs match Entity source
+        run: npm run docs:wiki:verify

@@ -144,4 +144,77 @@ describe('source registration routes', () => {
       expect(JSON.parse(updatedBody.capabilities)).toMatchObject({ read: true, write: true, list: true, search: true });
     });
   });
+
+  it('inherits read-only policy for aliases of protected local roots', async () => {
+    const workspaceRoot = await makeTempRoot();
+    const wikiRoot = path.join(workspaceRoot, 'wiki');
+    const dbRoot = await makeTempRoot();
+    const wikiAliasRoot = path.join(workspaceRoot, 'wiki-alias-root');
+    await fs.promises.mkdir(wikiRoot, { recursive: true });
+    await fs.promises.symlink(wikiRoot, wikiAliasRoot, 'dir');
+    process.env.WORKSPACE = workspaceRoot;
+    process.env.ENTITY_TASK_DB_PATH = path.join(dbRoot, 'entity.sqlite');
+
+    await withSourceServer(async (baseUrl) => {
+      const create = (id: string, basePath: string, capabilities?: string) =>
+        fetch(`${baseUrl}/api/fs/sources`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, displayName: id, type: 'local', basePath, capabilities }),
+        });
+      expect((await create('protected-wiki', wikiRoot, JSON.stringify({ readOnly: true }))).status).toBe(201);
+      const alias = await create('wiki-alias', wikiRoot);
+      expect(alias.status).toBe(201);
+      const body = (await alias.json()) as { capabilities: string };
+      expect(JSON.parse(body.capabilities)).toMatchObject({ readOnly: true, write: false });
+      const symlinkAlias = await create('wiki-symlink-alias', wikiAliasRoot);
+      expect(symlinkAlias.status).toBe(201);
+      const symlinkBody = (await symlinkAlias.json()) as { capabilities: string };
+      expect(JSON.parse(symlinkBody.capabilities)).toMatchObject({ readOnly: true, write: false });
+    });
+  });
+
+  it('prevents deletion or adapter-type replacement of trusted config-managed sources', async () => {
+    const {
+      capabilitiesForStorage,
+      localSourceOverlapsReadOnlyRoot,
+      sourceCanBeDeleted,
+      sourceTypeCanBeChanged,
+    } = await import('./routes-sources');
+    const configured = JSON.stringify({ source: 'entity.config.yaml', readOnly: true, agentBindings: ['assistant'] });
+    expect(sourceCanBeDeleted(configured)).toBe(false);
+    expect(sourceCanBeDeleted(JSON.stringify({ readOnly: true }))).toBe(true);
+    expect(sourceTypeCanBeChanged(configured, 'local', 'http-markdown')).toBe(false);
+    expect(sourceTypeCanBeChanged(configured, 'local', 'local')).toBe(true);
+    expect(JSON.parse(capabilitiesForStorage('http-markdown', '{}', null, configured) ?? '{}')).toMatchObject({
+      source: 'entity.config.yaml',
+      agentBindings: ['assistant'],
+    });
+    const readOnlySource = {
+      type: 'local' as const,
+      base_path: '/workspace/wiki',
+      capabilities: configured,
+    };
+    expect(localSourceOverlapsReadOnlyRoot('/workspace/wiki', [readOnlySource])).toBe(true);
+    expect(localSourceOverlapsReadOnlyRoot('/workspace/wiki/subdir', [readOnlySource])).toBe(true);
+    expect(localSourceOverlapsReadOnlyRoot('/workspace', [readOnlySource])).toBe(true);
+    expect(localSourceOverlapsReadOnlyRoot('/other', [readOnlySource])).toBe(false);
+  });
+
+  it('preserves trusted config-managed read-only policy on client updates', async () => {
+    const { capabilitiesForStorage } = await import('./routes-sources');
+    const stored = capabilitiesForStorage(
+      'local',
+      JSON.stringify({ readOnly: false }),
+      process.cwd(),
+      JSON.stringify({ source: 'entity.config.yaml', readOnly: true, agentBindings: ['assistant'] }),
+    );
+
+    expect(JSON.parse(stored ?? '{}')).toMatchObject({
+      source: 'entity.config.yaml',
+      readOnly: true,
+      write: false,
+      agentBindings: ['assistant'],
+    });
+  });
 });

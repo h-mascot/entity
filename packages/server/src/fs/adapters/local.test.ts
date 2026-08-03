@@ -98,6 +98,21 @@ describe('LocalFileSourceAdapter metadata', () => {
     await expect(fs.promises.readdir(outside)).resolves.toEqual([]);
   });
 
+  it('keeps configured read-only local sources readable but blocks mutations', async () => {
+    const root = await makeTempRoot();
+    vi.stubEnv('WORKSPACE', root);
+    await fs.promises.writeFile(path.join(root, 'guide.md'), '# guide\n', 'utf-8');
+    const adapter = new LocalFileSourceAdapter(
+      sourceFor(root, { capabilities: JSON.stringify({ readOnly: true }) }),
+    );
+
+    expect(adapter.capabilities()).toMatchObject({ read: true, write: false, list: true, search: true });
+    await expect(adapter.read('guide.md')).resolves.toMatchObject({ content: '# guide\n' });
+    await expect(adapter.write('guide.md', '# changed\n')).rejects.toThrow('Local source is read-only.');
+    await expect(adapter.mkdir('new-folder')).rejects.toThrow('Local source is read-only.');
+    await expect(fs.promises.readFile(path.join(root, 'guide.md'), 'utf-8')).resolves.toBe('# guide\n');
+  });
+
   it('derives write access for allowlisted roots instead of stored client JSON', () => {
     const workspaceRoot = process.env.WORKSPACE ?? process.cwd();
     const adapter = new LocalFileSourceAdapter(sourceFor(workspaceRoot));

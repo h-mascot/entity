@@ -1,0 +1,11 @@
+packages:
+  - .
+
+minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - openwiki
+  - "@langchain/*"
+  - deepagents
+  - langsmith
+onlyBuiltDependencies:
+  - better-sqlite3

@@ -29,15 +29,37 @@ export const LOCAL_SOURCE_CAPABILITY_POLICY: SourceCapability = {
   search: true,
 };
 
-export function deriveLocalSourceCapabilities(basePath: string | undefined | null): SourceCapability {
+interface LocalSourceCapabilityOptions {
+  readOnly?: boolean;
+}
+
+function sourceIsReadOnly(source: FileSourceRecord): boolean {
+  try {
+    const parsed = JSON.parse(source.capabilities) as { readOnly?: unknown };
+    return parsed.readOnly === true;
+  } catch {
+    return false;
+  }
+}
+
+export function deriveLocalSourceCapabilities(
+  basePath: string | undefined | null,
+  options: LocalSourceCapabilityOptions = {},
+): SourceCapability {
   return {
     ...LOCAL_SOURCE_CAPABILITY_POLICY,
-    write: isBasePathAllowlisted(basePath),
+    write: !options.readOnly && isBasePathAllowlisted(basePath),
   };
 }
 
-export function localSourceCapabilitiesJson(basePath?: string | null): string {
-  return JSON.stringify(deriveLocalSourceCapabilities(basePath));
+export function localSourceCapabilitiesJson(
+  basePath?: string | null,
+  options: LocalSourceCapabilityOptions = {},
+): string {
+  return JSON.stringify({
+    ...deriveLocalSourceCapabilities(basePath, options),
+    readOnly: options.readOnly === true,
+  });
 }
 
 function toNode(sourceId: string, rootPath: string, entryName: string, stats: fs.Stats): SourceNode {
@@ -80,8 +102,16 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     }
   }
 
+  private assertWritable(): void {
+    if (sourceIsReadOnly(this.source)) {
+      throw new Error('Local source is read-only.');
+    }
+  }
+
   capabilities(): SourceCapability {
-    return deriveLocalSourceCapabilities(this.source.base_path);
+    return deriveLocalSourceCapabilities(this.source.base_path, {
+      readOnly: sourceIsReadOnly(this.source),
+    });
   }
 
   async list(relativePath: string): Promise<SourceNode[]> {
@@ -207,6 +237,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
   }
 
   async write(relativePath: string, content: string): Promise<{ updatedAt?: string }> {
+    this.assertWritable();
     const basePath = this.source.base_path?.trim();
     if (!basePath) {
       throw new Error('Local source basePath is not configured.');
@@ -241,6 +272,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
   }
 
   async mkdir(relativePath: string): Promise<void> {
+    this.assertWritable();
     const basePath = this.source.base_path?.trim();
     if (!basePath) {
       throw new Error('Local source basePath is not configured.');

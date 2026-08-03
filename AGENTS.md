@@ -184,3 +184,13 @@ The Task Master agent — and the task-comment `@mention` responder — generate
 - Without a key, `@mention` replies still post a graceful "configure a model" message and task pickup still works; only the generated text is skipped.
 
 **Cloud secret caveat:** newly added Secrets are injected into the VM environment, but a long-running dev server (or its tmux server) started *before* the secret was added will not see it. Restart the dev server in a shell/tmux session that has the secret in its environment (e.g. recreate the tmux server) so `process.env` picks it up.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
+
+Entity refreshes OpenWiki before sandbox shipping on the trusted Enterprise runner; GitHub Actions verifies that committed generated docs remain fresh. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+
+<!-- OPENWIKI:END -->
