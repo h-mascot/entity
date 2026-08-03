@@ -194,6 +194,16 @@ test("source fingerprint covers all tracked-style shipped roots", async () => {
   }
 });
 
+test("pull request CI verifies generated docs against the PR head after merge-tree tests", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/main.yml", import.meta.url), "utf8");
+  const testPosition = workflow.indexOf('npm test || echo "Tests skipped (MVP mode)"');
+  const headPosition = workflow.indexOf("github.event.pull_request.head.sha");
+  const verifyPosition = workflow.lastIndexOf("npm run docs:wiki:verify");
+  assert.ok(testPosition >= 0 && headPosition > testPosition && verifyPosition > headPosition);
+  assert.match(workflow, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
+  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+});
+
 test("deploy gate verifies the exact source checkout and fails closed", async () => {
   const deploySource = await readFile(new URL("../deploy.sh", import.meta.url), "utf8");
   const releaseCheckSource = await readFile(new URL("./entity-release-check.sh", import.meta.url), "utf8");
