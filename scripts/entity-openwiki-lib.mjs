@@ -109,6 +109,10 @@ export function generatedWikiStatusIsClean(status) {
   return status.trim().length === 0;
 }
 
+export function shouldRunOpenWiki(requestedMode, wikiIsFresh) {
+  return requestedMode !== "prepare" || !wikiIsFresh;
+}
+
 export function normalizeOpenWikiBootstrapText(text) {
   return text.replace(
     "The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki.",

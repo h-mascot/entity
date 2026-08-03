@@ -13,6 +13,7 @@ import {
   codexAuthToOpenWikiEnv,
   generatedWikiStatusIsClean,
   normalizeOpenWikiBootstrapText,
+  shouldRunOpenWiki,
   validateOpenWikiIgnore,
   verifyGeneratedWiki,
   writeGenerationMetadata,
@@ -50,6 +51,12 @@ test("buildOpenWikiArgs pins OpenWiki and enforces minimum release age", () => {
   assert.deepEqual(buildOpenWikiArgs("update", "Remove the duplicate workflow"), [
     "code", "--update", "--print", "Remove the duplicate workflow",
   ]);
+});
+
+test("prepare generation runs only when the wiki is stale", () => {
+  assert.equal(shouldRunOpenWiki("prepare", true), false);
+  assert.equal(shouldRunOpenWiki("prepare", false), true);
+  assert.equal(shouldRunOpenWiki("update", true), true);
 });
 
 test("OpenWiki bootstrap guidance reflects trusted generation and GitHub verification", () => {

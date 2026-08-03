@@ -11,6 +11,7 @@ import {
   codexAuthToOpenWikiEnv,
   generatedWikiStatusIsClean,
   normalizeOpenWikiBootstrapText,
+  shouldRunOpenWiki,
   verifyGeneratedWiki,
   writeGenerationMetadata,
 } from "./entity-openwiki-lib.mjs";
@@ -28,6 +29,31 @@ if (requestedMode === "verify") {
 if (!new Set(["init", "update"]).has(mode)) {
   console.error("Usage: node scripts/entity-openwiki.mjs <init|update|prepare|verify>");
   process.exit(64);
+}
+
+if (requestedMode === "prepare") {
+  const initialStatus = spawnSync("git", [
+    "status", "--porcelain", "--untracked-files=normal", "--", "openwiki", "AGENTS.md", "CLAUDE.md",
+  ], { cwd: root, encoding: "utf8" });
+  if (initialStatus.error) throw initialStatus.error;
+  if (initialStatus.status !== 0) process.exit(initialStatus.status ?? 1);
+  if (!generatedWikiStatusIsClean(initialStatus.stdout)) {
+    console.error("[entity-openwiki] generated documentation is already dirty. Review and commit it before shipping:");
+    console.error(initialStatus.stdout.trimEnd());
+    process.exit(75);
+  }
+
+  let wikiIsFresh = false;
+  try {
+    await verifyGeneratedWiki(root);
+    wikiIsFresh = true;
+  } catch {
+    // A stale or incomplete wiki must be regenerated below.
+  }
+  if (!shouldRunOpenWiki(requestedMode, wikiIsFresh)) {
+    console.log("[entity-openwiki] wiki is already fresh; prepare skipped generation.");
+    process.exit(0);
+  }
 }
 
 const provider = process.env.OPENWIKI_PROVIDER || "openai-chatgpt";
