@@ -137,7 +137,24 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
 
       const adapter = createFileSourceAdapter(source);
       const startedAt = Date.now();
-      const file = await adapter.read(normalizedPath);
+      let file: { content: string; contentType: string; updatedAt?: string; size?: number; isBinary?: boolean };
+
+      try {
+        file = await adapter.read(normalizedPath);
+      } catch (readErr) {
+        if (typeof (adapter as { readRaw?: unknown }).readRaw === 'function') {
+          const raw = await adapter.readRaw!(normalizedPath);
+          file = {
+            content: '',
+            contentType: raw.contentType,
+            updatedAt: raw.updatedAt,
+            size: raw.size,
+            isBinary: true,
+          };
+        } else {
+          throw readErr;
+        }
+      }
       const durationMs = Date.now() - startedAt;
       const fileSize = file.size ?? Buffer.byteLength(file.content, 'utf-8');
       const isBinary = typeof file.isBinary === 'boolean' ? file.isBinary : !isTextualContentType(file.contentType);
