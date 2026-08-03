@@ -1,4 +1,4 @@
-import { lazy, Suspense, type Dispatch, type SetStateAction } from 'react';
+import { lazy, Suspense, type ComponentProps, type Dispatch, type SetStateAction } from 'react';
 import type { DocsTtsSettings } from '../components/MarkdownAudioControls';
 
 const FileSourcesSettings = lazy(() => import('../components/settings/FileSourcesSettings'));
@@ -9,6 +9,8 @@ const TaskMasterSettings = lazy(() => import('../components/TaskMasterSettings')
 const DocsSettings = lazy(() => import('../components/settings/DocsSettings'));
 const PluginAdminPanel = lazy(() => import('../components/plugins/PluginAdminPanel'));
 const OfflineAwareChat = lazy(() => import('../components/OfflineAwareChat'));
+const UsersAndRolesSettings = lazy(() => import('../components/settings/UsersAndRolesSettings'));
+const AdminSettingsForm = lazy(() => import('../components/settings/AdminSettingsForm'));
 
 type AdminSection =
   | 'general'
@@ -152,6 +154,22 @@ function LazyFileSourcesSettings(props: { apiBase?: string; enabled?: boolean })
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading settings" />}>
       <FileSourcesSettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyAdminSettingsForm(props: ComponentProps<typeof AdminSettingsForm>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading settings" />}>
+      <AdminSettingsForm {...props} />
+    </Suspense>
+  );
+}
+
+function LazyUsersAndRolesSettings(props: { apiBase?: string }) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading users and roles" />}>
+      <UsersAndRolesSettings {...props} />
     </Suspense>
   );
 }
@@ -474,7 +492,21 @@ export default function AdminView({
 
 
         {adminSection === 'accessControl' && (
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3">
+            <LazyUsersAndRolesSettings apiBase={apiBase} />
+            <LazyAdminSettingsForm
+              apiBase={apiBase}
+              section="accessControl"
+              title="Access control settings"
+              description="Workspace auth defaults and principal resolution policy."
+              fields={[
+                { kind: 'boolean', key: 'loginRequiredDefault', label: 'Default login required' },
+                { kind: 'text', key: 'defaultOrgId', label: 'Default org ID' },
+                { kind: 'boolean', key: 'enforceStoredPrincipals', label: 'Enforce stored principals' },
+                { kind: 'boolean', key: 'allowHeaderCompat', label: 'Allow local header compatibility path' },
+              ]}
+            />
+            <div className="grid gap-3 md:grid-cols-2">
             <FeatureSettingsCard
               title="Login gate"
               status={loginRequired ? 'required' : 'optional'}
@@ -487,12 +519,12 @@ export default function AdminView({
             />
             <FeatureSettingsCard
               title="RBAC / principal posture"
-              status="visible"
-              body="Role, principal, and scope enforcement exists in server permission envelopes and request headers."
+              status="editable above"
+              body="Stored principals resolve server-side grants. Disabled principals fail closed; unknown local principals still use the tested header compatibility path."
               bullets={[
-                'Supported roles include viewer, contributor, manager, and admin in request permission context.',
+                'Create principals and scoped grants in the Users & Roles panel above.',
                 'Object access decisions return safe envelopes with required/effective role information.',
-                'This panel is an Admin map of the posture; dedicated grant editing remains a follow-up hardening task.',
+                'x-entity-role is ignored when a stored principal record exists.',
               ]}
             />
             <FeatureSettingsCard
@@ -513,50 +545,34 @@ export default function AdminView({
                 'Service tokens require an explicit X-Entity-Actor value.',
               ]}
             />
+            </div>
           </div>
         )}
 
         {adminSection === 'businessOnboarding' && (
-          <div className="grid gap-3 md:grid-cols-2">
-            <FeatureSettingsCard
-              title="Business onboarding route"
-              status="enabled"
-              body="Business onboarding is available as the first-run/setup flow and can be reached from /onboarding/business or the setup gate."
-              bullets={[
-                'Catalog covers claims, engineering/devops, product, sales/BD, marketing, finance, customer success, people ops, health business, AI ops, and other.',
-                'The flow seeds teams, projects, agent assignments, and starter operating tasks.',
-                'Completion returns the user to the workspace and persists onboarding state.',
-              ]}
-            />
-            <FeatureSettingsCard
-              title="Onboarding module registry"
-              status="guarded"
-              body="Agent/module onboarding manifests are resolved server-side with required/recommended/optional/admin risk levels."
-              bullets={[
-                'Default bundle includes Entity contracts, file sources, Mission Control, and Entity linker modules.',
-                'Admin-only or high-risk modules are reported as warnings instead of silently installing.',
-                'Dry-run plans enumerate writes, downloads, install, verify, rollback, and context export steps.',
-              ]}
-            />
-            <FeatureSettingsCard
-              title="Business setup safety"
-              status="fail-closed"
-              body="Business onboarding writes through workspace/team/project/task APIs and validates inputs before mutation."
-              bullets={[
-                'Unknown domains and malformed payloads fail with explicit API errors.',
-                'Named agent assignments only attach when matching registry records exist or can be safely represented.',
-              ]}
-            />
-            <FeatureSettingsCard
-              title="Admin coverage status"
-              status="covered"
-              body="This Admin page now gives operators a dedicated place to inspect the business onboarding feature posture."
-              bullets={[
-                'Deeper controls like resetting onboarding state or editing domain catalogs should be separate explicit admin actions.',
-                'No production data mutation is exposed from this posture page.',
-              ]}
-            />
-          </div>
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="businessOnboarding"
+            title="Business onboarding"
+            description="Control whether onboarding is enabled, the default domain, and dry-run safety requirements."
+            fields={[
+              { kind: 'boolean', key: 'enabled', label: 'Enable business onboarding flow' },
+              { kind: 'select', key: 'defaultDomain', label: 'Default domain', options: [
+                { value: 'claims', label: 'Claims' },
+                { value: 'engineering', label: 'Engineering' },
+                { value: 'product', label: 'Product' },
+                { value: 'sales', label: 'Sales' },
+                { value: 'marketing', label: 'Marketing' },
+                { value: 'finance', label: 'Finance' },
+                { value: 'customer_success', label: 'Customer success' },
+                { value: 'people_ops', label: 'People ops' },
+                { value: 'health_business', label: 'Health business' },
+                { value: 'ai_ops', label: 'AI ops' },
+                { value: 'other', label: 'Other' },
+              ] },
+              { kind: 'boolean', key: 'requireDryRun', label: 'Require dry-run confirmation before writes' },
+            ]}
+          />
         )}
 
         {adminSection === 'missionControl' && (
@@ -595,121 +611,85 @@ export default function AdminView({
 
 
         {adminSection === 'engineering' && (
-          <div className="grid gap-3 md:grid-cols-2">
-            <FeatureSettingsCard
-              title="Engineering board"
-              status="enabled"
-              body="Dedicated Mission Control domain board for Entity Engineering work."
-              bullets={[
-                'Create-task defaults fail closed unless an Engineering project/domain is available.',
-                'Imported backlog work uses idempotent title keys and backup receipts.',
-                'Current runtime shows the Engineering empty state cleanly when there are no scoped tasks.',
-              ]}
-            />
-            <FeatureSettingsCard
-              title="Import gates"
-              status="guarded"
-              body="Controls are intentionally gated through receipts/backups rather than a blind UI button."
-              bullets={[
-                'Dry-run before write is required for roadmap/todo import lanes.',
-                'Approved import writes preserve a backup receipt and no-prod boundary.',
-              ]}
-            />
-          </div>
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="engineering"
+            title="Engineering"
+            description="Engineering board defaults and import safety gates."
+            fields={[
+              { kind: 'select', key: 'defaultWorkDomain', label: 'Default work domain', options: [
+                { value: 'engineering', label: 'Engineering' },
+                { value: 'product', label: 'Product' },
+                { value: 'ops', label: 'Ops' },
+              ] },
+              { kind: 'boolean', key: 'importDryRunRequired', label: 'Require import dry-run' },
+              { kind: 'boolean', key: 'showEmptyStateHints', label: 'Show empty-state hints' },
+            ]}
+          />
         )}
 
         {adminSection === 'workplanes' && (
-          <div className="grid gap-3 md:grid-cols-2">
-            <FeatureSettingsCard
-              title="Task Workplanes"
-              status="enabled"
-              body="Deep task cockpit for task summary, proof, files, activity, comments, subtasks, and outputs."
-              bullets={[
-                'Layout is human-owned; agent layout mutation attempts must be rejected.',
-                'Missing proof must not present as review-ready.',
-                'Deep-link and return-to-board state are part of acceptance.',
-              ]}
-            />
-            <FeatureSettingsCard
-              title="ActivityEvent spine"
-              status="enabled"
-              body="Plan/progress/log/proof/status/blocker events feed receipts, reviews, routing, and notification history."
-              bullets={[
-                'Activity consumers are canonicalized through the ActivityEvent APIs.',
-                'Degraded/malformed events remain visible instead of disappearing.',
-              ]}
-            />
-          </div>
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="workplanes"
+            title="Workplanes"
+            description="Task workplane proof and layout safety controls."
+            fields={[
+              { kind: 'boolean', key: 'requireProofBeforeReview', label: 'Require proof before review-ready' },
+              { kind: 'boolean', key: 'lockAgentLayoutMutation', label: 'Reject agent layout mutation' },
+              { kind: 'boolean', key: 'showActivityDegradedBanner', label: 'Show degraded activity banner' },
+            ]}
+          />
         )}
 
         {adminSection === 'strategicRoadmap' && (
-          <div className="grid gap-3 md:grid-cols-2">
-            <FeatureSettingsCard
-              title="Strategic roadmap view"
-              status="enabled"
-              body="Renders roadmap, recurring tasks, and backlog/future ordering from Mission Control task state."
-              bullets={[
-                'Roadmaps and recurring tasks have explicit empty states.',
-                'Backlog/future items are visible without mutating task state.',
-              ]}
-            />
-            <FeatureSettingsCard
-              title="Dependency-aware ordering"
-              status="read-only"
-              body="Strategic view exposes ordering and links without becoming a second task source of truth."
-              bullets={[
-                'Linear/roadmap links belong as references, not alternate status stores.',
-                'Promotions back into Ops should go through Mission Control task APIs.',
-              ]}
-            />
-          </div>
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="strategicRoadmap"
+            title="Strategic roadmap"
+            description="Control which strategic roadmap lanes are visible in Mission Control."
+            fields={[
+              { kind: 'boolean', key: 'showBacklogLane', label: 'Show backlog lane' },
+              { kind: 'boolean', key: 'showRecurringLane', label: 'Show recurring lane' },
+              { kind: 'boolean', key: 'showDependencyHints', label: 'Show dependency hints' },
+            ]}
+          />
         )}
 
         {adminSection === 'scopedSearch' && (
-          <div className="grid gap-3 md:grid-cols-2">
-            <FeatureSettingsCard
-              title="Scoped search"
-              status="enabled"
-              body="Search covers docs, task/proof surfaces, and degraded-index visibility."
-              bullets={[
-                'Doc Hub search supports source/type/origin/agent filters.',
-                'Task/proof search should show empty and degraded states rather than silent misses.',
-                'Search is a discovery layer; source-backed files remain the document truth.',
-              ]}
-            />
-            <FeatureSettingsCard
-              title="Index health"
-              status="visible in Files/Docs"
-              body="Index problems should surface in the UI and QA receipts."
-              bullets={[
-                'File-source access errors must remain visible and not block unrelated sources.',
-                'Degraded index results are acceptable only when clearly labeled.',
-              ]}
-            />
-          </div>
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="scopedSearch"
+            title="Scoped search"
+            description="Default search collection and degraded-result visibility."
+            fields={[
+              { kind: 'select', key: 'defaultCollection', label: 'Default collection', options: [
+                { value: 'all', label: 'All' },
+                { value: 'obsidian', label: 'Obsidian' },
+                { value: 'superada', label: 'Superada' },
+                { value: 'sessions', label: 'Sessions' },
+                { value: 'scotty', label: 'Scotty' },
+                { value: 'spock', label: 'Spock' },
+                { value: 'memory', label: 'Memory' },
+              ] },
+              { kind: 'boolean', key: 'labelDegradedResults', label: 'Label degraded results' },
+              { kind: 'boolean', key: 'includeTaskProof', label: 'Include task/proof surfaces' },
+            ]}
+          />
         )}
 
         {adminSection === 'channels' && (
-          <div className="grid gap-3 md:grid-cols-2">
-            <FeatureSettingsCard
-              title="Channel adapters"
-              status="feature-flagged"
-              body="Inbound channel messages map to tasks/ActivityEvents; outbound status maps back to channels."
-              bullets={[
-                'Adapters must never become alternate task truth stores.',
-                'Reference adapter is behind a feature flag and should publish proof/status, not hidden state.',
-              ]}
-            />
-            <FeatureSettingsCard
-              title="Notification safety"
-              status="guarded"
-              body="Channel delivery is intentionally separated from task authority."
-              bullets={[
-                'Adapter failures should degrade to visible status/proof instead of blocking core Mission Control.',
-                'External posting still requires the appropriate channel/operator boundary.',
-              ]}
-            />
-          </div>
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="channels"
+            title="Channels"
+            description="Channel adapter enablement and delivery preferences."
+            fields={[
+              { kind: 'boolean', key: 'referenceAdapterEnabled', label: 'Enable reference adapter' },
+              { kind: 'string-list', key: 'preferredChannels', label: 'Preferred channels' },
+              { kind: 'boolean', key: 'degradeOnAdapterFailure', label: 'Degrade visibly on adapter failure' },
+            ]}
+          />
         )}
 
         {adminSection === 'integrations' && (

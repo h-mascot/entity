@@ -7,6 +7,10 @@ import {
   resolvePhase2Flags,
   type Phase2FlagSnapshot,
 } from '../phase2-flags';
+import { getEntityDatabase } from '../../../db/src/entity-db';
+import { ensureAppSettingsTable } from '../config/settings-store';
+import { ADMIN_SETTINGS_KEYS } from '../config/admin-settings';
+import { getAdminSettings } from '../config/admin-settings-store';
 
 type SearchMode = 'keyword' | 'semantic' | 'hybrid';
 type SearchCollection = 'all' | 'obsidian' | 'superada' | 'sessions' | 'scotty' | 'spock' | 'memory';
@@ -622,7 +626,11 @@ export function createSearchRouter(dependencies: SearchRouterDependencies = {}):
     }
 
     const collectionRaw = req.query.collection;
-    const collection = normalizeCollection(collectionRaw) ?? 'all';
+    const scopedSearchSettings = getAdminSettings(
+      getEntityDatabase(ensureAppSettingsTable),
+      ADMIN_SETTINGS_KEYS.scopedSearch,
+    );
+    const collection = normalizeCollection(collectionRaw) ?? scopedSearchSettings.defaultCollection;
     if (typeof collectionRaw !== 'undefined' && !normalizeCollection(collectionRaw)) {
       return res.status(400).json({ error: 'invalid collection' });
     }

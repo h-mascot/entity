@@ -131,6 +131,7 @@ const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
 const MCCreateTaskModal = lazy(() => import('./components/mission-control/MCCreateTaskModal'));
 const ShowClawFeaturedPage = lazy(() => import('./ShowClawFeaturedPage'));
 const AdminView = lazy(() => import('./views/AdminView'));
+const DocumentConvertDialog = lazy(() => import('./components/doc-hub/DocumentConvertDialog'));
 const MobileView = lazy(() => import('./views/MobileView'));
 const FilesView = lazy(() => import('./views/FilesView'));
 
@@ -5916,6 +5917,26 @@ export default function App() {
           />
         </Suspense>
       ) : null}
+
+      <Suspense fallback={null}>
+        <DocumentConvertDialog
+          open={activeDocHubTool === 'convert'}
+          sourceId={currentSourceId}
+          sourcePath={currentFile}
+          readOnly={currentFileReadOnly}
+          apiBase={runtime.apiBase}
+          onClose={() => {
+            setActiveDocHubTool(null);
+            window.dispatchEvent(new CustomEvent('entity:doc-convert-closed'));
+          }}
+          onConverted={({ targetPath }) => {
+            if (currentSourceId) {
+              void handleSourceFileSelect(currentSourceId, targetPath);
+            }
+          }}
+          pushToast={pushToast}
+        />
+      </Suspense>
 
       <div
         id="loginOverlay"

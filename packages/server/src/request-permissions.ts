@@ -7,6 +7,15 @@ import {
   type PrincipalPermissionContext,
   type ProtectedObject,
 } from './permissions';
+import {
+  buildLocalCompatPrincipalContext,
+  resolveStoredPrincipalContext,
+} from './principals/resolver';
+import type { PrincipalRepository } from '../../db/src/principals';
+import { getEntityDatabase } from '../../db/src/entity-db';
+import { ensureAppSettingsTable } from './config/settings-store';
+import { ADMIN_SETTINGS_KEYS } from './config/admin-settings';
+import { getAdminSettings } from './config/admin-settings-store';
 
 export interface RequestOrgBinding {
   orgId: string;
@@ -26,21 +35,39 @@ export function readRequestOrg(req: Request): string | null {
   return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
 }
 
-export function readRequestPrincipal(req: Request, orgId: string): PrincipalPermissionContext {
+function readEnforceStoredPrincipals(): boolean {
+  try {
+    const db = getEntityDatabase(ensureAppSettingsTable);
+    return getAdminSettings(db, ADMIN_SETTINGS_KEYS.accessControl).enforceStoredPrincipals;
+  } catch {
+    return true;
+  }
+}
+
+export interface ReadRequestPrincipalOptions {
+  enforceStoredPrincipals?: boolean;
+}
+
+export function readRequestPrincipal(
+  req: Request,
+  orgId: string,
+  repo?: PrincipalRepository,
+  options?: ReadRequestPrincipalOptions,
+): PrincipalPermissionContext {
   const principalId = req.header('x-entity-principal-id')?.trim() || 'entity-local-user';
   const roleHeader = req.header('x-entity-role')?.trim().toLowerCase();
-  const role = roleHeader === 'viewer' || roleHeader === 'contributor' || roleHeader === 'manager' || roleHeader === 'admin'
-    ? roleHeader
-    : 'manager';
-  const sensitivityHeader = req.header('x-entity-sensitivity') ?? '';
-  const sensitivity_categories = sensitivityHeader
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-  return {
-    principal_id: principalId,
-    grants: [{ role, org_id: orgId, sensitivity_categories }],
-  };
+  const sensitivityHeader = req.header('x-entity-sensitivity') ?? undefined;
+  const stored = resolveStoredPrincipalContext(principalId, repo);
+  const enforceStored = options?.enforceStoredPrincipals ?? readEnforceStoredPrincipals();
+  if (stored.kind === 'stored') {
+    if (stored.status === 'disabled') {
+      return stored.principal;
+    }
+    if (enforceStored) {
+      return stored.principal;
+    }
+  }
+  return buildLocalCompatPrincipalContext(principalId, orgId, roleHeader, sensitivityHeader);
 }
 
 export function requireRequestOrg(req: Request, res: Response): RequestOrgBinding | null {
