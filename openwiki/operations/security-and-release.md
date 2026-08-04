@@ -37,6 +37,8 @@ flowchart TD
 
 `permissions.ts` implements scope inheritance, roles (`viewer`, `contributor`, `manager`, `admin`), ACL allow/deny rules, sensitivity categories, actions, and redacted restricted envelopes. `request-permissions.ts` binds requests to an org and builds principal context from `x-entity-*` headers.
 
+Admin access now also depends on stored principals: the admin auth middleware allows bootstrap when there are no principals yet, accepts a stored principal with an active admin grant, rejects disabled principals, and can fall back to localhost header compatibility for legacy/local setups when API auth is off. That means admin access is intentionally fail-closed once principals exist, but the repository still preserves a local migration path for old header-based behavior.
+
 Two boundaries are crucial:
 
 1. Principal/role/sensitivity headers are not cryptographically bound to claims in the shared bearer token. The token authenticates server access, not individual identity.
@@ -106,3 +108,5 @@ When asked whether a feature “exists” or “is live”:
 5. Do not equate a route, type, TODO, plan, proof fixture, or UI placeholder with a working end-to-end capability.
 
 This distinction applies especially to [execution providers and proof](../platform/execution-and-proof.md), [plugin mounts](../platform/configuration-and-plugins.md), and desktop/mobile packaging described in the [quickstart](../quickstart.md#desktop-and-mobile).
+(../platform/execution-and-proof.md), [plugin mounts](../platform/configuration-and-plugins.md), and desktop/mobile packaging described in the [quickstart](../quickstart.md#desktop-and-mobile).
+er/src/middleware/admin-auth.ts`.

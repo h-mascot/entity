@@ -81,10 +81,13 @@ The broader [runtime and data architecture](../architecture/runtime-and-data.md)
 | Restricted search result | Title/path snippets and preview/open actions are suppressed rather than leaking content |
 | Legacy workspace path inside nested read-only local source | Workspace writes, creates, deletes, and moves are rejected; reads remain available |
 | External Google reference lacks auth/scope or is deleted/restricted | Preview and link-out are reduced or hidden; external documents remain intentionally read-only |
+| Read-only source in the convert dialog | Document conversion is blocked and the UI explains that the source is read-only |
+| Binary source or unsupported conversion target | The backend rejects the request rather than creating a derivative document |
+| Writable local source opened in the convert dialog | The UI can preview or create a new derivative document with preserved provenance |
 
 Admin stores/configures Documents API access, but credentials are scoped bearer/service credentials and must not be embedded in documentation. The [security page](../operations/security-and-release.md) explains why object-permission enforcement is route-specific.
 
-Config-managed file sources are a stricter case: the server treats `entity.config.yaml` ownership as sticky, so those sources cannot be deleted through the API, and their adapter type cannot be swapped to a different source kind such as `http-markdown`. When a trusted config-managed source is stored as another adapter type, the storage layer preserves the `entity.config.yaml` ownership marker so later updates keep the same source provenance. Legacy workspace write, create, delete, and move routes now also reject paths that fall inside nested read-only local sources, while reads from those sources remain available.
+Config-managed file sources are a stricter case: the server treats `entity.config.yaml` ownership as sticky, so those sources cannot be deleted through the API, and their adapter type cannot be swapped to a different source kind such as `http-markdown`. When a trusted config-managed source is stored as another adapter type, the storage layer preserves the `entity.config.yaml` ownership marker so later updates keep the same source provenance. Legacy workspace write, create, delete, and move routes now also reject paths that fall inside nested read-only local sources, while reads from those sources remain available. Document conversion is constrained separately to enabled local sources with write capability, so a file can be browsed or read even when it is not eligible for conversion.
 
 ## Task and document relationships
 
@@ -104,3 +107,4 @@ Start with the owning surface rather than `App.tsx` unless navigation or shared 
 - tests under `packages/server/src/fs/` and `packages/server/src/editor/`
 
 Build the app and run server Vitest. Browser-check search, source switching, open/close/restore, save behavior, task return navigation, restricted results, and the responsive layout; utility tests do not cover the full cross-package workflow.
+ity tests do not cover the full cross-package workflow.

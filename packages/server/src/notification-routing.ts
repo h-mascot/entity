@@ -9,6 +9,10 @@ import type {
   ObjectRef,
   PolicyReasonChainEntry,
 } from '../../db/src';
+import { getEntityDatabase } from '../../db/src/entity-db';
+import { ADMIN_SETTINGS_KEYS } from './config/admin-settings';
+import { getAdminSettings } from './config/admin-settings-store';
+import { ensureAppSettingsTable } from './config/settings-store';
 
 export type NotificationUrgency = 'low' | 'normal' | 'high' | 'critical';
 export type NotificationChannelAvailability = 'available' | 'degraded' | 'unavailable';
@@ -105,9 +109,25 @@ function defaultChannels(input: Pick<NotificationRoutingInput, 'urgency' | 'risk
   return ['clickclack'];
 }
 
+function configuredPreferredChannels(): NotificationDeliveryChannel[] {
+  const settings = getAdminSettings(getEntityDatabase(ensureAppSettingsTable), ADMIN_SETTINGS_KEYS.channels);
+  const channels = [...settings.preferredChannels] as NotificationDeliveryChannel[];
+  if (!settings.referenceAdapterEnabled) {
+    return channels.filter((channel) => channel !== 'other');
+  }
+  return channels;
+}
+
 export function resolveNotificationChannels(input: NotificationRoutingInput): NotificationDeliveryChannel[] {
   const preferred = input.preferredChannels ? uniqueChannels(input.preferredChannels) : [];
-  return preferred.length > 0 ? preferred : defaultChannels(input);
+  if (preferred.length > 0) return preferred;
+  const configured = configuredPreferredChannels().filter((channel) => channel !== 'entity_inbox');
+  let channels = configured.length > 0 ? configured : defaultChannels(input);
+  if ((input.urgency === 'high' || input.urgency === 'critical' || input.riskLevel === 'high' || input.riskLevel === 'critical')
+    && !channels.includes('email')) {
+    channels = [...channels, 'email'];
+  }
+  return channels;
 }
 
 function redactSensitiveText(value: string): string {

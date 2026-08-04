@@ -20,6 +20,9 @@ import {
 import { buildEffectiveConfig, deepMerge } from './effective';
 import { EntityConfigSchema, OnboardingAgentSessionSchema, OnboardingStateSchema, type OnboardingAgentSession } from './schema';
 import { ensureAppSettingsTable, getSettingJson, setSettingJson } from './settings-store';
+import { ADMIN_SETTINGS_KEYS } from './admin-settings';
+import { getAdminSettings, resetAdminSettings, setAdminSettings } from './admin-settings-store';
+import { createRequireAdminPrincipal } from '../middleware/admin-auth';
 
 const ONBOARDING_STATE_KEY = 'onboarding.state';
 const ONBOARDING_AGENT_SESSION_PREFIX = 'onboarding.agentSession.';
@@ -724,4 +727,54 @@ export function registerConfigRoutes(app: express.Express): void {
       });
     }
   });
+
+  const requireAdmin = createRequireAdminPrincipal();
+
+  for (const [section, key] of Object.entries({
+    accessControl: ADMIN_SETTINGS_KEYS.accessControl,
+    businessOnboarding: ADMIN_SETTINGS_KEYS.businessOnboarding,
+    engineering: ADMIN_SETTINGS_KEYS.engineering,
+    workplanes: ADMIN_SETTINGS_KEYS.workplanes,
+    strategicRoadmap: ADMIN_SETTINGS_KEYS.strategicRoadmap,
+    scopedSearch: ADMIN_SETTINGS_KEYS.scopedSearch,
+    channels: ADMIN_SETTINGS_KEYS.channels,
+  })) {
+    app.get(`/api/admin/settings/${section}`, (_req, res) => {
+      try {
+        const db = getEntityDatabase(ensureAppSettingsTable);
+        res.json({ key, settings: getAdminSettings(db, key as typeof ADMIN_SETTINGS_KEYS.accessControl) });
+      } catch (error) {
+        res.status(500).json({
+          error: `Failed to load ${section} settings`,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
+    app.patch(`/api/admin/settings/${section}`, requireAdmin, (req, res) => {
+      try {
+        const db = getEntityDatabase(ensureAppSettingsTable);
+        const updated = setAdminSettings(db, key as typeof ADMIN_SETTINGS_KEYS.accessControl, req.body ?? {});
+        res.json({ key, settings: updated });
+      } catch (error) {
+        res.status(400).json({
+          error: `Invalid ${section} settings payload`,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
+    app.post(`/api/admin/settings/${section}/reset`, requireAdmin, (_req, res) => {
+      try {
+        const db = getEntityDatabase(ensureAppSettingsTable);
+        const settings = resetAdminSettings(db, key as typeof ADMIN_SETTINGS_KEYS.accessControl);
+        res.json({ key, settings });
+      } catch (error) {
+        res.status(500).json({
+          error: `Failed to reset ${section} settings`,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
 }

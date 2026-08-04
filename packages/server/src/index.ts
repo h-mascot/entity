@@ -168,6 +168,7 @@ import { createSwarmRouter } from "./swarm";
 import { normalizeTaskOutputLinks } from "./task-output-links";
 import { registerNodeOperationsRoutes } from "./node-operations";
 import { registerDocHubTelemetryRoute } from "./doc-hub-telemetry";
+import { registerPrincipalRoutes } from "./routes/principals";
 import {
   setApiNoStoreHeaders,
 } from "./static-cache";
@@ -203,6 +204,7 @@ app.use(createApiAuthMiddleware());
 
 registerCoreProbeRoutes(app, phase2Flags);
 registerConfigRoutes(app);
+registerPrincipalRoutes(app);
 app.use("/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/search", createSearchRouter({ flags: phase2Flags }));

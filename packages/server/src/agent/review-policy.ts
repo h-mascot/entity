@@ -1,4 +1,8 @@
 import type { TaskColumn, TaskRecord } from '../../../db/src';
+import { getEntityDatabase } from '../../../db/src/entity-db';
+import { ADMIN_SETTINGS_KEYS } from '../config/admin-settings';
+import { getAdminSettings } from '../config/admin-settings-store';
+import { ensureAppSettingsTable } from '../config/settings-store';
 
 export const REVIEW_OUTPUT_MIN_LENGTH = 50;
 export const REVIEW_VALID_SCORE_MIN = 85;
@@ -419,6 +423,26 @@ export function validateReviewEntry(metadata: unknown): ReviewValidationResult {
       message: 'Insufficient review packet. Add evidence or clearer done criteria.',
       metadata: null,
     };
+  }
+
+  const workplaneSettings = getAdminSettings(
+    getEntityDatabase(ensureAppSettingsTable),
+    ADMIN_SETTINGS_KEYS.workplanes,
+  );
+  if (workplaneSettings.requireProofBeforeReview) {
+    const hasProof = Boolean(
+      readString(parsed.proof_url)
+      || readString(parsed.proof_ref)
+      || readString(parsed.evidence_ref)
+      || (Array.isArray(parsed.proof_links) && parsed.proof_links.length > 0),
+    );
+    if (!hasProof) {
+      return {
+        ok: false,
+        message: 'Workplane policy requires proof before review entry.',
+        metadata: parsed,
+      };
+    }
   }
 
   const reviewType = normalizeReviewType(parsed.review_type ?? parsed.review_class);

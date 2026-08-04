@@ -254,6 +254,7 @@ describe('review lifecycle validation', () => {
   const validPeerMetadata = {
     review_type: 'peer',
     reviewer: 'Book',
+    proof_url: 'https://example.com/proof',
     henry_required: false,
     risk_level: 'low',
     submitted_by: 'Ada',

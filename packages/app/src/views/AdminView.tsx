@@ -1,4 +1,4 @@
-import { lazy, Suspense, type Dispatch, type SetStateAction } from 'react';
+import { lazy, Suspense, type ComponentProps, type Dispatch, type SetStateAction } from 'react';
 import type { DocsTtsSettings } from '../components/MarkdownAudioControls';
 
 const FileSourcesSettings = lazy(() => import('../components/settings/FileSourcesSettings'));
@@ -9,11 +9,20 @@ const TaskMasterSettings = lazy(() => import('../components/TaskMasterSettings')
 const DocsSettings = lazy(() => import('../components/settings/DocsSettings'));
 const PluginAdminPanel = lazy(() => import('../components/plugins/PluginAdminPanel'));
 const OfflineAwareChat = lazy(() => import('../components/OfflineAwareChat'));
+const UsersAndRolesSettings = lazy(() => import('../components/settings/UsersAndRolesSettings'));
+const AdminSettingsForm = lazy(() => import('../components/settings/AdminSettingsForm'));
 
 type AdminSection =
   | 'general'
   | 'profile'
+  | 'accessControl'
+  | 'businessOnboarding'
   | 'missionControl'
+  | 'engineering'
+  | 'workplanes'
+  | 'strategicRoadmap'
+  | 'scopedSearch'
+  | 'channels'
   | 'integrations'
   | 'tts'
   | 'plugins'
@@ -90,6 +99,38 @@ interface AdminViewProps {
   pwaInstalled?: boolean;
 }
 
+function FeatureSettingsCard({
+  title,
+  status,
+  body,
+  bullets,
+}: {
+  title: string;
+  status: string;
+  body: string;
+  bullets: string[];
+}) {
+  return (
+    <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold text-[var(--text-primary)]">{title}</div>
+          <div className="mt-1 text-xs text-[var(--text-muted)]">{body}</div>
+        </div>
+        <span className="mc-shell-pill px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">{status}</span>
+      </div>
+      <ul className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
+        {bullets.map((bullet) => (
+          <li key={bullet} className="flex gap-2">
+            <span aria-hidden="true">-</span>
+            <span>{bullet}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }) {
   return (
     <div className="flex h-full min-h-[12rem] w-full items-center justify-center text-sm text-[var(--text-muted)]">
@@ -113,6 +154,22 @@ function LazyFileSourcesSettings(props: { apiBase?: string; enabled?: boolean })
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading settings" />}>
       <FileSourcesSettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyAdminSettingsForm(props: ComponentProps<typeof AdminSettingsForm>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading settings" />}>
+      <AdminSettingsForm {...props} />
+    </Suspense>
+  );
+}
+
+function LazyUsersAndRolesSettings(props: { apiBase?: string }) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading users and roles" />}>
+      <UsersAndRolesSettings {...props} />
     </Suspense>
   );
 }
@@ -432,6 +489,92 @@ export default function AdminView({
           </div>
         )}
 
+
+
+        {adminSection === 'accessControl' && (
+          <div className="grid gap-3">
+            <LazyUsersAndRolesSettings apiBase={apiBase} />
+            <LazyAdminSettingsForm
+              apiBase={apiBase}
+              section="accessControl"
+              title="Access control settings"
+              description="Workspace auth defaults and principal resolution policy."
+              fields={[
+                { kind: 'boolean', key: 'loginRequiredDefault', label: 'Default login required' },
+                { kind: 'text', key: 'defaultOrgId', label: 'Default org ID' },
+                { kind: 'boolean', key: 'enforceStoredPrincipals', label: 'Enforce stored principals' },
+                { kind: 'boolean', key: 'allowHeaderCompat', label: 'Allow local header compatibility path' },
+              ]}
+            />
+            <div className="grid gap-3 md:grid-cols-2">
+            <FeatureSettingsCard
+              title="Login gate"
+              status={loginRequired ? 'required' : 'optional'}
+              body="Workspace-level auth posture for the browser app. Changes to the login gate remain controlled from General settings."
+              bullets={[
+                authSession ? `Current session: ${authSession.username}` : 'No active browser login session.',
+                'Document API credentials are configured under Integrations and enforce document scopes separately.',
+                'Agent registry module scopes are configured under Agent registry.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="RBAC / principal posture"
+              status="editable above"
+              body="Stored principals resolve server-side grants. Disabled principals fail closed; unknown local principals still use the tested header compatibility path."
+              bullets={[
+                'Create principals and scoped grants in the Users & Roles panel above.',
+                'Object access decisions return safe envelopes with required/effective role information.',
+                'x-entity-role is ignored when a stored principal record exists.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Agent/module scopes"
+              status="editable in Agent registry"
+              body="Agent-level enablement, permissions, and module scope labels live in the Agent registry settings page."
+              bullets={[
+                'Use Agent registry to enable/disable agents and review module scopes.',
+                'Disabling preserves records; deletion removes them from the registry.',
+              ]}
+            />
+            <FeatureSettingsCard
+              title="Documents API access"
+              status="editable in Integrations"
+              body="Bearer/service token setup for comments, suggestions, and reviews is under Integrations."
+              bullets={[
+                'Requires documents:read plus write scopes for comments/suggestions/reviews.',
+                'Service tokens require an explicit X-Entity-Actor value.',
+              ]}
+            />
+            </div>
+          </div>
+        )}
+
+        {adminSection === 'businessOnboarding' && (
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="businessOnboarding"
+            title="Business onboarding"
+            description="Control whether onboarding is enabled, the default domain, and dry-run safety requirements."
+            fields={[
+              { kind: 'boolean', key: 'enabled', label: 'Enable business onboarding flow' },
+              { kind: 'select', key: 'defaultDomain', label: 'Default domain', options: [
+                { value: 'claims', label: 'Claims' },
+                { value: 'engineering', label: 'Engineering' },
+                { value: 'product', label: 'Product' },
+                { value: 'sales', label: 'Sales' },
+                { value: 'marketing', label: 'Marketing' },
+                { value: 'finance', label: 'Finance' },
+                { value: 'customer_success', label: 'Customer success' },
+                { value: 'people_ops', label: 'People ops' },
+                { value: 'health_business', label: 'Health business' },
+                { value: 'ai_ops', label: 'AI ops' },
+                { value: 'other', label: 'Other' },
+              ] },
+              { kind: 'boolean', key: 'requireDryRun', label: 'Require dry-run confirmation before writes' },
+            ]}
+          />
+        )}
+
         {adminSection === 'missionControl' && (
           <div className="grid gap-3 md:grid-cols-2">
             <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
@@ -463,6 +606,90 @@ export default function AdminView({
               </button>
             </div>
           </div>
+        )}
+
+
+
+        {adminSection === 'engineering' && (
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="engineering"
+            title="Engineering"
+            description="Engineering board defaults and import safety gates."
+            fields={[
+              { kind: 'select', key: 'defaultWorkDomain', label: 'Default work domain', options: [
+                { value: 'engineering', label: 'Engineering' },
+                { value: 'product', label: 'Product' },
+                { value: 'ops', label: 'Ops' },
+              ] },
+              { kind: 'boolean', key: 'importDryRunRequired', label: 'Require import dry-run' },
+              { kind: 'boolean', key: 'showEmptyStateHints', label: 'Show empty-state hints' },
+            ]}
+          />
+        )}
+
+        {adminSection === 'workplanes' && (
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="workplanes"
+            title="Workplanes"
+            description="Task workplane proof and layout safety controls."
+            fields={[
+              { kind: 'boolean', key: 'requireProofBeforeReview', label: 'Require proof before review-ready' },
+              { kind: 'boolean', key: 'lockAgentLayoutMutation', label: 'Reject agent layout mutation' },
+              { kind: 'boolean', key: 'showActivityDegradedBanner', label: 'Show degraded activity banner' },
+            ]}
+          />
+        )}
+
+        {adminSection === 'strategicRoadmap' && (
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="strategicRoadmap"
+            title="Strategic roadmap"
+            description="Control which strategic roadmap lanes are visible in Mission Control."
+            fields={[
+              { kind: 'boolean', key: 'showBacklogLane', label: 'Show backlog lane' },
+              { kind: 'boolean', key: 'showRecurringLane', label: 'Show recurring lane' },
+              { kind: 'boolean', key: 'showDependencyHints', label: 'Show dependency hints' },
+            ]}
+          />
+        )}
+
+        {adminSection === 'scopedSearch' && (
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="scopedSearch"
+            title="Scoped search"
+            description="Default search collection and degraded-result visibility."
+            fields={[
+              { kind: 'select', key: 'defaultCollection', label: 'Default collection', options: [
+                { value: 'all', label: 'All' },
+                { value: 'obsidian', label: 'Obsidian' },
+                { value: 'superada', label: 'Superada' },
+                { value: 'sessions', label: 'Sessions' },
+                { value: 'scotty', label: 'Scotty' },
+                { value: 'spock', label: 'Spock' },
+                { value: 'memory', label: 'Memory' },
+              ] },
+              { kind: 'boolean', key: 'labelDegradedResults', label: 'Label degraded results' },
+              { kind: 'boolean', key: 'includeTaskProof', label: 'Include task/proof surfaces' },
+            ]}
+          />
+        )}
+
+        {adminSection === 'channels' && (
+          <LazyAdminSettingsForm
+            apiBase={apiBase}
+            section="channels"
+            title="Channels"
+            description="Channel adapter enablement and delivery preferences."
+            fields={[
+              { kind: 'boolean', key: 'referenceAdapterEnabled', label: 'Enable reference adapter' },
+              { kind: 'string-list', key: 'preferredChannels', label: 'Preferred channels' },
+              { kind: 'boolean', key: 'degradeOnAdapterFailure', label: 'Degrade visibly on adapter failure' },
+            ]}
+          />
         )}
 
         {adminSection === 'integrations' && (

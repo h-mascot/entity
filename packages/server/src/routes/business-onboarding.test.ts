@@ -289,7 +289,7 @@ describe('business onboarding routes', () => {
         id: 'curacel',
         name: 'Curacel',
         mission: null,
-        domains_json: '[]',
+        domains_json: '["product"]',
         blueprint_json: null,
       },
     });

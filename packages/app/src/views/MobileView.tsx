@@ -678,6 +678,19 @@ export default function MobileView(props: any) {
     manualShareState.documentIdentity === currentDocumentIdentity ? manualShareState.value : null;
 
   useEffect(() => {
+    const handleConvertClosed = () => {
+      dispatchMobileSurface({ type: 'close-requested' });
+      if (typeof window !== 'undefined' && historySurface() !== 'closed') {
+        const nextState = { ...(window.history.state as Record<string, unknown>) };
+        delete nextState[MOBILE_DOC_HUB_SURFACE_STATE_KEY];
+        window.history.replaceState(nextState, '', window.location.href);
+      }
+    };
+    window.addEventListener('entity:doc-convert-closed', handleConvertClosed);
+    return () => window.removeEventListener('entity:doc-convert-closed', handleConvertClosed);
+  }, []);
+
+  useEffect(() => {
     dispatchManualShare({ type: 'document-changed', documentIdentity: currentDocumentIdentity });
     if (previousDocumentIdentityRef.current === currentDocumentIdentity) return;
     previousDocumentIdentityRef.current = currentDocumentIdentity;
@@ -995,7 +1008,9 @@ export default function MobileView(props: any) {
   return (
     <>
       <div
-        inert={documentToolsOpen ? true : undefined}
+        ref={(node) => {
+          if (node) node.inert = documentToolsOpen;
+        }}
         aria-hidden={documentToolsOpen ? 'true' : undefined}
         className={`flex min-w-0 flex-1 flex-col bg-[var(--bg-primary)] md:hidden ${inDeepView ? 'pb-0' : 'pb-24'}`}
       >
