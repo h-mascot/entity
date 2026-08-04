@@ -605,7 +605,7 @@ const clickClackBridge = process.env.ENTITY_CHAT_CLICKCLACK_BRIDGE === '1'
   ? createClickClackBridge()
   : undefined;
 registerClickClackProxyRoutes(app);
-registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge });
+registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge, getTaskOrg: async (taskId) => (await taskSyncLayer.getTask(Number(taskId)))?.org_id ?? null });
 
 
 // TTS routes

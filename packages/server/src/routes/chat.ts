@@ -15,6 +15,7 @@ import {
 } from '../../../db/src';
 import { ChatModelRegistry, type ChatModelOption } from './chat-model-registry';
 import { requireRequestOrg, sendPermissionDenied, type RequestOrgBinding } from '../request-permissions';
+import { isTrustedServiceContext } from '../principals/request-context';
 
 interface ChatObjectRefAccessDecision {
   allowed: boolean;
@@ -29,6 +30,12 @@ interface ChatRouteDependencies {
   clickClackBridge?: ClickClackChatBridge;
   clickClackReadiness?: ClickClackReadinessProbe;
   chatObjectRefAccess?: ChatObjectRefAccess;
+  /**
+   * R4: resolves the tenant org of a task id so `/api/chat/task/:taskId` can be
+   * tenant-authorized for customer principals. Optional; when absent the route
+   * trusts the resolved customer scope but cannot deny a foreign task id.
+   */
+  getTaskOrg?: (taskId: string) => Promise<string | null | undefined> | string | null | undefined;
 }
 
 interface OpenClawReply {
@@ -667,52 +674,47 @@ async function requestLlmResponse(agent: string, content: string, modelId?: stri
   }
 }
 
-async function ensureDefaults() {
+/**
+ * R4: provision default chat categories/channels. When `orgId` is supplied
+ * (a resolved CUSTOMER scope) the defaults are stamped with that org and use
+ * org-prefixed ids so they never collide with the workspace-global ids seeded
+ * by the trusted/admin bootstrap; the returned snapshot is the caller's own-org
+ * view only. When `orgId` is undefined (trusted service/admin path) the
+ * pre-R4 workspace-global seeding is preserved verbatim.
+ */
+async function ensureDefaults(orgId?: string) {
   const repo = createChatRepository();
-  const categories = repo.listCategories();
-  const byName = new Map(categories.map((row) => [row.name.trim().toLowerCase(), row]));
+  const scoped = typeof orgId === 'string' && orgId.trim() ? orgId.trim() : undefined;
+  const prefix = scoped ? `${scoped}::` : '';
+  const categoryOrgId = scoped ?? null;
 
-  const general = byName.get('general') ?? repo.createCategory({ id: 'general', name: 'General', emoji: '💬', order: 0 });
-  const agents = byName.get('agents') ?? repo.createCategory({ id: 'agents', name: 'Agents', emoji: '🤖', order: 1 });
+  const generalId = `${prefix}general`;
+  const agentsId = `${prefix}agents`;
+  const general = repo.getCategoryByName('General', scoped)
+    ?? repo.createCategory({ id: generalId, name: 'General', emoji: '💬', order: 0, org_id: categoryOrgId });
+  const agents = repo.getCategoryByName('Agents', scoped)
+    ?? repo.createCategory({ id: agentsId, name: 'Agents', emoji: '🤖', order: 1, org_id: categoryOrgId });
 
-  const channels = repo.listChannels();
-  const channelByName = new Map(channels.map((row) => [row.name.trim().toLowerCase(), row]));
+  const defaultChannels: Array<{ name: string; categoryId: string; order: number; agents: string[] }> = [
+    { name: 'command-deck', categoryId: general.id, order: 0, agents: [] },
+    { name: 'ada', categoryId: agents.id, order: 0, agents: ['ada'] },
+    { name: 'spock', categoryId: agents.id, order: 1, agents: ['spock'] },
+    { name: 'scotty', categoryId: agents.id, order: 2, agents: ['scotty'] },
+    { name: 'geordi', categoryId: agents.id, order: 3, agents: ['geordi'] },
+    { name: 'zora', categoryId: agents.id, order: 4, agents: ['zora'] },
+    { name: 'midas', categoryId: agents.id, order: 5, agents: ['midas'] },
+    { name: 'random', categoryId: general.id, order: 1, agents: [] },
+  ];
 
-  if (!channelByName.has('command-deck')) {
-    repo.createChannel({ id: 'command-deck', name: 'command-deck', category_id: general.id, order: 0, agents: [] });
-  }
-
-  if (!channelByName.has('ada')) {
-    repo.createChannel({ id: 'ada', name: 'ada', category_id: agents.id, order: 0, agents: ['ada'] });
-  }
-
-  if (!channelByName.has('spock')) {
-    repo.createChannel({ id: 'spock', name: 'spock', category_id: agents.id, order: 1, agents: ['spock'] });
-  }
-
-  if (!channelByName.has('scotty')) {
-    repo.createChannel({ id: 'scotty', name: 'scotty', category_id: agents.id, order: 2, agents: ['scotty'] });
-  }
-
-  if (!channelByName.has('geordi')) {
-    repo.createChannel({ id: 'geordi', name: 'geordi', category_id: agents.id, order: 3, agents: ['geordi'] });
-  }
-
-  if (!channelByName.has('zora')) {
-    repo.createChannel({ id: 'zora', name: 'zora', category_id: agents.id, order: 4, agents: ['zora'] });
-  }
-
-  if (!channelByName.has('midas')) {
-    repo.createChannel({ id: 'midas', name: 'midas', category_id: agents.id, order: 5, agents: ['midas'] });
-  }
-
-  if (!channelByName.has('random')) {
-    repo.createChannel({ id: 'random', name: 'random', category_id: general.id, order: 1, agents: [] });
+  for (const def of defaultChannels) {
+    if (!repo.getChannelByName(def.name, scoped)) {
+      repo.createChannel({ id: `${prefix}${def.name}`, name: def.name, category_id: def.categoryId, order: def.order, agents: def.agents, org_id: categoryOrgId });
+    }
   }
 
   return {
-    categories: repo.listCategories().map(toCategory),
-    channels: repo.listChannels().map(toChannel),
+    categories: repo.listCategories(scoped).map(toCategory),
+    channels: repo.listChannels(scoped).map(toChannel),
   };
 }
 
@@ -775,6 +777,7 @@ export function registerChatRoutes({
   clickClackBridge,
   clickClackReadiness,
   chatObjectRefAccess = allowChatObjectRef,
+  getTaskOrg,
 }: ChatRouteDependencies): void {
   const repo = createChatRepository();
   const modelRegistry = new ChatModelRegistry({
@@ -786,6 +789,64 @@ export function registerChatRoutes({
     ?? (process.env.ENTITY_CHAT_CLICKCLACK_BRIDGE === '1' ? createClickClackBridge() : undefined);
   const readinessProbe = clickClackReadiness
     ?? createEnvClickClackReadinessProbe({ bridgeEnabled: Boolean(sidecarBridge) });
+
+  /**
+   * R4: resolve the durable tenant scope for a chat request.
+   *
+   * Customer principals bind to a membership-derived org via the shared
+   * requireRequestOrg resolver (caller-selected orgs only narrow within grants;
+   * spoofed orgs are 403 and an ambiguous/omitted scope fails closed 400). The
+   * returned `orgId` is then applied to EVERY chat list/read/mutation so foreign
+   * and legacy-unowned rows (org_id IS NULL) are never disclosed or mutated.
+   *
+   * The trusted service/admin path resolves a binding too (so principal/object
+   * checks keep working) but passes `orgId = undefined` so chat remains the
+   * workspace-global surface it always was (PR #71/#72 preserved).
+   *
+   * Returns `{ binding, orgId }`, or `null` after a 400/403 has been written.
+   */
+  function resolveChatScope(req: express.Request, res: express.Response): { binding: RequestOrgBinding; orgId: string | undefined } | null {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return null;
+    const orgId = isTrustedServiceContext(req) ? undefined : binding.orgId;
+    return { binding, orgId };
+  }
+
+  /** R4: 404 helper that never discloses whether a foreign id exists. */
+  function notFound(res: express.Response, what: string) {
+    return res.status(404).json({ error: `${what} not found` });
+  }
+
+  type ChatScope = { binding: RequestOrgBinding; orgId: string | undefined };
+
+  /**
+   * D-R4-OBJECTREF-ASYNC: object-ref authorization for a resolved chat scope.
+   * Defers to chatObjectRefAccess first; for task refs under a customer scope it
+   * additionally verifies the task's org matches the request org via getTaskOrg.
+   */
+  async function authorize(scope: ChatScope, ref: ObjectRef): Promise<ChatObjectRefAccessDecision> {
+    const decision = chatObjectRefAccess(scope.binding, ref);
+    if (!decision.allowed) return decision;
+    if (scope.orgId === undefined || ref.object_type !== 'task') return decision;
+    if (!getTaskOrg) return { allowed: false, reason: 'task authorization unavailable' };
+    const org = await getTaskOrg(ref.object_id);
+    return org === scope.orgId ? decision : { allowed: false, reason: 'task outside request org' };
+  }
+
+  /** D-R4-OBJECTREF-ASYNC: async-visible object refs via authorize. */
+  async function visible(scope: ChatScope, refs: ObjectRef[]): Promise<{ object_refs: ObjectRef[]; restricted_count: number }> {
+    const visibleRefs: ObjectRef[] = [];
+    let restrictedCount = 0;
+    for (const ref of refs) {
+      const decision = await authorize(scope, ref);
+      if (decision.allowed) {
+        visibleRefs.push(ref);
+      } else {
+        restrictedCount += 1;
+      }
+    }
+    return { object_refs: visibleRefs, restricted_count: restrictedCount };
+  }
 
   app.get('/api/chat/me', (_req, res) => {
     res.json({
@@ -815,24 +876,44 @@ export function registerChatRoutes({
     }
   });
 
-  app.get('/api/chat/task/:taskId', (req, res) => {
+  app.get('/api/chat/task/:taskId', async (req, res) => {
     try {
       const taskId = String(req.params.taskId ?? '').trim();
       if (!taskId) {
         return res.status(400).json({ error: 'taskId is required' });
       }
 
+      // R4: a task id is an org-scoped object reference. A customer principal
+      // may only resolve chat for a task within its principal-derived scope.
+      // An UNKNOWN task id (getTaskOrg resolves to null) must NOT fall through to
+      // channel disclosure/creation; it fails closed 404, as does a foreign task.
+      // The trusted service/admin path preserves the workspace-global lookup.
+      let orgId: string | undefined;
+      if (isTrustedServiceContext(req)) {
+        orgId = undefined;
+      } else {
+        const binding = requireRequestOrg(req, res);
+        if (!binding) return undefined;
+        orgId = binding.orgId;
+        if (getTaskOrg) {
+          const taskOrg = await getTaskOrg(taskId);
+          if (!taskOrg || taskOrg !== binding.orgId) {
+            return notFound(res, 'task');
+          }
+        }
+      }
+
       const candidateIds = [`task-${taskId}`, taskId];
       const channel = candidateIds
-        .map((id) => repo.getChannel(id) ?? repo.getChannelByName(id))
+        .map((id) => repo.getChannel(id, orgId) ?? repo.getChannelByName(id, orgId))
         .find(Boolean);
 
       if (!channel) {
         return res.json({ taskId, channel: null, messages: [], threads: [] });
       }
 
-      const messages = repo.listMessagesByChannel(channel.id).map(toMessage);
-      const threads = repo.listThreadsByChannel(channel.id).map(toThread);
+      const messages = repo.listMessagesByChannel(channel.id, orgId).map(toMessage);
+      const threads = repo.listThreadsByChannel(channel.id, orgId).map(toThread);
       return res.json({ taskId, channel: toChannel(channel), messages, threads });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -856,11 +937,13 @@ export function registerChatRoutes({
     }
   });
 
-  app.get('/api/chat/channels', (_req, res) => {
+  app.get('/api/chat/channels', (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
       return res.json({
-        categories: repo.listCategories().map(toCategory),
-        channels: repo.listChannels().map(toChannel),
+        categories: repo.listCategories(scope.orgId).map(toCategory),
+        channels: repo.listChannels(scope.orgId).map(toChannel),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -869,8 +952,13 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/channels/:channelId/messages', (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
-      const messages = repo.listMessagesByChannel(req.params.channelId).map(toMessage);
+      // R4: a foreign/unknown channel id discloses nothing (404) before listing.
+      const channel = repo.getChannel(req.params.channelId, scope.orgId);
+      if (!channel) return notFound(res, 'channel');
+      const messages = repo.listMessagesByChannel(channel.id, scope.orgId).map(toMessage);
       return res.json({ messages });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -879,8 +967,12 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/channels/:channelId/threads', (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
-      const threads = repo.listThreadsByChannel(req.params.channelId).map(toThread);
+      const channel = repo.getChannel(req.params.channelId, scope.orgId);
+      if (!channel) return notFound(res, 'channel');
+      const threads = repo.listThreadsByChannel(channel.id, scope.orgId).map(toThread);
       return res.json({ threads });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -888,35 +980,36 @@ export function registerChatRoutes({
     }
   });
 
-  app.get('/api/chat/channels/:channelId/object-refs', (req, res) => {
-    const binding = requireRequestOrg(req, res);
-    if (!binding) return undefined;
-    const channel = repo.getChannel(req.params.channelId);
+  app.get('/api/chat/channels/:channelId/object-refs', async (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
+    const channel = repo.getChannel(req.params.channelId, scope.orgId);
     if (!channel) {
-      return res.status(404).json({ error: 'channel not found' });
+      return notFound(res, 'channel');
     }
     return res.json({
       target: { type: 'channel', id: channel.id },
-      ...visibleObjectRefs(binding, channel.linked_object_refs, chatObjectRefAccess),
+      ...await visible(scope, channel.linked_object_refs),
     });
   });
 
-  app.post('/api/chat/channels/:channelId/object-refs', (req, res) => {
-    const binding = requireRequestOrg(req, res);
-    if (!binding) return undefined;
+  app.post('/api/chat/channels/:channelId/object-refs', async (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
       const objectRef = parseObjectRefBody(req.body);
-      const decision = chatObjectRefAccess(binding, objectRef);
+      const decision = await authorize(scope, objectRef);
       if (!decision.allowed) {
         return sendPermissionDenied(res, decision.reason ?? 'access denied by object policy');
       }
-      const channel = repo.linkChannelObject(req.params.channelId, objectRef);
+      // R4: link only against an own-org channel; a foreign id 404s and never mutates.
+      const channel = repo.linkChannelObject(req.params.channelId, objectRef, scope.orgId);
       if (!channel) {
-        return res.status(404).json({ error: 'channel not found' });
+        return notFound(res, 'channel');
       }
       return res.status(201).json({
         target: { type: 'channel', id: channel.id },
-        ...visibleObjectRefs(binding, channel.linked_object_refs, chatObjectRefAccess),
+        ...await visible(scope, channel.linked_object_refs),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -925,8 +1018,12 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/threads/:threadId/messages', (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
-      const messages = repo.listMessagesByThread(req.params.threadId).map(toMessage);
+      const thread = repo.getThread(req.params.threadId, scope.orgId);
+      if (!thread) return notFound(res, 'thread');
+      const messages = repo.listMessagesByThread(thread.id, scope.orgId).map(toMessage);
       return res.json({ messages });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -935,43 +1032,45 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/messages/:messageId', (req, res) => {
-    const message = repo.getMessage(req.params.messageId);
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
+    const message = repo.getMessage(req.params.messageId, scope.orgId);
     if (!message) {
-      return res.status(404).json({ error: 'message not found' });
+      return notFound(res, 'message');
     }
 
     return res.json({ message: toMessage(message) });
   });
 
-  app.get('/api/chat/threads/:threadId/object-refs', (req, res) => {
-    const binding = requireRequestOrg(req, res);
-    if (!binding) return undefined;
-    const thread = repo.getThread(req.params.threadId);
+  app.get('/api/chat/threads/:threadId/object-refs', async (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
+    const thread = repo.getThread(req.params.threadId, scope.orgId);
     if (!thread) {
-      return res.status(404).json({ error: 'thread not found' });
+      return notFound(res, 'thread');
     }
     return res.json({
       target: { type: 'thread', id: thread.id },
-      ...visibleObjectRefs(binding, thread.linked_object_refs, chatObjectRefAccess),
+      ...await visible(scope, thread.linked_object_refs),
     });
   });
 
-  app.post('/api/chat/threads/:threadId/object-refs', (req, res) => {
-    const binding = requireRequestOrg(req, res);
-    if (!binding) return undefined;
+  app.post('/api/chat/threads/:threadId/object-refs', async (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
       const objectRef = parseObjectRefBody(req.body);
-      const decision = chatObjectRefAccess(binding, objectRef);
+      const decision = await authorize(scope, objectRef);
       if (!decision.allowed) {
         return sendPermissionDenied(res, decision.reason ?? 'access denied by object policy');
       }
-      const thread = repo.linkThreadObject(req.params.threadId, objectRef);
+      const thread = repo.linkThreadObject(req.params.threadId, objectRef, scope.orgId);
       if (!thread) {
-        return res.status(404).json({ error: 'thread not found' });
+        return notFound(res, 'thread');
       }
       return res.status(201).json({
         target: { type: 'thread', id: thread.id },
-        ...visibleObjectRefs(binding, thread.linked_object_refs, chatObjectRefAccess),
+        ...await visible(scope, thread.linked_object_refs),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -980,21 +1079,27 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/threads/by-parent/:parentMessageId', (req, res) => {
-    const thread = repo.getThreadByParentMessage(req.params.parentMessageId);
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
+    const thread = repo.getThreadByParentMessage(req.params.parentMessageId, scope.orgId);
     if (!thread) {
-      return res.status(404).json({ error: 'thread not found' });
+      return notFound(res, 'thread');
     }
 
     return res.json({ thread: toThread(thread) });
   });
 
   app.post('/api/chat/categories', (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
+      // R4: ownership is principal-derived; caller body org_id is ignored.
       const category = repo.createCategory({
         id: typeof req.body?.id === 'string' ? req.body.id : undefined,
         name: String(req.body?.name ?? '').trim(),
         emoji: typeof req.body?.emoji === 'string' ? req.body.emoji : undefined,
         order: Number.isFinite(Number(req.body?.order)) ? Number(req.body.order) : undefined,
+        org_id: scope.orgId ?? null,
       });
       return res.status(201).json({ category: toCategory(category) });
     } catch (err) {
@@ -1004,11 +1109,23 @@ export function registerChatRoutes({
   });
 
   app.post('/api/chat/channels', (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
       const categoryId = String(req.body?.categoryId ?? req.body?.category_id ?? '').trim();
       if (!categoryId) {
         return res.status(400).json({ error: 'categoryId is required' });
       }
+
+      // R4: a channel INHERITS its parent category's org ownership. A foreign or
+      // legacy-unowned category cannot host a caller's channel (404); the new
+      // channel is stamped with the resolved principal-derived org, never a
+      // caller-supplied body value.
+      const category = repo.getCategory(categoryId, scope.orgId);
+      if (!category) {
+        return notFound(res, 'category');
+      }
+      const inheritedOrg = scope.orgId ?? category.org_id ?? null;
 
       const channel = repo.createChannel({
         id: typeof req.body?.id === 'string' ? req.body.id : undefined,
@@ -1017,6 +1134,7 @@ export function registerChatRoutes({
         category_id: categoryId,
         order: Number.isFinite(Number(req.body?.order)) ? Number(req.body.order) : undefined,
         agents: normalizeAgents(req.body?.agents),
+        org_id: inheritedOrg,
       });
 
       return res.status(201).json({ channel: toChannel(channel) });
@@ -1027,17 +1145,28 @@ export function registerChatRoutes({
   });
 
   app.patch('/api/chat/channels/:channelId', (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
+      const rawCategoryId = req.body?.categoryId ?? req.body?.category_id;
+      let categoryId: string | undefined;
+      if (typeof rawCategoryId === 'string') {
+        categoryId = rawCategoryId.trim();
+        if (!categoryId || !repo.getCategory(categoryId, scope.orgId)) {
+          return notFound(res, 'category');
+        }
+      }
+
       const channel = repo.updateChannel(req.params.channelId, {
         name: typeof req.body?.name === 'string' ? req.body.name : undefined,
         description: typeof req.body?.description === 'string' ? req.body.description : undefined,
-        category_id: typeof req.body?.categoryId === 'string' ? req.body.categoryId : undefined,
+        category_id: categoryId,
         order: Number.isFinite(Number(req.body?.order)) ? Number(req.body.order) : undefined,
         agents: Array.isArray(req.body?.agents) ? normalizeAgents(req.body.agents) : undefined,
-      });
+      }, scope.orgId);
 
       if (!channel) {
-        return res.status(404).json({ error: 'channel not found' });
+        return notFound(res, 'channel');
       }
 
       return res.json({ channel: toChannel(channel) });
@@ -1048,20 +1177,30 @@ export function registerChatRoutes({
   });
 
   app.delete('/api/chat/channels/:channelId', (req, res) => {
-    const deleted = repo.deleteChannel(req.params.channelId);
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
+    const deleted = repo.deleteChannel(req.params.channelId, scope.orgId);
     if (!deleted) {
-      return res.status(404).json({ error: 'channel not found' });
+      return notFound(res, 'channel');
     }
 
     return res.json({ success: true });
   });
 
   app.post('/api/chat/channels/:channelId/read', (req, res) => {
-    repo.markChannelRead(req.params.channelId);
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
+    // R4: only acknowledge a channel the caller owns; foreign id is a silent 404
+    // so cross-org existence is not leaked.
+    const channel = repo.getChannel(req.params.channelId, scope.orgId);
+    if (!channel) return notFound(res, 'channel');
+    repo.markChannelRead(channel.id, scope.orgId);
     return res.json({ success: true });
   });
 
   app.post('/api/chat/threads', (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
       const channelId = String(req.body?.channelId ?? '').trim();
       const parentMessageId = String(req.body?.parentMessageId ?? '').trim();
@@ -1070,7 +1209,21 @@ export function registerChatRoutes({
         return res.status(400).json({ error: 'channelId and parentMessageId are required' });
       }
 
-      const existing = repo.getThreadByParentMessage(parentMessageId);
+      // R4: a thread INHERITS its parent channel's org. A foreign/unknown
+      // channel id 404s before any thread is created.
+      const channel = repo.getChannel(channelId, scope.orgId);
+      if (!channel) {
+        return notFound(res, 'channel');
+      }
+
+      // D-R4-PARENT-CHANNEL: the parent message must exist in the caller's org
+      // and belong to the same channel before a thread is resolved/created from it.
+      const parent = repo.getMessage(parentMessageId, scope.orgId);
+      if (!parent || parent.channel_id !== channel.id) {
+        return notFound(res, 'message');
+      }
+
+      const existing = repo.getThreadByParentMessage(parentMessageId, scope.orgId);
       if (existing) {
         return res.json({ thread: toThread(existing) });
       }
@@ -1080,6 +1233,7 @@ export function registerChatRoutes({
         channel_id: channelId,
         parent_message_id: parentMessageId,
         title,
+        org_id: scope.orgId ?? channel.org_id ?? null,
       });
 
       return res.status(201).json({ thread: toThread(thread) });
@@ -1089,9 +1243,11 @@ export function registerChatRoutes({
     }
   });
 
-  app.post('/api/chat/setup', async (_req, res) => {
+  app.post('/api/chat/setup', async (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
-      const snapshot = await ensureDefaults();
+      const snapshot = await ensureDefaults(scope.orgId);
       return res.json(snapshot);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1100,11 +1256,46 @@ export function registerChatRoutes({
   });
 
   app.post('/api/chat/send', async (req, res) => {
+    const scope = resolveChatScope(req, res);
+    if (!scope) return undefined;
     try {
       const channelId = String(req.body?.channelId ?? '').trim();
       const content = String(req.body?.content ?? '').trim();
       if (!channelId || !content) {
         return res.status(400).json({ error: 'channelId and content are required' });
+      }
+
+      // R4: resolve the channel under the caller's org BEFORE any durable write.
+      // A foreign or unknown channel id 404s and is never mutated. A thread, when
+      // supplied, must likewise belong to the caller's org. Messages INHERIT the
+      // channel's org ownership; caller-supplied body org/ownership is ignored.
+      const channel = repo.getChannel(channelId, scope.orgId);
+      if (!channel) {
+        return notFound(res, 'channel');
+      }
+      const messageOrgId = scope.orgId ?? channel.org_id ?? null;
+
+      // D-R4-PARENT-CHANNEL: validate the requested thread and optional parent
+      // message against the resolved channel BEFORE any write, then reuse these
+      // validated ids for every message create below (never re-read body values).
+      const requestedThreadId = typeof req.body?.threadId === 'string' ? req.body.threadId.trim() : '';
+      let threadId: string | undefined;
+      if (requestedThreadId) {
+        const thread = repo.getThread(requestedThreadId, scope.orgId);
+        if (!thread || thread.channel_id !== channel.id) {
+          return notFound(res, 'thread');
+        }
+        threadId = thread.id;
+      }
+
+      let parentMessageId: string | undefined;
+      const requestedParentMessageId = typeof req.body?.parentMessageId === 'string' ? req.body.parentMessageId.trim() : '';
+      if (requestedParentMessageId) {
+        const parent = repo.getMessage(requestedParentMessageId, scope.orgId);
+        if (!parent || parent.channel_id !== channel.id) {
+          return notFound(res, 'message');
+        }
+        parentMessageId = parent.id;
       }
 
       const agents = normalizeAgents(req.body?.agents);
@@ -1126,8 +1317,6 @@ export function registerChatRoutes({
       }
 
       if (sidecarBridge) {
-        const threadId = typeof req.body?.threadId === 'string' ? req.body.threadId : undefined;
-        const parentMessageId = typeof req.body?.parentMessageId === 'string' ? req.body.parentMessageId : undefined;
         const timestamp = typeof req.body?.timestamp === 'string' ? req.body.timestamp : new Date().toISOString();
         const userMessage = repo.createMessage({
           id: typeof req.body?.messageId === 'string' ? req.body.messageId : undefined,
@@ -1141,6 +1330,7 @@ export function registerChatRoutes({
           status: 'sent',
           timestamp,
           reply_to: parentMessageId,
+          org_id: messageOrgId,
         });
 
         if (threadId) {
@@ -1154,7 +1344,7 @@ export function registerChatRoutes({
             content,
             targets,
             messageId: userMessage.id,
-            threadId: typeof req.body?.threadId === 'string' ? req.body.threadId : undefined,
+            threadId,
             // Entity message ids are local; keep ClickClack sidecar sends channel-scoped until we persist an id map.
             parentMessageId: undefined,
             modelByAgent,
@@ -1187,6 +1377,7 @@ export function registerChatRoutes({
             status: 'sent',
             timestamp: compatibilityMessageTimestamp(message.createdAt),
             reply_to: parentMessageId,
+            org_id: messageOrgId,
           });
 
           if (threadId) {
@@ -1204,8 +1395,6 @@ export function registerChatRoutes({
       }
 
       const timestamp = typeof req.body?.timestamp === 'string' ? req.body.timestamp : new Date().toISOString();
-      const threadId = typeof req.body?.threadId === 'string' ? req.body.threadId : undefined;
-      const parentMessageId = typeof req.body?.parentMessageId === 'string' ? req.body.parentMessageId : undefined;
 
       const sender = typeof req.body?.sender === 'string' ? req.body.sender : 'user';
       const senderEmoji = typeof req.body?.senderEmoji === 'string' ? req.body.senderEmoji : '🧑';
@@ -1222,6 +1411,7 @@ export function registerChatRoutes({
         status: 'sent',
         timestamp,
         reply_to: parentMessageId,
+        org_id: messageOrgId,
       });
 
       if (threadId) {
@@ -1273,6 +1463,7 @@ export function registerChatRoutes({
           status: 'sent',
           timestamp: new Date().toISOString(),
           reply_to: parentMessageId,
+          org_id: messageOrgId,
         });
 
         if (threadId) {

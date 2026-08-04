@@ -25,8 +25,7 @@ import {
   type FileSourceRepository,
 } from '../../../db/src/file-sources';
 import { phase2FlagEnabled, resolvePhase2Flags, type Phase2FlagSnapshot } from '../phase2-flags';
-import { readRequestPrincipal, type RequestOrgBinding } from '../request-permissions';
-import { readDefaultOrgId } from '../config/admin-runtime';
+import { requireRequestOrg, type RequestOrgBinding } from '../request-permissions';
 import { buildGoogleExternalDocumentMetadata } from '../google-docs-metadata';
 import {
   externalResult,
@@ -101,22 +100,18 @@ interface SearchFilters extends TaskProofSearchFilters {
 class ScopedSearchRequestError extends Error {}
 
 /**
- * SRCH-A-03 authority hardening: scoped search aggregates across documents, tasks,
- * and proof artifacts, so the org used to scope every backend SQL query must come
- * ONLY from the authenticated workspace header (`x-entity-org-id`/`x-entity-org`)
- * — never from client-controlled query/body values. This is stricter than the
- * legacy requireRequestOrg() used by single-object routes and closes the
- * org-selector authority gap for this high-risk surface. Per-object visibility is
- * still gated by the principal's org-scoped grants via permissionSafeRecord().
+ * R4 authority hardening: scoped search aggregates across documents, tasks,
+ * and proof artifacts, so the org used to scope every backend SQL query must
+ * come ONLY from the shared principal-derived resolver (`requireRequestOrg`).
+ * For a customer principal the bound org is membership-derived: a caller-
+ * selected header/query/body org can only narrow within grants (never widen)
+ * and an omitted/ambiguous scope fails closed. For the trusted service/admin
+ * path the existing readRequestOrg convention is preserved. Per-object
+ * visibility is still gated by the principal's org-scoped grants via the
+ * permission envelopes built from binding.principal.
  */
 function requireScopedSearchOrg(req: Request, res: Response): RequestOrgBinding | null {
-  const headerOrg = req.header('x-entity-org-id')?.trim() || req.header('x-entity-org')?.trim() || null;
-  const orgId = headerOrg ?? readDefaultOrgId();
-  if (!orgId) {
-    res.status(400).json({ error: 'request org required', code: 'request_org_required' });
-    return null;
-  }
-  return { orgId, principal: readRequestPrincipal(req, orgId) };
+  return requireRequestOrg(req, res);
 }
 
 function readQuery(req: Request, key: string): string | undefined {

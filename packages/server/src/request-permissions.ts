@@ -39,6 +39,28 @@ export function readRequestOrg(req: Request): string | null {
   return readDefaultOrgId();
 }
 
+/**
+ * R4: read the caller-EXPLICIT request org (header/query/body) WITHOUT the
+ * deployment-wide default-org fallback. Customer principals must never silently
+ * bind the deployment default (it is outside their grants); a missing explicit
+ * scope is handled as ambiguous/auto-bind by the resolver, not as the default.
+ */
+export function readExplicitRequestOrg(req: Request): string | null {
+  const headerOrg = req.header('x-entity-org-id') ?? req.header('x-entity-org');
+  const queryOrg = typeof req.query.org_id === 'string'
+    ? req.query.org_id
+    : typeof req.query.orgId === 'string'
+      ? req.query.orgId
+      : null;
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+  const bodyOrg = typeof body.org_id === 'string' ? body.org_id : typeof body.orgId === 'string' ? body.orgId : null;
+  const candidate = headerOrg ?? queryOrg ?? bodyOrg;
+  if (typeof candidate === 'string' && candidate.trim()) {
+    return candidate.trim();
+  }
+  return null;
+}
+
 function readEnforceStoredPrincipals(): boolean {
   try {
     return readAccessControlRuntimeSettings().enforceStoredPrincipals;
@@ -100,8 +122,10 @@ export function requireRequestOrg(req: Request, res: Response, repo?: PrincipalR
   if (customer) {
     // Membership-derived tenant scope (Terra B4): a caller-selected org header /
     // query / body value is honored ONLY if it lies within the authenticated
-    // principal's membership. It can never expand access to another tenant.
-    const candidate = readRequestOrg(req);
+    // principal's membership. It can never expand access to another tenant. The
+    // deployment default is NOT used for customers (R4) so a missing scope is
+    // ambiguous/auto-bind, never an out-of-grants default.
+    const candidate = readExplicitRequestOrg(req);
     if (candidate && !isOrgAuthorized(req, candidate)) {
       sendPermissionDenied(res, 'requested org is outside the principal membership');
       return null;
