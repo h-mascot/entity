@@ -162,9 +162,11 @@ const FORBIDDEN_ADAPTER_SOURCE_RULES: Array<{
  */
 export const CHANNEL_ADAPTER_PRODUCTION_SOURCE_FILES = [
   'adapter.ts',
+  'email-adapter.ts',
   'feature-flag.ts',
   'index.ts',
   'registry.ts',
+  'router.ts',
   'sanitize.ts',
   'slack-reference-adapter.ts',
   'slack-transport.ts',

@@ -97,6 +97,7 @@ import { runInferenceProviderMigrations } from "./provider-registry/migrations";
 import { registerCrewRoutes } from "./crews-routes";
 import { registerChatRoutes } from "./routes/chat";
 import { createClickClackBridge } from "./clickclack/bridge";
+import { createChannelAdapterRouter } from "./channels/router";
 import { registerClickClackProxyRoutes } from "./clickclack/proxy";
 import { registerConfigRoutes } from "./config/routes";
 import { createNotificationRouter } from "./routes/notifications";
@@ -412,6 +413,10 @@ registerPluginRuntimeModules({
 });
 // Mount core swarm lifecycle routes (dispatch, accept, reject, cancel, providers)
 app.use("/api/swarm", createSwarmRouter());
+
+// THE-932: expose the channel adapter registry (notification backend health).
+// Email/SMTP adapters fail closed on plaintext SMTP AUTH at construction.
+app.use("/api/channel-adapters", createChannelAdapterRouter());
 
 mountPluginRoutes({
   app,

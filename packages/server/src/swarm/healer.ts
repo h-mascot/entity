@@ -40,18 +40,20 @@ function defaultGetDatabase(): Database.Database {
   return getEntityDatabase();
 }
 
-function persistHealOutcome(outcome: HealOutcome): void {
+function persistHealOutcome(outcome: HealOutcome, getDatabase: () => Database.Database = defaultGetDatabase): void {
   try {
-    const db = getEntityDatabase(ensureAppSettingsTable);
+    const db = getDatabase();
+    ensureAppSettingsTable(db);
     setSettingJson(db, HEALER_STATUS_KEY, outcome, 'healer');
   } catch {
     // Persistence is best-effort; the in-memory outcome is still authoritative.
   }
 }
 
-function loadPersistedHealOutcome(): HealOutcome | null {
+function loadPersistedHealOutcome(getDatabase: () => Database.Database = defaultGetDatabase): HealOutcome | null {
   try {
-    const db = getEntityDatabase(ensureAppSettingsTable);
+    const db = getDatabase();
+    ensureAppSettingsTable(db);
     const stored = getSettingJson(db, HEALER_STATUS_KEY);
     if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return null;
     const record = stored as Partial<HealOutcome>;
@@ -123,25 +125,25 @@ export async function healStuckJobs(deps: HealDependencies = {}): Promise<HealRe
       console.log(`[healer] Healed ${result.stuckJobs} stuck jobs: ${result.retriedJobs} retried, ${result.failedJobs} failed`);
     }
 
-    recordHealSuccess(result);
+    recordHealSuccess(result, getDatabase);
     return result;
   } catch (error) {
-    recordHealFailure(error);
+    recordHealFailure(error, getDatabase);
     throw error;
   }
 }
 
-function recordHealSuccess(result: HealResult): void {
+function recordHealSuccess(result: HealResult, getDatabase: () => Database.Database = defaultGetDatabase): void {
   const outcome: HealOutcome = { result, timestamp: result.timestamp, error: null };
   lastHealOutcome = outcome;
-  persistHealOutcome(outcome);
+  persistHealOutcome(outcome, getDatabase);
 }
 
-function recordHealFailure(error: unknown): void {
+function recordHealFailure(error: unknown, getDatabase: () => Database.Database = defaultGetDatabase): void {
   const message = error instanceof Error ? error.message : 'Unknown heal error';
   const outcome: HealOutcome = { result: null, timestamp: new Date().toISOString(), error: message };
   lastHealOutcome = outcome;
-  persistHealOutcome(outcome);
+  persistHealOutcome(outcome, getDatabase);
 }
 
 export function getLastHealOutcome(): HealOutcome | null {

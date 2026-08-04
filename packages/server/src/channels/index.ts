@@ -59,6 +59,16 @@ export {
 } from './slack-reference-adapter';
 
 export {
+  createEmailChannelAdapter,
+  EmailAdapterConfigError,
+  EMAIL_CHANNEL_ADAPTER_ID,
+  EMAIL_CHANNEL_ADAPTER_DISPLAY_NAME,
+  type EmailChannelAdapterOptions,
+} from './email-adapter';
+
+export { createChannelAdapterRouter, createChannelAdapterRegistryForRuntime } from './router';
+
+export {
   createOfflineSlackTransport,
   type OfflineSlackTransportOptions,
   type SlackTransport,

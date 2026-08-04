@@ -4,6 +4,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const tmpDbPath = path.join(os.tmpdir(), `entity-healer-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
@@ -55,5 +56,22 @@ describe('swarm healer — last result/time/error (THE-932)', () => {
     const status = getHealerStatus();
     expect(status.lastResult).toBeDefined();
     expect(status.lastResult!.error).toBeNull();
+  });
+
+  it('persists status through the injected getDatabase (consistent dependency boundary)', async () => {
+    const { healStuckJobs } = await import('./healer');
+    const { ensureAppSettingsTable, getSettingJson } = await import('../config/settings-store');
+    // A separate in-memory database stands in for a non-default target.
+    const injected = new Database(':memory:');
+    try {
+      const result = await healStuckJobs({ getDatabase: () => injected });
+      expect(result.stuckJobs).toBe(0);
+      ensureAppSettingsTable(injected);
+      const stored = getSettingJson(injected, 'swarm.healerStatus') as { error: string | null } | null;
+      expect(stored).not.toBeNull();
+      expect(stored!.error).toBeNull();
+    } finally {
+      injected.close();
+    }
   });
 });
