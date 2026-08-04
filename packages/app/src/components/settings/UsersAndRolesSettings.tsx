@@ -143,11 +143,20 @@ export default function UsersAndRolesSettings({ apiBase = '' }: UsersAndRolesSet
           const body = await bootstrapRes.json().catch(() => ({})) as { error?: string };
           throw new Error(body.error ?? `Bootstrap admin grant failed (${bootstrapRes.status})`);
         }
-        await fetch(apiPath(apiBase, '/api/admin/settings/accessControl'), withApiToken({
+        const bindingRes = await fetch(apiPath(apiBase, '/api/admin/settings/accessControl'), withApiToken({
           method: 'PATCH',
           headers: adminMutationHeaders({ 'Content-Type': 'application/json' }, created.id),
           body: JSON.stringify({ apiPrincipalId: created.id }),
         }));
+        // Surface a binding-persistence failure rather than reporting a
+        // successful bootstrap. Without the persisted apiPrincipalId the
+        // resolver cannot bind subsequent admin requests once a second
+        // principal exists (fail-closed), so a silent failure here would
+        // manifest later as an unexplained 403 on the next admin read.
+        if (!bindingRes.ok) {
+          const body = await bindingRes.json().catch(() => ({})) as { error?: string };
+          throw new Error(body.error ?? `Persist admin binding failed (${bindingRes.status})`);
+        }
         clearAdminRuntimeSettingsCache();
       }
       setCreateOpen(false);

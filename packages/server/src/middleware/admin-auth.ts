@@ -100,6 +100,19 @@ export function createRequireAdminPrincipal(repo: PrincipalRepository = createPr
     const grantPrincipalId = typeof req.params.principalId === 'string'
       ? req.params.principalId
       : targetPrincipalId || readGrantPrincipalIdFromPath(req);
+    // The self-bootstrap carve-out authorizes the FIRST global-admin grant on
+    // the sole ACTIVE principal. It is narrowed on all three axes flagged by
+    // the governed review:
+    //   1. The resolved sole principal must be ACTIVE (a disabled sole
+    //      principal must not be able to create a fresh admin grant — that
+    //      would be an authorization elevation).
+    //   2. The grant body must be a GLOBAL admin grant (no org/team/project
+    //      scope). A scoped grant is not a bootstrap grant and must go
+    //      through normal authorization.
+    //   3. The sole principal must NOT already have a global admin grant
+    //      (the carve-out is for the first-grant transition only).
+    // Identity was resolved unambiguously to the sole principal, so checking
+    // it here is consistent with the identity/authorization separation.
     const isSelfBootstrapGrant =
       req.method === 'POST'
       && req.path.endsWith('/grants')
@@ -107,7 +120,12 @@ export function createRequireAdminPrincipal(repo: PrincipalRepository = createPr
       && grantPrincipalId === principalId
       && principalCount === 1
       && typeof req.body?.role === 'string'
-      && req.body.role === 'admin';
+      && req.body.role === 'admin'
+      && req.body.org_id == null
+      && req.body.team_id == null
+      && req.body.project_id == null
+      && !hasGlobalAdminGrant(principalId, repo)
+      && storedPrincipalIsActive(principalId, repo);
 
     if (isSelfBootstrapGrant) {
       next();
@@ -145,6 +163,11 @@ export function canUseStoredPrincipalResolution(): boolean {
 export function storedPrincipalFailsClosed(principalId: string): boolean {
   const stored = resolveStoredPrincipalContext(principalId);
   return stored.kind === 'stored' && stored.status === 'disabled';
+}
+
+function storedPrincipalIsActive(principalId: string, repo: PrincipalRepository): boolean {
+  const stored = resolveStoredPrincipalContext(principalId, repo);
+  return stored.kind === 'stored' && stored.status === 'active';
 }
 
 export { LOCAL_ADMIN_PRINCIPAL_ID };
