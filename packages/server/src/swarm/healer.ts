@@ -68,8 +68,8 @@ function loadPersistedHealOutcome(getDatabase: () => Database.Database = default
   }
 }
 
-// Best-effort restore of the last known outcome on module load.
-lastHealOutcome = loadPersistedHealOutcome();
+// Restoration is deliberately deferred: importing the swarm module can happen
+// before dotenv/runtime bootstrap has resolved ENTITY_TASK_DB_PATH.
 
 /**
  * Find and heal stuck jobs
@@ -142,6 +142,7 @@ export async function healStuckJobs(deps: HealDependencies = {}): Promise<HealRe
 function recordHealSuccess(result: HealResult, getDatabase: () => Database.Database = defaultGetDatabase): void {
   const outcome: HealOutcome = { result, timestamp: result.timestamp, error: null };
   lastHealOutcome = outcome;
+  healerStateInitialized = true;
   persistHealOutcome(outcome, getDatabase);
 }
 
@@ -149,10 +150,19 @@ function recordHealFailure(error: unknown, getDatabase: () => Database.Database 
   const message = error instanceof Error ? error.message : 'Unknown heal error';
   const outcome: HealOutcome = { result: null, timestamp: new Date().toISOString(), error: message };
   lastHealOutcome = outcome;
+  healerStateInitialized = true;
   persistHealOutcome(outcome, getDatabase);
 }
 
+let healerStateInitialized = false;
+function ensureHealerStateInitialized(): void {
+  if (healerStateInitialized) return;
+  lastHealOutcome = loadPersistedHealOutcome();
+  healerStateInitialized = true;
+}
+
 export function getLastHealOutcome(): HealOutcome | null {
+  ensureHealerStateInitialized();
   return lastHealOutcome;
 }
 
@@ -167,6 +177,7 @@ export function startHealer(): void {
     return;
   }
 
+  ensureHealerStateInitialized();
   console.log(`[healer] Starting (interval: ${HEAL_INTERVAL_MS / 1000}s, threshold: ${STUCK_THRESHOLD_MINUTES}min)`);
   
   // Run immediately on start
@@ -197,6 +208,6 @@ export function getHealerStatus(): { running: boolean; intervalMs: number; thres
     running: healerInterval !== null,
     intervalMs: HEAL_INTERVAL_MS,
     thresholdMinutes: STUCK_THRESHOLD_MINUTES,
-    lastResult: lastHealOutcome,
+    lastResult: getLastHealOutcome(),
   };
 }
