@@ -17,6 +17,49 @@ import {
   type IntakeCallbackEvent,
 } from './types';
 
+/** THE-932: bound externally supplied event detail and timestamps. */
+const MAX_CALLBACK_DETAIL_CHARS = 2000;
+const OCCURRED_AT_FUTURE_TOLERANCE_MS = 24 * 60 * 60 * 1000;
+const OCCURRED_AT_AGE_TOLERANCE_MS = 365 * 24 * 60 * 60 * 1000;
+
+function boundDetail(
+  value: unknown,
+  path: string,
+  issues: CallbackValidationIssue[],
+): string | undefined {
+  const trimmed = readTrimmed(value);
+  if (trimmed && trimmed.length > MAX_CALLBACK_DETAIL_CHARS) {
+    issues.push(
+      issue(path, 'detail_too_long', `detail fields must be at most ${MAX_CALLBACK_DETAIL_CHARS} characters`),
+    );
+    return undefined;
+  }
+  return trimmed;
+}
+
+function validateOccurredAt(
+  value: unknown,
+  issues: CallbackValidationIssue[],
+): string | undefined {
+  const trimmed = readTrimmed(value);
+  if (!trimmed) return undefined;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    issues.push(issue('occurredAt', 'invalid_occurred_at', 'occurredAt must be an ISO-8601 timestamp'));
+    return undefined;
+  }
+  const now = Date.now();
+  if (parsed.getTime() - now > OCCURRED_AT_FUTURE_TOLERANCE_MS) {
+    issues.push(issue('occurredAt', 'invalid_occurred_at', 'occurredAt cannot be more than 24h in the future'));
+    return undefined;
+  }
+  if (now - parsed.getTime() > OCCURRED_AT_AGE_TOLERANCE_MS) {
+    issues.push(issue('occurredAt', 'invalid_occurred_at', 'occurredAt cannot be more than 365 days in the past'));
+    return undefined;
+  }
+  return parsed.toISOString();
+}
+
 /** Same posture as EEPC-A-02 manifest secret classification. */
 const SECRET_KEY_HINT_RE =
   /(api[_-]?key|token|secret|password|authorization|bearer|credential)/i;
@@ -116,6 +159,12 @@ function requireSummary(
     issues.push(issue(path, 'missing_summary', `${event} callback requires a non-empty summary`));
     return undefined;
   }
+  if (summary.length > MAX_CALLBACK_DETAIL_CHARS) {
+    issues.push(
+      issue(path, 'detail_too_long', `summary must be at most ${MAX_CALLBACK_DETAIL_CHARS} characters`),
+    );
+    return undefined;
+  }
   return summary;
 }
 
@@ -167,7 +216,7 @@ export function parseCallbackPayloadShape(
     provider,
     jobId,
     idempotencyKey: readTrimmed(raw.idempotencyKey) ?? readTrimmed(raw.idempotency_key),
-    occurredAt: readTrimmed(raw.occurredAt) ?? readTrimmed(raw.occurred_at),
+    occurredAt: validateOccurredAt(raw.occurredAt ?? raw.occurred_at, issues),
     actorPrincipalId: readTrimmed(raw.actorPrincipalId) ?? readTrimmed(raw.actor_principal_id),
   };
 
@@ -216,7 +265,7 @@ export function parseCallbackPayloadShape(
       payload.progress = {
         summary,
         percent,
-        feedback: readTrimmed(progressRaw.feedback ?? raw.feedback),
+        feedback: boundDetail(progressRaw.feedback ?? raw.feedback, 'progress.feedback', issues),
       };
     }
   }
@@ -278,7 +327,7 @@ export function parseCallbackPayloadShape(
       'blocker.summary',
       issues,
     );
-    const reason = readTrimmed(blockerRaw.reason ?? raw.reason ?? summary);
+    const reason = boundDetail(blockerRaw.reason ?? raw.reason ?? summary, 'blocker.reason', issues);
     if (!reason) {
       issues.push(issue('blocker.reason', 'missing_reason', 'blocker.reason is required'));
     }

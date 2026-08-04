@@ -394,6 +394,8 @@ export default function SwarmBoard({ apiBase = '', plugin }: PluginComponentProp
   const [jobs, setJobs] = useState<SwarmJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // THE-932: distinguish a genuinely empty board from a load failure (degraded).
+  const [loadFailed, setLoadFailed] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newTaskId, setNewTaskId] = useState('');
   const [newSummary, setNewSummary] = useState('');
@@ -421,9 +423,11 @@ export default function SwarmBoard({ apiBase = '', plugin }: PluginComponentProp
       .then((data) => {
         setJobs(data?.jobs ?? []);
         setError(null);
+        setLoadFailed(false);
       })
       .catch((err) => {
-        // Only show fetch errors if we have no data yet
+        // THE-932: a load failure is a degraded state, distinct from empty.
+        setLoadFailed(true);
         if (jobs.length === 0) setError(toErrorMessage(err, 'Unable to load swarm jobs.'));
       })
       .finally(() => setLoading(false));
@@ -690,6 +694,25 @@ export default function SwarmBoard({ apiBase = '', plugin }: PluginComponentProp
       {/* Kanban Board */}
       {loading ? (
         <div className="flex items-center justify-center py-20 text-[var(--text-muted)]">Loading jobs...</div>
+      ) : loadFailed && jobs.length === 0 ? (
+        // THE-932: degraded load-failure state — distinct from a genuinely empty board.
+        <div
+          className="flex flex-col items-center justify-center gap-1 rounded-xl border border-[var(--error)]/40 bg-[var(--surface-error)]/30 px-4 py-16 text-center"
+          data-testid="swarm-board-degraded"
+        >
+          <div className="text-sm font-medium text-[var(--error)]">Swarm board unavailable</div>
+          <div className="text-xs text-[var(--text-secondary)]">
+            Couldn’t load jobs right now (degraded). Retrying automatically…
+          </div>
+        </div>
+      ) : jobs.length === 0 ? (
+        <div
+          className="flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-[var(--border-secondary)] px-4 py-16 text-center"
+          data-testid="swarm-board-empty"
+        >
+          <div className="text-sm font-medium text-[var(--text-primary)]">No jobs yet</div>
+          <div className="text-xs text-[var(--text-muted)]">Dispatch a job above to populate the board.</div>
+        </div>
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-4" style={{ minHeight: 'calc(100vh - 260px)' }}>
           {COLUMNS.map((col) => {

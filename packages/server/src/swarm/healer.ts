@@ -7,11 +7,14 @@
  */
 
 import { getEntityDatabase } from '../../../db/src/entity-db';
+import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../config/settings-store';
 import { updateSwarmJob, getSwarmJob, listSwarmJobs, ensureSwarmSchema } from './db';
 import type { SwarmJob } from './types';
+import type Database from 'better-sqlite3';
 
 const STUCK_THRESHOLD_MINUTES = 60;
 const HEAL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const HEALER_STATUS_KEY = 'swarm.healerStatus';
 
 interface HealResult {
   stuckJobs: number;
@@ -20,63 +23,129 @@ interface HealResult {
   timestamp: string;
 }
 
+export interface HealOutcome {
+  result: HealResult | null;
+  timestamp: string;
+  error: string | null;
+}
+
+export interface HealDependencies {
+  /** Injectable for tests. Defaults to the shared Entity database. */
+  getDatabase?: () => Database.Database;
+}
+
+let lastHealOutcome: HealOutcome | null = null;
+
+function defaultGetDatabase(): Database.Database {
+  return getEntityDatabase();
+}
+
+function persistHealOutcome(outcome: HealOutcome): void {
+  try {
+    const db = getEntityDatabase(ensureAppSettingsTable);
+    setSettingJson(db, HEALER_STATUS_KEY, outcome, 'healer');
+  } catch {
+    // Persistence is best-effort; the in-memory outcome is still authoritative.
+  }
+}
+
+function loadPersistedHealOutcome(): HealOutcome | null {
+  try {
+    const db = getEntityDatabase(ensureAppSettingsTable);
+    const stored = getSettingJson(db, HEALER_STATUS_KEY);
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return null;
+    const record = stored as Partial<HealOutcome>;
+    if (typeof record.timestamp !== 'string' || typeof record.error !== 'string') return null;
+    return { result: (record.result as HealResult) ?? null, timestamp: record.timestamp, error: record.error };
+  } catch {
+    return null;
+  }
+}
+
+// Best-effort restore of the last known outcome on module load.
+lastHealOutcome = loadPersistedHealOutcome();
+
 /**
  * Find and heal stuck jobs
  */
-export async function healStuckJobs(): Promise<HealResult> {
-  const db = getEntityDatabase();
-  // The healer can run before any swarm route has triggered schema setup, so
-  // ensure the swarm tables/columns exist before querying dispatched_at.
-  ensureSwarmSchema(db);
-  const now = new Date();
-  const threshold = new Date(now.getTime() - STUCK_THRESHOLD_MINUTES * 60 * 1000);
-  const thresholdIso = threshold.toISOString();
+export async function healStuckJobs(deps: HealDependencies = {}): Promise<HealResult> {
+  const getDatabase = deps.getDatabase ?? defaultGetDatabase;
+  try {
+    const db = getDatabase();
+    // The healer can run before any swarm route has triggered schema setup, so
+    // ensure the swarm tables/columns exist before querying dispatched_at.
+    ensureSwarmSchema(db);
+    const now = new Date();
+    const threshold = new Date(now.getTime() - STUCK_THRESHOLD_MINUTES * 60 * 1000);
+    const thresholdIso = threshold.toISOString();
 
-  const result: HealResult = {
-    stuckJobs: 0,
-    retriedJobs: 0,
-    failedJobs: 0,
-    timestamp: now.toISOString(),
-  };
+    const result: HealResult = {
+      stuckJobs: 0,
+      retriedJobs: 0,
+      failedJobs: 0,
+      timestamp: now.toISOString(),
+    };
 
-  // Find jobs stuck in 'running' past the threshold
-  const stuckJobs = db.prepare(`
-    SELECT * FROM swarm_jobs 
-    WHERE status = 'running' 
-    AND dispatched_at < ?
-  `).all(thresholdIso) as SwarmJob[];
+    // Find jobs stuck in 'running' past the threshold
+    const stuckJobs = db.prepare(`
+      SELECT * FROM swarm_jobs
+      WHERE status = 'running'
+      AND dispatched_at < ?
+    `).all(thresholdIso) as SwarmJob[];
 
-  result.stuckJobs = stuckJobs.length;
+    result.stuckJobs = stuckJobs.length;
 
-  for (const job of stuckJobs) {
-    const canRetry = job.retry_count < job.max_retries;
+    for (const job of stuckJobs) {
+      const canRetry = job.retry_count < job.max_retries;
 
-    if (canRetry) {
-      // Re-queue for retry
-      updateSwarmJob(job.id, {
-        status: 'queued',
-        retry_count: job.retry_count + 1,
-        feedback: `Auto-healed: stuck for >${STUCK_THRESHOLD_MINUTES}min. Retry ${job.retry_count + 1}/${job.max_retries}`,
-        run_handle: undefined,
-      });
-      result.retriedJobs++;
-      console.log(`[healer] Re-queued stuck job ${job.id} (retry ${job.retry_count + 1}/${job.max_retries})`);
-    } else {
-      // Max retries exhausted, mark as failed
-      updateSwarmJob(job.id, {
-        status: 'failed',
-        feedback: `Auto-failed: stuck for >${STUCK_THRESHOLD_MINUTES}min, max retries (${job.max_retries}) exhausted`,
-      });
-      result.failedJobs++;
-      console.log(`[healer] Failed stuck job ${job.id} (max retries exhausted)`);
+      if (canRetry) {
+        // Re-queue for retry
+        updateSwarmJob(job.id, {
+          status: 'queued',
+          retry_count: job.retry_count + 1,
+          feedback: `Auto-healed: stuck for >${STUCK_THRESHOLD_MINUTES}min. Retry ${job.retry_count + 1}/${job.max_retries}`,
+          run_handle: undefined,
+        });
+        result.retriedJobs++;
+        console.log(`[healer] Re-queued stuck job ${job.id} (retry ${job.retry_count + 1}/${job.max_retries})`);
+      } else {
+        // Max retries exhausted, mark as failed
+        updateSwarmJob(job.id, {
+          status: 'failed',
+          feedback: `Auto-failed: stuck for >${STUCK_THRESHOLD_MINUTES}min, max retries (${job.max_retries}) exhausted`,
+        });
+        result.failedJobs++;
+        console.log(`[healer] Failed stuck job ${job.id} (max retries exhausted)`);
+      }
     }
-  }
 
-  if (result.stuckJobs > 0) {
-    console.log(`[healer] Healed ${result.stuckJobs} stuck jobs: ${result.retriedJobs} retried, ${result.failedJobs} failed`);
-  }
+    if (result.stuckJobs > 0) {
+      console.log(`[healer] Healed ${result.stuckJobs} stuck jobs: ${result.retriedJobs} retried, ${result.failedJobs} failed`);
+    }
 
-  return result;
+    recordHealSuccess(result);
+    return result;
+  } catch (error) {
+    recordHealFailure(error);
+    throw error;
+  }
+}
+
+function recordHealSuccess(result: HealResult): void {
+  const outcome: HealOutcome = { result, timestamp: result.timestamp, error: null };
+  lastHealOutcome = outcome;
+  persistHealOutcome(outcome);
+}
+
+function recordHealFailure(error: unknown): void {
+  const message = error instanceof Error ? error.message : 'Unknown heal error';
+  const outcome: HealOutcome = { result: null, timestamp: new Date().toISOString(), error: message };
+  lastHealOutcome = outcome;
+  persistHealOutcome(outcome);
+}
+
+export function getLastHealOutcome(): HealOutcome | null {
+  return lastHealOutcome;
 }
 
 let healerInterval: ReturnType<typeof setInterval> | null = null;
@@ -115,10 +184,11 @@ export function stopHealer(): void {
 /**
  * Get healer status
  */
-export function getHealerStatus(): { running: boolean; intervalMs: number; thresholdMinutes: number } {
+export function getHealerStatus(): { running: boolean; intervalMs: number; thresholdMinutes: number; lastResult: HealOutcome | null } {
   return {
     running: healerInterval !== null,
     intervalMs: HEAL_INTERVAL_MS,
     thresholdMinutes: STUCK_THRESHOLD_MINUTES,
+    lastResult: lastHealOutcome,
   };
 }
