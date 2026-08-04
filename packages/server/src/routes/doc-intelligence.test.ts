@@ -151,4 +151,32 @@ describe('validateDocSchemaExtraction — exact field match (THE-934)', () => {
     const decision = validateDocSchemaExtraction('{"Owner": null}', ['Owner']);
     expect(decision.ok).toBe(false);
   });
+
+  it('rejects inherited Object.prototype keys (toString, constructor, __proto__) for an empty object', () => {
+    // `{}` must not satisfy a required field that only exists on the prototype.
+    for (const field of ['toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf']) {
+      const decision = validateDocSchemaExtraction('{}', [field]);
+      expect(decision.ok).toBe(false);
+      if (!decision.ok) {
+        expect(decision.missingFields).toEqual([field]);
+      }
+    }
+  });
+
+  it('rejects inherited keys even when combined with valid own fields', () => {
+    const decision = validateDocSchemaExtraction('{"Owner": "Alice"}', ['Owner', 'toString']);
+    expect(decision.ok).toBe(false);
+    if (!decision.ok) {
+      expect(decision.missingFields).toEqual(['toString']);
+    }
+  });
+
+  it('accepts a valid own-property field and distinguishes Owner from Homeowner', () => {
+    // Owner is a real own property; Homeowner is a different own property and
+    // must not satisfy a required Owner.
+    expect(validateDocSchemaExtraction('{"Owner": "Alice"}', ['Owner']).ok).toBe(true);
+    expect(validateDocSchemaExtraction('{"Homeowner": "Alice"}', ['Owner']).ok).toBe(false);
+    // Both Owner and Homeowner present as own properties — Owner is satisfied.
+    expect(validateDocSchemaExtraction('{"Owner": "Alice", "Homeowner": "Bob"}', ['Owner']).ok).toBe(true);
+  });
 });

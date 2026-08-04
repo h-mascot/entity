@@ -223,6 +223,10 @@ export function validateDocSchemaExtraction(
 
   const missing: string[] = [];
   for (const field of requiredFields) {
+    if (!Object.prototype.hasOwnProperty.call(data, field)) {
+      missing.push(field);
+      continue;
+    }
     const value = data[field];
     if (value === undefined || value === null || typeof value === 'object') {
       missing.push(field);
