@@ -79,7 +79,7 @@
 <li><code>packages/server/src/routes/docs.ts</code> serves documents from a constrained allow-list of roots and file types.</li>
 <li><code>packages/server/src/routes/legacy-files.ts</code> supports older file routes that still need compatibility handling.</li>
 <li><code>packages/server/src/document-objects.ts</code> and <code>packages/db/src/file-sources.ts</code> carry document and file-source persistence details.</li>
-<li><code>entity.config.example.yaml</code> defines the default local file sources and the allowed document extensions. The sample <code>entity-wiki</code> source now points at <code>./openwiki-html</code>, which matches the generated presentation tree used by the runtime docs flow and the file-source bootstrap path documented in <a href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top">Admin and extensions</a>.</li>
+<li><code>entity.config.example.yaml</code> defines the default local file sources and the allowed document extensions. The sample <code>entity-wiki</code> source now points at <code>./openwiki-html</code>, which matches the generated presentation tree used by the runtime docs flow and the file-source bootstrap path documented in <a href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top">Admin and extensions</a>. The server-side docs/index pipeline strips the generated HTML before it derives previews, so the rendered wiki stays searchable even though the on-disk presentation tree is HTML.</li>
 </ul>
 <h2 id="file-source-configuration">File-source configuration</h2>
 <p>The sample config shows two built-in local file sources:</p>

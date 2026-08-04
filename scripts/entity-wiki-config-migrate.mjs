@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import { copyFile, lstat, readFile, readlink, rename, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -151,7 +151,17 @@ async function main() {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  const modulePath = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(modulePath);
+  } catch {
+    return path.resolve(process.argv[1]) === path.resolve(modulePath);
+  }
+}
+
+if (isMainModule()) {
   main().catch((error) => {
     console.error(`[entity-wiki-config] ${error.message}`);
     process.exitCode = 1;
