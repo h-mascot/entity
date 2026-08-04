@@ -16,6 +16,7 @@ import { createPrincipalRepository } from '../../db/src/principals';
 import { isApiAuthEnabled } from './middleware/api-auth';
 import { readAccessControlRuntimeSettings, readDefaultOrgId } from './config/admin-runtime';
 import { LOCAL_ADMIN_PRINCIPAL_ID, resolveTrustedPrincipalId } from './principals/admin-identity';
+import { getCustomerPrincipal, isOrgAuthorized } from './principals/request-context';
 
 export interface RequestOrgBinding {
   orgId: string;
@@ -67,6 +68,14 @@ export function readRequestPrincipal(
   repo?: PrincipalRepository,
   options?: ReadRequestPrincipalOptions,
 ): PrincipalPermissionContext {
+  // Server-resolved customer principal wins: caller x-entity-principal-id /
+  // x-entity-role headers MUST NOT override an authenticated customer identity
+  // (Terra B1/B4). The customer context is attached by the customer-principal
+  // middleware from a validated, individually revocable access token.
+  const customer = getCustomerPrincipal(req);
+  if (customer) {
+    return customer.permission;
+  }
   const principalId = readRequestPrincipalId(req, repo);
   const roleHeader = req.header('x-entity-role')?.trim().toLowerCase();
   const sensitivityHeader = req.header('x-entity-sensitivity') ?? undefined;
@@ -86,7 +95,35 @@ export function readRequestPrincipal(
   return buildLocalCompatPrincipalContext(principalId, orgId, roleHeader, sensitivityHeader);
 }
 
-export function requireRequestOrg(req: Request, res: Response): RequestOrgBinding | null {
+export function requireRequestOrg(req: Request, res: Response, repo?: PrincipalRepository): RequestOrgBinding | null {
+  const customer = getCustomerPrincipal(req);
+  if (customer) {
+    // Membership-derived tenant scope (Terra B4): a caller-selected org header /
+    // query / body value is honored ONLY if it lies within the authenticated
+    // principal's membership. It can never expand access to another tenant.
+    const candidate = readRequestOrg(req);
+    if (candidate && !isOrgAuthorized(req, candidate)) {
+      sendPermissionDenied(res, 'requested org is outside the principal membership');
+      return null;
+    }
+    let orgId: string | null = candidate;
+    if (!orgId) {
+      if (customer.isGlobalAdmin) {
+        orgId = readDefaultOrgId();
+      } else if (customer.orgIds.length === 1) {
+        orgId = customer.orgIds[0];
+      }
+    }
+    if (!orgId) {
+      res.status(400).json({
+        error: 'request org required',
+        code: 'request_org_required',
+        reason: 'customer principal has multiple org scopes; specify one',
+      });
+      return null;
+    }
+    return { orgId, principal: readRequestPrincipal(req, orgId, repo) };
+  }
   const orgId = readRequestOrg(req);
   if (!orgId) {
     res.status(400).json({
@@ -95,7 +132,7 @@ export function requireRequestOrg(req: Request, res: Response): RequestOrgBindin
     });
     return null;
   }
-  return { orgId, principal: readRequestPrincipal(req, orgId) };
+  return { orgId, principal: readRequestPrincipal(req, orgId, repo) };
 }
 
 export function sendPermissionDenied(res: Response, reason: string): Response {

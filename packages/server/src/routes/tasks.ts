@@ -6,6 +6,11 @@ import type {
 } from "../../../db/src";
 import { asyncHandler } from "../middleware/async-handler";
 import { orderTaskProjectIdsWithPrimary } from "../task-projects";
+import {
+  authorizeTaskOrg,
+  filterTasksForRequest,
+  resolveAuthorizedOrg,
+} from "../principals/request-context";
 
 type RegisterTaskRoutesDeps = Record<string, any>;
 
@@ -300,8 +305,12 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       }
 
       const enrichedTasks = enrichTasksWithSubtaskSummary(tasks);
-      const total = enrichedTasks.length;
-      const paginatedTasks = paginateTasks(enrichedTasks, pagination);
+      // Tenant-authorize the list for customer principals (Terra B3): a
+      // customer never sees tasks outside their membership org(s). Trusted
+      // service/admin path is unchanged (filter is a no-op).
+      const tenantScopedTasks = filterTasksForRequest(req, enrichedTasks);
+      const total = tenantScopedTasks.length;
+      const paginatedTasks = paginateTasks(tenantScopedTasks, pagination);
       // Only embed activity when explicitly requested (?includeActivity=true)
       // This avoids 296 individual SQLite queries on every poll
       const includeActivity =
@@ -409,8 +418,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
-
-      // Always include activity for single-task detail view
+      // Tenant-authorize the loaded task before exposure (Terra B3).
+      if (!authorizeTaskOrg(req, res, task, "read")) return;
       const activity = activityRepository.listActivitiesByTaskId(id, 20);
       const subtasks = await taskSyncLayer.listSubtasks(id);
       const enrichedTask = enrichTasksWithSubtaskSummary([
@@ -495,6 +504,17 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const taskScope = parseTaskCreateScope(req.body as Record<string, unknown>);
     if ("error" in taskScope) {
       return res.status(400).json(taskScope);
+    }
+    // Tenant-authorize task creation scope (Terra B3): a customer principal may
+    // only create work in an org it is a member of. The caller body org_id must
+    // match the authenticated membership; it can never create in another org.
+    const authorizedCreateOrg = resolveAuthorizedOrg(req, res, taskScope.org_id ?? null);
+    if (authorizedCreateOrg === null) {
+      // null with a response already sent means denied (403/400). null without a
+      // response means trusted path / global-admin without explicit org: defer.
+      if (res.headersSent) return;
+    } else {
+      taskScope.org_id = authorizedCreateOrg.orgId;
     }
     if ((taskScope.org_id || taskScope.team_id || taskScope.project_id) && !workspaceRepo) {
       return res.status(500).json({ error: "workspace scope repository unavailable" });
@@ -753,6 +773,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!existingTask) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before mutation (Terra B3).
+      if (!authorizeTaskOrg(req, res, existingTask, "write")) return;
       const accountabilityUpdates = parseTaskAccountabilityUpdates(
         req.body as Record<string, unknown>,
       );
@@ -1239,6 +1261,9 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         return res.status(404).json({ error: "task not found" });
       }
 
+      // Tenant-authorize before move (Terra B3).
+      if (!authorizeTaskOrg(req, res, existingTask, "write")) return;
+
       const accountabilityCheck = validateTaskAccountability({
         column,
         assignee: existingTask.assignee,
@@ -1411,6 +1436,9 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
 
     try {
       const task = await taskSyncLayer.getTask(id);
+      // Tenant-authorize before delete (Terra B3). Authorize before destroying so
+      // a cross-tenant caller cannot delete another org's task by guessed id.
+      if (!authorizeTaskOrg(req, res, task, "write")) return;
       const deleted = await taskSyncLayer.deleteTask(id);
       if (!deleted) {
         return res.status(404).json({ error: "task not found" });

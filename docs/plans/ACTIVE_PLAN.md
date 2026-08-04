@@ -44,6 +44,8 @@ Preserve and independently validate the two-commit Curacel checkpoint, close onl
 | 20:30 BST | Initialization | ✅ | Recorded routes, base/head, budgets, scope, and production prohibition. |
 | 20:35 BST | Recon | ✅ | Historical plans and current two-commit diff under independent inspection. |
 | 20:45 BST | Worker 01-initial | ✅ | citadel/glm5.2. Closed deterministic-proof gaps (#3/#4/#7); verified auth/tenant boundary preserved; gates green. Candidate committed. |
+| 20:53 BST | Terra review | ⚠ CHANGES_REQUESTED | citadel/gpt-5.6-terra medium. Blockers B1–B7 (shared-bearer not customer auth; caller actor impersonation; global task fetch; caller-selected doc org; mocked acceptance; deferred criteria; backup-only restore). |
+| 21:08 BST | Worker 02-auth-tenant-repair | ✅ | citadel/glm5.2 targeted repair. B1–B5 + B7 FIXED (per-request customer principal + tenant authorization, production-composed RED-first acceptance, operational restore); B6 criterion-5 PARTIAL/BLOCKED with exact residual. Gates green; 0 regressions. |
 
 ## Initial criterion matrix (recon, subject to worker verification)
 | Criterion | Status | Initial evidence / actionable gap |
@@ -57,6 +59,8 @@ Preserve and independently validate the two-commit Curacel checkpoint, close onl
 | 7 Deterministic pilot acceptance suite | PARTIAL | New suite exists but explicitly describes remaining capabilities and lacks backup/restore proof. |
 
 ## Worker validation (01-initial — citadel/glm5.2, bounded initial generation)
+
+> **Worker 02-auth-tenant-repair (targeted repair after Terra CHANGES_REQUESTED) is documented in full in `docs/plans/2026-08-04-curacel-pilot-integration.md` (section “Worker validation (02-auth-tenant-repair …)”).** Summary: B1 per-request customer principal (individually revocable access tokens), B2 server-derived review/handoff actor, B3 task-CRUD tenant authorization, B4 membership-derived document/evidence scope, B5 production-composed RED-first acceptance, B7 operational restore — all FIXED; B6 criterion-5 PARTIAL/BLOCKED with exact residual (chat-sidecar not checked out + provider/onboarding contracts differ from main). Gates: server 1234/1234 (165 files), db 61/61 (14 files), build clean, `git diff --check` clean. productionUntouched=true. This ACTIVE_PLAN copy is synchronized to the governed plan.
 
 See `docs/plans/2026-08-04-curacel-pilot-integration.md` for the full worker validation section (auth/tenant-boundary scrutiny, actionable gaps closed, verified criterion matrix, deferred items with rationale, and gate counts). Summary: closed deterministic-proof gaps #3 (linked task/file/evidence/PR workflow), #4 (CAS safe-retry/resume), #7 (backup/restore durability) with additive test-only proof in `packages/db/src/curacel-pilot-acceptance.test.ts`; verified PR #71/#72 server-trusted principal and the org-keyed tenant boundary are preserved and not regressed; no production/server/db source code changed.
 

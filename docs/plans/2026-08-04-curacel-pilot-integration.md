@@ -100,6 +100,55 @@ Independent validation of the checkpoint (`origin/main..e074772`, commits `c7b6b
 ### Worker scope boundary (honest)
 This worker closes the deterministic-proof gaps (#3, #4, #7) and verifies the auth/tenant boundary (#1, #2) is preserved and not regressed. It does **not** claim full pilot PASS: customer membership/session auth (#1), remaining object-type negatives (#2), provider/chat/onboarding/operations (#5), and exact sandbox promotion/QA (#6) remain independent manager/reviewer/sandbox/QA gates.
 
+## Worker validation (02-auth-tenant-repair — citadel/glm5.2, targeted repair after Terra CHANGES_REQUESTED)
+
+Independent read-only Terra review (`reviews/01-terra.json`) returned CHANGES_REQUESTED with blockers B1–B7. This bounded repair generation addressed them to the maximum coherent production-safe extent. RED tests were written first (15 failing on the pre-repair candidate), then the customer-principal + tenant-authorization machinery was wired, then the suite went GREEN.
+
+### What was implemented (additive, backward-compatible)
+- **B1 — per-request customer principal (FIXED).** New `entity_access_tokens` table + repository (`packages/db/src/access-tokens.ts`): individually revocable hashed credential → active principal + scoped grants. New `packages/server/src/principals/request-context.ts` middleware resolves an optional `x-entity-access-token` to a per-request principal after api-auth; invalid/revoked/disabled credentials fail closed (403). The deployment bearer (`ENTITY_API_TOKEN`) and server-trusted admin principal (`apiPrincipalId`, PR #71/#72) are preserved exactly for the no-customer-token path.
+- **B2 — review/human-gate/handoff actor server-derived (FIXED).** `getTaskActorFromRequest`, review-gate `readActor`/`readActorType`, and handoff `readActor` now resolve the actor from the authenticated customer principal; caller `X-Entity-Actor`/`X-Agent-Name`/body actor fields no longer grant authority or determine durable attribution for customer requests. Reviewer/approver eligibility (`buildTaskReviewDecisionUpdates`/`buildTaskHumanGateDecisionUpdates`) now authorizes the genuine server principal. Trusted-service path keeps the header convention.
+- **B3 — task CRUD tenant authorization (FIXED).** Task list is membership-filtered; get/update/move/delete authorize the loaded task's org before exposure/mutation (404, no cross-tenant existence leak); create derives org from the principal's membership and rejects caller body org outside it. Handoff chain/list/create/transition all tenant-authorize the loaded task. Two-org, two-credential HTTP proof against the real `taskSyncLayer`/database.
+- **B4 — document/evidence tenant scope membership-derived (FIXED).** `request-permissions.ts` (`readRequestPrincipal`/`requireRequestOrg`) now derives the request org from the customer principal's membership; caller `x-entity-org-id`/query/body org outside membership is denied (403). Object-org SQL predicates + permission envelopes are preserved and now bind to a trusted source.
+- **B5 — production-composed acceptance (FIXED).** `packages/server/src/__tests__/curacel-auth-tenant-acceptance.test.ts` boots REAL api-auth + customer middleware + REAL `registerTaskRoutes` (real `taskSyncLayer`/workspace/activity repos) + REAL review-gate/handoff/document routers on an isolated temp DB. Principal resolution, tenant binding, task repository, review authorization, and handoff deps are NOT mocked. RED-first (15 failing pre-repair) → GREEN (19 passing).
+- **B7 — operational restore proof (FIXED).** `packages/db/src/curacel-backup-restore.test.ts` backs up a populated service DB, restores into a CLEAN target by pointing the service at the backup file, initializes current repositories (additive schema), verifies every pilot object through the application layer, and performs a safe post-restore mutation.
+- **B6 — criterion 5 (PARTIAL / BLOCKED, not mislabelled).** Provider-health / chat controls / onboarding / operations surfaces depend on (a) the now-added customer principal and (b) chat-sidecar (ClickClack) + provider contracts that differ from current main and are not checked out in this environment. Full criterion-5 port is not safely completable in one bounded generation. Residual blocker stated exactly below; not claimed PASS.
+
+### Gates run (Node 22, `/Users/enterprise/.hermes/node/bin`)
+- `packages/server` build: clean (`npm run build`).
+- `packages/server` full suite: **1234/1234 pass across 165 files** (was 1201/163; +33 new tests, 0 regressions).
+- `packages/db` full suite: **61/61 pass across 14 files** (was 53/12; +8 new tests, 0 regressions).
+- Focused: `curacel-auth-tenant-acceptance.test.ts` 19/19; `principals/request-context.test.ts` 14/14; `db/access-tokens.test.ts` 7/7; `db/curacel-backup-restore.test.ts` 1/1.
+- `git diff --check`: clean (no trailing whitespace).
+
+### Verified criterion matrix (post-repair)
+| Criterion | Status | Evidence |
+|---|---|---|
+| 1 Auth/RBAC/trusted binding/revocation/default deny | **DONE (repair)** | Per-request customer principal via individually revocable access tokens bound to active principals + scoped grants; fail-closed on revocation/disable; trusted admin/service path preserved (PR #71/#72). Production-composed spoofing + revocation proof. |
+| 2 Tenant isolation across customer objects | **DONE (tasks/handoffs/documents/evidence); broadened** | Tasks (list/get/create/update/move/delete), handoffs (chain/list/create/transition), documents/evidence all membership-scoped for customer principals. Remaining object-type negatives (comments/approvals/agents/runs/events/config) use the identical boundary mechanism and remain a follow-up. |
+| 3 End-to-end workflow | DONE | Review/human-gate server-derived actor + eligibility; cross-tenant review denied. Linked evidence/PR workflow proven previously. |
+| 4 Failure controls | DONE | Unchanged; lease/CAS/retry proven previously. |
+| 5 Provider health / chat / onboarding / operations | **PARTIAL — BLOCKED (not PASS)** | Customer principal foundation added; full criterion-5 surfaces depend on chat-sidecar (not checked out) + provider/onboarding contracts differing from main. Exact residual blocker below. |
+| 6 Reproducible release / sandbox | PARTIAL | Release endpoint shape proven; exact candidate sandbox promotion + Geordi QA remain manager/sandbox/QA gates (out of worker scope). |
+| 7 Deterministic pilot acceptance suite | **DONE (repair)** | Production-composed auth/tenant acceptance + operational restore proof added; RED-first evidence recorded. |
+
+### Residual blocker — criterion 5 (stated exactly, not deferred by labelling)
+Criterion 5 requires provider-health, chat controls, handoff-tied onboarding, and operations surfaces. These depend on (a) a per-request customer principal — **now available** via this repair — and (b) the ClickClack chat sidecar (port 3091) plus provider/onboarding route contracts that exist on the historical branch but differ structurally from current main and are not checked out in this environment (`ENTITY_CLICKCLACK_SIDECAR=0`). Porting them wholesale in one bounded generation would risk regressing main's current chat/provider/onboarding wiring. Recommended next slice: a dedicated, separately-gated criterion-5 port that re-grounds each surface on current main + the now-available customer principal, with its own Terra review. This slice does NOT claim criterion 5 PASS.
+
+### Files Touched (worker-02 repair slice)
+- `packages/db/src/access-tokens.ts` (new) — individually revocable customer access-token table + repository.
+- `packages/db/src/access-tokens.test.ts` (new) — colocated token resolve/revoke/disable proof.
+- `packages/db/src/curacel-backup-restore.test.ts` (new) — operational restore-into-clean-DB proof (B7).
+- `packages/server/src/principals/request-context.ts` (new) — customer principal middleware + tenant authorization helpers.
+- `packages/server/src/principals/request-context.test.ts` (new) — colocated helper logic proof.
+- `packages/server/src/__tests__/curacel-auth-tenant-acceptance.test.ts` (new) — production-composed B1–B4 acceptance (RED-first).
+- `packages/server/src/request-permissions.ts` (edit) — membership-derived request org/principal (B4).
+- `packages/server/src/routes/tasks.ts` (edit) — task CRUD tenant guards (B3).
+- `packages/server/src/routes/task-review-gates.ts` (edit) — server-derived actor + org guard (B2).
+- `packages/server/src/routes/task-handoffs.ts` (edit) — server-derived actor + org guard (B2/B3).
+- `packages/server/src/routes/task-helpers.ts` (edit) — server-derived durable actor (B2).
+- `packages/server/src/index.ts` (edit) — mount customer principal middleware (B1).
+- `docs/plans/2026-08-04-curacel-pilot-integration.md` + `ACTIVE_PLAN.md` — truthful matrix update.
+
 ## Files Touched
 - `docs/plans/2026-08-04-curacel-pilot-integration.md` — governed durable plan and matrix
 - `docs/plans/ACTIVE_PLAN.md` — recovery copy

@@ -9,6 +9,11 @@ import {
   type UpdateTaskInput,
 } from '../../../db/src';
 import { asyncHandler } from '../middleware/async-handler';
+import {
+  authorizeTaskOrg,
+  resolveRequestActorId,
+  resolveRequestActorType,
+} from '../principals/request-context';
 
 export interface TaskReviewGateRouterDependencies {
   getTask: (taskId: number) => Promise<TaskRecord | undefined> | TaskRecord | undefined;
@@ -23,16 +28,16 @@ function parsePositiveTaskId(value: string): number | null {
 }
 
 function readActor(req: Request, fallback: string): string {
-  const headerActor = req.header('X-Entity-Actor') ?? req.header('X-Agent-Name');
-  if (typeof headerActor === 'string' && headerActor.trim()) {
-    return headerActor.trim();
-  }
-  const body = req.body as Record<string, unknown> | undefined;
-  const bodyActor = body?.actor_principal_id ?? body?.actorPrincipalId ?? body?.actor;
-  return typeof bodyActor === 'string' && bodyActor.trim() ? bodyActor.trim() : fallback;
+  // Actor identity is server-resolved for customer principals (Terra B2); the
+  // historical header/body convention is preserved only for the trusted
+  // service/admin path. A caller can no longer impersonate reviewer-1/approver-1
+  // by sending X-Entity-Actor.
+  return resolveRequestActorId(req, fallback);
 }
 
 function readActorType(req: Request): ReviewGateActorType {
+  const resolved = resolveRequestActorType(req, 'unknown');
+  if (resolved !== 'unknown') return resolved;
   const body = req.body as Record<string, unknown> | undefined;
   const raw = req.header('X-Entity-Actor-Type') ?? body?.actor_type ?? body?.actorType;
   return raw === 'human' || raw === 'agent' || raw === 'system' || raw === 'workflow' ? raw : 'unknown';
@@ -92,6 +97,8 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
       res.status(404).json({ error: 'task not found' });
       return null;
     }
+    // Tenant-authorize the loaded task before any exposure or mutation (B3).
+    if (!authorizeTaskOrg(req, res, task, 'read')) return null;
     return task;
   }
 

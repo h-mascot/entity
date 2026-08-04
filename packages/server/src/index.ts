@@ -118,6 +118,7 @@ import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
 import { createTaskHandoffRouter } from "./routes/task-handoffs";
+import { createCustomerPrincipalMiddleware } from "./principals/request-context";
 import { registerStrategicRoutes, registerTaskRoutes } from "./routes/tasks";
 import {
   buildTaskPreview,
@@ -215,6 +216,11 @@ const notificationRepository = createNotificationRepository();
 
 // API authentication — requires ENTITY_API_TOKEN env var; skips when unset (dev mode)
 app.use(createApiAuthMiddleware());
+// Layer an individually revocable per-request customer principal on top of
+// the deployment bearer (Terra B1). Runs after api-auth; resolves an optional
+// x-entity-access-token to an active principal + scoped grants. Absent token
+// => trusted service/admin path is unchanged (PR #71/#72 preserved).
+app.use(createCustomerPrincipalMiddleware());
 
 registerCoreProbeRoutes(app, phase2Flags);
 registerConfigRoutes(app);
