@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPrincipalRepository, ensurePrincipalsSchema } from '../../db/src/principals';
 import { evaluatePermission } from './permissions';
 import { readRequestPrincipal } from './request-permissions';
@@ -21,6 +21,7 @@ describe('request permissions with stored principals', () => {
     db.exec('DROP TABLE IF EXISTS principal_grants');
     db.exec('DROP TABLE IF EXISTS entity_principals');
     ensurePrincipalsSchema(db);
+    vi.unstubAllEnvs();
   });
 
   it('ignores x-entity-role when stored principal exists even without API auth', () => {
@@ -103,6 +104,28 @@ describe('request permissions with stored principals', () => {
 
     expect(decision.allowed).toBe(false);
     expect(decision.effective_role).toBe('none');
+  });
+
+  it('binds data-plane principal from API settings instead of spoofed headers', () => {
+    vi.stubEnv('ENTITY_API_TOKEN', 'secret-token');
+    vi.stubEnv('ENTITY_API_PRINCIPAL_ID', 'viewer-user');
+    repo.createPrincipal({ id: 'global-admin', principal_type: 'human', display_name: 'Global', created_by: 'seed' });
+    repo.createGrant({ principal_id: 'global-admin', role: 'admin', created_by: 'seed' });
+    repo.createPrincipal({ id: 'viewer-user', principal_type: 'human', display_name: 'Viewer', created_by: 'seed' });
+    repo.createGrant({
+      principal_id: 'viewer-user',
+      role: 'viewer',
+      org_id: 'org-a',
+      created_by: 'seed',
+    });
+
+    const principal = readRequestPrincipal(fakeRequest({
+      'x-entity-principal-id': 'global-admin',
+      'x-entity-role': 'admin',
+    }), 'org-a', repo);
+
+    expect(principal.principal_id).toBe('viewer-user');
+    expect(principal.grants[0]?.role).toBe('viewer');
   });
 
   it('allows header compat when enforceStoredPrincipals is disabled', () => {

@@ -28,7 +28,7 @@ export function hasGlobalAdminGrant(principalId: string, repo: PrincipalReposito
     && !grant.project_id);
 }
 
-export function resolveTrustedAdminPrincipalId(
+export function resolveTrustedPrincipalId(
   req: Request,
   repo: PrincipalRepository,
 ): string | null {
@@ -57,4 +57,12 @@ export function resolveTrustedAdminPrincipalId(
   }
 
   return headerPrincipalId || LOCAL_ADMIN_PRINCIPAL_ID;
+}
+
+/** @deprecated Use resolveTrustedPrincipalId */
+export function resolveTrustedAdminPrincipalId(
+  req: Request,
+  repo: PrincipalRepository,
+): string | null {
+  return resolveTrustedPrincipalId(req, repo);
 }

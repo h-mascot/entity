@@ -4,7 +4,7 @@ import { resolveStoredPrincipalContext } from '../principals/resolver';
 import {
   hasGlobalAdminGrant,
   LOCAL_ADMIN_PRINCIPAL_ID,
-  resolveTrustedAdminPrincipalId,
+  resolveTrustedPrincipalId,
 } from '../principals/admin-identity';
 import { getEntityDatabase } from '../../../db/src/entity-db';
 import { ensureAppSettingsTable } from '../config/settings-store';
@@ -42,11 +42,23 @@ export function createRequireAdminPrincipal(repo: PrincipalRepository = createPr
   return (req: Request, res: Response, next: NextFunction): void => {
     const principalCount = repo.listPrincipals({ includeDisabled: true }).length;
     if (principalCount === 0) {
+      if (isApiAuthEnabled()) {
+        const isCreatePrincipal =
+          req.method === 'POST'
+          && (req.path === '/principals' || req.path.endsWith('/principals'));
+        if (!isCreatePrincipal) {
+          res.status(403).json({
+            error: 'create the first principal before other admin mutations',
+            code: 'admin_bootstrap_required',
+          });
+          return;
+        }
+      }
       next();
       return;
     }
 
-    const principalId = resolveTrustedAdminPrincipalId(req, repo);
+    const principalId = resolveTrustedPrincipalId(req, repo);
     if (!principalId) {
       res.status(403).json({
         error: 'admin principal binding required when API auth is enabled',

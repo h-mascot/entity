@@ -17,8 +17,35 @@ describe('admin auth middleware', () => {
   it('allows bootstrap when no principals exist', () => {
     const middleware = createRequireAdminPrincipal(repo);
     const next = vi.fn();
-    middleware({ header: () => undefined, hostname: 'localhost' } as any, { status: () => ({ json: vi.fn() }) } as any, next);
+    middleware({
+      header: () => undefined,
+      hostname: 'localhost',
+      method: 'POST',
+      path: '/principals',
+      params: {},
+      body: {},
+      socket: { remoteAddress: '127.0.0.1' },
+    } as any, { status: () => ({ json: vi.fn() }) } as any, next);
     expect(next).toHaveBeenCalled();
+  });
+
+  it('blocks non-create admin routes during API-auth bootstrap', () => {
+    vi.stubEnv('ENTITY_API_TOKEN', 'secret-token');
+    const middleware = createRequireAdminPrincipal(repo);
+    const denied = vi.fn();
+    const res = { status: vi.fn(() => ({ json: denied })) };
+    const next = vi.fn();
+    middleware({
+      header: () => undefined,
+      hostname: 'localhost',
+      method: 'GET',
+      path: '/principals',
+      params: {},
+      body: {},
+      socket: { remoteAddress: '127.0.0.1' },
+    } as any, res as any, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 
   it('allows local header compat admin for unknown principals', () => {

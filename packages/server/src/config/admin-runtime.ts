@@ -33,7 +33,7 @@ export function readAdminRuntimeSettings() {
     scopedSearch: readSettings(ADMIN_SETTINGS_KEYS.scopedSearch),
     channels: readSettings(ADMIN_SETTINGS_KEYS.channels),
   };
-  return settings as unknown as {
+  const normalized = settings as unknown as {
     accessControl: AccessControlSettings;
     businessOnboarding: BusinessOnboardingSettings;
     engineering: EngineeringSettings;
@@ -42,6 +42,16 @@ export function readAdminRuntimeSettings() {
     scopedSearch: ScopedSearchSettings;
     channels: ChannelsSettings;
   };
+  if (process.env.ENTITY_API_TOKEN?.trim()) {
+    return {
+      ...normalized,
+      accessControl: {
+        ...normalized.accessControl,
+        apiPrincipalId: null,
+      },
+    };
+  }
+  return normalized;
 }
 
 export function readAccessControlRuntimeSettings(): AccessControlSettings {

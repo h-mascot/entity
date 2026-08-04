@@ -12,7 +12,10 @@ import {
   resolveStoredPrincipalContext,
 } from './principals/resolver';
 import type { PrincipalRepository } from '../../db/src/principals';
+import { createPrincipalRepository } from '../../db/src/principals';
+import { isApiAuthEnabled } from './middleware/api-auth';
 import { readAccessControlRuntimeSettings, readDefaultOrgId } from './config/admin-runtime';
+import { LOCAL_ADMIN_PRINCIPAL_ID, resolveTrustedPrincipalId } from './principals/admin-identity';
 
 export interface RequestOrgBinding {
   orgId: string;
@@ -47,15 +50,29 @@ export interface ReadRequestPrincipalOptions {
   enforceStoredPrincipals?: boolean;
 }
 
+function readRequestPrincipalId(req: Request, repo?: PrincipalRepository): string {
+  if (isApiAuthEnabled()) {
+    const trusted = resolveTrustedPrincipalId(req, repo ?? createPrincipalRepository());
+    if (!trusted) {
+      return '__untrusted_principal__';
+    }
+    return trusted;
+  }
+  return req.header('x-entity-principal-id')?.trim() || LOCAL_ADMIN_PRINCIPAL_ID;
+}
+
 export function readRequestPrincipal(
   req: Request,
   orgId: string,
   repo?: PrincipalRepository,
   options?: ReadRequestPrincipalOptions,
 ): PrincipalPermissionContext {
-  const principalId = req.header('x-entity-principal-id')?.trim() || 'entity-local-user';
+  const principalId = readRequestPrincipalId(req, repo);
   const roleHeader = req.header('x-entity-role')?.trim().toLowerCase();
   const sensitivityHeader = req.header('x-entity-sensitivity') ?? undefined;
+  if (principalId === '__untrusted_principal__') {
+    return { principal_id: principalId, grants: [] };
+  }
   const stored = resolveStoredPrincipalContext(principalId, repo);
   const enforceStored = options?.enforceStoredPrincipals ?? readEnforceStoredPrincipals();
   if (stored.kind === 'stored') {
