@@ -1785,6 +1785,7 @@ export default function MobileView(props: any) {
                 apiBase={runtime.mcOrigin}
                 onClose={handleCloseTaskDetail}
                 onDocsLinkNavigate={handleTaskOutputDocsNavigation}
+                returnBoard={mcBoardTab}
               />
             </Suspense>
           </div>

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "execution-engine",
+  "identity": {
+    "id": "swarm.symphony",
+    "name": "symphony",
+    "label": "Symphony missing claim",
+    "version": "1.0.0",
+    "category": "orchestration"
+  },
+  "execution": {
+    "mode": "pull",
+    "acceptsDispatch": true,
+    "entityPollsProvider": false,
+    "expectsClaimCallbacks": true
+  },
+  "lifecycle": {
+    "dispatch": true,
+    "status": true,
+    "cancel": true,
+    "collectProof": true,
+    "claimCallback": true,
+    "releaseCallback": false,
+    "proofCallback": false,
+    "completeCallback": false,
+    "failCallback": false
+  },
+  "callbacks": {
+    "intake": []
+  },
+  "statusMapping": {
+    "afterDispatch": "queued",
+    "runStateToJobStatus": {}
+  },
+  "health": {
+    "publicFields": ["available", "message"],
+    "privateFields": [],
+    "allowUrlsInPublicMessage": false,
+    "allowPathsInPublicMessage": false
+  },
+  "config": { "bindings": [] },
+  "dangerousActions": [],
+  "activityEvents": { "emits": [] }
+}

@@ -1,0 +1,76 @@
+{
+  "code": "EEPC-A-02",
+  "issue": "THE-890",
+  "parent": "THE-831",
+  "decision": "IMPLEMENTED",
+  "dependency": "EEPC-A-01",
+  "dependencyCommit": "c0ab3bfa36550a98c100d5814525ab57df6c329b",
+  "schemaVersion": "1.0.0",
+  "kind": "execution-engine",
+  "modulePath": "packages/server/src/swarm/manifest",
+  "validateExport": "validateExecutionEngineManifest",
+  "productionRegistrationWired": false,
+  "covers": [
+    "identity/version",
+    "execution mode",
+    "lifecycle capabilities",
+    "callback/event mapping",
+    "status mapping",
+    "health redaction/public-safety",
+    "config secret classification",
+    "dangerous action declarations",
+    "activity event placeholder (Q46)"
+  ],
+  "executionModes": ["push", "pull", "hybrid", "stub"],
+  "validFixtures": [
+    "valid-acp.json",
+    "valid-symphony.json",
+    "valid-eforge.json",
+    "valid-codex.json",
+    "valid-ccp-stub.json",
+    "valid-flywheel-stub.json"
+  ],
+  "invalidFixtures": [
+    "invalid-missing-identity-version.json",
+    "invalid-stub-accepts-dispatch.json",
+    "invalid-secret-unclassified.json",
+    "invalid-pull-missing-claim.json",
+    "invalid-dangerous-undeclared-allow.json",
+    "invalid-secret-value-leak.json",
+    "invalid-health-public-secret-field.json"
+  ],
+  "semanticCodes": [
+    "stub_accepts_dispatch",
+    "stub_lifecycle_dispatch",
+    "accepts_dispatch_without_lifecycle",
+    "lifecycle_dispatch_without_accept",
+    "push_requires_poll",
+    "pull_hybrid_requires_claim",
+    "claim_expectation_without_capability",
+    "missing_claim_mapping",
+    "missing_job_id_param",
+    "secret_public_health_field",
+    "private_overlaps_public",
+    "secret_key_unclassified",
+    "dangerous_allow_missing",
+    "shell_action_path",
+    "id_name_mismatch",
+    "secret_value_leak",
+    "secret_key_with_value"
+  ],
+  "dangerousActionExample": {
+    "provider": "eforge",
+    "pathTemplate": "/api/swarm/providers/eforge/control",
+    "requiresExplicitAllow": true,
+    "shells": true
+  },
+  "nonGoals": [
+    "Doc Hub rebuild",
+    "Provider Registry duplicate",
+    "production mutation",
+    "secret exposure",
+    "Skill Workshop in Entity core",
+    "manifest-driven bootstrap wiring",
+    "ActivityEvent spine implementation"
+  ]
+}

@@ -100,7 +100,7 @@ function parseRecord(value: string | null | undefined): Record<string, unknown> 
   }
 }
 
-function sourcePreviewRestricted(source: FileSourceRecord): { restricted: boolean; reasons: string[] } {
+export function sourcePreviewRestricted(source: FileSourceRecord): { restricted: boolean; reasons: string[] } {
   const capabilities = parseRecord(source.capabilities);
   const policy = capabilities.entity_visibility_policy && typeof capabilities.entity_visibility_policy === 'object' && !Array.isArray(capabilities.entity_visibility_policy)
     ? capabilities.entity_visibility_policy as Record<string, unknown>

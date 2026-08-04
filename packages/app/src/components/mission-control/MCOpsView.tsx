@@ -39,6 +39,8 @@ interface MCOpsViewProps {
   onDocsLinkNavigate?: (href: string) => boolean;
   showArchiveColumn?: boolean;
   scopeTaskDetailsToTasks?: boolean;
+  /** THE-860 — board/tab key preserved into Workplane return context. */
+  returnBoard?: string | null;
 }
 
 type BoardColumn = TaskColumn | 'archive';
@@ -187,6 +189,7 @@ export default function MCOpsView({
   onDocsLinkNavigate,
   showArchiveColumn = true,
   scopeTaskDetailsToTasks = false,
+  returnBoard = null,
 }: MCOpsViewProps) {
   const { updateTask } = useTaskBoard({ apiBase, autoLoad: false });
   const shouldShowInsights = showInsights || !compactShell;
@@ -754,6 +757,7 @@ export default function MCOpsView({
             taskId={activeTaskDetailId}
             onClose={handleCloseTask}
             onDocsLinkNavigate={onDocsLinkNavigate}
+            returnBoard={returnBoard}
           />
         </Suspense>
       ) : null}

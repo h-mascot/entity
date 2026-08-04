@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "execution-engine",
+  "identity": {
+    "id": "swarm.ccp",
+    "name": "ccp",
+    "label": "CCP bad stub",
+    "version": "0.0.0",
+    "category": "delivery-control-plane"
+  },
+  "execution": {
+    "mode": "stub",
+    "acceptsDispatch": true,
+    "entityPollsProvider": false,
+    "expectsClaimCallbacks": false
+  },
+  "lifecycle": {
+    "dispatch": true,
+    "status": true,
+    "cancel": true,
+    "collectProof": true,
+    "claimCallback": false,
+    "releaseCallback": false,
+    "proofCallback": false,
+    "completeCallback": false,
+    "failCallback": false
+  },
+  "callbacks": { "intake": [] },
+  "statusMapping": { "runStateToJobStatus": {} },
+  "health": {
+    "publicFields": ["available", "message"],
+    "privateFields": [],
+    "allowUrlsInPublicMessage": false,
+    "allowPathsInPublicMessage": false
+  },
+  "config": { "bindings": [] },
+  "dangerousActions": [],
+  "activityEvents": { "emits": [] }
+}

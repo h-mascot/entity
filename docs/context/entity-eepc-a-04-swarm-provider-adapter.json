@@ -1,0 +1,45 @@
+{
+  "code": "EEPC-A-04",
+  "issue": "THE-892",
+  "parent": "THE-831",
+  "decision": "IMPLEMENTED",
+  "dependency": "EEPC-A-03",
+  "dependencyCommit": "2b0286a567a68c7e7fe3e9ee81919e9dd901027e",
+  "grillAuthority": ["Q45"],
+  "surfaces": {
+    "adapter": "packages/server/src/swarm/providers/contract-adapter.ts",
+    "bootstrap": "packages/server/src/swarm/providers/contract-bootstrap.ts",
+    "dispatcher": "packages/server/src/swarm/dispatcher.ts",
+    "tests": "packages/server/src/swarm/providers/contract-adapter.test.ts"
+  },
+  "builtinOrder": ["acp", "symphony", "eforge", "codex", "ccp", "flywheel"],
+  "mappings": {
+    "dispatchGate": "execution.acceptsDispatch && lifecycle.dispatch",
+    "afterDispatch": "statusMapping.afterDispatch",
+    "runStateToJobStatus": "statusMapping.runStateToJobStatus",
+    "publicHealth": "projectPublicHealth",
+    "statusCallback": "toStatusCallbackPayload",
+    "proofCallback": "toProofCallbackPayload"
+  },
+  "failClosed": [
+    "manifest_missing",
+    "manifest_kind_invalid",
+    "provider_manifest_mismatch",
+    "dispatch_refused_when_acceptsDispatch_false",
+    "malformed_runHandle",
+    "secret_value_leak_in_status_summary",
+    "proof_not_public_safe"
+  ],
+  "deferred": [
+    "EEPC-A-05 Codex stub adapter specialization",
+    "EEPC-A-06 eforge stub adapter specialization",
+    "EEPC-B-01 public list/health route redaction enforcement",
+    "EEPC-A-07 callback auth negative path"
+  ],
+  "nonGoals": [
+    "no Doc Hub rebuild",
+    "no Provider Registry duplicate",
+    "no production OAuth/secrets",
+    "no production promotion"
+  ]
+}

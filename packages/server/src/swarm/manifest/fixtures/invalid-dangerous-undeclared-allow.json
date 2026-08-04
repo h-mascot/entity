@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "execution-engine",
+  "identity": {
+    "id": "swarm.eforge",
+    "name": "eforge",
+    "label": "eforge bad dangerous action",
+    "version": "1.0.0",
+    "category": "build-system"
+  },
+  "execution": {
+    "mode": "hybrid",
+    "acceptsDispatch": true,
+    "entityPollsProvider": true,
+    "expectsClaimCallbacks": true
+  },
+  "lifecycle": {
+    "dispatch": true,
+    "status": true,
+    "cancel": true,
+    "collectProof": true,
+    "claimCallback": true,
+    "releaseCallback": true,
+    "proofCallback": true,
+    "completeCallback": true,
+    "failCallback": true
+  },
+  "callbacks": {
+    "intake": [
+      {
+        "event": "claim",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/claim",
+        "authRequired": true,
+        "idempotent": false
+      }
+    ]
+  },
+  "statusMapping": {
+    "afterDispatch": "queued",
+    "runStateToJobStatus": {}
+  },
+  "health": {
+    "publicFields": ["available", "message"],
+    "privateFields": [],
+    "allowUrlsInPublicMessage": false,
+    "allowPathsInPublicMessage": false
+  },
+  "config": { "bindings": [] },
+  "dangerousActions": [
+    {
+      "id": "eforge-daemon-control",
+      "label": "eforge daemon control",
+      "method": "POST",
+      "pathTemplate": "/api/swarm/providers/eforge/control",
+      "requiresExplicitAllow": false,
+      "shells": true
+    }
+  ],
+  "activityEvents": { "emits": [] }
+}

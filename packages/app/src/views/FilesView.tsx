@@ -70,6 +70,9 @@ export default function FilesView(props: any) {
           onOpenVoiceSettings={props.onOpenVoiceSettings}
           pushToast={props.pushToast}
           filesContextBarProps={filesContextBarProps}
+          apiBase={runtime.apiBase}
+          orgId={props.orgId}
+          onScopedSearchNavigate={props.onScopedSearchNavigate}
         />
       </Suspense>
       <div className="flex min-h-0 flex-1 flex-col">

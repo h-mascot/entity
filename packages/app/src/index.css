@@ -2747,3 +2747,71 @@ textarea {
 .entity-mobile-nav-shadow {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
 }
+
+/* THE-868 / WP1-B-07 — Workplane narrow/mobile viewport smoke */
+.workplane-shell {
+  overflow-x: hidden;
+  min-width: 0;
+  width: 100%;
+  max-width: 100vw;
+}
+
+.workplane-shell .workplane-shell-header,
+.workplane-shell .workplane-panel-nav,
+.workplane-shell .workplane-panel-body {
+  min-width: 0;
+}
+
+.workplane-shell .workplane-panel-body {
+  overflow-x: hidden;
+}
+
+.workplane-shell .workplane-panel-body a,
+.workplane-shell .workplane-panel-body [data-testid='workplane-proof-item-href'],
+.workplane-shell .workplane-panel-body [data-testid='workplane-files-docs-opener'] {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 720px) {
+  .workplane-shell .workplane-shell-header {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .workplane-shell .workplane-panel-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    gap: 4px;
+  }
+
+  .workplane-shell .workplane-panel-nav .workplane-panel-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .workplane-shell .workplane-panel-body {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 390px) {
+  .workplane-shell .workplane-shell-header {
+    padding-left: 10px;
+    padding-right: 10px;
+    gap: 8px;
+  }
+
+  .workplane-shell .workplane-panel-nav {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .workplane-shell .workplane-panel-body {
+    padding: 10px;
+  }
+}

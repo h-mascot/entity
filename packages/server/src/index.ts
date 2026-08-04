@@ -13,6 +13,7 @@ import cors from "cors";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   addTaskProject,
+  createActivityEventSpineRepository,
   createActivityRepository,
   createCrew,
   createDocumentObjectRepository,
@@ -137,6 +138,12 @@ import {
   withReceiptArtifactRef,
 } from "./routes/task-helpers";
 import { registerAgentControlRoutes, registerAgentRegistryRoutes } from "./routes/agents";
+import { registerAgentInviteRoutes } from "./routes/agent-invites";
+import { registerAgentAdminSettingsRoutes } from "./routes/agent-admin-settings";
+import { registerAgentPresenceRoutes } from "./routes/agent-presence";
+import { registerWorkplaneAgentRoutes } from "./routes/workplane-agents";
+import { registerWorkplaneChiefRoutingRoutes } from "./routes/workplane-chief-routing";
+import { registerWorkplaneAskRoutes } from "./routes/workplane-asks";
 import { registerActivityRoutes, registerDbModeRoutes, registerRuntimeRoutes } from "./routes/runtime";
 import { registerDocIntelligenceRoutes } from "./routes/doc-intelligence";
 import { createBusinessOnboardingRouter, createTaskSyncLayerRepoFactory } from "./routes/business-onboarding";
@@ -158,6 +165,10 @@ import {
   createActivityEventService,
 } from "./activity-events";
 import {
+  createActivitySpineEventRouter,
+  createActivitySpineEventService,
+} from "./activity-spine-events";
+import {
   createTaskMasterClaimRouter,
   createTaskMasterClaimService,
 } from "./task-master-claims";
@@ -165,6 +176,7 @@ import { completeTaskWithReceipt } from "./receipt-writer";
 import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
+import { listSwarmJobs } from "./swarm/db";
 import { normalizeTaskOutputLinks } from "./task-output-links";
 import { registerNodeOperationsRoutes } from "./node-operations";
 import { registerDocHubTelemetryRoute } from "./doc-hub-telemetry";
@@ -205,6 +217,18 @@ app.use(createApiAuthMiddleware());
 registerCoreProbeRoutes(app, phase2Flags);
 registerConfigRoutes(app);
 registerPrincipalRoutes(app);
+// Durable invite controls before /api/agents/:id* registry routes (THE-880 / WP2-A-05).
+registerAgentInviteRoutes(app);
+// Admin invite TTL / modules / revoke audit (THE-887 / WP2-B-06).
+registerAgentAdminSettingsRoutes(app);
+// Heartbeat / Workplane presence before /api/agents/:id* (THE-883 / WP2-B-02).
+registerAgentPresenceRoutes(app);
+// Attach agents to task Workplanes (THE-884 / WP2-B-03).
+registerWorkplaneAgentRoutes(app);
+// Chief-of-Staff routing policy claim/assign (THE-885 / WP2-B-04).
+registerWorkplaneChiefRoutingRoutes(app);
+// ASK claim/resolve flow (THE-886 / WP2-B-05).
+registerWorkplaneAskRoutes(app);
 app.use("/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/notifications", createNotificationRouter({ notificationRepository }));
 app.use("/api/search", createSearchRouter({ flags: phase2Flags }));
@@ -325,11 +349,20 @@ function broadcast(data: unknown) {
 }
 
 const activityRepository = createActivityRepository();
+const activityEventSpineRepository = createActivityEventSpineRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
 const activityEventService = createActivityEventService({
   activityRepository,
   getTask: (taskId) => taskSyncLayer.getTask(taskId),
+});
+const activitySpineEventService = createActivitySpineEventService({
+  spineRepository: activityEventSpineRepository,
+  getTask: (taskId) => taskSyncLayer.getTask(taskId),
+  // THE-872 / WP1-C-04 — read-path adapters (no mutation / no Engineering import).
+  listActivityEventsForTask: (taskId, limit) =>
+    activityRepository.listActivitiesByTaskId(taskId, limit),
+  listSwarmJobsForTask: (taskId) => listSwarmJobs({ task_id: taskId }),
 });
 const taskMasterClaimService = createTaskMasterClaimService({
   taskSyncLayer,
@@ -499,6 +532,8 @@ registerDocIntelligenceRoutes(app, "");
 registerDocIntelligenceRoutes(app, "/api");
 app.use(createActivityEventRouter(activityEventService));
 app.use("/api", createActivityEventRouter(activityEventService));
+app.use(createActivitySpineEventRouter(activitySpineEventService));
+app.use("/api", createActivitySpineEventRouter(activitySpineEventService));
 app.use(createTaskMasterClaimRouter(taskMasterClaimService));
 app.use("/api", createTaskMasterClaimRouter(taskMasterClaimService));
 registerActivityRoutes(app, "", { activityRepository });

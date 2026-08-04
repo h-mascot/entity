@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "openwikiVersion": "0.2.5",
-  "sourceFingerprint": "e18b2a150443296333b8716975e636aad96c51093fb40f337fe86e684baf128a",
-  "provider": "openai-compatible",
-  "model": "poolside/laguna-s-2.1:free",
-  "generatedAt": "2026-08-04T02:20:30.083Z"
+  "sourceFingerprint": "c09d20687991d164c2c324653e3f5e36cb71222458297aae550d6608d1bd8cbd",
+  "provider": "openai-chatgpt",
+  "model": "gpt-5.4-mini",
+  "generatedAt": "2026-08-04T02:51:57.371Z"
 }

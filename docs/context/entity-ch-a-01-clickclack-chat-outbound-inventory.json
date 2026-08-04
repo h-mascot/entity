@@ -1,0 +1,184 @@
+{
+  "code": "CH-A-01",
+  "issue": "THE-917",
+  "parent": "THE-836",
+  "decision": "CHARACTERIZED",
+  "dependencies": ["WP1-C-07", "EEPC-B-04"],
+  "dependencyIssues": ["THE-875", "THE-899"],
+  "sourceSha256": "84541727830ef8f4018ad2b9fdf587d653dfbba940b38b279ae3f90ca18ba895",
+  "scopePaths": [
+    "packages/server/src/routes/chat.ts",
+    "packages/server/src/clickclack",
+    "packages/server/src/notification-routing.ts",
+    "packages/server/src/routes/notifications.ts",
+    "packages/app/src/components/Chat",
+    "packages/app/src/components/mission-control/TaskChatContextPanel.tsx"
+  ],
+  "relatedPriorInventory": "docs/context/entity-phase-2-integration-boundary-inventory.md",
+  "clickclack": {
+    "pinCommit": "d77dd568d8ff5c9d3d7c1063b4c317c1e3cd1be2",
+    "pinFile": "docs/specs/clickclack-sidecar-pin.json",
+    "defaultBaseUrl": "http://127.0.0.1:3091",
+    "defaultCheckout": "/tmp/clickclack",
+    "namespaces": {
+      "spa": "/clickclack/*",
+      "api": "/api/clickclack/*"
+    },
+    "modules": {
+      "bridge": "packages/server/src/clickclack/bridge.ts",
+      "proxy": "packages/server/src/clickclack/proxy.ts",
+      "readiness": "packages/server/src/clickclack/readiness.ts"
+    },
+    "readinessStates": [
+      "live",
+      "staged",
+      "degraded",
+      "unavailable",
+      "not_configured"
+    ],
+    "envNames": [
+      "ENTITY_CHAT_CLICKCLACK_BRIDGE",
+      "ENTITY_CLICKCLACK_SIDECAR",
+      "ENTITY_CLICKCLACK_BASE_URL",
+      "ENTITY_CLICKCLACK_CHECKOUT",
+      "ENTITY_CLICKCLACK_DATA_DIR",
+      "ENTITY_CLICKCLACK_BRIDGE_MANIFEST",
+      "ENTITY_CLICKCLACK_DEV_USER",
+      "ENTITY_CLICKCLACK_ALLOW_HUMAN_AGENT_FALLBACK",
+      "ENTITY_API_TOKEN"
+    ],
+    "proxyAlwaysRegistered": true,
+    "bridgeOptional": true,
+    "bridgeIsDevEchoSpike": true,
+    "liveHttpProbeWhenBridgeEnabled": false
+  },
+  "missionChat": {
+    "mount": "registerChatRoutes",
+    "prefix": "/api/chat",
+    "routes": [
+      { "method": "GET", "path": "/api/chat/me" },
+      { "method": "GET", "path": "/api/chat/clickclack/readiness" },
+      { "method": "GET", "path": "/api/chat/task/:taskId" },
+      { "method": "GET", "path": "/api/chat/models" },
+      { "method": "GET", "path": "/api/chat/channels" },
+      { "method": "GET", "path": "/api/chat/channels/:channelId/messages" },
+      { "method": "GET", "path": "/api/chat/channels/:channelId/threads" },
+      { "method": "GET", "path": "/api/chat/channels/:channelId/object-refs", "orgRequired": true },
+      { "method": "POST", "path": "/api/chat/channels/:channelId/object-refs", "orgRequired": true },
+      { "method": "GET", "path": "/api/chat/threads/:threadId/messages" },
+      { "method": "GET", "path": "/api/chat/messages/:messageId" },
+      { "method": "GET", "path": "/api/chat/threads/:threadId/object-refs", "orgRequired": true },
+      { "method": "POST", "path": "/api/chat/threads/:threadId/object-refs", "orgRequired": true },
+      { "method": "GET", "path": "/api/chat/threads/by-parent/:parentMessageId" },
+      { "method": "POST", "path": "/api/chat/categories" },
+      { "method": "POST", "path": "/api/chat/channels" },
+      { "method": "PATCH", "path": "/api/chat/channels/:channelId" },
+      { "method": "DELETE", "path": "/api/chat/channels/:channelId" },
+      { "method": "POST", "path": "/api/chat/channels/:channelId/read" },
+      { "method": "POST", "path": "/api/chat/threads" },
+      { "method": "POST", "path": "/api/chat/setup" },
+      { "method": "POST", "path": "/api/chat/send", "degradedStatusOnBridgeFail": 202 }
+    ],
+    "orgScopedRoutes": ["object-refs"],
+    "externalTransmitPaths": [
+      "clickclack_sidecar_local_http",
+      "openclaw_cli",
+      "hermes_cli",
+      "cloud_llm_http",
+      "ollama_local"
+    ],
+    "externalImChannelsFromChat": []
+  },
+  "notifications": {
+    "inboxRoutes": [
+      { "method": "GET", "path": "/api/notifications" },
+      { "method": "PATCH", "path": "/api/notifications/:id" },
+      { "method": "GET", "path": "/notifications" },
+      { "method": "PATCH", "path": "/notifications/:id" }
+    ],
+    "routingService": {
+      "file": "packages/server/src/notification-routing.ts",
+      "export": "createNotificationRoutingService",
+      "mountedInIndex": false,
+      "inboxFirst": true,
+      "adapterInterface": "NotificationDeliveryAdapter"
+    },
+    "externalChannels": [
+      "clickclack",
+      "email",
+      "discord",
+      "slack",
+      "agentpush",
+      "webhook",
+      "other"
+    ],
+    "canonicalChannel": "entity_inbox",
+    "defaultChannelsNormal": ["clickclack"],
+    "defaultChannelsHighCritical": ["clickclack", "email"],
+    "productionAdaptersRegistered": [],
+    "inboundIntakeToTaskOrActivityEvent": false
+  },
+  "ui": {
+    "missionChatDir": "packages/app/src/components/Chat",
+    "missionChatComponents": [
+      "ChatView.tsx",
+      "ChatSidebar.tsx",
+      "ChannelView.tsx",
+      "ThreadPanel.tsx",
+      "MessageInput.tsx",
+      "MessageBubble.tsx",
+      "ChatOfflineProvider.tsx"
+    ],
+    "chatClickclackPackagePresent": false,
+    "taskChatContext": "packages/app/src/components/mission-control/TaskChatContextPanel.tsx",
+    "taskChatContextReadOnly": true,
+    "chatUsesWebSocket": false,
+    "notificationUi": [
+      "packages/app/src/hooks/useEntityNotifications.ts",
+      "packages/app/src/components/NotificationHistoryPanel.tsx"
+    ],
+    "externalChannelBindUi": false
+  },
+  "wiring": {
+    "file": "packages/server/src/index.ts",
+    "steps": [
+      "createNotificationRouter mounted at /notifications and /api/notifications",
+      "createClickClackBridge when ENTITY_CHAT_CLICKCLACK_BRIDGE=1",
+      "registerClickClackProxyRoutes always",
+      "registerChatRoutes with optional clickClackBridge",
+      "createNotificationRoutingService not mounted"
+    ]
+  },
+  "characterizationTests": [
+    "packages/server/src/routes/ch-a-01-inventory.test.ts",
+    "packages/server/src/routes/chat-clickclack.test.ts",
+    "packages/server/src/routes/chat-degraded-core-flows.test.ts",
+    "packages/server/src/routes/chat-object-refs.test.ts",
+    "packages/server/src/clickclack/proxy.test.ts",
+    "packages/server/src/clickclack/bridge.test.ts",
+    "packages/server/src/notification-routing.test.ts",
+    "packages/server/src/routes/notifications.test.ts"
+  ],
+  "gapsForChA02": [
+    "no_shared_channel_adapter_interface",
+    "notification_routing_unwired",
+    "clickclack_dual_homed_chat_vs_notify",
+    "no_inbound_intake_adapter",
+    "chat_org_scoping_incomplete",
+    "bridge_is_dev_echo",
+    "proxy_always_on_no_live_probe",
+    "ui_lacks_external_channel_fields",
+    "no_chat_websocket_realtime",
+    "composer_routing_toggles_unused",
+    "notification_channel_opaque_in_ui",
+    "adapter_secrets_echo_policy_needed"
+  ],
+  "nonGoalsHonored": [
+    "no_doc_hub_rebuild",
+    "no_provider_registry_duplicate",
+    "no_production_mutation",
+    "no_secret_exposure",
+    "no_outbound_production_integrations_created",
+    "no_skill_workshop_in_entity_core"
+  ]
+}

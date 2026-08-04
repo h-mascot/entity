@@ -3,6 +3,8 @@ import os from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import Database from 'better-sqlite3';
+import { ACTIVITY_EVENT_SPINE_TYPES } from './activity-event-spine';
+import { ensureActivityEventSpineStoreSchema } from './activity-event-spine-store';
 import { getEntityDatabase } from './entity-db';
 
 export const TASK_COLUMNS = ['backlog', 'todo', 'doing', 'review', 'done'] as const;
@@ -829,6 +831,18 @@ export interface CreateNativeDocumentInput {
   metadata_json?: string;
 }
 
+export interface ListNativeDocumentsInput {
+  org_id: string;
+  query?: string | null;
+  team_id?: string | null;
+  project_id?: number | null;
+  lifecycle_state?: NativeDocumentLifecycleState;
+  sensitivity?: string | null;
+  from?: string | null;
+  to?: string | null;
+  limit?: number | null;
+}
+
 export interface UpdateNativeDocumentVersionInput {
   title?: string;
   stable_path?: string;
@@ -902,12 +916,18 @@ export interface ListExternalDocumentRefsInput {
   connector_type?: ExternalDocumentConnectorType;
   query?: string | null;
   linked_object_ref?: ObjectRef | null;
+  auth_state?: ExternalDocumentAuthState;
+  readiness_state?: ExternalDocumentReadinessState;
+  external_ref_state?: ExternalDocumentRefState;
+  from?: string | null;
+  to?: string | null;
   limit?: number | null;
 }
 
 export interface DocumentObjectRepository {
   createNativeDocument: (input: CreateNativeDocumentInput) => NativeDocumentRecord;
   getNativeDocument: (id: string) => NativeDocumentRecord | undefined;
+  listNativeDocuments: (input: ListNativeDocumentsInput) => NativeDocumentRecord[];
   updateNativeDocumentVersion: (id: string, input: UpdateNativeDocumentVersionInput) => NativeDocumentRecord | undefined;
   listNativeDocumentVersions: (id: string) => NativeDocumentVersionRecord[];
   linkNativeDocumentObject: (id: string, objectRef: ObjectRef) => NativeDocumentRecord | undefined;
@@ -2636,6 +2656,25 @@ export interface CreateEvidenceArtifactInput {
   metadata_json?: string;
 }
 
+export interface ListEvidenceArtifactsInput {
+  org_id: string;
+  query?: string | null;
+  artifact_kinds?: EvidenceArtifactKind[];
+  team_id?: string | null;
+  project_id?: number | null;
+  sensitivity?: string | null;
+  availability_state?: EvidenceArtifactAvailabilityState | null;
+  query_origin_task_ids?: number[];
+  origin_task_ids?: number[];
+  team_origin_task_ids?: number[];
+  project_origin_task_ids?: number[];
+  sensitivity_origin_task_ids?: number[];
+  require_origin_task_match?: boolean;
+  from?: string | null;
+  to?: string | null;
+  limit?: number | null;
+}
+
 export interface UpdateEvidenceArtifactVersionInput {
   title?: string;
   stable_path?: string;
@@ -2647,6 +2686,7 @@ export interface UpdateEvidenceArtifactVersionInput {
 export interface EvidenceArtifactRepository {
   createArtifact: (input: CreateEvidenceArtifactInput) => EvidenceArtifactRecord;
   getArtifact: (id: string) => EvidenceArtifactRecord | undefined;
+  listArtifacts: (input: ListEvidenceArtifactsInput) => EvidenceArtifactRecord[];
   listArtifactsByOriginTask: (taskId: number) => EvidenceArtifactRecord[];
   updateArtifactVersion: (id: string, input: UpdateEvidenceArtifactVersionInput) => EvidenceArtifactRecord | undefined;
   listArtifactVersions: (id: string) => EvidenceArtifactVersionRecord[];
@@ -2699,6 +2739,8 @@ export const ACTIVITY_EVENT_TYPES = [
   'permission_denied',
   'integration_degraded',
   'migration_warning',
+  // Workplane minimal ActivityEvent spine (THE-869 / WP1-C-01)
+  ...ACTIVITY_EVENT_SPINE_TYPES,
   'legacy_event_observed',
 ] as const;
 
@@ -5639,6 +5681,58 @@ function bootstrap(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_entity_grants_agent ON entity_agent_module_grants(agent_id);
     CREATE INDEX IF NOT EXISTS idx_entity_grants_module ON entity_agent_module_grants(module_id);
     CREATE INDEX IF NOT EXISTS idx_entity_skill_refs_module ON entity_module_skill_refs(module_id);
+
+    CREATE TABLE IF NOT EXISTS agent_invites (
+      id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      generation INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'created',
+      agent_id TEXT,
+      agent_name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'worker',
+      created_at TEXT NOT NULL,
+      opened_at TEXT,
+      completed_at TEXT,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      revoked_by TEXT,
+      created_by TEXT,
+      creation_source TEXT NOT NULL DEFAULT 'agents_invite',
+      workspace_id TEXT,
+      project_id TEXT,
+      workplane_id TEXT,
+      task_id INTEGER,
+      selected_bundle TEXT NOT NULL DEFAULT 'default',
+      selected_modules_json TEXT NOT NULL DEFAULT '[]',
+      selected_module_config_json TEXT NOT NULL DEFAULT '{}',
+      permissions_scope_json TEXT NOT NULL DEFAULT '[]',
+      safe_stop_conditions_json TEXT NOT NULL DEFAULT '[]',
+      provider_profile_id TEXT,
+      chief_routing_mode TEXT NOT NULL DEFAULT 'none',
+      previous_token_hash TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_invites_token_hash ON agent_invites(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_agent_invites_status ON agent_invites(status);
+    CREATE INDEX IF NOT EXISTS idx_agent_invites_created_at ON agent_invites(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_invites_agent_id ON agent_invites(agent_id);
+
+    CREATE TABLE IF NOT EXISTS agent_invite_progress (
+      id TEXT PRIMARY KEY,
+      invite_id TEXT NOT NULL,
+      step_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      module_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      message TEXT,
+      evidence_url TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE(invite_id, step_id),
+      FOREIGN KEY(invite_id) REFERENCES agent_invites(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_invite_progress_invite ON agent_invite_progress(invite_id);
   `);
 
   if (!hasColumn(db, 'tasks', 'brief')) {
@@ -5776,6 +5870,9 @@ function bootstrap(db: Database.Database): void {
   `);
 
   db.exec('CREATE INDEX IF NOT EXISTS idx_activities_event_type ON activities(activity_event_type)');
+
+  // THE-870 / WP1-C-02 — additive task-scoped ActivityEvent spine storage
+  ensureActivityEventSpineStoreSchema(db);
 
   seedDefaultMissionControlProjects(db);
   seedEntityRegistryDefaults(db);
@@ -8296,10 +8393,14 @@ export function createTaskRepository(): TaskRepository {
   const deleteTaskCommentsStmt = db.prepare('DELETE FROM task_comments WHERE task_id = ?');
   const deleteTaskProjectsByTaskStmt = db.prepare('DELETE FROM task_projects WHERE task_id = ?');
   const deleteTaskActivitiesStmt = db.prepare('DELETE FROM activities WHERE task_id = ?');
+  const deleteTaskSpineEventsStmt = db.prepare(
+    'DELETE FROM task_activity_spine_events WHERE task_id = ?',
+  );
   const deleteTaskWithChildren = db.transaction((id: number) => {
     deleteTaskCommentsStmt.run(id);
     deleteTaskProjectsByTaskStmt.run(id);
     deleteTaskActivitiesStmt.run(id);
+    deleteTaskSpineEventsStmt.run(id);
     return deleteStmt.run(id);
   });
 
@@ -8822,6 +8923,12 @@ export function createTaskRepository(): TaskRepository {
 export function createDocumentObjectRepository(): DocumentObjectRepository {
   const db = openEntityDatabase();
   const getNativeStmt = db.prepare('SELECT * FROM native_documents WHERE id = ?');
+  const listNativeByOrgStmt = db.prepare(`
+    SELECT *
+    FROM native_documents
+    WHERE org_id = ?
+    ORDER BY updated_at DESC, title ASC, id ASC
+  `);
   const getExternalStmt = db.prepare('SELECT * FROM external_document_refs WHERE id = ?');
   const listExternalByOrgStmt = db.prepare(`
     SELECT *
@@ -8969,6 +9076,46 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
       return row ? mapNativeDocumentRow(row) : undefined;
     },
 
+    listNativeDocuments: (input: ListNativeDocumentsInput) => {
+      // Org-scoped at the SQL layer; org_id is sourced exclusively from requireRequestOrg().
+      const orgId = normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID);
+      const query = normalizeBlockerReason(input.query)?.toLowerCase() ?? null;
+      const teamId = normalizeBlockerReason(input.team_id);
+      const projectId = normalizePositiveInteger(input.project_id);
+      const sensitivity = normalizeBlockerReason(input.sensitivity)?.toLowerCase() ?? null;
+      const fromMs = input.from ? Date.parse(input.from) : Number.NaN;
+      const toMs = input.to ? Date.parse(input.to) : Number.NaN;
+      const limit = Math.min(normalizePositiveInteger(input.limit) ?? 50, 10_101);
+      const rows = listNativeByOrgStmt.all(orgId) as Array<Record<string, unknown>>;
+      return rows
+        .map(mapNativeDocumentRow)
+        .filter((record) => !teamId || record.team_id === teamId)
+        .filter((record) => !projectId || record.project_id === projectId)
+        .filter((record) => !input.lifecycle_state || record.lifecycle_state === input.lifecycle_state)
+        .filter((record) => !sensitivity || record.sensitivity?.toLowerCase() === sensitivity)
+        .filter((record) => {
+          if (!query) return true;
+          return [
+            record.title,
+            record.stable_path,
+            record.metadata_json,
+          ].join(' ').toLowerCase().includes(query);
+        })
+        .filter((record) => {
+          const updatedAtMs = Date.parse(record.updated_at);
+          if (Number.isFinite(fromMs) && updatedAtMs < fromMs) return false;
+          if (Number.isFinite(toMs) && updatedAtMs > toMs) return false;
+          return true;
+        })
+        .sort((left, right) =>
+          Number(Boolean(query && right.title.toLowerCase().includes(query)))
+          - Number(Boolean(query && left.title.toLowerCase().includes(query)))
+          || Date.parse(right.updated_at) - Date.parse(left.updated_at)
+          || left.id.localeCompare(right.id)
+        )
+        .slice(0, limit);
+    },
+
     updateNativeDocumentVersion: (id: string, input: UpdateNativeDocumentVersionInput) => {
       const normalizedId = id.trim();
       const updatedId = db.transaction(() => {
@@ -9068,15 +9215,21 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
     },
 
     listExternalDocumentRefs: (input: ListExternalDocumentRefsInput) => {
+      // Org-scoped at the SQL layer; org_id is sourced exclusively from requireRequestOrg().
       const orgId = normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID);
       const connectorType = input.connector_type ? normalizeExternalConnectorType(input.connector_type) : undefined;
       const query = normalizeBlockerReason(input.query)?.toLowerCase() ?? null;
-      const limit = Math.min(normalizePositiveInteger(input.limit) ?? 50, 100);
+      const fromMs = input.from ? Date.parse(input.from) : Number.NaN;
+      const toMs = input.to ? Date.parse(input.to) : Number.NaN;
+      const limit = Math.min(normalizePositiveInteger(input.limit) ?? 50, 10_101);
       const objectRef = input.linked_object_ref ?? null;
       const rows = listExternalByOrgStmt.all(orgId) as Array<Record<string, unknown>>;
       const matches = rows
         .map(mapExternalDocumentRefRow)
         .filter((record) => !connectorType || record.connector_type === connectorType)
+        .filter((record) => !input.auth_state || record.auth_state === input.auth_state)
+        .filter((record) => !input.readiness_state || record.readiness_state === input.readiness_state)
+        .filter((record) => !input.external_ref_state || record.external_ref_state === input.external_ref_state)
         .filter((record) => {
           if (!query) return true;
           const searchable = [
@@ -9097,7 +9250,19 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
             entry.object_id === objectRef.object_id &&
             (!objectRef.link_role || entry.link_role === objectRef.link_role)
           );
-        });
+        })
+        .filter((record) => {
+          const updatedAtMs = Date.parse(record.updated_at);
+          if (Number.isFinite(fromMs) && updatedAtMs < fromMs) return false;
+          if (Number.isFinite(toMs) && updatedAtMs > toMs) return false;
+          return true;
+        })
+        .sort((left, right) =>
+          Number(Boolean(query && right.title.toLowerCase().includes(query)))
+          - Number(Boolean(query && left.title.toLowerCase().includes(query)))
+          || Date.parse(right.updated_at) - Date.parse(left.updated_at)
+          || left.id.localeCompare(right.id)
+        );
       return matches.slice(0, limit);
     },
 
@@ -9118,6 +9283,12 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
 export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
   const db = openEntityDatabase();
   const getStmt = db.prepare('SELECT * FROM evidence_artifacts WHERE id = ?');
+  const listByOrgStmt = db.prepare(`
+    SELECT *
+    FROM evidence_artifacts
+    WHERE org_id = ?
+    ORDER BY updated_at DESC, title ASC, id ASC
+  `);
   const listVersionsStmt = db.prepare(`
     SELECT *
     FROM evidence_artifact_versions
@@ -9251,6 +9422,92 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
         return [];
       }
       return (listByOriginTaskStmt.all(safeTaskId) as Array<Record<string, unknown>>).map(mapEvidenceArtifactRow);
+    },
+
+    listArtifacts: (input: ListEvidenceArtifactsInput) => {
+      // Org-scoped at the SQL layer; org_id is sourced exclusively from requireRequestOrg().
+      const orgId = normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID);
+      const query = normalizeBlockerReason(input.query)?.toLowerCase() ?? null;
+      const kinds = input.artifact_kinds?.length ? new Set(input.artifact_kinds) : null;
+      const teamId = normalizeBlockerReason(input.team_id);
+      const projectId = normalizePositiveInteger(input.project_id);
+      const sensitivity = normalizeBlockerReason(input.sensitivity)?.toLowerCase() ?? null;
+      const queryOriginTaskIds = new Set(
+        (input.query_origin_task_ids ?? []).map(normalizePositiveInteger).filter((id): id is number => Boolean(id)),
+      );
+      const originTaskIds = input.origin_task_ids
+        ? new Set(input.origin_task_ids.map(normalizePositiveInteger).filter((id): id is number => Boolean(id)))
+        : null;
+      const teamOriginTaskIds = new Set(
+        (input.team_origin_task_ids ?? []).map(normalizePositiveInteger).filter((id): id is number => Boolean(id)),
+      );
+      const projectOriginTaskIds = new Set(
+        (input.project_origin_task_ids ?? []).map(normalizePositiveInteger).filter((id): id is number => Boolean(id)),
+      );
+      const sensitivityOriginTaskIds = new Set(
+        (input.sensitivity_origin_task_ids ?? []).map(normalizePositiveInteger).filter((id): id is number => Boolean(id)),
+      );
+      const fromMs = input.from ? Date.parse(input.from) : Number.NaN;
+      const toMs = input.to ? Date.parse(input.to) : Number.NaN;
+      const limit = Math.min(normalizePositiveInteger(input.limit) ?? 50, 10_101);
+      return (listByOrgStmt.all(orgId) as Array<Record<string, unknown>>)
+        .map(mapEvidenceArtifactRow)
+        .filter((record) => !kinds || kinds.has(record.artifact_kind))
+        .filter((record) => !input.availability_state || record.availability_state === input.availability_state)
+        .filter((record) => {
+          const originMatches = Boolean(
+            record.origin_task_id && originTaskIds?.has(record.origin_task_id),
+          );
+          if (input.require_origin_task_match && !originMatches) return false;
+          if (teamId && (
+            record.team_id
+              ? record.team_id !== teamId
+              : !record.origin_task_id || !teamOriginTaskIds.has(record.origin_task_id)
+          )) return false;
+          if (projectId && (
+            record.project_id
+              ? record.project_id !== projectId
+              : !record.origin_task_id || !projectOriginTaskIds.has(record.origin_task_id)
+          )) return false;
+          if (sensitivity) {
+            const metadata = parseJsonObject(record.metadata_json);
+            const artifactSensitivity = normalizeBlockerReason(
+              metadata.sensitivity ?? metadata.sensitivity_class,
+            )?.toLowerCase();
+            const artifactSensitivityMatches = artifactSensitivity
+              ?.split(',')
+              .some((entry) => entry.trim() === sensitivity) ?? false;
+            if (
+              !artifactSensitivityMatches
+              && (!record.origin_task_id || !sensitivityOriginTaskIds.has(record.origin_task_id))
+            ) return false;
+          }
+          return true;
+        })
+        .filter((record) => {
+          if (!query) return true;
+          const directMatch = [
+            record.title,
+            record.artifact_kind,
+            record.human_path_alias,
+          ].filter(Boolean).join(' ').toLowerCase().includes(query);
+          return directMatch || Boolean(
+            record.origin_task_id && queryOriginTaskIds.has(record.origin_task_id),
+          );
+        })
+        .filter((record) => {
+          const updatedAtMs = Date.parse(record.updated_at);
+          if (Number.isFinite(fromMs) && updatedAtMs < fromMs) return false;
+          if (Number.isFinite(toMs) && updatedAtMs > toMs) return false;
+          return true;
+        })
+        .sort((left, right) =>
+          Number(Boolean(query && right.title.toLowerCase().includes(query)))
+          - Number(Boolean(query && left.title.toLowerCase().includes(query)))
+          || Date.parse(right.updated_at) - Date.parse(left.updated_at)
+          || left.id.localeCompare(right.id)
+        )
+        .slice(0, limit);
     },
 
     updateArtifactVersion: (id: string, input: UpdateEvidenceArtifactVersionInput) => {
@@ -11135,6 +11392,52 @@ export {
   type ChatMessageRecord,
   type ChatThreadRecord,
 } from "./chat";
+
+// Agent invite kit durable foundation (THE-877 / WP2-A-02)
+export {
+  AGENT_INVITE_STATUSES,
+  CHIEF_ROUTING_MODES,
+  INVITE_CREATION_SOURCES,
+  INVITE_PROGRESS_STEP_STATUSES,
+  createAgentInviteRepository,
+  ensureAgentInviteSchema,
+  type AgentInviteProgressRecord,
+  type AgentInviteRecord,
+  type AgentInviteRepository,
+  type AgentInviteStatus,
+  type ChiefRoutingMode,
+  type CreateAgentInviteInput,
+  type CreateAgentInviteProgressInput,
+  type InviteCreationSource,
+  type InviteProgressStepStatus,
+  type UpdateAgentInviteStatusInput,
+} from "./agent-invites";
+
+// Workplane ActivityEvent spine (THE-869 / WP1-C-01) — type/schema
+export {
+  ACTIVITY_EVENT_SPINE_TYPES,
+  classifyActivityEventToSpineType,
+  compareActivityEventSpineOrder,
+  isActivityEventSpineType,
+  normalizeActivityEventSpine,
+  normalizeActivityEventSpineType,
+  type ActivityEventSpine,
+  type ActivityEventSpineActor,
+  type ActivityEventSpineActorType,
+  type ActivityEventSpineNormalizeResult,
+  type ActivityEventSpineType,
+} from './activity-event-spine';
+
+// Workplane ActivityEvent spine storage (THE-870 / WP1-C-02) — task-scoped append/query
+export {
+  createActivityEventSpineRepository,
+  ensureActivityEventSpineStoreSchema,
+  type ActivityEventSpineRepository,
+  type AppendActivityEventSpineInput,
+  type AppendActivityEventSpineResult,
+  type ListActivityEventSpineResult,
+  type StoredActivityEventSpine,
+} from './activity-event-spine-store';
 
 
 export function getSubscribedCrews(agentSlug: string): CrewRecord[] {

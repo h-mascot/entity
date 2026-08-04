@@ -104,6 +104,18 @@ function createFakeRepos(): {
       return record;
     },
     getNativeDocument: (id: string) => nativeDocuments.get(id),
+    listNativeDocuments: (input) => {
+      const query = input.query?.toLowerCase() ?? null;
+      return Array.from(nativeDocuments.values())
+        .filter((entry) => entry.org_id === input.org_id)
+        .filter((entry) => !input.team_id || entry.team_id === input.team_id)
+        .filter((entry) => !input.project_id || entry.project_id === input.project_id)
+        .filter((entry) => !input.lifecycle_state || entry.lifecycle_state === input.lifecycle_state)
+        .filter((entry) => {
+          if (!query) return true;
+          return [entry.title, entry.stable_path, entry.metadata_json].join(' ').toLowerCase().includes(query);
+        });
+    },
     updateNativeDocumentVersion: (id: string, input: UpdateNativeDocumentVersionInput) => {
       const current = nativeDocuments.get(id);
       if (!current) return undefined;
@@ -258,6 +270,18 @@ function createFakeRepos(): {
       return record;
     },
     getArtifact: (id: string) => artifacts.get(id),
+    listArtifacts: (input) => {
+      const query = input.query?.toLowerCase() ?? null;
+      return Array.from(artifacts.values())
+        .filter((entry) => entry.org_id === input.org_id)
+        .filter((entry) => !input.team_id || entry.team_id === input.team_id)
+        .filter((entry) => !input.project_id || entry.project_id === input.project_id)
+        .filter((entry) => !input.artifact_kinds?.length || input.artifact_kinds.includes(entry.artifact_kind))
+        .filter((entry) => {
+          if (!query) return true;
+          return [entry.title, entry.artifact_kind, entry.human_path_alias].filter(Boolean).join(' ').toLowerCase().includes(query);
+        });
+    },
     listArtifactsByOriginTask: (taskId: number) =>
       Array.from(artifacts.values()).filter((entry) => entry.origin_task_id === taskId),
     updateArtifactVersion: (id: string, input: UpdateEvidenceArtifactVersionInput) => {

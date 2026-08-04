@@ -1,0 +1,135 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "execution-engine",
+  "identity": {
+    "id": "swarm.eforge",
+    "name": "eforge",
+    "label": "eforge",
+    "version": "1.0.0",
+    "category": "build-system",
+    "description": "Hybrid queue/API build system; claim callbacks plus optional poller."
+  },
+  "execution": {
+    "mode": "hybrid",
+    "acceptsDispatch": true,
+    "entityPollsProvider": true,
+    "expectsClaimCallbacks": true
+  },
+  "lifecycle": {
+    "dispatch": true,
+    "status": true,
+    "cancel": true,
+    "collectProof": true,
+    "claimCallback": true,
+    "releaseCallback": true,
+    "proofCallback": true,
+    "completeCallback": true,
+    "failCallback": true
+  },
+  "callbacks": {
+    "intake": [
+      {
+        "event": "claim",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/claim",
+        "activityEventKind": "status",
+        "authRequired": true,
+        "idempotent": false
+      },
+      {
+        "event": "status",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/status",
+        "activityEventKind": "progress",
+        "authRequired": true,
+        "idempotent": true
+      },
+      {
+        "event": "proof",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/proof",
+        "activityEventKind": "proof",
+        "authRequired": true,
+        "idempotent": false
+      },
+      {
+        "event": "complete",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/complete",
+        "activityEventKind": "status",
+        "authRequired": true,
+        "idempotent": true
+      },
+      {
+        "event": "fail",
+        "method": "POST",
+        "pathTemplate": "/api/swarm/jobs/:id/fail",
+        "activityEventKind": "blocker",
+        "authRequired": true,
+        "idempotent": true
+      }
+    ]
+  },
+  "statusMapping": {
+    "afterDispatch": "queued",
+    "runStateToJobStatus": {
+      "queued": "queued",
+      "running": "running",
+      "completed": "proof",
+      "failed": "failed",
+      "cancelled": "cancelled"
+    }
+  },
+  "health": {
+    "publicFields": ["available", "latencyMs", "message"],
+    "privateFields": ["apiUrl", "queueDir", "webUrl", "monitorUrl"],
+    "allowUrlsInPublicMessage": false,
+    "allowPathsInPublicMessage": false
+  },
+  "config": {
+    "bindings": [
+      {
+        "key": "EFORGE_API_URL",
+        "source": "env",
+        "required": false,
+        "secret": false,
+        "description": "Optional eforge API URL (private diagnostic)"
+      },
+      {
+        "key": "EFORGE_QUEUE_DIR",
+        "source": "env",
+        "required": false,
+        "secret": false,
+        "description": "Local queue directory path (private; never public health)"
+      },
+      {
+        "key": "EFORGE_WEB_URL",
+        "source": "env",
+        "required": false,
+        "secret": false,
+        "description": "Operator web URL (private diagnostic)"
+      },
+      {
+        "key": "EFORGE_POLL_INTERVAL_MS",
+        "source": "env",
+        "required": false,
+        "secret": false,
+        "description": "Poller interval milliseconds"
+      }
+    ]
+  },
+  "dangerousActions": [
+    {
+      "id": "eforge-daemon-control",
+      "label": "eforge daemon control",
+      "method": "POST",
+      "pathTemplate": "/api/swarm/providers/eforge/control",
+      "requiresExplicitAllow": true,
+      "shells": true,
+      "description": "Shells eforge daemon start|stop|restart|status — not implied by health"
+    }
+  ],
+  "activityEvents": {
+    "emits": ["progress", "status", "proof", "blocker", "log"]
+  }
+}
