@@ -5,7 +5,7 @@ Preserve and independently validate the two-commit Curacel checkpoint, close onl
 
 **Created:** 2026-08-04
 **Agent:** Manager — citadel/azure-openai-responses/gpt-5.6-sol
-**Status:** IN PROGRESS
+**Status:** ACTIVE / READY_NEXT
 
 ## Context
 - Base: `origin/main` at `4c9dd5cfb463e0e992869f27fda26b38859446bc`
@@ -17,7 +17,7 @@ Preserve and independently validate the two-commit Curacel checkpoint, close onl
 
 ## Dependencies
 - [x] Recon depends on reading AGENTS, scope, historical plans, current diff, and deploy contract.
-- [ ] Worker execution depends on an actionable gap matrix.
+- [x] Worker execution depends on an actionable gap matrix.
 - [ ] Terra review depends on deterministic focused/full gates and committed candidate.
 - [ ] Sandbox depends on deterministic PASS and Terra PASS.
 - [ ] Geordi QA depends on exact sandbox SHA PASS.
@@ -45,7 +45,9 @@ Preserve and independently validate the two-commit Curacel checkpoint, close onl
 | 20:35 BST | Recon | ✅ | Historical plans and current two-commit diff under independent inspection. |
 | 20:45 BST | Worker 01-initial | ✅ | citadel/glm5.2. Closed deterministic-proof gaps (#3/#4/#7); verified auth/tenant boundary preserved; gates green. Candidate committed. |
 | 20:53 BST | Terra review | ⚠ CHANGES_REQUESTED | citadel/gpt-5.6-terra medium. Blockers B1–B7 (shared-bearer not customer auth; caller actor impersonation; global task fetch; caller-selected doc org; mocked acceptance; deferred criteria; backup-only restore). |
-| 21:08 BST | Worker 02-auth-tenant-repair | ✅ | citadel/glm5.2 targeted repair. B1–B5 + B7 FIXED (per-request customer principal + tenant authorization, production-composed RED-first acceptance, operational restore); B6 criterion-5 PARTIAL/BLOCKED with exact residual. Gates green; 0 regressions. |
+| 21:08 BST | Worker 02-auth-tenant-repair | ✅ | citadel/glm5.2 targeted repair. B1–B5 + B7 candidate landed; Terra later found R1–R7 residual defects. Gates green; 0 regressions. |
+| 23:02 BST | R3/R4 continuation | ✅ | R3 task-derived authorization accepted at `3fc5f08`; R4 shared principal-derived surfaces accepted at `a616916`. Historical terminal BLOCKED receipt retained unchanged as evidence. |
+| 00:04 BST | Ownership/live-state reconciliation | ✅ | Clean worktree at `a616916`; expected `9b86925` was an earlier reviewed checkpoint, while governed state proves accepted R3/R4 continuation. No other Pi process owns this worktree. Manager actual route citadel/azure-openai-responses/gpt-5.6-sol; authoritative CLI thinking medium; `PI_REASONING_LEVEL=off` mismatch noted without downgrade. |
 
 ## Initial criterion matrix (recon, subject to worker verification)
 | Criterion | Status | Initial evidence / actionable gap |
@@ -73,12 +75,22 @@ Deferred (exact rationale in main plan): #1 customer membership/session auth por
 - `docs/plans/ACTIVE_PLAN.md` — recovery copy
 - Governance artifacts outside repo — state and phase receipts
 
+## Governed repair sequence (continuation correction)
+- [ ] D-R1: mandatory per-principal credentials across customer data-plane; preserve narrowly authenticated service/admin boundary.
+- [ ] D-R2: operation RBAC plus team/project grants.
+- [x] R3: task-derived comments/activity/note/subtask/aggregate authorization (`3fc5f08`).
+- [x] R4: shared principal-derived workspace/search/activity/chat scoping (`a616916`).
+- [ ] R5: production-composed workflow and durable actor/audit proof after R1/R2.
+- [ ] R6: provider health, chat controls, onboarding, operations criterion 5.
+- [ ] R7: distinct clean-target restore with immutable backup proof.
+- [ ] Node 22 full `npm run ctrl:gate`, fresh Terra review, immutable sandbox promotion, then Geordi QA-only.
+
 ## Resume Instructions
 1. Read this file and governance `state.json`.
 2. Run `git status --short --branch` and `git rev-parse HEAD`.
-3. Continue from the first unchecked plan item.
+3. Continue from the first unchecked governed repair slice; current exact next action is D-R1.
 4. Never overlap workers or review unchanged HEAD twice.
-5. Never touch production.
+5. Preserve old receipts; never touch production.
 
 ## Done
 - [ ] Deterministic gates PASS
