@@ -29,6 +29,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createApiAuthMiddleware } from '../middleware/api-auth';
 import { createCustomerPrincipalMiddleware } from '../principals/request-context';
+import { createDataPlaneCredentialGuard } from '../middleware/data-plane-credential';
 import { registerTaskRoutes, registerStrategicRoutes } from '../routes/tasks';
 import { createActivityLogger } from '../routes/activity-log';
 import { buildTaskMutationActivityEvent } from '../activity-events';
@@ -278,6 +279,9 @@ async function bootApp(): Promise<Fixture> {
   app.use(express.json());
   app.use(createApiAuthMiddleware());
   app.use(createCustomerPrincipalMiddleware(tokenRepo));
+  // Terra R1: centralized customer data-plane credential guard (mirrors
+  // production composition). Shared bearer is transport only.
+  app.use(createDataPlaneCredentialGuard());
   registerTaskRoutes(app as any, '/api', taskRouteDeps as any);
   registerStrategicRoutes(app as any, '/api', strategicRouteDeps as any);
 
@@ -599,27 +603,28 @@ describe('R3 — merge & projects mutations deny cross-org with no durable chang
 // unrestricted. Spoofed identity/role headers must not change outcomes.
 // ---------------------------------------------------------------------------
 
-describe('R3 — trusted path preserved and global admin unrestricted', () => {
+describe('R3 — trusted path denied on data plane (R1); global admin unrestricted', () => {
   let f: Fixture;
   beforeEach(async () => { f = await bootApp(); });
 
-  it('trusted bearer-only request reads task comments unchanged (PR #71/#72)', async () => {
+  it('R1: trusted bearer-only request is denied task comments (customer credential required)', async () => {
+    // Terra R1: the shared bearer is transport only. A bearer-only request
+    // (no x-entity-access-token) is denied on the customer data plane and never
+    // downgrades to the trusted-service identity. The trusted service/admin
+    // path is preserved only on the control plane.
     const res = await fetch(`${f.baseUrl}/api/tasks/${f.acmeTaskA}/comments`, {
       headers: { authorization: `Bearer ${f.apiToken}`, 'x-entity-org-id': 'org-acme' },
     });
-    expect(res.status).toBe(200);
-    const comments = await readJson(res);
-    expect((comments as any[]).some((c) => c.body === 'acme seeded comment')).toBe(true);
+    expect(res.status).toBe(403);
+    expect((await readJson(res)).code).toBe('customer_credential_required');
   });
 
-  it('trusted bearer-only request lists all tasks across both orgs (stale/duplicates unfiltered)', async () => {
+  it('R1: trusted bearer-only request is denied the stale task list (no cross-org leak)', async () => {
     const stale = await fetch(`${f.baseUrl}/api/tasks/stale?hours=${1e-9}`, {
       headers: { authorization: `Bearer ${f.apiToken}` },
     });
-    expect(stale.status).toBe(200);
-    const orgs = new Set(((await readJson(stale)).tasks as any[]).map((t) => t.org_id));
-    expect(orgs.has('org-acme')).toBe(true);
-    expect(orgs.has('org-beta')).toBe(true);
+    expect(stale.status).toBe(403);
+    expect((await readJson(stale)).code).toBe('customer_credential_required');
   });
 
   it('global admin customer credential can read another org task (unrestricted)', async () => {

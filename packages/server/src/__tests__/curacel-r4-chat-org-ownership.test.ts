@@ -30,6 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createApiAuthMiddleware } from '../middleware/api-auth';
 import { createCustomerPrincipalMiddleware } from '../principals/request-context';
+import { createDataPlaneCredentialGuard } from '../middleware/data-plane-credential';
 import { registerChatRoutes } from '../routes/chat';
 import { createAccessTokenRepository } from '../../../db/src/access-tokens';
 import { createPrincipalRepository } from '../../../db/src/principals';
@@ -141,6 +142,10 @@ async function bootApp(): Promise<Fixture> {
   app.use(express.json());
   app.use(createApiAuthMiddleware());
   app.use(createCustomerPrincipalMiddleware(tokenRepo));
+  // Terra R1: centralized customer data-plane credential guard (mirrors
+  // production composition). Shared bearer is transport only; chat is
+  // data-plane and requires a valid x-entity-access-token.
+  app.use(createDataPlaneCredentialGuard());
   registerChatRoutes({
     app,
     getTaskOrg: async (taskId) => (await taskSyncLayer.getTask(Number(taskId)))?.org_id ?? null,
@@ -151,18 +156,16 @@ async function bootApp(): Promise<Fixture> {
   const port = (server.address() as { port: number }).port;
   const baseUrl = `http://127.0.0.1:${port}`;
 
-  const trusted = (extra: Record<string, string> = {}) => authHeaders(apiToken, undefined, extra);
-
-  // Trusted bootstrap seeds workspace-GLOBAL (unowned) defaults + a message.
-  await postJson(baseUrl, '/api/chat/setup', trusted(), {});
-  const unownedSend = await readJson(await postJson(baseUrl, '/api/chat/send', trusted(), {
-    channelId: 'command-deck',
-    targetAgent: 'book',
-    agents: ['book'],
-    content: 'unowned seed message',
-    messageId: 'unowned-msg-1',
-  }));
-  const unownedMessageId = unownedSend.message.id as string;
+  // R1: workspace-GLOBAL (unowned) defaults + message are seeded directly via
+  // the chat repository. The prior bearer-only HTTP provisioning can no longer
+  // reach the data plane (shared bearer is transport only), so the trusted
+  // bootstrap is materialized at the repository layer instead. This mirrors
+  // ensureDefaults(undefined) for the command-deck channel the suite asserts on.
+  const chatRepo = createChatRepository();
+  chatRepo.createCategory({ id: 'general', name: 'General', emoji: '💬', order: 0, org_id: null });
+  chatRepo.createChannel({ id: 'command-deck', name: 'command-deck', category_id: 'general', order: 0, agents: [], org_id: null });
+  chatRepo.createMessage({ id: 'unowned-msg-1', channel_id: 'command-deck', sender: 'book', content: 'unowned seed message', org_id: null });
+  const unownedMessageId = 'unowned-msg-1';
 
   // Per-org provisioning + same-org messages/threads for both customers.
   const acmeSetup = await readJson(await postJson(baseUrl, '/api/chat/setup', authHeaders(apiToken, tokens.memberAcme), {}));
@@ -513,13 +516,15 @@ describe('R4 — spoofing, ambiguity, trusted path', () => {
     expect(ids).not.toContain(f.acmeChannelId);
   });
 
-  it('trusted service/admin path lists workspace-global unowned channels', async () => {
+  it('R1: shared-bearer-only chat channels request is denied (customer credential required)', async () => {
+    // Terra R1: the shared bearer is transport only. A bearer-only request to
+    // the chat data plane is denied and never downgrades to the trusted-service
+    // identity. Workspace-global unowned rows therefore cannot be reached by a
+    // shared bearer holder; the control-plane preservation is proven in
+    // curacel-r1-customer-dataplane-credential.
     const res = await fetch(`${f.baseUrl}/api/chat/channels`, { headers: authHeaders(f.apiToken) });
-    expect(res.status).toBe(200);
-    const ids = ((await readJson(res)).channels as any[]).map((c) => c.id);
-    expect(ids).toContain(f.unownedChannelId);
-    expect(ids).toContain(f.acmeChannelId);
-    expect(ids).toContain(f.betaChannelId);
+    expect(res.status).toBe(403);
+    expect((await readJson(res)).code).toBe('customer_credential_required');
   });
 
   it('global-admin customer credential is unrestricted across orgs', async () => {

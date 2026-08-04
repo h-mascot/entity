@@ -31,6 +31,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createApiAuthMiddleware } from '../middleware/api-auth';
 import { createCustomerPrincipalMiddleware } from '../principals/request-context';
+import { createDataPlaneCredentialGuard } from '../middleware/data-plane-credential';
 import { registerTaskRoutes } from '../routes/tasks';
 import { createTaskReviewGateRouter } from '../routes/task-review-gates';
 import { createTaskHandoffRouter } from '../routes/task-handoffs';
@@ -316,6 +317,10 @@ async function bootApp(): Promise<Fixture> {
   app.use(express.json());
   app.use(createApiAuthMiddleware());
   app.use(createCustomerPrincipalMiddleware(tokenRepo));
+  // Terra R1: centralized customer data-plane credential guard. The shared
+  // bearer is TRANSPORT only; customer data-plane routes require a valid
+  // x-entity-access-token. Mounted to mirror production composition.
+  app.use(createDataPlaneCredentialGuard());
   registerTaskRoutes(app as any, '/api', taskRouteDeps as any);
   app.use('/api/tasks', createTaskReviewGateRouter({
     getTask: (id: number) => taskSyncLayer.getTask(id),
@@ -419,13 +424,17 @@ describe('B1 — per-request customer principal, spoofing denied, revocation', (
     expect(res.status).toBe(403);
   });
 
-  it('preserves the trusted service/admin path when no customer token is present (PR #71/#72)', async () => {
-    // No x-entity-access-token -> resolveTrustedPrincipalId (svc-admin). Existing
-    // caller-supplied org header is honored for the trusted path (unchanged).
+  it('R1: denies a shared-bearer-only data-plane request (customer credential required)', async () => {
+    // Terra R1: ENTITY_API_TOKEN is transport only. A request bearing only the
+    // shared bearer (no x-entity-access-token) MUST be denied on the customer
+    // data plane and never downgrade to the trusted-service identity. The
+    // trusted service/admin path is preserved ONLY on the control plane
+    // (admin/principal/setup), proven in curacel-r1-customer-dataplane-credential.
     const res = await fetch(`${f.baseUrl}/api/tasks`, {
       headers: { authorization: `Bearer ${f.apiToken}`, 'x-entity-org-id': 'org-acme' },
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    expect((await readJson(res)).code).toBe('customer_credential_required');
   });
 });
 

@@ -149,7 +149,17 @@ export function getCustomerPrincipal(req: Request): CustomerPrincipalContext | n
   return req.entityCustomerPrincipal ?? null;
 }
 
-/** True when no customer credential resolved (trusted service/admin path). */
+/**
+ * True when no customer credential resolved (trusted service/admin path).
+ *
+ * R1 enforcement boundary: the production-mounted `createDataPlaneCredentialGuard`
+ * (`middleware/data-plane-credential.ts`) rejects any customer data-plane request
+ * that lacks a valid per-principal `x-entity-access-token` BEFORE route handlers
+ * run. So when this helper returns true on a data-plane route, the request can
+ * only have arrived via local dev (API auth disabled) or a misrouted path; it is
+ * never reached in API-auth production for the customer data plane. Control-plane
+ * routes (`/api/admin`) legitimately operate as the trusted path here.
+ */
 export function isTrustedServiceContext(req: Request): boolean {
   return !req.entityCustomerPrincipal;
 }
@@ -158,6 +168,12 @@ export function isTrustedServiceContext(req: Request): boolean {
  * Orgs the customer principal may access. Returns null when the request is
  * the trusted service/admin path (unrestricted) OR the customer is a global
  * admin (unrestricted but still a bound individual identity).
+ *
+ * R1: in API-auth production the data-plane guard guarantees a customer
+ * principal is present before any data-plane route handler runs, so the
+ * `null` (unrestricted) trusted return is only reachable on the control plane
+ * (`/api/admin`) or in local dev. It is never the result of a shared
+ * bearer holder reaching the customer data plane.
  */
 export function authorizedOrgIds(req: Request): string[] | null {
   const ctx = getCustomerPrincipal(req);

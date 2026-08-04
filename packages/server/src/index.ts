@@ -119,6 +119,7 @@ import { createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
 import { createTaskHandoffRouter } from "./routes/task-handoffs";
 import { createCustomerPrincipalMiddleware } from "./principals/request-context";
+import { createDataPlaneCredentialGuard } from "./middleware/data-plane-credential";
 import { registerStrategicRoutes, registerTaskRoutes } from "./routes/tasks";
 import {
   buildTaskPreview,
@@ -221,6 +222,13 @@ app.use(createApiAuthMiddleware());
 // x-entity-access-token to an active principal + scoped grants. Absent token
 // => trusted service/admin path is unchanged (PR #71/#72 preserved).
 app.use(createCustomerPrincipalMiddleware());
+// Centralized customer data-plane credential guard (Terra R1). With API auth
+// enabled, the shared ENTITY_API_TOKEN is TRANSPORT ONLY; every customer
+// data-plane route additionally requires a valid, active, individually
+// revocable x-entity-access-token. Missing/invalid/revoked/disabled credentials
+// fail closed (403) and never downgrade. Public/control routes pass through;
+// local dev (API auth disabled) is inert.
+app.use(createDataPlaneCredentialGuard());
 
 registerCoreProbeRoutes(app, phase2Flags);
 registerConfigRoutes(app);

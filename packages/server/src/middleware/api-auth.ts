@@ -116,8 +116,11 @@ const PROTECTED_UNPREFIXED_ROOTS: readonly string[] = [
 
 /**
  * Check if a request path matches a public route pattern.
+ *
+ * Exported so the data-plane credential guard (Terra R1) can reuse the exact
+ * same public-route definition instead of duplicating it.
  */
-function isPublicRoute(path: string): boolean {
+export function isPublicRoute(path: string): boolean {
   for (const exact of PUBLIC_EXACT_ROUTES) {
     if (path === exact) return true;
   }
@@ -151,8 +154,11 @@ function isAgentNativeEditorEnabled(): boolean {
  * Whether a path is part of the protected API surface: the /api/* routes plus
  * the legacy unprefixed mirrors. Static assets and the SPA shell are
  * intentionally excluded so they keep serving without a token.
+ *
+ * Exported so the data-plane credential guard (Terra R1) can layer customer
+ * credentials on exactly the same surface that the transport bearer protects.
  */
-function isProtectedApiPath(path: string): boolean {
+export function isProtectedApiPath(path: string): boolean {
   if (path === "/api" || path.startsWith("/api/")) {
     return true;
   }
