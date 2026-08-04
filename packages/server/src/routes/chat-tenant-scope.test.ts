@@ -24,14 +24,18 @@ const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
 beforeAll(() => {
   process.env.ENTITY_TASK_DB_PATH = tmpDbPath;
   const repo = createChatRepository();
-  repo.createCategory({ id: 'cat', name: 'Cat' });
+  repo.createCategory({ id: 'cat-a1', name: 'Cat A1', org_id: 'org-a', team_id: 'team-a1' });
+  repo.createCategory({ id: 'cat-a2', name: 'Cat A2', org_id: 'org-a', team_id: 'team-a2' });
+  repo.createCategory({ id: 'cat-a-orgwide', name: 'Cat A Orgwide', org_id: 'org-a' });
+  repo.createCategory({ id: 'cat-b1', name: 'Cat B1', org_id: 'org-b', team_id: 'team-b1' });
+  repo.createCategory({ id: 'cat-legacy', name: 'Cat Legacy' });
   // Seed channels with explicit ownership across two orgs / multiple teams.
-  repo.createChannel({ id: 'ch-a1', name: 'ch-a1', category_id: 'cat', org_id: 'org-a', team_id: 'team-a1' });
-  repo.createChannel({ id: 'ch-a2', name: 'ch-a2', category_id: 'cat', org_id: 'org-a', team_id: 'team-a2' });
-  repo.createChannel({ id: 'ch-a-orgwide', name: 'ch-a-orgwide', category_id: 'cat', org_id: 'org-a', team_id: undefined });
-  repo.createChannel({ id: 'ch-b1', name: 'ch-b1', category_id: 'cat', org_id: 'org-b', team_id: 'team-b1' });
+  repo.createChannel({ id: 'ch-a1', name: 'ch-a1', category_id: 'cat-a1', org_id: 'org-a', team_id: 'team-a1' });
+  repo.createChannel({ id: 'ch-a2', name: 'ch-a2', category_id: 'cat-a2', org_id: 'org-a', team_id: 'team-a2' });
+  repo.createChannel({ id: 'ch-a-orgwide', name: 'ch-a-orgwide', category_id: 'cat-a-orgwide', org_id: 'org-a', team_id: undefined });
+  repo.createChannel({ id: 'ch-b1', name: 'ch-b1', category_id: 'cat-b1', org_id: 'org-b', team_id: 'team-b1' });
   // A legacy unowned channel (org_id null) — preserved but fails closed.
-  repo.createChannel({ id: 'ch-legacy', name: 'ch-legacy', category_id: 'cat' });
+  repo.createChannel({ id: 'ch-legacy', name: 'ch-legacy', category_id: 'cat-legacy' });
   // Seed a parent message + thread under ch-a1 (owned by org-a/team-a1).
   repo.createMessage({ id: 'msg-a1', channel_id: 'ch-a1', sender: 'user', content: 'hi', org_id: 'org-a', team_id: 'team-a1' });
   repo.createThread({ id: 'thr-a1', channel_id: 'ch-a1', parent_message_id: 'msg-a1', title: 'T', org_id: 'org-a', team_id: 'team-a1' });

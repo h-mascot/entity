@@ -99,3 +99,13 @@ already PASS and were not regressed.
 - [x] Gate: `npm run ctrl:gate` (Node 22) ✅ — app 415 + db 48 + server 1340.
 - [x] Commits: 4 coherent commits; HEAD `9d6c1ad`; worktree clean.
 - [x] Not merged/pushed/deployed; production untouched; blockers=[].
+
+
+---
+
+## Final THE-931 category/name isolation closure — VERIFIED (2026-08-04)
+- [x] Exact tenant category validation on channel create/patch; foreign/missing no-leak.
+- [x] Tenant-scoped `name COLLATE NOCASE` uniqueness for categories/channels.
+- [x] Atomic actual-schema-derived migration preserves deployed columns, indexes, triggers and FKs; fail-closed duplicate preflight and reserved-index replacement.
+- [x] Supervisor focused 37/37; full serial gate app 415 + DB 54 + server 1344.
+- [x] Independent review PASS (`blockerCount=0`). Production untouched.

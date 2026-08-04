@@ -186,6 +186,10 @@ export function createScopedChatRepository(
   const tenant = readScope ? createTenantChatRepository(readScope) : null;
   const creationScope = resolveChatCreationScope(binding);
   const historyAllowed = (): boolean => access(binding).allowed && tenant !== null;
+  const categoryMatchesOwner = (
+    category: ChatCategoryRecord | undefined,
+    owner: { org_id: string | null; team_id: string | null },
+  ): boolean => Boolean(category && category.org_id === owner.org_id && category.team_id === owner.team_id);
 
   return {
     historyAllowed,
@@ -230,6 +234,11 @@ export function createScopedChatRepository(
 
     createChannel: (input) => {
       if (!creationScope) throw new Error('channel creation requires an assignment');
+      const category = tenant?.getCategory(input.category_id);
+      if (!categoryMatchesOwner(category, {
+        org_id: creationScope.orgId,
+        team_id: creationScope.teamId,
+      })) throw new Error('category not found');
       return repo.createChannel({
         name: input.name,
         description: input.description,
@@ -244,7 +253,15 @@ export function createScopedChatRepository(
       });
     },
 
-    updateChannel: (id, patch) => (historyAllowed() && tenant?.getChannel(id) ? repo.updateChannel(id, patch) : undefined),
+    updateChannel: (id, patch) => {
+      if (!historyAllowed() || !tenant) return undefined;
+      const channel = tenant.getChannel(id);
+      if (!channel) return undefined;
+      if (typeof patch.category_id === 'string' && !categoryMatchesOwner(tenant.getCategory(patch.category_id), channel)) {
+        return undefined;
+      }
+      return repo.updateChannel(id, patch);
+    },
 
     deleteChannel: (id) => Boolean(historyAllowed() && tenant?.getChannel(id) && repo.deleteChannel(id)),
 

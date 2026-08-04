@@ -119,6 +119,7 @@ export interface CreateChatThreadInput {
 export interface ChatRepository {
   listCategories: () => ChatCategoryRecord[];
   createCategory: (input: CreateChatCategoryInput) => ChatCategoryRecord;
+  getCategory: (id: string) => ChatCategoryRecord | undefined;
   getCategoryByName: (name: string) => ChatCategoryRecord | undefined;
 
   listChannels: () => ChatChannelRecord[];
@@ -212,11 +213,317 @@ function appendObjectRef(current: ObjectRef[], objectRef: ObjectRef): ObjectRef[
   return exists ? current : [...current, normalized];
 }
 
+interface SqliteIndexRow {
+  name: string;
+  unique: number;
+}
+
+type ChatNameTable = 'chat_categories' | 'chat_channels';
+
+const CHAT_TENANT_NAME_INDEXES = [
+  {
+    name: 'idx_chat_categories_tenant_name_team',
+    sql: `CREATE UNIQUE INDEX idx_chat_categories_tenant_name_team
+      ON chat_categories(org_id, team_id, name COLLATE NOCASE)
+      WHERE org_id IS NOT NULL AND team_id IS NOT NULL`,
+  },
+  {
+    name: 'idx_chat_categories_tenant_name_orgwide',
+    sql: `CREATE UNIQUE INDEX idx_chat_categories_tenant_name_orgwide
+      ON chat_categories(org_id, name COLLATE NOCASE)
+      WHERE org_id IS NOT NULL AND team_id IS NULL`,
+  },
+  {
+    name: 'idx_chat_channels_tenant_name_team',
+    sql: `CREATE UNIQUE INDEX idx_chat_channels_tenant_name_team
+      ON chat_channels(org_id, team_id, name COLLATE NOCASE)
+      WHERE org_id IS NOT NULL AND team_id IS NOT NULL`,
+  },
+  {
+    name: 'idx_chat_channels_tenant_name_orgwide',
+    sql: `CREATE UNIQUE INDEX idx_chat_channels_tenant_name_orgwide
+      ON chat_channels(org_id, name COLLATE NOCASE)
+      WHERE org_id IS NOT NULL AND team_id IS NULL`,
+  },
+] as const;
+
+const RESERVED_CHAT_TENANT_NAME_INDEXES = new Set(CHAT_TENANT_NAME_INDEXES.map((index) => index.name));
+
+interface SqlToken {
+  kind: 'word' | 'identifier' | 'string' | 'symbol';
+  value: string;
+  start: number;
+  end: number;
+}
+
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function sqlTokens(sql: string): SqlToken[] {
+  const tokens: SqlToken[] = [];
+  let index = 0;
+  while (index < sql.length) {
+    const start = index;
+    const character = sql[index];
+    if (/\s/.test(character)) {
+      index += 1;
+      continue;
+    }
+    if (character === '-' && sql[index + 1] === '-') {
+      index += 2;
+      while (index < sql.length && sql[index] !== '\n') index += 1;
+      continue;
+    }
+    if (character === '/' && sql[index + 1] === '*') {
+      index += 2;
+      while (index < sql.length && !(sql[index] === '*' && sql[index + 1] === '/')) index += 1;
+      index = Math.min(sql.length, index + 2);
+      continue;
+    }
+    if (character === "'") {
+      index += 1;
+      while (index < sql.length) {
+        if (sql[index] === "'" && sql[index + 1] === "'") index += 2;
+        else if (sql[index++] === "'") break;
+      }
+      tokens.push({ kind: 'string', value: sql.slice(start, index), start, end: index });
+      continue;
+    }
+    if (character === '"' || character === '`' || character === '[') {
+      const close = character === '[' ? ']' : character;
+      index += 1;
+      let value = '';
+      while (index < sql.length) {
+        if (sql[index] === close) {
+          if (close !== ']' && sql[index + 1] === close) {
+            value += close;
+            index += 2;
+            continue;
+          }
+          index += 1;
+          break;
+        }
+        value += sql[index++];
+      }
+      tokens.push({ kind: 'identifier', value, start, end: index });
+      continue;
+    }
+    if (/[A-Za-z_]/.test(character)) {
+      index += 1;
+      while (index < sql.length && /[A-Za-z0-9_$]/.test(sql[index])) index += 1;
+      tokens.push({ kind: 'word', value: sql.slice(start, index), start, end: index });
+      continue;
+    }
+    index += 1;
+    tokens.push({ kind: 'symbol', value: character, start, end: index });
+  }
+  return tokens;
+}
+
+function tokenKeyword(token: SqlToken | undefined, keyword: string): boolean {
+  return token?.kind === 'word' && token.value.toUpperCase() === keyword;
+}
+
+function tokenIdentifier(token: SqlToken | undefined): string | null {
+  return token && (token.kind === 'word' || token.kind === 'identifier') ? token.value : null;
+}
+
+function isGlobalTableNameUnique(definition: string): boolean {
+  const tokens = sqlTokens(definition);
+  let offset = 0;
+  if (tokenKeyword(tokens[offset], 'CONSTRAINT')) offset += 2;
+  if (!tokenKeyword(tokens[offset], 'UNIQUE') || tokens[offset + 1]?.value !== '(') return false;
+
+  let closeIndex = offset + 2;
+  let depth = 1;
+  for (; closeIndex < tokens.length && depth > 0; closeIndex += 1) {
+    if (tokens[closeIndex].value === '(') depth += 1;
+    else if (tokens[closeIndex].value === ')') depth -= 1;
+  }
+  if (depth !== 0) return false;
+  const inner = tokens.slice(offset + 2, closeIndex - 1);
+  if (tokenIdentifier(inner[0])?.toLowerCase() !== 'name') return false;
+  let innerIndex = 1;
+  if (tokenKeyword(inner[innerIndex], 'COLLATE') && tokenIdentifier(inner[innerIndex + 1])) innerIndex += 2;
+  if (tokenKeyword(inner[innerIndex], 'ASC') || tokenKeyword(inner[innerIndex], 'DESC')) innerIndex += 1;
+  if (innerIndex !== inner.length) return false;
+
+  const suffix = tokens.slice(closeIndex);
+  return suffix.length === 0 || (
+    suffix.length === 3
+    && tokenKeyword(suffix[0], 'ON')
+    && tokenKeyword(suffix[1], 'CONFLICT')
+    && ['ROLLBACK', 'ABORT', 'FAIL', 'IGNORE', 'REPLACE'].some((action) => tokenKeyword(suffix[2], action))
+  );
+}
+
+function removeInlineNameUnique(definition: string): string {
+  const tokens = sqlTokens(definition);
+  if (tokenIdentifier(tokens[0])?.toLowerCase() !== 'name') return definition;
+
+  const ranges: Array<{ start: number; end: number }> = [];
+  let depth = 0;
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.value === '(') depth += 1;
+    else if (token.value === ')') depth -= 1;
+    else if (depth === 0 && tokenKeyword(token, 'UNIQUE')) {
+      let start = token.start;
+      if (index >= 2 && tokenKeyword(tokens[index - 2], 'CONSTRAINT') && tokenIdentifier(tokens[index - 1])) {
+        start = tokens[index - 2].start;
+      }
+      let end = token.end;
+      if (tokenKeyword(tokens[index + 1], 'ON') && tokenKeyword(tokens[index + 2], 'CONFLICT') && tokens[index + 3]) {
+        end = tokens[index + 3].end;
+        index += 3;
+      }
+      ranges.push({ start, end });
+    }
+  }
+  return ranges.reverse().reduce((sql, range) => `${sql.slice(0, range.start)}${sql.slice(range.end)}`, definition);
+}
+
+function tableDefinitions(createSql: string): { definitions: string[]; closeParen: number } {
+  const tokens = sqlTokens(createSql);
+  const openIndex = tokens.findIndex((token) => token.value === '(');
+  if (openIndex < 0) throw new Error('chat tenant-name migration could not parse CREATE TABLE');
+  const definitions: string[] = [];
+  let depth = 0;
+  let definitionStart = tokens[openIndex].end;
+  for (let index = openIndex + 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.value === '(') depth += 1;
+    else if (token.value === ')' && depth > 0) depth -= 1;
+    else if ((token.value === ',' || token.value === ')') && depth === 0) {
+      definitions.push(createSql.slice(definitionStart, token.start));
+      if (token.value === ')') return { definitions, closeParen: token.start };
+      definitionStart = token.end;
+    }
+  }
+  throw new Error('chat tenant-name migration found unterminated CREATE TABLE');
+}
+
+function replacementTableSql(createSql: string, temporaryTable: string): string {
+  const parsed = tableDefinitions(createSql);
+  const definitions = parsed.definitions
+    .filter((definition) => !isGlobalTableNameUnique(definition))
+    .map(removeInlineNameUnique);
+  return `CREATE TABLE ${quoteIdentifier(temporaryTable)} (${definitions.join(',')})${createSql.slice(parsed.closeParen + 1)}`;
+}
+
+function indexColumns(db: Database.Database, indexName: string): string[] {
+  return (db.prepare(`PRAGMA index_info(${JSON.stringify(indexName)})`).all() as Array<{ name: string }>)
+    .map((row) => row.name);
+}
+
+function hasGlobalNameUniqueness(db: Database.Database, table: ChatNameTable): boolean {
+  return (db.prepare(`PRAGMA index_list(${table})`).all() as SqliteIndexRow[])
+    .some((index) => index.unique === 1 && indexColumns(db, index.name).join(',') === 'name');
+}
+
+function assertNoTenantNameDuplicates(db: Database.Database): void {
+  for (const table of ['chat_categories', 'chat_channels'] as const) {
+    const tableExists = Boolean(db.prepare(
+      `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    ).get(table));
+    if (!tableExists || !['name', 'org_id', 'team_id'].every((column) => hasColumn(db, table, column))) {
+      continue;
+    }
+    const duplicate = db.prepare(`
+      SELECT org_id, team_id, lower(name) AS normalized_name
+      FROM ${quoteIdentifier(table)}
+      WHERE org_id IS NOT NULL
+      GROUP BY org_id, team_id, lower(name)
+      HAVING COUNT(*) > 1
+      ORDER BY org_id COLLATE BINARY, team_id IS NOT NULL, team_id COLLATE BINARY, lower(name) COLLATE BINARY
+      LIMIT 1
+    `).get() as { org_id: string; team_id: string | null; normalized_name: string } | undefined;
+    if (duplicate) {
+      throw new Error(
+        `chat tenant-name migration blocked by duplicate: ${table} org_id=${duplicate.org_id} team_id=${duplicate.team_id ?? 'NULL'} name=${duplicate.normalized_name}`,
+      );
+    }
+  }
+}
+
+/**
+ * SQLite cannot drop inline or table-level UNIQUE constraints. Rebuild affected
+ * tables from their deployed SQL and replace all reserved tenant indexes in the
+ * same transaction, so any copy, schema-object, index, or FK failure rolls back.
+ */
+function migrateChatNameUniqueness(db: Database.Database): void {
+  // Index creation cannot succeed with these rows. Fail before changing either
+  // the schema or foreign-key mode so startup is deterministic and retryable.
+  assertNoTenantNameDuplicates(db);
+
+  const tables = (['chat_categories', 'chat_channels'] as const)
+    .filter((table) => hasGlobalNameUniqueness(db, table));
+
+  const schemaObjects = (db.prepare(`
+    SELECT type, name, tbl_name, sql FROM sqlite_master
+    WHERE type IN ('index', 'trigger')
+      AND tbl_name IN ('chat_categories', 'chat_channels')
+      AND sql IS NOT NULL
+    ORDER BY CASE type WHEN 'index' THEN 0 ELSE 1 END, name
+  `).all() as Array<{ type: 'index' | 'trigger'; name: string; tbl_name: ChatNameTable; sql: string }>)
+    .filter((object) => tables.includes(object.tbl_name))
+    .filter((object) => !RESERVED_CHAT_TENANT_NAME_INDEXES.has(object.name as typeof CHAT_TENANT_NAME_INDEXES[number]['name']))
+    .filter((object) => object.type === 'trigger' || !(
+      (db.prepare(`SELECT [unique] FROM pragma_index_list(?) WHERE name = ?`).get(
+        object.tbl_name,
+        object.name,
+      ) as { unique?: number } | undefined)?.unique === 1
+      && indexColumns(db, object.name).join(',') === 'name'
+    ));
+
+  const tablePlans = tables.map((table) => {
+    const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table) as { sql?: string } | undefined;
+    if (!row?.sql) throw new Error(`chat tenant-name migration missing schema for ${table}`);
+    const temporaryTable = `__${table}_tenant_name_${randomUUID().replace(/-/g, '')}`;
+    const columns = (db.prepare(`PRAGMA table_xinfo(${quoteIdentifier(table)})`).all() as Array<{ name: string; hidden: number }>)
+      .filter((column) => column.hidden === 0)
+      .map((column) => column.name);
+    if (columns.length === 0) throw new Error(`chat tenant-name migration found no columns for ${table}`);
+    return { table, temporaryTable, createSql: replacementTableSql(row.sql, temporaryTable), columns };
+  });
+
+  const foreignKeysEnabled = Number(db.pragma('foreign_keys', { simple: true })) === 1;
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      // These names are reserved. Never trust IF NOT EXISTS: remove any index
+      // using one of them, regardless of its current table or definition.
+      for (const index of CHAT_TENANT_NAME_INDEXES) {
+        db.exec(`DROP INDEX IF EXISTS ${quoteIdentifier(index.name)}`);
+      }
+      for (const plan of tablePlans) {
+        db.exec(plan.createSql);
+        const columns = plan.columns.map(quoteIdentifier).join(', ');
+        db.exec(`INSERT INTO ${quoteIdentifier(plan.temporaryTable)} (${columns}) SELECT ${columns} FROM ${quoteIdentifier(plan.table)}`);
+      }
+      for (const table of [...tables].reverse()) db.exec(`DROP TABLE ${quoteIdentifier(table)}`);
+      for (const plan of tablePlans) {
+        db.exec(`ALTER TABLE ${quoteIdentifier(plan.temporaryTable)} RENAME TO ${quoteIdentifier(plan.table)}`);
+      }
+      for (const object of schemaObjects) db.exec(object.sql);
+      for (const index of CHAT_TENANT_NAME_INDEXES) db.exec(index.sql);
+      const violations = db.pragma('foreign_key_check') as unknown[];
+      if (violations.length > 0) throw new Error('chat tenant-name migration failed foreign_key_check');
+    })();
+  } finally {
+    db.pragma(`foreign_keys = ${foreignKeysEnabled ? 'ON' : 'OFF'}`);
+  }
+}
+
 function ensureChatSchema(db: Database.Database): void {
+  // Existing tenant-scoped tables must be validated before CREATE/ALTER/INDEX
+  // statements can change any deployed schema object.
+  assertNoTenantNameDuplicates(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS chat_categories (
       id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
       emoji TEXT,
       "order" INTEGER NOT NULL DEFAULT 0,
       org_id TEXT,
@@ -226,7 +533,7 @@ function ensureChatSchema(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS chat_channels (
       id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
       description TEXT,
       category_id TEXT NOT NULL REFERENCES chat_categories(id) ON DELETE CASCADE,
       "order" INTEGER NOT NULL DEFAULT 0,
@@ -270,11 +577,6 @@ function ensureChatSchema(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE INDEX IF NOT EXISTS idx_chat_channels_category_order ON chat_channels(category_id, "order", name);
-    CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_ts ON chat_messages(channel_id, timestamp, created_at);
-    CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_ts ON chat_messages(thread_id, timestamp, created_at);
-    CREATE INDEX IF NOT EXISTS idx_chat_threads_channel_last ON chat_threads(channel_id, last_message_at DESC);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_parent_message ON chat_threads(parent_message_id);
   `);
 
   for (const [table, column] of [['chat_channels', 'org_id'], ['chat_channels', 'team_id'], ['chat_messages', 'org_id'], ['chat_messages', 'team_id'], ['chat_threads', 'org_id'], ['chat_threads', 'team_id'], ['chat_categories', 'org_id'], ['chat_categories', 'team_id']] as const) {
@@ -286,6 +588,14 @@ function ensureChatSchema(db: Database.Database): void {
   if (!hasColumn(db, 'chat_threads', 'linked_object_refs_json')) {
     db.exec("ALTER TABLE chat_threads ADD COLUMN linked_object_refs_json TEXT NOT NULL DEFAULT '[]'");
   }
+  migrateChatNameUniqueness(db);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_chat_channels_category_order ON chat_channels(category_id, "order", name);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_ts ON chat_messages(channel_id, timestamp, created_at);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_ts ON chat_messages(thread_id, timestamp, created_at);
+    CREATE INDEX IF NOT EXISTS idx_chat_threads_channel_last ON chat_threads(channel_id, last_message_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_parent_message ON chat_threads(parent_message_id);
+  `);
 }
 
 function mapCategoryRow(row: Record<string, unknown>): ChatCategoryRecord {
@@ -362,6 +672,7 @@ export function createChatRepository(): ChatRepository {
     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
   const getCategoryStmt = db.prepare('SELECT * FROM chat_categories WHERE id = ?');
+  const getCategoryInExactScopeStmt = db.prepare('SELECT id FROM chat_categories WHERE id = ? AND org_id IS ? AND team_id IS ?');
 
   const listChannelsStmt = db.prepare('SELECT * FROM chat_channels ORDER BY category_id ASC, "order" ASC, name COLLATE NOCASE ASC');
   const listChannelsByCategoryStmt = db.prepare('SELECT * FROM chat_channels WHERE category_id = ? ORDER BY "order" ASC, name COLLATE NOCASE ASC');
@@ -421,6 +732,11 @@ export function createChatRepository(): ChatRepository {
       return mapCategoryRow(row);
     },
 
+    getCategory: (id) => {
+      const row = getCategoryStmt.get(id) as Record<string, unknown> | undefined;
+      return row ? mapCategoryRow(row) : undefined;
+    },
+
     getCategoryByName: (name) => {
       const row = getCategoryByNameStmt.get(name) as Record<string, unknown> | undefined;
       return row ? mapCategoryRow(row) : undefined;
@@ -446,16 +762,23 @@ export function createChatRepository(): ChatRepository {
         throw new Error('name is required');
       }
 
+      const orgId = input.org_id?.trim() || null;
+      const teamId = input.team_id?.trim() || null;
+      const categoryId = input.category_id.trim();
+      if (!categoryId || !getCategoryInExactScopeStmt.get(categoryId, orgId, teamId)) {
+        throw new Error('category not found');
+      }
+
       const id = input.id?.trim() || randomUUID();
       createChannelStmt.run(
         id,
         name,
         input.description?.trim() || null,
-        input.category_id,
+        categoryId,
         Number(input.order ?? 0),
         JSON.stringify(parseAgents(input.agents ?? [])),
-        input.org_id?.trim() || null,
-        input.team_id?.trim() || null
+        orgId,
+        teamId
       );
       const row = getChannelStmt.get(id) as Record<string, unknown> | undefined;
       if (!row) throw new Error('Failed to create channel');
@@ -484,8 +807,12 @@ export function createChatRepository(): ChatRepository {
       }
 
       if (typeof patch.category_id === 'string') {
+        const categoryId = patch.category_id.trim();
+        const orgId = typeof existing.org_id === 'string' ? existing.org_id : null;
+        const teamId = typeof existing.team_id === 'string' ? existing.team_id : null;
+        if (!categoryId || !getCategoryInExactScopeStmt.get(categoryId, orgId, teamId)) return undefined;
         fields.push('category_id = ?');
-        values.push(patch.category_id);
+        values.push(categoryId);
       }
 
       if (typeof patch.order !== 'undefined') {
@@ -646,6 +973,7 @@ export interface TenantChatRepository {
   getChannel(id: string): ChatChannelRecord | undefined;
   getChannelByName(name: string): ChatChannelRecord | undefined;
   listCategories(): ChatCategoryRecord[];
+  getCategory(id: string): ChatCategoryRecord | undefined;
   listMessagesByChannel(channelId: string): ChatMessageRecord[];
   listMessagesByThread(threadId: string): ChatMessageRecord[];
   getMessage(id: string): ChatMessageRecord | undefined;
@@ -680,6 +1008,7 @@ export function createTenantChatRepository(scope: ChatDbScope, dbOverride?: Data
   const getChannelStmt = db.prepare(`SELECT * FROM chat_channels WHERE id = @id AND ${where.sql}`);
   const getChannelByNameStmt = db.prepare(`SELECT * FROM chat_channels WHERE lower(name) = lower(@name) AND ${where.sql}`);
   const listCategoriesStmt = db.prepare(`SELECT * FROM chat_categories WHERE ${where.sql} ORDER BY "order" ASC, name COLLATE NOCASE ASC`);
+  const getScopedCategoryStmt = db.prepare(`SELECT * FROM chat_categories WHERE id = @id AND ${where.sql}`);
 
   const listMessagesByChannelStmt = db.prepare(`
     SELECT * FROM chat_messages
@@ -711,6 +1040,10 @@ export function createTenantChatRepository(scope: ChatDbScope, dbOverride?: Data
       return row ? mapChannelRow(row) : undefined;
     },
     listCategories: () => (listCategoriesStmt.all(where.params) as Array<Record<string, unknown>>).map(mapCategoryRow),
+    getCategory: (id) => {
+      const row = getScopedCategoryStmt.get({ ...where.params, id }) as Record<string, unknown> | undefined;
+      return row ? mapCategoryRow(row) : undefined;
+    },
     listMessagesByChannel: (channelId) => (listMessagesByChannelStmt.all({ ...where.params, channelId }) as Array<Record<string, unknown>>).map(mapMessageRow),
     listMessagesByThread: (threadId) => (listMessagesByThreadStmt.all({ ...where.params, threadId }) as Array<Record<string, unknown>>).map(mapMessageRow),
     getMessage: (id) => {

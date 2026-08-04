@@ -34,20 +34,26 @@ beforeAll(() => {
   // Owned categories per org/team.
   repo.createCategory({ id: 'cat-a1', name: 'Cat A1', org_id: 'org-a', team_id: 'team-a1' });
   repo.createCategory({ id: 'cat-a-orgwide', name: 'Cat A Orgwide', org_id: 'org-a', team_id: undefined });
+  repo.createCategory({ id: 'cat-b1', name: 'Cat B1', org_id: 'org-b', team_id: 'team-b1' });
   // A legacy unowned category (org_id null) — must fail closed for agents.
   repo.createCategory({ id: 'cat-legacy', name: 'Cat Legacy' });
 
   // A foreign channel to test id-collision / oracle behavior.
   repo.createChannel({ id: 'ch-foreign', name: 'ch-foreign', category_id: 'cat-a1', org_id: 'org-a', team_id: 'team-a1' });
+  repo.createChannel({ id: 'ch-b-owned', name: 'ch-b-owned', category_id: 'cat-b1', org_id: 'org-b', team_id: 'team-b1' });
 
   const principals = createPrincipalRepository();
   principals.createPrincipal({ id: 'org-a-admin', principal_type: 'agent', display_name: 'Admin A' });
   principals.createGrant({ principal_id: 'org-a-admin', role: 'admin', org_id: 'org-a' });
   principals.createPrincipal({ id: 'a1-contrib', principal_type: 'agent', display_name: 'A1' });
   principals.createGrant({ principal_id: 'a1-contrib', role: 'contributor', org_id: 'org-a', team_id: 'team-a1' });
+  principals.createPrincipal({ id: 'a2-contrib', principal_type: 'agent', display_name: 'A2' });
+  principals.createGrant({ principal_id: 'a2-contrib', role: 'contributor', org_id: 'org-a', team_id: 'team-a2' });
   principals.createPrincipal({ id: 'multi-contrib', principal_type: 'agent', display_name: 'Multi' });
   principals.createGrant({ principal_id: 'multi-contrib', role: 'contributor', org_id: 'org-a', team_id: 'team-a1' });
   principals.createGrant({ principal_id: 'multi-contrib', role: 'contributor', org_id: 'org-a', team_id: 'team-a2' });
+  principals.createPrincipal({ id: 'b1-contrib', principal_type: 'agent', display_name: 'B1' });
+  principals.createGrant({ principal_id: 'b1-contrib', role: 'contributor', org_id: 'org-b', team_id: 'team-b1' });
   principals.createPrincipal({ id: 'no-grant', principal_type: 'agent', display_name: 'NoGrant' });
 });
 
@@ -153,6 +159,79 @@ describe('THE-931 (R2) — channel/category creation isolation', () => {
       expect(fresh.status).toBe(201);
       const freshBody = (await fresh.json()) as { channel: { id: string } };
       expect(freshBody.channel.id).not.toBe('never-existed');
+    });
+  });
+
+  describe('category and tenant-local name isolation', () => {
+    const signature = async (response: Response): Promise<{ status: number; body: unknown }> => ({
+      status: response.status,
+      body: await response.json(),
+    });
+
+    it('makes foreign and missing categories indistinguishable on create with no mutation', async () => {
+      const request = (categoryId: string) => fetch(`${base}/api/chat/channels`, {
+        method: 'POST', headers: jsonHeaders('b1-contrib', 'org-b'),
+        body: JSON.stringify({ name: 'oracle-create', categoryId }),
+      });
+      const foreign = await signature(await request('cat-a1'));
+      const missing = await signature(await request('cat-missing'));
+      expect(foreign).toEqual(missing);
+      expect(createChatRepository().getChannelByName('oracle-create')).toBeUndefined();
+    });
+
+    it('makes foreign and missing categories indistinguishable on patch and leaves the channel unchanged', async () => {
+      const before = createChatRepository().getChannel('ch-b-owned');
+      const request = (categoryId: string) => fetch(`${base}/api/chat/channels/ch-b-owned`, {
+        method: 'PATCH', headers: jsonHeaders('b1-contrib', 'org-b'),
+        body: JSON.stringify({ categoryId }),
+      });
+      const foreign = await signature(await request('cat-a1'));
+      const missing = await signature(await request('cat-missing'));
+      expect(foreign).toEqual(missing);
+      expect(createChatRepository().getChannel('ch-b-owned')).toEqual(before);
+    });
+
+    it('allows a matching-scope category for channel create and patch', async () => {
+      const created = await fetch(`${base}/api/chat/channels`, {
+        method: 'POST', headers: jsonHeaders('b1-contrib', 'org-b'),
+        body: JSON.stringify({ name: 'matching-category', categoryId: 'cat-b1' }),
+      });
+      expect(created.status).toBe(201);
+      const createdBody = (await created.json()) as { channel: { id: string; categoryId: string } };
+      expect(createdBody.channel.categoryId).toBe('cat-b1');
+
+      const patched = await fetch(`${base}/api/chat/channels/${createdBody.channel.id}`, {
+        method: 'PATCH', headers: jsonHeaders('b1-contrib', 'org-b'),
+        body: JSON.stringify({ categoryId: 'cat-b1' }),
+      });
+      expect(patched.status).toBe(200);
+      expect(((await patched.json()) as { channel: { categoryId: string } }).channel.categoryId).toBe('cat-b1');
+    });
+
+    it('allows duplicate category and channel names across tenants but rejects them in the same scope', async () => {
+      const createCategory = (principalId: string, orgId: string) => fetch(`${base}/api/chat/categories`, {
+        method: 'POST', headers: jsonHeaders(principalId, orgId),
+        body: JSON.stringify({ name: 'Tenant Shared' }),
+      });
+      const categoryA = await createCategory('a1-contrib', 'org-a');
+      const categoryA2 = await createCategory('a2-contrib', 'org-a');
+      const categoryB = await createCategory('b1-contrib', 'org-b');
+      expect(categoryA.status).toBe(201);
+      expect(categoryA2.status).toBe(201);
+      expect(categoryB.status).toBe(201);
+      expect((await createCategory('a1-contrib', 'org-a')).status).toBe(400);
+      const categoryAId = ((await categoryA.json()) as { category: { id: string } }).category.id;
+      const categoryA2Id = ((await categoryA2.json()) as { category: { id: string } }).category.id;
+      const categoryBId = ((await categoryB.json()) as { category: { id: string } }).category.id;
+
+      const createChannel = (principalId: string, orgId: string, categoryId: string) => fetch(`${base}/api/chat/channels`, {
+        method: 'POST', headers: jsonHeaders(principalId, orgId),
+        body: JSON.stringify({ name: 'tenant-shared-channel', categoryId }),
+      });
+      expect((await createChannel('a1-contrib', 'org-a', categoryAId)).status).toBe(201);
+      expect((await createChannel('a2-contrib', 'org-a', categoryA2Id)).status).toBe(201);
+      expect((await createChannel('b1-contrib', 'org-b', categoryBId)).status).toBe(201);
+      expect((await createChannel('a1-contrib', 'org-a', categoryAId)).status).toBe(400);
     });
   });
 

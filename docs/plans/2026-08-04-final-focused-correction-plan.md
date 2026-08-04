@@ -32,9 +32,18 @@ Review source: `clawd/output/entity/ra-fu-runnerqa-20260804/reviews/split-r2/{TH
 - Files: `packages/db/src/chat.ts`, `packages/server/src/routes/chat.ts`, new + updated tests.
 
 ## Slice D — gate & receipt
-- [ ] D1 focused exploit tests individually + together under Node 22.
-- [ ] D2 `cd packages/server && npm run build && npx vitest run`.
-- [ ] D3 `npm --prefix packages/app run build`.
-- [ ] D4 `npm run ctrl:gate` serially.
-- [ ] D5 self-review all route calls for raw-repository bypasses + SQL scope.
-- [ ] D6 coherent commits; clean worktree; update plan/state + worker-final receipt (HEAD/test proof/blockers=[]/productionUntouched=true).
+- [x] D1 focused exploit tests individually + together under Node 22.
+- [x] D2 `cd packages/server && npm run build && npx vitest run`.
+- [x] D3 `npm --prefix packages/app run build`.
+- [x] D4 `npm run ctrl:gate` serially.
+- [x] D5 self-review all route calls for raw-repository bypasses + SQL scope.
+- [x] D6 coherent commits; clean worktree; update plan/state + worker-final receipt (HEAD/test proof/blockers=[]/productionUntouched=true).
+
+
+## Final THE-931 category/name isolation closure — VERIFIED
+- [x] Category references on channel create/patch resolve through exact tenant scope; foreign and missing are indistinguishable with no mutation.
+- [x] Category/channel names are case-insensitively unique per org/team via four exact `name COLLATE NOCASE` partial indexes; cross-tenant duplicates are allowed.
+- [x] Generic migration derives from deployed `sqlite_master` definitions, preserves arbitrary columns/generated columns/constraints/indexes/triggers/relations, and passes `foreign_key_check`.
+- [x] Duplicate preflight, table rebuild, reserved-index replacement, and FK validation are atomic and retry-safe; wrong reserved index definitions are replaced.
+- [x] Focused supervisor: 37/37 PASS. Serial `npm run ctrl:gate`: app 415 + DB 54 + server 1344 PASS.
+- [x] Independent final review: PASS, blockerCount=0. Production untouched.

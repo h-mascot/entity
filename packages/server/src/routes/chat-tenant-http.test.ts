@@ -26,11 +26,14 @@ beforeAll(() => {
 
   // Seed chat resources with known org/team ownership.
   const repo = createChatRepository();
-  repo.createCategory({ id: 'cat-a', name: 'Cat A' });
-  repo.createChannel({ id: 'ch-a1', name: 'ch-a1', category_id: 'cat-a', org_id: 'org-a', team_id: 'team-a1' });
-  repo.createChannel({ id: 'ch-a2', name: 'ch-a2', category_id: 'cat-a', org_id: 'org-a', team_id: 'team-a2' });
-  repo.createChannel({ id: 'ch-a-orgwide', name: 'ch-a-orgwide', category_id: 'cat-a', org_id: 'org-a', team_id: undefined });
-  repo.createChannel({ id: 'ch-b1', name: 'ch-b1', category_id: 'cat-a', org_id: 'org-b', team_id: 'team-b1' });
+  repo.createCategory({ id: 'cat-a1', name: 'Cat A1', org_id: 'org-a', team_id: 'team-a1' });
+  repo.createCategory({ id: 'cat-a2', name: 'Cat A2', org_id: 'org-a', team_id: 'team-a2' });
+  repo.createCategory({ id: 'cat-a-orgwide', name: 'Cat A Orgwide', org_id: 'org-a' });
+  repo.createCategory({ id: 'cat-b1', name: 'Cat B1', org_id: 'org-b', team_id: 'team-b1' });
+  repo.createChannel({ id: 'ch-a1', name: 'ch-a1', category_id: 'cat-a1', org_id: 'org-a', team_id: 'team-a1' });
+  repo.createChannel({ id: 'ch-a2', name: 'ch-a2', category_id: 'cat-a2', org_id: 'org-a', team_id: 'team-a2' });
+  repo.createChannel({ id: 'ch-a-orgwide', name: 'ch-a-orgwide', category_id: 'cat-a-orgwide', org_id: 'org-a', team_id: undefined });
+  repo.createChannel({ id: 'ch-b1', name: 'ch-b1', category_id: 'cat-b1', org_id: 'org-b', team_id: 'team-b1' });
   repo.createMessage({ id: 'msg-a1', channel_id: 'ch-a1', sender: 'user', content: 'hi', org_id: 'org-a', team_id: 'team-a1' });
 
   // Seed principals + grants.
