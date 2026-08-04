@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
+<meta name="color-scheme" content="dark">
+<title>Files and documents · Entity Wiki</title>
+<style>
+:root{color-scheme:dark;--bg:#090b0e;--panel:#101318;--panel-2:#151920;--line:#252b34;--text:#f4f7fb;--muted:#9aa4b2;--quiet:#6f7a88;--accent:#63e6ff;--accent-soft:rgba(99,230,255,.1);--code:#0c1015;font-family:Inter,Geist,"SF Pro Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px}*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}body{line-height:1.65}.skip-link{position:fixed;left:1rem;top:-4rem;z-index:10;padding:.65rem .9rem;background:var(--accent);color:#041014;border-radius:.45rem;font-weight:700}.skip-link:focus{top:1rem}.wiki-shell{display:grid;grid-template-columns:minmax(15rem,19rem) minmax(0,1fr);min-height:100vh}.wiki-sidebar{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);background:var(--panel);padding:1.5rem 1rem}.wiki-brand{display:flex;align-items:center;gap:.65rem;margin:0 .5rem 1.5rem;font-size:.76rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.wiki-brand-mark{width:.7rem;height:.7rem;border-radius:50%;background:var(--accent);box-shadow:0 0 1rem rgba(99,230,255,.38)}.wiki-nav-list{display:grid;gap:.25rem;margin:0;padding:0;list-style:none}.wiki-nav-link{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.65rem .75rem;border:1px solid transparent;border-radius:.55rem;color:var(--muted);text-decoration:none;font-size:.88rem}.wiki-nav-link:hover,.wiki-nav-link:focus-visible{border-color:var(--line);background:var(--panel-2);color:var(--text);outline:none}.wiki-nav-link.is-active{border-color:rgba(99,230,255,.24);background:var(--accent-soft);color:var(--accent)}.wiki-nav-link small{color:var(--quiet);font-size:.64rem;text-transform:uppercase;letter-spacing:.08em}.wiki-main{min-width:0}.mobile-nav{display:none;border-bottom:1px solid var(--line);background:var(--panel);padding:.8rem 1rem}.mobile-nav summary{cursor:pointer;font-weight:700}.mobile-nav nav{margin-top:.75rem}.wiki-article{width:min(100%,74rem);margin:0 auto;padding:clamp(2rem,5vw,5rem) clamp(1.25rem,5vw,5rem) 4rem}.page-header{padding-bottom:2rem;border-bottom:1px solid var(--line);margin-bottom:2.5rem}.eyebrow{display:flex;align-items:center;gap:.65rem;color:var(--accent);font-size:.72rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.eyebrow-type:before{content:"/";margin-right:.65rem;color:var(--quiet)}h1{margin:.75rem 0 0;font-size:clamp(2.15rem,5vw,4.5rem);line-height:1.02;letter-spacing:-.045em;max-width:18ch}h2,h3,h4{scroll-margin-top:1.5rem;line-height:1.2;letter-spacing:-.02em}h2{margin:3rem 0 1rem;font-size:1.75rem;padding-top:.5rem}h3{margin:2.25rem 0 .75rem;font-size:1.25rem}.description{max-width:68ch;margin:1.1rem 0 0;color:var(--muted);font-size:1.04rem}.tags{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:1.25rem}.tag{border:1px solid var(--line);border-radius:999px;padding:.22rem .55rem;color:var(--muted);font-size:.7rem}.prose{max-width:78ch}.prose p,.prose li{color:#cbd2dc}.prose a{color:var(--accent);text-underline-offset:.2em}.prose a:hover{text-decoration-thickness:.13em}.prose code{border:1px solid var(--line);border-radius:.35rem;background:var(--code);padding:.12rem .32rem;color:#d9f8ff;font-size:.86em}.prose pre{overflow:auto;border:1px solid var(--line);border-radius:.7rem;background:var(--code);padding:1rem}.prose pre code{border:0;padding:0;background:transparent}.prose blockquote{margin:1.5rem 0;padding:.2rem 1rem;border-left:3px solid var(--accent);color:var(--muted)}.prose table{display:block;width:max-content;max-width:100%;overflow:auto;border-collapse:collapse;margin:1.5rem 0}.prose th,.prose td{border:1px solid var(--line);padding:.65rem .8rem;text-align:left}.prose th{background:var(--panel-2);color:var(--text)}.prose img{max-width:100%;height:auto;border-radius:.7rem}.image-unavailable{color:var(--quiet);font-style:italic}.pager{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:4rem;padding-top:1.5rem;border-top:1px solid var(--line)}.pager-link{display:flex;flex-direction:column;gap:.15rem;padding:.85rem 1rem;border:1px solid var(--line);border-radius:.65rem;color:var(--text);text-decoration:none}.pager-link:hover,.pager-link:focus-visible{border-color:var(--accent);outline:none}.pager-link small{color:var(--quiet);text-transform:uppercase;letter-spacing:.08em}.pager-next{text-align:right}@media(max-width:760px){.wiki-shell{display:block}.wiki-sidebar{display:none}.mobile-nav{display:block;position:sticky;top:0;z-index:2}.wiki-article{padding-top:2.5rem}h1{font-size:2.55rem}.pager{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#wiki-content">Skip to content</a>
+<div class="wiki-shell">
+<aside class="wiki-sidebar"><div class="wiki-brand"><span class="wiki-brand-mark"></span>Entity Wiki</div><nav aria-label="Wiki pages"><ul class="wiki-nav-list"><li><a class="wiki-nav-link" href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top"><span>Admin and extensions</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/agents-and-activity.html" target="_top"><span>Agents and activity</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/index.html" target="_top"><span>Files</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/swarm-plugins-admin.html" target="_top"><span>Swarm, plugins, and admin</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top"><span>Workspace and files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link is-active" href="/docs/source/entity-wiki/files-and-docs.html" target="_top" aria-current="page"><span>Files and documents</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/index.html" target="_top"><span>Files</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/mission-control.html" target="_top"><span>Mission Control</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/index.html" target="_top"><span>Files</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top"><span>Security, Testing, and Release Flow</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top"><span>Configuration, Admin, Plugins, and Services</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top"><span>Execution Engines and Proof</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/index.html" target="_top"><span>Files</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/desktop-mobile.html" target="_top"><span>Desktop and mobile shells</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/index.html" target="_top"><span>Files</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/quickstart.html" target="_top"><span>Entity Quickstart</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></aside>
+<main class="wiki-main" id="wiki-content">
+<details class="mobile-nav"><summary>Wiki navigation · Files and documents</summary><nav aria-label="Wiki pages"><ul class="wiki-nav-list"><li><a class="wiki-nav-link" href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top"><span>Admin and extensions</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/agents-and-activity.html" target="_top"><span>Agents and activity</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/index.html" target="_top"><span>Files</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/swarm-plugins-admin.html" target="_top"><span>Swarm, plugins, and admin</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top"><span>Workspace and files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link is-active" href="/docs/source/entity-wiki/files-and-docs.html" target="_top" aria-current="page"><span>Files and documents</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/index.html" target="_top"><span>Files</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/mission-control.html" target="_top"><span>Mission Control</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/index.html" target="_top"><span>Files</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top"><span>Security, Testing, and Release Flow</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top"><span>Configuration, Admin, Plugins, and Services</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top"><span>Execution Engines and Proof</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/index.html" target="_top"><span>Files</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/desktop-mobile.html" target="_top"><span>Desktop and mobile shells</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/index.html" target="_top"><span>Files</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/quickstart.html" target="_top"><span>Entity Quickstart</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></details>
+<article class="wiki-article">
+<header class="page-header"><div class="eyebrow"><span>Entity Wiki</span><span class="eyebrow-type">Feature Surface</span></div><h1>Files and documents</h1><p class="description">File browsing and document workspace surface for Entity. Covers the unified file dashboard, Doc Hub chrome, document editor, file sources, document collaboration records, and docs-serving routes.</p><div class="tags" aria-label="Tags"><span class="tag">entity</span><span class="tag">files</span><span class="tag">docs</span><span class="tag">doc-hub</span><span class="tag">collaboration</span><span class="tag">file-sources</span></div></header>
+<div class="prose"><p>The Files area is a shared workspace for browsing content from one or more sources, opening documents, editing markdown-like files, and keeping collaboration state attached to the document.</p>
+<p>The main source seams are:</p>
+<ul>
+<li><code>packages/app/src/views/FilesView.tsx</code> for the top-level Files route.</li>
+<li><code>packages/app/src/components/UnifiedFileDashboard.tsx</code> for the multi-source browser.</li>
+<li><code>packages/app/src/components/doc-hub/DocHubWorkspaceChrome.tsx</code> for the tabbed Doc Hub chrome.</li>
+<li><code>packages/app/src/views/DocumentEditorView.tsx</code> and related editor components for editing, comments, suggestions, and review markers.</li>
+<li><code>packages/server/src/routes/docs.ts</code>, <code>packages/server/src/routes/documents.ts</code>, and <code>packages/server/src/routes/search.ts</code> for document serving and document APIs.</li>
+<li><code>packages/db/src/file-sources.ts</code> and <code>packages/db/src/document-collab.ts</code> for source registration and collaboration persistence.</li>
+<li><code>packages/server/src/config/runtime.ts</code>, <code>packages/server/src/config/schema.ts</code>, <code>packages/server/src/fs/adapters/local.ts</code>, <code>packages/server/src/fs/adapters/http-markdown.ts</code>, <code>packages/server/src/fs/routes-sources.ts</code>, and <code>packages/server/src/fs/routes-files.ts</code> for bootstrap allowlisting, read-only enforcement, and remote raw-read handling on local and HTTP-backed file sources.</li>
+</ul>
+<h2 id="what-users-can-do">What users can do</h2>
+<ul>
+<li>Browse files from the workspace and other configured sources.</li>
+<li>Open documents in a tabbed Doc Hub shell.</li>
+<li>Edit content in the document editor.</li>
+<li>Read markdown previews and file history.</li>
+<li>Switch between file sources when multi-source browsing is enabled.</li>
+<li>See comments, suggestions, presence, authorship ranges, and review runs attached to the document.</li>
+<li>Use text-to-speech controls for document reading where enabled.</li>
+</ul>
+<h2 id="unified-file-browsing">Unified file browsing</h2>
+<p><code>FilesView</code> decides whether the user sees the unified dashboard or a simpler “select a file” fallback. The decision is controlled by the runtime flag exposed to the view as <code>fsMultiSourceEnabled</code>.</p>
+<p>When multi-source browsing is enabled, the UI renders <code>UnifiedFileDashboard</code>, which is the product’s primary entry into source selection and file browsing. The dashboard and source tree are consistent with the file source registry in <code>packages/db/src/file-sources.ts</code>, which stores source type, base path, base URL, auth type, enabled state, icon, health, and sync timestamps.</p>
+<p>The example config in <code>entity.config.example.yaml</code> shows two local sources by default: <code>workspace</code> and <code>entity-wiki</code>. The wiki source is declared <code>readOnly: true</code>, and runtime bootstrap adds configured local file-source roots to <code>ENTITY_FS_LOCAL_SOURCE_ROOTS</code> so the allowlist covers trusted roots before the adapter enforces read-only behavior. The effective-config path now reconstructs stored capabilities into <code>readOnly</code>, so Admin and file-source views stay aligned with the Entity Wiki bootstrap contract.</p>
+<h2 id="doc-hub-and-document-editing">Doc Hub and document editing</h2>
+<p><code>DocHubWorkspaceChrome</code> keeps document tabs and top-level workspace actions together. It is the shell around the document editor, not the editor itself.</p>
+<p>The editor-specific state is persisted in <code>packages/db/src/document-collab.ts</code>. That schema stores:</p>
+<ul>
+<li>document sessions;</li>
+<li>authorship ranges and history;</li>
+<li>presence records;</li>
+<li>comments and replies;</li>
+<li>suggestions with open/accepted/rejected state;</li>
+<li>review runs with pending/running/completed/failed state.</li>
+</ul>
+<pre><code class="language-mermaid">erDiagram
+  document_sessions ||--o{ document_presence : tracks
+  document_sessions ||--o{ document_comment : contains
+  document_sessions ||--o{ document_suggestion : contains
+  document_sessions ||--o{ document_review_run : contains
+  document_sessions ||--o{ document_authorship_range : annotates
+  document_sessions ||--o{ document_authorship_history : records
+  document_comment ||--o{ document_comment_reply : has
+</code></pre>
+<p>That collaboration layer is what makes the Files surface more than a file browser: it is the shared document state that the UI can render and the server can validate.</p>
+<h2 id="document-serving-and-access-control">Document serving and access control</h2>
+<p><code>packages/server/src/routes/docs.ts</code> resolves document paths from several allowed roots, including workspace-backed candidates and legacy fallback roots. It rejects path traversal and only allows text-oriented file extensions.</p>
+<p><code>packages/server/src/routes/documents.ts</code> adds the document-specific API surface. That route is where document sessions, blocks, presence, snapshots, events, and share-token authorization are handled.</p>
+<p>The access model is explicit:</p>
+<ul>
+<li>public documents are readable without a share token;</li>
+<li>shared/private documents require a valid token from the <code>Authorization: Bearer ...</code> header, <code>X-Share-Token</code>, or <code>?token=</code> query parameter;</li>
+<li>document edits and events are persisted in SQLite-backed tables.</li>
+</ul>
+<p>Local file sources add another boundary: the server seeds trusted local roots into <code>ENTITY_FS_LOCAL_SOURCE_ROOTS</code> during bootstrap, the local adapter reports <code>readOnly</code> in stored capabilities, and <code>packages/server/src/fs/routes-files.ts</code> rejects write requests when the adapter says the source is read-only. The adapter itself also blocks direct <code>write</code> and <code>mkdir</code> calls for read-only sources, so both the HTTP surface and the adapter layer enforce the same contract. The HTTP markdown adapter follows the same read-only rule, but its <code>readRaw</code> path can still return binary content and the file route will flag the payload as <code>isBinary</code> when the text read path rejects a non-text resource. The file-source API also refuses to delete config-managed local sources and preserves the <code>entity.config.yaml</code> source marker on updates, which closes the delete/recreate path that could otherwise bypass the trusted read-only policy. New local source registrations also inherit read-only policy when their root overlaps any protected read-only local root, so same-root, parent, and child aliases cannot be used to regain writes around a trusted wiki source.</p>
+<h2 id="change-notes-for-future-agents">Change notes for future agents</h2>
+<p>When changing Files / Doc Hub, check these seams together:</p>
+<ol>
+<li><code>packages/app/src/views/FilesView.tsx</code> and <code>packages/app/src/components/UnifiedFileDashboard.tsx</code> for navigation and source selection.</li>
+<li><code>packages/app/src/views/DocumentEditorView.tsx</code> and <code>packages/app/src/components/doc-hub/DocHubWorkspaceChrome.tsx</code> for editing and tabs.</li>
+<li><code>packages/server/src/routes/docs.ts</code> and <code>packages/server/src/routes/documents.ts</code> for serving and authorization.</li>
+<li><code>packages/db/src/file-sources.ts</code> and <code>packages/db/src/document-collab.ts</code> for persistence.</li>
+</ol>
+<p>If you change the allowed document file types or auth model, update the server route and the UI together so the workspace does not offer a capability the backend rejects.</p>
+</div>
+<nav class="pager" aria-label="Adjacent wiki pages"><a href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top" class="pager-link"><small>Previous</small><strong>← Workspace and files</strong></a><a href="/docs/source/entity-wiki/index.html" target="_top" class="pager-link pager-next"><small>Next</small><strong>Files →</strong></a></nav>
+</article>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
+<meta name="color-scheme" content="dark">
+<title>Entity Quickstart · Entity Wiki</title>
+<style>
+:root{color-scheme:dark;--bg:#090b0e;--panel:#101318;--panel-2:#151920;--line:#252b34;--text:#f4f7fb;--muted:#9aa4b2;--quiet:#6f7a88;--accent:#63e6ff;--accent-soft:rgba(99,230,255,.1);--code:#0c1015;font-family:Inter,Geist,"SF Pro Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px}*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}body{line-height:1.65}.skip-link{position:fixed;left:1rem;top:-4rem;z-index:10;padding:.65rem .9rem;background:var(--accent);color:#041014;border-radius:.45rem;font-weight:700}.skip-link:focus{top:1rem}.wiki-shell{display:grid;grid-template-columns:minmax(15rem,19rem) minmax(0,1fr);min-height:100vh}.wiki-sidebar{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);background:var(--panel);padding:1.5rem 1rem}.wiki-brand{display:flex;align-items:center;gap:.65rem;margin:0 .5rem 1.5rem;font-size:.76rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.wiki-brand-mark{width:.7rem;height:.7rem;border-radius:50%;background:var(--accent);box-shadow:0 0 1rem rgba(99,230,255,.38)}.wiki-nav-list{display:grid;gap:.25rem;margin:0;padding:0;list-style:none}.wiki-nav-link{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.65rem .75rem;border:1px solid transparent;border-radius:.55rem;color:var(--muted);text-decoration:none;font-size:.88rem}.wiki-nav-link:hover,.wiki-nav-link:focus-visible{border-color:var(--line);background:var(--panel-2);color:var(--text);outline:none}.wiki-nav-link.is-active{border-color:rgba(99,230,255,.24);background:var(--accent-soft);color:var(--accent)}.wiki-nav-link small{color:var(--quiet);font-size:.64rem;text-transform:uppercase;letter-spacing:.08em}.wiki-main{min-width:0}.mobile-nav{display:none;border-bottom:1px solid var(--line);background:var(--panel);padding:.8rem 1rem}.mobile-nav summary{cursor:pointer;font-weight:700}.mobile-nav nav{margin-top:.75rem}.wiki-article{width:min(100%,74rem);margin:0 auto;padding:clamp(2rem,5vw,5rem) clamp(1.25rem,5vw,5rem) 4rem}.page-header{padding-bottom:2rem;border-bottom:1px solid var(--line);margin-bottom:2.5rem}.eyebrow{display:flex;align-items:center;gap:.65rem;color:var(--accent);font-size:.72rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.eyebrow-type:before{content:"/";margin-right:.65rem;color:var(--quiet)}h1{margin:.75rem 0 0;font-size:clamp(2.15rem,5vw,4.5rem);line-height:1.02;letter-spacing:-.045em;max-width:18ch}h2,h3,h4{scroll-margin-top:1.5rem;line-height:1.2;letter-spacing:-.02em}h2{margin:3rem 0 1rem;font-size:1.75rem;padding-top:.5rem}h3{margin:2.25rem 0 .75rem;font-size:1.25rem}.description{max-width:68ch;margin:1.1rem 0 0;color:var(--muted);font-size:1.04rem}.tags{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:1.25rem}.tag{border:1px solid var(--line);border-radius:999px;padding:.22rem .55rem;color:var(--muted);font-size:.7rem}.prose{max-width:78ch}.prose p,.prose li{color:#cbd2dc}.prose a{color:var(--accent);text-underline-offset:.2em}.prose a:hover{text-decoration-thickness:.13em}.prose code{border:1px solid var(--line);border-radius:.35rem;background:var(--code);padding:.12rem .32rem;color:#d9f8ff;font-size:.86em}.prose pre{overflow:auto;border:1px solid var(--line);border-radius:.7rem;background:var(--code);padding:1rem}.prose pre code{border:0;padding:0;background:transparent}.prose blockquote{margin:1.5rem 0;padding:.2rem 1rem;border-left:3px solid var(--accent);color:var(--muted)}.prose table{display:block;width:max-content;max-width:100%;overflow:auto;border-collapse:collapse;margin:1.5rem 0}.prose th,.prose td{border:1px solid var(--line);padding:.65rem .8rem;text-align:left}.prose th{background:var(--panel-2);color:var(--text)}.prose img{max-width:100%;height:auto;border-radius:.7rem}.image-unavailable{color:var(--quiet);font-style:italic}.pager{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:4rem;padding-top:1.5rem;border-top:1px solid var(--line)}.pager-link{display:flex;flex-direction:column;gap:.15rem;padding:.85rem 1rem;border:1px solid var(--line);border-radius:.65rem;color:var(--text);text-decoration:none}.pager-link:hover,.pager-link:focus-visible{border-color:var(--accent);outline:none}.pager-link small{color:var(--quiet);text-transform:uppercase;letter-spacing:.08em}.pager-next{text-align:right}@media(max-width:760px){.wiki-shell{display:block}.wiki-sidebar{display:none}.mobile-nav{display:block;position:sticky;top:0;z-index:2}.wiki-article{padding-top:2.5rem}h1{font-size:2.55rem}.pager{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#wiki-content">Skip to content</a>
+<div class="wiki-shell">
+<aside class="wiki-sidebar"><div class="wiki-brand"><span class="wiki-brand-mark"></span>Entity Wiki</div><nav aria-label="Wiki pages"><ul class="wiki-nav-list"><li><a class="wiki-nav-link" href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top"><span>Admin and extensions</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/agents-and-activity.html" target="_top"><span>Agents and activity</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/index.html" target="_top"><span>Files</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/swarm-plugins-admin.html" target="_top"><span>Swarm, plugins, and admin</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top"><span>Workspace and files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/files-and-docs.html" target="_top"><span>Files and documents</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/index.html" target="_top"><span>Files</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/mission-control.html" target="_top"><span>Mission Control</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/index.html" target="_top"><span>Files</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top"><span>Security, Testing, and Release Flow</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top"><span>Configuration, Admin, Plugins, and Services</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top"><span>Execution Engines and Proof</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/index.html" target="_top"><span>Files</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/desktop-mobile.html" target="_top"><span>Desktop and mobile shells</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/index.html" target="_top"><span>Files</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link is-active" href="/docs/source/entity-wiki/quickstart.html" target="_top" aria-current="page"><span>Entity Quickstart</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></aside>
+<main class="wiki-main" id="wiki-content">
+<details class="mobile-nav"><summary>Wiki navigation · Entity Quickstart</summary><nav aria-label="Wiki pages"><ul class="wiki-nav-list"><li><a class="wiki-nav-link" href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top"><span>Admin and extensions</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/agents-and-activity.html" target="_top"><span>Agents and activity</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/index.html" target="_top"><span>Files</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/swarm-plugins-admin.html" target="_top"><span>Swarm, plugins, and admin</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top"><span>Workspace and files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/files-and-docs.html" target="_top"><span>Files and documents</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/index.html" target="_top"><span>Files</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/mission-control.html" target="_top"><span>Mission Control</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/index.html" target="_top"><span>Files</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top"><span>Security, Testing, and Release Flow</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top"><span>Configuration, Admin, Plugins, and Services</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top"><span>Execution Engines and Proof</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/index.html" target="_top"><span>Files</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/desktop-mobile.html" target="_top"><span>Desktop and mobile shells</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/index.html" target="_top"><span>Files</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link is-active" href="/docs/source/entity-wiki/quickstart.html" target="_top" aria-current="page"><span>Entity Quickstart</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></details>
+<article class="wiki-article">
+<header class="page-header"><div class="eyebrow"><span>Entity Wiki</span><span class="eyebrow-type">Product Guide</span></div><h1>Entity Quickstart</h1><p class="description">Entry point to Entity, an AI-native workspace for files, tasks, agents, collaboration, execution providers, plugins, and operational proof.</p><div class="tags" aria-label="Tags"><span class="tag">entity</span><span class="tag">quickstart</span><span class="tag">product</span><span class="tag">engineering</span></div></header>
+<div class="prose"><p>Entity is a local-first, server-backed workspace where humans can inspect, steer, and review agent work. Its implemented product surfaces bring tasks, files, documents, agent state, activity, chat, services, plugins, and operational evidence into one React application. Source presence does <strong>not</strong> prove deployment rollout: <code>/api/version</code>, release metadata, sandbox validation, and deployment receipts remain authoritative for any live environment.</p>
+<h2 id="start-locally">Start locally</h2>
+<p>Prerequisites are Node.js 20+ and npm.</p>
+<pre><code class="language-bash">npm install
+npm run setup
+npm run build
+npm run doctor
+npm run dev
+</code></pre>
+<p>Open <code>http://localhost:3000</code>. <code>npm run setup</code> creates local configuration, seeds the read-only Entity Wiki local file source at <code>./openwiki-html</code>, and normally prepares the optional ClickClack chat sidecar; use <code>npm run setup -- --skip-clickclack</code> when only the core workspace is needed. The Express server serves the built frontend, so rebuild <code>packages/app</code> after UI changes unless using the separate Vite development loop documented in <code>README.md</code>.</p>
+<p>The default configuration is loopback-only and local-first. Do not expose it on a network without understanding the <a href="/docs/source/entity-wiki/operations/security-and-release.html#network-and-authentication-boundary" target="_top">security boundary</a>.</p>
+<h2 id="what-users-can-do">What users can do</h2>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Implemented capability</th>
+<th>Important boundary</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Files</td>
+<td>Search and filter configured sources, browse trees, open tabs, read and edit source-backed files, and enter collaboration views</td>
+<td>Multi-source home is controlled by <code>VITE_ENTITY_FS_MULTISOURCE</code>; cached reads can mask an unavailable source</td>
+</tr>
+<tr>
+<td>Mission Control</td>
+<td>Create, assign, move, filter, review, gate, comment on, and inspect tasks across Kanban, Insights, and Strategic views</td>
+<td>A recorded handoff does not itself prove an agent runtime was dispatched</td>
+</tr>
+<tr>
+<td>Agents</td>
+<td>Inspect registry identity, focus, model/runtime metadata, work, health, metrics, and activity; invoke limited runtime controls when eligible</td>
+<td>Registry failure degrades management details; safe controls require a bound Helm-managed runtime</td>
+</tr>
+<tr>
+<td>Services</td>
+<td>View plugin-supplied service families, health, latency, links, and degraded/offline states</td>
+<td>The <code>entity-services</code> plugin and its compiled frontend mount must both be available</td>
+</tr>
+<tr>
+<td>Chat</td>
+<td>Use channel/thread UI and model-routing plumbing</td>
+<td>ClickClack compatibility routing is optional and sidecar-dependent</td>
+</tr>
+<tr>
+<td>Admin</td>
+<td>Configure workspace behavior, file sources, Task Master, document credentials, plugins, TTS, integrations, agent registry, presentation, and users &amp; roles</td>
+<td>Not every setting is hot-reloadable; bootstrap path changes require restart</td>
+</tr>
+</tbody></table>
+<p>The <a href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top">Files and documents</a> experience connects source browsing to native document collaboration, task output links, and document conversion from writable local sources, and it now reflects the read-only local-source bootstrap path for the Entity Wiki source. <a href="/docs/source/entity-wiki/mission-control.html" target="_top">Mission Control</a> owns execution planning, accountability, comments, reviews, gates, and handoff records. The <a href="/docs/source/entity-wiki/agents-and-activity.html" target="_top">Agents and activity</a> surface joins registry data with health and activity rather than treating agents as transient chat sessions. <a href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top">Admin and extensions</a> covers principals, scoped grants, file sources, settings, plugins, and services, including the server-trusted <code>accessControl.apiPrincipalId</code> binding used by the first-admin bootstrap flow. <a href="/docs/source/entity-wiki/runtime-and-release.html" target="_top">Runtime and release</a> is the canonical home for the hardened OpenWiki integration, release checks, and docs freshness rules, including isolated credential-file HOME handling, supported-provider validation, complete shipped-source fingerprinting, HTML presentation rendering into <code>openwiki-html/</code>, the <code>scripts/entity-wiki-config-migrate.mjs</code> bootstrap path update, exact clean-checkout identity checks, cross-platform remote Node discovery, truthful detached gateway branch identity checks against exact origin branch refs, credential-free proxy handling, JSON-over-stdin release metadata dispatch through <code>scripts/entity-release-info-stdin.mjs</code>, and guaranteed cleanup of the isolated HOME even when <code>pnpm install</code> or OpenWiki fails. Entity refreshes OpenWiki before sandbox shipping on the trusted Enterprise runner, and GitHub Actions verifies that committed generated docs remain fresh against the pull request head rather than the merge commit, including fork-aware head checkouts on pull requests.</p>
+<h2 id="how-the-system-fits-together">How the system fits together</h2>
+<p>The React application uses state-driven tabs and hand-written history handling rather than a conventional router. It calls an Express/HTTP and WebSocket server, which composes core routes, SQLite repositories, file adapters, the editor subsystem, Task Master, plugins, and Swarm. Read <a href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top">Runtime and data architecture</a> for the route families and persisted model.</p>
+<p><a href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top">Execution and proof</a> explains why Task Master automation, Swarm provider execution, Swarm proof, and canonical task receipts are separate concepts. <a href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top">Configuration and plugins</a> describes config precedence, Admin surfaces, model settings, plugin mounts, and Entity Services. <a href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top">Security and release</a> covers authentication, stored-principal admin authorization, partial object authorization, testing, and the staged release contract. <a href="/docs/source/entity-wiki/runtime-and-release.html" target="_top">Runtime and release</a> is also the canonical home for the OpenWiki generation, prepare, verify, and remote release metadata flow, including the <code>scripts/entity-release-info-stdin.mjs</code> wrapper that carries JSON metadata over stdin and the <code>openwiki-html/</code> presentation tree plus its <code>scripts/entity-wiki-config-migrate.mjs</code> bootstrap path update and file-index HTML extraction support.</p>
+<h2 id="desktop-and-mobile">Desktop and mobile</h2>
+<ul>
+<li><code>npm run desktop</code> starts the canonical Electron shell in <code>electron/</code>. It probes the configured Entity server, can start the local server from a development checkout, retries connection, and renders the same web workspace. <code>packages/desktop</code> is a legacy forwarding wrapper, not the canonical implementation.</li>
+<li><code>cd packages/mobile &amp;&amp; npx expo start</code> starts the Expo WebView shell. A physical phone needs a reachable LAN URL. The wrapper performs connectivity setup; product behavior remains in the responsive web frontend rather than native domain code.</li>
+<li>Recent git history added standalone Electron and Expo shells and then concentrated on responsive task, Files, chat, activity, and Admin behavior. This supports source-level availability, not store distribution or production rollout.</li>
+</ul>
+<p>Both shells depend on the <a href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top">server runtime</a>; neither is an independent offline implementation of Entity.</p>
+<h2 id="where-to-start-when-changing-entity">Where to start when changing Entity</h2>
+<ol>
+<li>Identify the owning product concept above, then follow its linked page to frontend, server, data, flags, and tests.</li>
+<li>Inspect executable source before plans or issue text. <code>packages/app/src/App.tsx</code> is the cross-surface shell; <code>packages/server/src/index.ts</code> is the composition root; <code>packages/db/src/index.ts</code> owns much of the shared schema.</li>
+<li>Preserve route and data compatibility: several APIs have both <code>/api/*</code> and legacy unprefixed mirrors.</li>
+<li>Add or update focused server Vitest coverage for server changes. Build and browser-check user-facing changes.</li>
+<li>Treat deployment status separately from implementation status; use the <a href="/docs/source/entity-wiki/operations/security-and-release.html#release-and-rollout-truth" target="_top">release evidence flow</a>.</li>
+<li>For documentation automation, follow the local <code>docs:wiki:init</code>, <code>docs:wiki:update</code>, <code>docs:wiki:prepare</code>, and <code>docs:wiki:verify</code> commands surfaced in <a href="/docs/source/entity-wiki/runtime-and-release.html" target="_top">Runtime and release</a>; <code>docs:wiki:prepare</code> now skips regeneration when the wiki fingerprint is already fresh, so sandbox shipping only regenerates docs when the tracked source set actually changed, and <code>deploy.sh</code> verifies the exact source checkout before syncing. The fingerprint logic now also treats tracked source nested under <code>build</code> and <code>dist</code> path segments as shipped input, matching the finalized source-fingerprint tests and keeping release-gate coverage aligned with generated-doc verification.</li>
+</ol>
+<h2 id="verification-commands">Verification commands</h2>
+<pre><code class="language-bash">npm --prefix packages/app run build
+npm --prefix packages/server run build
+npm --prefix packages/server run test
+npm run ctrl:gate
+npm run test:e2e
+</code></pre>
+<p><code>npm test</code> and <code>npm run test:e2e</code> invoke the browser smoke harness; server unit coverage is the Vitest workspace script. Browser verification is required by repository guidance for user-facing routes and workflows when available.</p>
+<h2 id="backlog">Backlog</h2>
+<ul>
+<li><strong>Chat and ClickClack deep dive</strong> — <code>packages/server/src/routes/chat.ts</code>, <code>packages/server/src/clickclack/</code>, and chat components; deferred to keep the initial wiki focused on the required work-management domains.</li>
+<li><strong>Terminal, notifications, and operational status</strong> — <code>packages/server/src/terminal.ts</code>, <code>routes/notifications.ts</code>, and <code>routes/operational-status.ts</code>; implemented supporting surfaces merit a later operations page.</li>
+<li><strong>Document collaboration schema detail</strong> — <code>packages/db/src/document-collab.ts</code>; the initial Files page covers behavior and boundaries, while a full collaboration ER model is deferred.</li>
+<li><strong>Crews, roadmaps, and subscriptions</strong> — relevant repositories and routes in <code>packages/db/src/index.ts</code> and server route modules; secondary to the core task/agent workflow in this first pass.</li>
+<li><strong>OpenWiki automation loop</strong> — <code>scripts/entity-openwiki.mjs</code>, <code>scripts/entity-openwiki-lib.mjs</code>, <code>scripts/entity-openwiki-html.mjs</code>, <code>packages/app/scripts/entity-openwiki-html-lib.mjs</code>, <code>.github/workflows/loop-docs-sweep.yml</code>, <code>.github/workflows/main.yml</code>, <code>scripts/entity-deploy-sandbox.sh</code>, and <code>scripts/entity-promote-prod.sh</code>; now documented on <a href="/docs/source/entity-wiki/runtime-and-release.html" target="_top">Runtime and release</a>, which owns the generation, prepare, and verify flow plus the GitHub freshness boundary. The <code>prepare</code> path now checks generated-doc cleanliness first, skips generation when the wiki fingerprint is already fresh, and regenerates only when stale so timestamp churn does not block sandbox deploys. The fingerprint now includes the repo roots meant to ship, and the finalized coverage explicitly proves tracked source nested under <code>build</code> and <code>dist</code> path segments still affects the docs gate. The launcher now also isolates its credential-file HOME, restricts provider credentials to the selected provider, and validates the requested provider against the supported set, with local Codex OAuth tokens translated only when the <code>openai-chatgpt</code> provider is used. <code>scripts/entity-release-check.sh</code> remains the fail-closed dirty-worktree guard that keeps deploys tied to the exact checked-out source, and <code>deploy.sh</code> now adds explicit config, exact-checkout, fingerprint, database, backup, and restart gates before sync while writing release/runtime metadata remotely only after the docs gate passes. <code>/.github/workflows/main.yml</code> now checks out the PR head after the merge-tree test phase and before <code>docs:wiki:verify</code>, including fork-aware head checkouts so the docs gate validates the exact pull-request tip. The webhook deployer and gateway pull deployer also now pass exact release identity through <code>ENTITY_RELEASE_SHA</code> and <code>ENTITY_RELEASE_BRANCH</code>, with the webhook path fetching <code>origin/main</code> durably before checkout. <code>scripts/entity-release-info-stdin.mjs</code> is the JSON-over-stdin wrapper that keeps metadata arguments data and delegates to <code>scripts/entity-release-info.mjs</code>, and the remote Node binary resolved by <code>deploy.sh</code> is reused for both metadata generation and fallback service restart, keeping the same validated executable across release-info writes and restart handling. The release manifest writer now records branch, git SHA, artifact hashes, and dist hashes for the shipped build outputs, so the release page is the canonical home for the new release-identity shape and remote metadata write flow. The new HTML presentation flow renders the wiki into <code>openwiki-html/</code>, rewrites internal links for docs hosting, and is kept fresh by <code>docs:wiki:render</code>, <code>docs:wiki:prepare</code>, and <code>scripts/entity-wiki-config-migrate.mjs</code>.</li>
+<li><strong>Config-managed file source deletion guard</strong> — <code>packages/server/src/fs/routes-sources.ts</code> and <code>packages/server/src/fs/routes-sources.test.ts</code>; now reflected in <a href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top">Files and documents</a> and the configuration page, but the route-level test details are deferred because the core behavior is already covered.</li>
+<li><strong>OpenWiki HTML presentation and config migration</strong> — <code>scripts/entity-openwiki-html.mjs</code>, <code>packages/app/scripts/entity-openwiki-html-lib.mjs</code>, <code>scripts/entity-wiki-config-migrate.mjs</code>, and <code>packages/server/src/fs/index-runner.ts</code>; the presentation tree is now a first-class docs artifact, its config bootstrap path moved from <code>./openwiki</code> to <code>./openwiki-html</code>, and the file index now extracts human-readable titles and previews from generated HTML. This run documents the release/runtime implications but defers a dedicated files page because the user-facing effect is still narrow.</li>
+<li><strong>File indexing and HTML extraction</strong> — <code>packages/server/src/fs/classify.ts</code> and <code>packages/server/src/fs/index-runner.ts</code>; the indexer now strips HTML tags and entities before it derives titles and text for source entries, which keeps rendered wiki pages searchable without storing markup as content.</li>
+</ul>
+</div>
+<nav class="pager" aria-label="Adjacent wiki pages"><a href="/docs/source/entity-wiki/platforms/index.html" target="_top" class="pager-link"><small>Previous</small><strong>← Files</strong></a><a href="/docs/source/entity-wiki/runtime-and-release.html" target="_top" class="pager-link pager-next"><small>Next</small><strong>Runtime and release →</strong></a></nav>
+</article>
+</main>
+</div>
+</body>
+</html>

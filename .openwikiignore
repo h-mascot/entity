@@ -7,6 +7,9 @@ node_modules/
 .tmp/
 output/
 .loop-cache/
+/openwiki-html/
+/.openwiki-html-backup-*/
+/.openwiki-html-tmp-*/
 
 # Runtime state, databases, logs, and credentials
 .env

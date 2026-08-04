@@ -1,6 +1,6 @@
 import { createFileIndexRepository } from '../../../db/src/file-index';
 import { createFileSourceRepository, type FileSourceRecord } from '../../../db/src/file-sources';
-import { classifyFile } from './classify';
+import { classifyFile, extractIndexableFileContent } from './classify';
 import { createFileSourceAdapter } from './adapters/registry';
 import { emitFsAudit } from './security';
 import { recordFsOperation } from './metrics';
@@ -394,6 +394,7 @@ export class FileIndexRunner {
           try {
             const file = await adapter.read(filePath);
             const classification = classifyFile(filePath, file.content);
+            const indexable = extractIndexableFileContent(filePath, file.content);
 
             this.indexRepo.upsertRecord({
               id: `${source.id}:${filePath}`,
@@ -408,7 +409,7 @@ export class FileIndexRunner {
               tags: JSON.stringify(classification.tags),
               updated_at: file.updatedAt ?? metadata.updatedAt ?? null,
               indexed_at: new Date().toISOString(),
-              preview: file.content.slice(0, 280),
+              preview: indexable.text.slice(0, 280),
               content_hash: classification.contentHash,
               org_id: metadata.orgId ?? null,
               sensitivity: metadata.sensitivity ?? null,

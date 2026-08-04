@@ -18,6 +18,10 @@ import {
   verifyGeneratedWiki,
   writeGenerationMetadata,
 } from "./entity-openwiki-lib.mjs";
+import {
+  renderOpenWikiHtml,
+  verifyOpenWikiHtml,
+} from "../packages/app/scripts/entity-openwiki-html-lib.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const requestedMode = process.argv[2] ?? "update";
@@ -26,7 +30,8 @@ const userMessage = process.argv.slice(3).join(" ");
 
 if (requestedMode === "verify") {
   const metadata = await verifyGeneratedWiki(root);
-  console.log(`[entity-openwiki] verified source fingerprint ${metadata.sourceFingerprint}`);
+  const presentation = await verifyOpenWikiHtml(root);
+  console.log(`[entity-openwiki] verified source fingerprint ${metadata.sourceFingerprint} and ${presentation.documentCount} HTML pages`);
   process.exit(0);
 }
 if (!new Set(["init", "update"]).has(mode)) {
@@ -36,7 +41,7 @@ if (!new Set(["init", "update"]).has(mode)) {
 
 if (requestedMode === "prepare") {
   const initialStatus = spawnSync("git", [
-    "status", "--porcelain", "--untracked-files=normal", "--", "openwiki", "AGENTS.md", "CLAUDE.md",
+    "status", "--porcelain", "--untracked-files=normal", "--", "openwiki", "openwiki-html", "AGENTS.md", "CLAUDE.md",
   ], { cwd: root, encoding: "utf8" });
   if (initialStatus.error) throw initialStatus.error;
   if (initialStatus.status !== 0) process.exit(initialStatus.status ?? 1);
@@ -54,7 +59,22 @@ if (requestedMode === "prepare") {
     // A stale or incomplete wiki must be regenerated below.
   }
   if (!shouldRunOpenWiki(requestedMode, wikiIsFresh)) {
-    console.log("[entity-openwiki] wiki is already fresh; prepare skipped generation.");
+    try {
+      await verifyOpenWikiHtml(root);
+    } catch {
+      await renderOpenWikiHtml(root);
+      const presentationStatus = spawnSync("git", [
+        "status", "--porcelain", "--untracked-files=normal", "--", "openwiki-html",
+      ], { cwd: root, encoding: "utf8" });
+      if (presentationStatus.error) throw presentationStatus.error;
+      if (presentationStatus.status !== 0) process.exit(presentationStatus.status ?? 1);
+      if (!generatedWikiStatusIsClean(presentationStatus.stdout)) {
+        console.error("[entity-openwiki] HTML presentation changed. Review and commit these files, then rerun shipping:");
+        console.error(presentationStatus.stdout.trimEnd());
+        process.exit(75);
+      }
+    }
+    console.log("[entity-openwiki] wiki and HTML presentation are already fresh; prepare skipped generation.");
     process.exit(0);
   }
 }
@@ -123,11 +143,13 @@ await writeGenerationMetadata(root, {
   provider,
   model,
 });
+const presentation = await renderOpenWikiHtml(root);
 const metadata = await verifyGeneratedWiki(root);
-console.log(`[entity-openwiki] generated and verified ${metadata.sourceFingerprint}`);
+await verifyOpenWikiHtml(root);
+console.log(`[entity-openwiki] generated and verified ${metadata.sourceFingerprint} with ${presentation.documentCount} HTML pages`);
 if (requestedMode === "prepare") {
   const statusResult = spawnSync("git", [
-    "status", "--porcelain", "--untracked-files=normal", "--", "openwiki", "AGENTS.md", "CLAUDE.md",
+    "status", "--porcelain", "--untracked-files=normal", "--", "openwiki", "openwiki-html", "AGENTS.md", "CLAUDE.md",
   ], { cwd: root, encoding: "utf8" });
   if (statusResult.error) throw statusResult.error;
   if (statusResult.status !== 0) process.exit(statusResult.status ?? 1);

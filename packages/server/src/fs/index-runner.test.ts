@@ -207,6 +207,29 @@ describe('FileIndexRunner deterministic incident skips', () => {
     expect(reconcileSourcePathsMock).toHaveBeenCalledWith('book', ['notes/current.md']);
   });
 
+  it('stores readable titles and previews for generated HTML files', async () => {
+    listSourcesMock.mockReturnValue([bookSource]);
+    const htmlPath = 'quickstart.html';
+    const fixtures = new Map<string, FixtureNode[]>([['', [node(htmlPath, false)]]]);
+    const metadataByPath = new Map<string, FixtureMetadata>([[htmlPath, metadata(htmlPath, 'file')]]);
+    const bookAdapter = createAdapter(fixtures, metadataByPath, new Set());
+    bookAdapter.read.mockResolvedValue({
+      content: '<!doctype html><html><head><style>.x{}</style></head><body><h1>Entity Quickstart</h1><p>Start &amp; verify.</p></body></html>',
+      updatedAt: '2026-06-17T00:00:00.000Z',
+    });
+    createFileSourceAdapterMock.mockReturnValue(bookAdapter.adapter);
+
+    const { FileIndexRunner } = await import('./index-runner');
+    const runner = new FileIndexRunner({ maxConcurrentSources: 1 });
+    await runner.runOnce();
+
+    expect(upsertRecordMock).toHaveBeenCalledWith(expect.objectContaining({
+      path: htmlPath,
+      title: 'Entity Quickstart',
+      preview: 'Entity Quickstart Start & verify.',
+    }));
+  });
+
   it('does not remove index records when the source scan hits its file limit', async () => {
     listSourcesMock.mockReturnValue([bookSource]);
     const paths = Array.from({ length: 11 }, (_, index) => `notes/file-${index}.md`);

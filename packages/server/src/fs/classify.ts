@@ -11,6 +11,56 @@ export interface FileClassification {
   contentHash: string;
 }
 
+const HTML_ENTITY_MAP: Record<string, string> = {
+  amp: '&',
+  apos: "'",
+  gt: '>',
+  lt: '<',
+  nbsp: ' ',
+  quot: '"',
+};
+
+function decodeCodePoint(value: string, radix: number, fallback: string): string {
+  const codePoint = Number.parseInt(value, radix);
+  return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+    ? String.fromCodePoint(codePoint)
+    : fallback;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
+    if (entity.startsWith('#x')) {
+      return decodeCodePoint(entity.slice(2), 16, match);
+    }
+    if (entity.startsWith('#')) {
+      return decodeCodePoint(entity.slice(1), 10, match);
+    }
+    return HTML_ENTITY_MAP[entity.toLowerCase()] ?? match;
+  });
+}
+
+function htmlFragmentToText(value: string): string {
+  return decodeHtmlEntities(value.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+
+export function extractIndexableFileContent(pathValue: string, content: string): { title?: string; text: string } {
+  const looksLikeHtml = /\.html?$/i.test(pathValue) || /^\s*(?:<!doctype\s+html|<html\b)/i.test(content);
+  if (!looksLikeHtml) {
+    return { title: undefined, text: content };
+  }
+
+  const headingMatch = content.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
+  const titleMatch = content.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  const title = htmlFragmentToText(headingMatch?.[1] ?? titleMatch?.[1] ?? '') || undefined;
+  const body = content.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? content;
+  const text = htmlFragmentToText(
+    body
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<(script|style|noscript|template|svg)\b[^>]*>[\s\S]*?<\/\1>/gi, ' '),
+  );
+  return { title, text };
+}
+
 function detectType(text: string): FileClassification['type'] {
   if (text.includes('daily review') || text.includes('daily-review')) {
     return 'daily-review';
@@ -104,7 +154,7 @@ function deriveTitle(pathValue: string, content?: string): string {
 
   const parts = pathValue.split('/');
   const fallback = parts[parts.length - 1] || pathValue;
-  return fallback.replace(/\.md$/i, '');
+  return fallback.replace(/\.(?:md|html?)$/i, '');
 }
 
 function deriveTags(pathValue: string, type: FileClassification['type'], agent: FileClassification['agent']): string[] {
@@ -128,12 +178,13 @@ function deriveTags(pathValue: string, type: FileClassification['type'], agent: 
 }
 
 export function classifyFile(pathValue: string, content = ''): FileClassification {
-  const text = `${pathValue} ${content}`.toLowerCase();
+  const indexable = extractIndexableFileContent(pathValue, content);
+  const text = `${pathValue} ${indexable.text}`.toLowerCase();
   const type = detectType(text);
   const agent = detectAgent(text);
-  const origin = detectOrigin(pathValue, content);
+  const origin = detectOrigin(pathValue, indexable.text);
   const recurring = detectRecurring(text);
-  const title = deriveTitle(pathValue, content);
+  const title = indexable.title ?? deriveTitle(pathValue, indexable.text);
   const tags = deriveTags(pathValue, type, agent);
   const contentHash = crypto.createHash('sha1').update(content).digest('hex');
 

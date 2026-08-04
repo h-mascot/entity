@@ -33,8 +33,10 @@
     "release:info": "node scripts/entity-release-info.mjs",
     "release:check": "node scripts/entity-release-info.mjs --check",
     "test:release-deploy": "node --test scripts/entity-release-info.test.mjs",
+    "test:wiki-html": "node --test scripts/entity-openwiki-html.test.mjs scripts/entity-wiki-config-migrate.test.mjs",
     "docs:wiki:init": "node scripts/entity-openwiki.mjs init",
     "docs:wiki:update": "node scripts/entity-openwiki.mjs update",
+    "docs:wiki:render": "node scripts/entity-openwiki-html.mjs render",
     "docs:wiki:verify": "node scripts/entity-openwiki.mjs verify",
     "docs:wiki:prepare": "node scripts/entity-openwiki.mjs prepare"
   },

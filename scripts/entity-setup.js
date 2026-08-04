@@ -179,7 +179,7 @@ async function main() {
     '  - id: entity-wiki',
     '    displayName: Entity Wiki',
     '    type: local',
-    '    basePath: ./openwiki',
+    '    basePath: ./openwiki-html',
     '    baseUrl: null',
     '    enabled: true',
     '    readOnly: true',
