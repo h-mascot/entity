@@ -218,7 +218,9 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const excludeTaskId = parsePositiveId(req.query.excludeTaskId);
 
     try {
-      const tasks = await taskSyncLayer.listTasks();
+      // Tenant-authorize the duplicate search (Terra R3): a customer only
+      // ever sees candidates within their membership org(s).
+      const tasks = filterTasksForRequest(req, await taskSyncLayer.listTasks());
       const candidates = findTaskDuplicateCandidates(title, tasks, {
         excludeTaskId:
           typeof excludeTaskId === "number" ? excludeTaskId : undefined,
@@ -344,7 +346,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       String(req.query.includeBlocked ?? "false").toLowerCase() === "true";
 
     try {
-      const tasks = await taskSyncLayer.listTasks();
+      // Tenant-authorize the stale scan (Terra R3).
+      const tasks = filterTasksForRequest(req, await taskSyncLayer.listTasks());
       const now = Date.now();
       const stale = tasks
         .filter((task: any) => {
@@ -395,7 +398,9 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const stalledHours = Number.isFinite(stalledHoursRaw) && stalledHoursRaw > 0 ? stalledHoursRaw : 24;
 
     try {
-      const tasks = await taskSyncLayer.listTasks();
+      // Tenant-authorize the inbox (Terra R3): a customer only sees their
+      // own org's owner accountability, never another tenant's.
+      const tasks = filterTasksForRequest(req, await taskSyncLayer.listTasks());
       return res.json(buildOwnerAccountabilityInbox({
         ownerPrincipalId,
         tasks,
@@ -1159,6 +1164,10 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!targetTask || !sourceTask) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize BOTH tasks before merging (Terra R3): a caller may
+      // never mutate another tenant's task by merging into or out of it.
+      if (!authorizeTaskOrg(req, res, targetTask, "write")) return;
+      if (!authorizeTaskOrg(req, res, sourceTask, "write")) return;
 
       const mergeNote = buildMergeAuditNote(sourceTask, targetTask);
       const targetAuditComment = taskCommentRepository.createComment({
@@ -1487,6 +1496,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before mutating (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "write")) return;
 
       logActivity({
         source: "task",
@@ -1519,6 +1530,12 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const limit = Number.isFinite(limitRaw) ? limitRaw : 20;
 
     try {
+      // Tenant-authorize the parent task before reading its activity (Terra R3).
+      const task = await taskSyncLayer.getTask(id);
+      if (!task) {
+        return res.status(404).json({ error: "task not found" });
+      }
+      if (!authorizeTaskOrg(req, res, task, "read")) return;
       const activities = activityRepository.listActivitiesByTaskId(id, limit);
       return res.json(activities);
     } catch (err) {
@@ -1559,6 +1576,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before mutating (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "write")) return;
 
       logActivity({
         source: "task",
@@ -1593,6 +1612,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!parentTask) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize the parent task before generating subtasks (Terra R3).
+      if (!authorizeTaskOrg(req, res, parentTask, "write")) return;
 
       const existingTasks = await taskSyncLayer.listTasks();
       const existingSubtasks = existingTasks.filter(
@@ -1669,6 +1690,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before reading comments (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "read")) return;
 
       const limit =
         typeof req.query.limit === "undefined"
@@ -1730,6 +1753,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before creating a comment (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "write")) return;
 
       const comment = taskCommentRepository.createComment({
         task_id: id,
@@ -2164,6 +2189,8 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before reading task projects (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "read")) return;
 
       return res.json(task.projects ?? []);
     } catch (err) {
@@ -2190,6 +2217,8 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
     if (!task) {
       return res.status(404).json({ error: "task not found" });
     }
+    // Tenant-authorize before linking projects (Terra R3).
+    if (!authorizeTaskOrg(req, res, task, "write")) return;
 
     if (typeof projectIds !== "undefined") {
       const parsedProjectIds = parsePositiveIdList(projectIds);
@@ -2261,6 +2290,8 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before unlinking projects (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "write")) return;
 
       const currentProjectIds = orderTaskProjectIdsWithPrimary(task);
       if (!currentProjectIds.includes(projectId)) {
@@ -2294,6 +2325,8 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before reading task history (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "read")) return;
 
       const history = getTaskHistory(taskId);
       return res.json(history);
