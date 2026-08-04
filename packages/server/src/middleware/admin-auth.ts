@@ -38,6 +38,12 @@ function localHeaderCompatAdmin(req: Request): boolean {
   return req.header('x-entity-role')?.trim().toLowerCase() === 'admin';
 }
 
+function readGrantPrincipalIdFromPath(req: Request): string {
+  const path = typeof req.path === 'string' ? req.path : '';
+  const match = path.match(/\/principals\/([^/]+)\/grants\/?$/);
+  return match?.[1] ?? '';
+}
+
 export function createRequireAdminPrincipal(repo: PrincipalRepository = createPrincipalRepository()) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const principalCount = repo.listPrincipals({ includeDisabled: true }).length;
@@ -68,7 +74,9 @@ export function createRequireAdminPrincipal(repo: PrincipalRepository = createPr
     }
 
     const targetPrincipalId = typeof req.params.id === 'string' ? req.params.id : '';
-    const grantPrincipalId = typeof req.params.principalId === 'string' ? req.params.principalId : targetPrincipalId;
+    const grantPrincipalId = typeof req.params.principalId === 'string'
+      ? req.params.principalId
+      : targetPrincipalId || readGrantPrincipalIdFromPath(req);
     const isSelfBootstrapGrant =
       req.method === 'POST'
       && req.path.endsWith('/grants')
