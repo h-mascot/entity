@@ -134,7 +134,7 @@ export const EEPC_CONTRACT_E2E_FIXTURE = {
       executionMode: 'push',
       health: {
         available: true,
-        message: 'reachable at http://127.0.0.1:9/secret-acp path=/Users/enterprise/queue',
+        message: 'reachable at http://127.0.0.1:9/secret-acp path=/Users/synth/queue',
       },
     },
     {

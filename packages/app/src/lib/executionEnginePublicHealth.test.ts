@@ -10,7 +10,7 @@ import {
 
 test('redactExecutionEngineMessage strips urls, paths, and bearer tokens', () => {
   const out = redactExecutionEngineMessage(
-    'up http://127.0.0.1:9/secret path=/Users/enterprise/secret Bearer abcdefghijklmnopqrstuvwxyz01234567',
+    'up http://127.0.0.1:9/secret path=/Users/synth/secret Bearer abcdefghijklmnopqrstuvwxyz01234567',
   );
   assert.ok(out);
   assert.match(out!, /\[redacted-url\]/);
@@ -56,7 +56,7 @@ test('normalizeExecutionEngineListItem flattens meta and never leaves secret-sha
     },
     health: {
       available: false,
-      message: 'missing config at /Users/enterprise/.secrets',
+      message: 'missing config at /Users/synth/.secrets',
     },
   });
 

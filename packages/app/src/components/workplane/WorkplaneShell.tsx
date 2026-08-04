@@ -17,8 +17,10 @@
  * Parses/serializes THE-857 URL state. All Q33 Slice-1 panel bodies are implemented.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import type { WorkplanePanelId } from '../mission-control/taskDetailWorkplaneSeams.ts';
+
+const ScopedSearchPanel = lazy(() => import('../scoped-search/ScopedSearchPanel'));
 import { navigateWorkplaneReturn } from '../../lib/workplaneReturnNavigation.ts';
 import { restoreWorkplaneAfterRefresh } from '../../lib/workplaneRefreshRestore.ts';
 import {
@@ -177,6 +179,7 @@ export default function WorkplaneShell({
   agentLayoutPayload,
 }: WorkplaneShellProps) {
   const [location, setLocation] = useState(() => readLocation(pathnameProp, searchProp));
+  const [scopedSearchOpen, setScopedSearchOpen] = useState(false);
   const [summaryLoad, setSummaryLoad] = useState<WorkplaneTaskSummaryLoadState>(() =>
     createWorkplaneTaskSummaryLoadState({ status: 'loading' }),
   );
@@ -810,6 +813,18 @@ export default function WorkplaneShell({
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-muted)]">
+          <button
+            type="button"
+            data-testid="workplane-scoped-search-entry"
+            aria-pressed={scopedSearchOpen}
+            aria-expanded={scopedSearchOpen}
+            aria-controls="workplane-scoped-search-panel"
+            onClick={() => setScopedSearchOpen((open) => !open)}
+            className="mc-shell-btn rounded border border-[var(--border-primary)] px-2 py-1 text-[var(--text-primary)]"
+            aria-label={scopedSearchOpen ? 'Hide scoped search' : 'Open scoped search'}
+          >
+            Search
+          </button>
           {model.selectedProof ? (
             <span
               className="mc-shell-pill rounded border border-[var(--border-primary)] px-2 py-0.5"
@@ -839,6 +854,13 @@ export default function WorkplaneShell({
           </button>
         </div>
       </header>
+      {scopedSearchOpen ? (
+        <div id="workplane-scoped-search-panel" className="border-b border-[var(--border-primary)] px-4 py-2" data-testid="workplane-scoped-search-slot">
+          <Suspense fallback={<div className="text-xs text-[var(--text-muted)]">Loading search…</div>}>
+            <ScopedSearchPanel surface="workplane" apiBase={apiBase} open={scopedSearchOpen} />
+          </Suspense>
+        </div>
+      ) : null}
 
       <nav
         className={workplanePanelNavNarrowClassNames()}

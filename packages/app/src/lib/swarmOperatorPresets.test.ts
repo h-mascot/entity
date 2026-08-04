@@ -29,7 +29,7 @@ const engines = [
     category: 'build-system',
     health: {
       available: true,
-      message: 'reachable at http://127.0.0.1:4568 path=/Users/enterprise/queue',
+      message: 'reachable at http://127.0.0.1:4568 path=/Users/synth/queue',
       latencyMs: 12,
     },
   },

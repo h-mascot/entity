@@ -261,7 +261,7 @@ describe('EEPC-A-07 unauthorized/malformed callback negative path', () => {
       provider: 'symphony',
       jobId: SYMPHONY_JOB.id,
       summary: 'leaky path',
-      artifact_refs: ['/Users/enterprise/secrets/proof.log'],
+      artifact_refs: ['/Users/synth/secrets/proof.log'],
     });
     expect(shape.ok).toBe(false);
     if (shape.ok) return;
@@ -283,7 +283,7 @@ describe('EEPC-A-07 unauthorized/malformed callback negative path', () => {
 
     const publicBody = toPublicCallbackErrorBody({
       code: validated.code,
-      message: `${validated.message} /Users/enterprise/Code/entity/.env`,
+      message: `${validated.message} /Users/synth/Code/entity/.env`,
       issues: [
         ...validated.issues,
         {

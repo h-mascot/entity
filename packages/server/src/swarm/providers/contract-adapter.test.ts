@@ -23,7 +23,7 @@ function fakeProvider(overrides: Partial<SwarmProvider> = {}): SwarmProvider {
     label: 'Fake ACP',
     healthCheck: vi.fn(async () => ({
       available: true,
-      message: 'ACP reachable at http://localhost:8100 under /Users/enterprise/secret-home',
+      message: 'ACP reachable at http://localhost:8100 under /Users/synth/secret-home',
       latencyMs: 12,
     })),
     dispatch: vi.fn(async () => ({ runHandle: 'run-1' })),
@@ -205,7 +205,7 @@ describe('EEPC-A-04 Swarm contract adapter', () => {
     expect(publicHealth.message).toContain('[redacted-url]');
     expect(publicHealth.message).toContain('[redacted-path]');
     expect(publicHealth.message).not.toContain('http://');
-    expect(publicHealth.message).not.toContain('/Users/enterprise');
+    expect(publicHealth.message).not.toContain('/Users/');
 
     // Legacy healthCheck remains unredacted for internal diagnostics.
     const legacy = await bound.adapter.healthCheck();

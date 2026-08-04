@@ -130,7 +130,7 @@ describe('EEPC-B-01 execution engine public list/health redaction', () => {
       available: true,
       latencyMs: 4,
       message:
-        'ACP reachable at http://127.0.0.1:9/secret-acp-base path=/Users/enterprise/secret Bearer abcdefghijklmnopqrstuvwxyz01234567',
+        'ACP reachable at http://127.0.0.1:9/secret-acp-base path=/Users/synth/secret Bearer abcdefghijklmnopqrstuvwxyz01234567',
     });
 
     try {

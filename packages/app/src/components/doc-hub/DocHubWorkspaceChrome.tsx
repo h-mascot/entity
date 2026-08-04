@@ -20,6 +20,7 @@ import { emitDocHubTelemetry } from '../../lib/docHubTelemetry';
 
 const MarkdownAudioControls = lazy(() => import('../MarkdownAudioControls'));
 const FilesContextBar = lazy(() => import('../../views/FilesContextBar'));
+const ScopedSearchPanel = lazy(() => import('../scoped-search/ScopedSearchPanel'));
 const shareAdapter = createShareAdapter();
 
 interface DocHubWorkspaceChromeProps {
@@ -39,6 +40,10 @@ interface DocHubWorkspaceChromeProps {
   onOpenVoiceSettings?: () => void;
   pushToast: (message: string, tone?: 'success' | 'error' | 'info' | 'warning') => void;
   filesContextBarProps: Record<string, unknown>;
+  /** THE-904/SRCH-A-05: API base for Doc Hub scoped search entry. */
+  apiBase?: string;
+  orgId?: string;
+  onScopedSearchNavigate?: (route: string) => void;
 }
 
 function ManualCopyFallback({
@@ -127,6 +132,9 @@ export default function DocHubWorkspaceChrome({
   onOpenVoiceSettings,
   pushToast,
   filesContextBarProps,
+  apiBase = '',
+  orgId,
+  onScopedSearchNavigate,
 }: DocHubWorkspaceChromeProps) {
   const documentIdentity = JSON.stringify([currentSourceId, docsPath]);
   const documentIdentityRef = useRef(documentIdentity);
@@ -135,6 +143,7 @@ export default function DocHubWorkspaceChrome({
     documentIdentity,
     value: null,
   });
+  const [scopedSearchOpen, setScopedSearchOpen] = useState(false);
   const copyLinkButtonRef = useRef<HTMLButtonElement>(null);
   const dismissManualCopy = () => {
     setManualCopyState((state) => ({ ...state, value: null }));
@@ -219,6 +228,24 @@ export default function DocHubWorkspaceChrome({
               +
             </button>
           </div>
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="doc-hub-scoped-search-entry"
+            aria-pressed={scopedSearchOpen}
+            aria-expanded={scopedSearchOpen}
+            aria-controls="doc-hub-scoped-search-panel"
+            onClick={() => setScopedSearchOpen((open) => !open)}
+            className={`mc-shell-btn px-2 py-1 text-xs ${
+              scopedSearchOpen ? 'mc-shell-btn-active' : ''
+            }`}
+            title="Scoped search"
+            aria-label={scopedSearchOpen ? 'Hide scoped search' : 'Open scoped search'}
+          >
+            Search
+          </button>
         </div>
 
         {showDocControls ? (
@@ -327,6 +354,19 @@ export default function DocHubWorkspaceChrome({
           </div>
         ) : null}
       </div>
+      {scopedSearchOpen ? (
+        <div id="doc-hub-scoped-search-panel" className="mt-2" data-testid="doc-hub-scoped-search-slot">
+          <Suspense fallback={<div className="text-xs text-[var(--text-muted)]">Loading search…</div>}>
+            <ScopedSearchPanel
+              surface="doc_hub"
+              apiBase={apiBase}
+              orgId={orgId}
+              open={scopedSearchOpen}
+              onNavigate={onScopedSearchNavigate}
+            />
+          </Suspense>
+        </div>
+      ) : null}
       {manualCopyState.documentIdentity === documentIdentity && manualCopyState.value ? (
         <ManualCopyFallback
           value={manualCopyState.value}
