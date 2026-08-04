@@ -4,6 +4,7 @@ import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
 import MarkdownPreview from '../MarkdownPreview';
 import GovernanceSection from './task-detail/GovernanceSection';
+import TaskHandoffSection from './TaskHandoffSection';
 import {
   TASK_COLUMNS,
   type TaskBoardTask,
@@ -3283,6 +3284,7 @@ export default function TaskDetailPanel({
                 </div>
               ) : null}
 
+	              <TaskHandoffSection taskId={taskId} apiBase={apiBase} />
 	              <section style={{ order: 1 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
 	                <div className="mb-1.5 flex items-center justify-between gap-3">
 	                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">

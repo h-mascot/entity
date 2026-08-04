@@ -6,6 +6,12 @@ import type {
 } from "../../../db/src";
 import { asyncHandler } from "../middleware/async-handler";
 import { orderTaskProjectIdsWithPrimary } from "../task-projects";
+import {
+  ensureObjectPermission,
+  requireRequestOrg,
+  sendPermissionDenied,
+} from "../request-permissions";
+import { createHandoffRepository, type HandoffMode } from "../../../db/src/handoffs";
 
 type RegisterTaskRoutesDeps = Record<string, any>;
 
@@ -1478,6 +1484,94 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return res.status(500).json({ error: message });
+    }
+  }));
+
+  // ── Task handoffs (THE-933) ────────────────────────────────────────────
+  const handoffRepo = createHandoffRepository();
+
+  app.get(`${tasksBase}/:id/handoffs`, asyncHandler(async (req, res) => {
+    const id = parseTaskId(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid task id" });
+
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const task = await taskSyncLayer.getTask(id);
+    if (!task) return res.status(404).json({ error: "task not found" });
+    if (!ensureObjectPermission(res, binding, { object_type: "task", object_id: id, org_id: task.org_id, team_id: task.team_id }, "read")) {
+      return undefined;
+    }
+
+    const mode = req.query.mode === "cloud" ? "cloud" : "local";
+    const cloudId = typeof req.query.cloudId === "string" ? req.query.cloudId : null;
+    const handoffs = handoffRepo.listForTask(id, { mode, orgId: binding.orgId, cloudId });
+    return res.json({ handoffs });
+  }));
+
+  app.post(`${tasksBase}/:id/handoff`, asyncHandler(async (req, res) => {
+    const id = parseTaskId(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid task id" });
+
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const task = await taskSyncLayer.getTask(id);
+    if (!task) return res.status(404).json({ error: "task not found" });
+    if (!ensureObjectPermission(res, binding, { object_type: "task", object_id: id, org_id: task.org_id, team_id: task.team_id }, "write")) {
+      return undefined;
+    }
+
+    const body = req.body ?? {};
+    const mode: HandoffMode = body.mode === "cloud" ? "cloud" : "local";
+    const targetPrincipalId = typeof body.targetPrincipalId === "string" ? body.targetPrincipalId.trim() : "";
+    // THE-933: validate/authorize the target principal.
+    if (!targetPrincipalId) return res.status(400).json({ error: "targetPrincipalId is required" });
+    if (targetPrincipalId === binding.principal.principal_id) {
+      return res.status(400).json({ error: "target principal must differ from the requester" });
+    }
+
+    try {
+      const handoff = handoffRepo.create({
+        taskId: id,
+        mode,
+        cloudId: typeof body.cloudId === "string" ? body.cloudId : null,
+        sourcePrincipalId: binding.principal.principal_id,
+        targetPrincipalId,
+        orgId: binding.orgId,
+        teamId: task.team_id ?? null,
+        note: typeof body.note === "string" ? body.note.slice(0, 500) : "",
+        createdByPrincipalId: binding.principal.principal_id,
+      });
+      const refreshed = await taskSyncLayer.getTask(id);
+      return res.status(201).json({ handoff, task: refreshed });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "handoff failed";
+      // Distinguish validation/scope errors from server faults.
+      const isScope = /org|scope|target|self|cloud/i.test(message);
+      return res.status(isScope ? 400 : 500).json({ error: message });
+    }
+  }));
+
+  app.post(`${tasksBase}/:id/handoffs/:handoffId/rollback`, asyncHandler(async (req, res) => {
+    const id = parseTaskId(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid task id" });
+
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const task = await taskSyncLayer.getTask(id);
+    if (!task) return res.status(404).json({ error: "task not found" });
+    if (!ensureObjectPermission(res, binding, { object_type: "task", object_id: id, org_id: task.org_id, team_id: task.team_id }, "write")) {
+      return undefined;
+    }
+
+    const mode: HandoffMode = req.query.mode === "cloud" ? "cloud" : "local";
+    try {
+      const handoff = handoffRepo.rollback(req.params.handoffId, { mode, orgId: binding.orgId });
+      const refreshed = await taskSyncLayer.getTask(id);
+      return res.json({ handoff, task: refreshed });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "rollback failed";
+      const isScope = /org|scope|not found/i.test(message);
+      return res.status(isScope ? (message.includes("not found") ? 404 : 400) : 500).json({ error: message });
     }
   }));
 
