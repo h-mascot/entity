@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type http from 'http';
+import { createChatRepository } from '../../../db/src/chat';
 
 const tmpDbPath = path.join(os.tmpdir(), `entity-chat-object-refs-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
@@ -74,20 +75,31 @@ describe('chat ObjectRef links', () => {
   }
 
   async function createChannelAndThread() {
+    const orgHeaders = { 'Content-Type': 'application/json', 'x-entity-org-id': 'default-org', 'x-entity-role': 'manager' };
     await fetch(`${baseUrl}/api/chat/categories`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: orgHeaders,
       body: JSON.stringify({ id: 'entity-links', name: 'Entity Links' }),
     });
     const channelResponse = await fetch(`${baseUrl}/api/chat/channels`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: orgHeaders,
       body: JSON.stringify({ id: 'object-ref-channel', name: 'ObjectRef Channel', categoryId: 'entity-links' }),
     });
     expect(channelResponse.status).toBe(201);
+    // THE-931: thread creation requires a real, owned parent message. Seed one
+    // directly through the repository (the public send route would invoke the
+    // agent runtime, which is undesirable here).
+    createChatRepository().createMessage({
+      id: 'parent-message',
+      channel_id: 'object-ref-channel',
+      sender: 'user',
+      content: 'parent',
+      org_id: 'default-org',
+    });
     const threadResponse = await fetch(`${baseUrl}/api/chat/threads`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: orgHeaders,
       body: JSON.stringify({ id: 'object-ref-thread', channelId: 'object-ref-channel', parentMessageId: 'parent-message', title: 'ObjectRef Thread' }),
     });
     expect(threadResponse.status).toBe(201);
@@ -97,7 +109,7 @@ describe('chat ObjectRef links', () => {
     await createChannelAndThread();
     const headers = {
       'Content-Type': 'application/json',
-      'x-entity-org-id': 'entity',
+      'x-entity-org-id': 'default-org',
       'x-entity-role': 'manager',
     };
 
@@ -138,11 +150,11 @@ describe('chat ObjectRef links', () => {
   it('requires permission before rendering or adding chat-linked context', async () => {
     const managerHeaders = {
       'Content-Type': 'application/json',
-      'x-entity-org-id': 'entity',
+      'x-entity-org-id': 'default-org',
       'x-entity-role': 'manager',
     };
     const viewerHeaders = {
-      'x-entity-org-id': 'entity',
+      'x-entity-org-id': 'default-org',
       'x-entity-role': 'viewer',
     };
 
@@ -179,7 +191,7 @@ describe('chat ObjectRef links', () => {
     });
 
     const refsResponse = await fetch(`${baseUrl}/api/chat/threads/object-ref-thread/object-refs`, {
-      headers: { 'x-entity-org-id': 'entity', 'x-entity-role': 'manager' },
+      headers: { 'x-entity-org-id': 'default-org', 'x-entity-role': 'manager' },
     });
     expect(refsResponse.status).toBe(200);
     expect(await readJson(refsResponse)).toMatchObject({

@@ -64,10 +64,10 @@ type ChatHistoryAccess = (binding: RequestOrgBinding) => ChatHistoryDecision;
  * 'none' and is denied.
  */
 export function principalCanReadChatHistory(binding: RequestOrgBinding): ChatHistoryDecision {
-  const role = resolveInheritedRole(binding.principal, { org_id: binding.orgId });
-  if (role === 'none') {
-    return { allowed: false, reason: 'chat history requires an org/team assignment' };
-  }
+  const allowed = binding.principal.grants.some((grant) =>
+    grant.role !== 'none' && (!grant.org_id || grant.org_id === binding.orgId),
+  );
+  if (!allowed) return { allowed: false, reason: 'chat history requires an org/team assignment' };
   return { allowed: true };
 }
 
@@ -78,8 +78,14 @@ function denyChatHistory(res: express.Response, missingError: string) {
 
 // Legacy rows without ownership are retained by migration but fail closed for
 // agent history. The local admin remains the explicit compatibility principal.
+// THE-931: team semantics reuse the canonical permission helper (resolveInheritedRole
+// via grantCoversObject) rather than a weaker hand-rolled check: an org-wide grant
+// covers any owned team resource in that org; a team-only grant covers only the
+// matching team and never an org-wide (team-less) resource.
 function ownsChatResource(resource: { org_id: string | null; team_id: string | null }, binding: RequestOrgBinding): boolean {
-  return resource.org_id === binding.orgId || (resource.org_id === null && binding.principal.principal_id === LOCAL_ADMIN_PRINCIPAL_ID);
+  if (resource.org_id === null) return binding.principal.principal_id === LOCAL_ADMIN_PRINCIPAL_ID;
+  if (resource.org_id !== binding.orgId) return false;
+  return resolveInheritedRole(binding.principal, { org_id: resource.org_id, team_id: resource.team_id }) !== 'none';
 }
 
 function ownsThread(repo: ReturnType<typeof createChatRepository>, thread: ChatThreadRecord, binding: RequestOrgBinding): boolean {
@@ -95,6 +101,185 @@ function ownsMessage(repo: ReturnType<typeof createChatRepository>, message: Cha
   if (!message.thread_id) return true;
   const thread = repo.getThread(message.thread_id);
   return Boolean(thread && ownsThread(repo, thread, binding));
+}
+
+/**
+ * THE-931 — authoritative tenant scope for chat resources.
+ *
+ * Resources are owned by an {orgId, teamId} pair. The scope is resolved from
+ * the authenticated principal's binding and the owned parent resource, never
+ * from a caller-supplied teamId. Legacy unowned rows (orgId null) are preserved
+ * but fail closed for every non-local-admin principal.
+ */
+export interface ChatTenantScope {
+  orgId: string;
+  teamId: string | null;
+}
+
+/**
+ * THE-931 — scoped chat repository.
+ *
+ * The authoritative org/team ownership boundary. Every read resolves parent
+ * ownership before returning (unauthorized is indistinguishable from missing —
+ * uniform no-leak). Every write derives its org/team from the owned parent and
+ * ignores any caller-supplied teamId, so a request that reaches the repository
+ * can never read or mutate another tenant's resources even if a route forgets a
+ * check. Routes MUST go through this wrapper for tenant-facing operations.
+ */
+export interface ScopedChatRepository {
+  historyAllowed(): boolean;
+  listChannels(): ChatChannelRecord[];
+  getChannel(id: string): ChatChannelRecord | undefined;
+  listMessagesByChannel(channelId: string): ChatMessageRecord[];
+  listThreadsByChannel(channelId: string): ChatThreadRecord[];
+  getThread(id: string): ChatThreadRecord | undefined;
+  getThreadByParentMessage(parentMessageId: string): ChatThreadRecord | undefined;
+  getMessage(id: string): ChatMessageRecord | undefined;
+  listChannelObjectRefs(id: string): ObjectRef[];
+  listThreadObjectRefs(id: string): ObjectRef[];
+  createChannel(input: { id?: string; name: string; description?: string; category_id: string; order?: number; agents?: string[]; team_id?: string }): ChatChannelRecord;
+  updateChannel(id: string, patch: { name?: string; description?: string; category_id?: string; order?: number; agents?: string[] }): ChatChannelRecord | undefined;
+  deleteChannel(id: string): boolean;
+  markChannelRead(id: string): boolean;
+  linkChannelObject(id: string, objectRef: ObjectRef): ChatChannelRecord | undefined;
+  linkThreadObject(id: string, objectRef: ObjectRef): ChatThreadRecord | undefined;
+  createThread(input: { id?: string; channel_id: string; parent_message_id: string; title: string }): ChatThreadRecord | undefined;
+  incrementThreadCount(threadId: string, timestamp: string): boolean;
+  createMessage(input: { id?: string; channel_id: string; thread_id?: string; sender: string; sender_emoji?: string; content: string; model?: string; is_local?: boolean; status?: string; timestamp?: string; reply_to?: string }): ChatMessageRecord | undefined;
+}
+
+export function createScopedChatRepository(
+  repo: ReturnType<typeof createChatRepository>,
+  binding: RequestOrgBinding,
+  access: ChatHistoryAccess,
+): ScopedChatRepository {
+  const historyAllowed = (): boolean => access(binding).allowed;
+
+  // Read gate: a resource is visible only when history is allowed AND the
+  // principal owns the resource (and, for threads/messages, the parent chain).
+  const ownedChannel = (id: string): ChatChannelRecord | undefined => {
+    if (!historyAllowed()) return undefined;
+    const channel = repo.getChannel(id);
+    return channel && ownsChatResource(channel, binding) ? channel : undefined;
+  };
+  const ownedThread = (id: string): ChatThreadRecord | undefined => {
+    if (!historyAllowed()) return undefined;
+    const thread = repo.getThread(id);
+    return thread && ownsThread(repo, thread, binding) ? thread : undefined;
+  };
+
+  return {
+    historyAllowed,
+
+    listChannels: () => (historyAllowed() ? repo.listChannels().filter((c) => ownsChatResource(c, binding)) : []),
+
+    getChannel: ownedChannel,
+
+    listMessagesByChannel: (channelId) => {
+      if (!ownedChannel(channelId)) return [];
+      return repo.listMessagesByChannel(channelId).filter((m) => ownsMessage(repo, m, binding));
+    },
+
+    listThreadsByChannel: (channelId) => {
+      if (!ownedChannel(channelId)) return [];
+      return repo.listThreadsByChannel(channelId).filter((t) => ownsThread(repo, t, binding));
+    },
+
+    getThread: ownedThread,
+
+    getThreadByParentMessage: (parentMessageId) => {
+      if (!historyAllowed()) return undefined;
+      const thread = repo.getThreadByParentMessage(parentMessageId);
+      return thread && ownsThread(repo, thread, binding) ? thread : undefined;
+    },
+
+    getMessage: (id) => {
+      if (!historyAllowed()) return undefined;
+      const message = repo.getMessage(id);
+      return message && ownsMessage(repo, message, binding) ? message : undefined;
+    },
+
+    listChannelObjectRefs: (id) => (ownedChannel(id) ? repo.listChannelObjectRefs(id) : []),
+
+    listThreadObjectRefs: (id) => (ownedThread(id) ? repo.listThreadObjectRefs(id) : []),
+
+    createChannel: (input) => repo.createChannel({
+      id: input.id,
+      name: input.name,
+      description: input.description,
+      category_id: input.category_id,
+      order: input.order,
+      agents: input.agents,
+      // Server-derived org ownership. A new channel's team may be caller-selected
+      // (it is a brand-new owned resource); org always comes from the binding.
+      org_id: binding.orgId,
+      team_id: input.team_id,
+    }),
+
+    updateChannel: (id, patch) => (ownedChannel(id) ? repo.updateChannel(id, patch) : undefined),
+
+    deleteChannel: (id) => Boolean(ownedChannel(id) && repo.deleteChannel(id)),
+
+    markChannelRead: (id) => {
+      if (!ownedChannel(id)) return false;
+      repo.markChannelRead(id);
+      return true;
+    },
+
+    linkChannelObject: (id, objectRef) => (ownedChannel(id) ? repo.linkChannelObject(id, objectRef) : undefined),
+
+    linkThreadObject: (id, objectRef) => (ownedThread(id) ? repo.linkThreadObject(id, objectRef) : undefined),
+
+    createThread: (input) => {
+      if (!historyAllowed()) return undefined;
+      // Thread inherits the owned parent channel scope; caller teamId is ignored.
+      const channel = repo.getChannel(input.channel_id);
+      const parent = repo.getMessage(input.parent_message_id);
+      if (!channel || !parent || parent.channel_id !== input.channel_id) return undefined;
+      if (!ownsChatResource(channel, binding) || !ownsMessage(repo, parent, binding)) return undefined;
+      return repo.createThread({
+        id: input.id,
+        channel_id: input.channel_id,
+        parent_message_id: input.parent_message_id,
+        title: input.title,
+        org_id: binding.orgId,
+        team_id: channel.team_id ?? undefined,
+      });
+    },
+
+    incrementThreadCount: (threadId, timestamp) => {
+      if (!ownedThread(threadId)) return false;
+      repo.incrementThreadCount(threadId, timestamp);
+      return true;
+    },
+
+    createMessage: (input) => {
+      if (!historyAllowed()) return undefined;
+      // Message inherits the owned parent channel scope (and thread, if any).
+      // Caller teamId is never trusted.
+      const channel = repo.getChannel(input.channel_id);
+      if (!channel || !ownsChatResource(channel, binding)) return undefined;
+      if (input.thread_id) {
+        const thread = repo.getThread(input.thread_id);
+        if (!thread || thread.channel_id !== input.channel_id || !ownsThread(repo, thread, binding)) return undefined;
+      }
+      return repo.createMessage({
+        id: input.id,
+        channel_id: input.channel_id,
+        thread_id: input.thread_id,
+        sender: input.sender,
+        sender_emoji: input.sender_emoji,
+        content: input.content,
+        model: input.model,
+        is_local: input.is_local,
+        status: input.status,
+        timestamp: input.timestamp,
+        reply_to: input.reply_to,
+        org_id: binding.orgId,
+        team_id: channel.team_id ?? undefined,
+      });
+    },
+  };
 }
 
 interface OpenClawReply {
@@ -148,7 +333,9 @@ function readChatNoiseSettings(): Required<StoredChatNoiseSettings> {
     const cooldownMs = Math.min(CHAT_NOISE_MAX_COOLDOWN_MS, Math.max(0, Number(record.cooldownMs ?? 0) || 0));
     return { cooldownMs, mutedAgents: normalizeMutedAgents(record.mutedAgents) };
   } catch {
-    return { cooldownMs: 0, mutedAgents: [] };
+    // A persistence failure is not an empty policy: fail closed so a mute or
+    // cooldown cannot be silently bypassed.
+    throw new Error('chat noise policy unavailable');
   }
 }
 
@@ -1010,23 +1197,24 @@ export function registerChatRoutes({
 
       const binding = requireRequestOrg(req, res);
       if (!binding) return undefined;
+      const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
       // THE-931: denied principals get the same empty shape as a task with no
       // channel — no existence leak.
-      if (!chatHistoryAccess(binding).allowed) {
+      if (!scoped.historyAllowed()) {
         return res.json({ taskId, channel: null, messages: [], threads: [] });
       }
 
       const candidateIds = [`task-${taskId}`, taskId];
       const channel = candidateIds
         .map((id) => repo.getChannel(id) ?? repo.getChannelByName(id))
-        .find(Boolean);
+        .find((candidate) => candidate && ownsChatResource(candidate, binding));
 
-      if (!channel || !ownsChatResource(channel, binding)) {
+      if (!channel) {
         return res.json({ taskId, channel: null, messages: [], threads: [] });
       }
 
-      const messages = repo.listMessagesByChannel(channel.id).filter((message) => ownsMessage(repo, message, binding)).map(toMessage);
-      const threads = repo.listThreadsByChannel(channel.id).filter((thread) => ownsThread(repo, thread, binding)).map(toThread);
+      const messages = scoped.listMessagesByChannel(channel.id).map(toMessage);
+      const threads = scoped.listThreadsByChannel(channel.id).map(toThread);
       return res.json({ taskId, channel: toChannel(channel), messages, threads });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1053,13 +1241,14 @@ export function registerChatRoutes({
   app.get('/api/chat/channels', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
-    if (!chatHistoryAccess(binding).allowed) {
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    if (!scoped.historyAllowed()) {
       return sendPermissionDenied(res, 'chat history requires an org/team assignment');
     }
     try {
       return res.json({
         categories: repo.listCategories().map(toCategory),
-        channels: repo.listChannels().filter((channel) => ownsChatResource(channel, binding)).map(toChannel),
+        channels: scoped.listChannels().map(toChannel),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1070,14 +1259,14 @@ export function registerChatRoutes({
   app.get('/api/chat/channels/:channelId/messages', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
     // THE-931: unauthorized is indistinguishable from missing (uniform no-leak 404).
-    const channel = repo.getChannel(req.params.channelId);
-    if (!chatHistoryAccess(binding).allowed || !channel || !ownsChatResource(channel, binding)) {
+    const channel = scoped.getChannel(req.params.channelId);
+    if (!channel) {
       return denyChatHistory(res, 'channel not found');
     }
     try {
-      const messages = repo.listMessagesByChannel(req.params.channelId).filter((message) => ownsMessage(repo, message, binding)).map(toMessage);
-      return res.json({ messages });
+      return res.json({ messages: scoped.listMessagesByChannel(req.params.channelId).map(toMessage) });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       return res.status(500).json({ error: message });
@@ -1087,13 +1276,13 @@ export function registerChatRoutes({
   app.get('/api/chat/channels/:channelId/threads', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
-    const channel = repo.getChannel(req.params.channelId);
-    if (!chatHistoryAccess(binding).allowed || !channel || !ownsChatResource(channel, binding)) {
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    const channel = scoped.getChannel(req.params.channelId);
+    if (!channel) {
       return denyChatHistory(res, 'channel not found');
     }
     try {
-      const threads = repo.listThreadsByChannel(req.params.channelId).filter((thread) => ownsThread(repo, thread, binding)).map(toThread);
-      return res.json({ threads });
+      return res.json({ threads: scoped.listThreadsByChannel(req.params.channelId).map(toThread) });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       return res.status(500).json({ error: message });
@@ -1103,7 +1292,8 @@ export function registerChatRoutes({
   app.get('/api/chat/channels/:channelId/object-refs', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
-    const channel = repo.getChannel(req.params.channelId);
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    const channel = scoped.getChannel(req.params.channelId);
     if (!channel) {
       return res.status(404).json({ error: 'channel not found' });
     }
@@ -1116,13 +1306,15 @@ export function registerChatRoutes({
   app.post('/api/chat/channels/:channelId/object-refs', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    if (!scoped.getChannel(req.params.channelId)) return denyChatHistory(res, 'channel not found');
     try {
       const objectRef = parseObjectRefBody(req.body);
       const decision = chatObjectRefAccess(binding, objectRef);
       if (!decision.allowed) {
         return sendPermissionDenied(res, decision.reason ?? 'access denied by object policy');
       }
-      const channel = repo.linkChannelObject(req.params.channelId, objectRef);
+      const channel = scoped.linkChannelObject(req.params.channelId, objectRef);
       if (!channel) {
         return res.status(404).json({ error: 'channel not found' });
       }
@@ -1139,8 +1331,9 @@ export function registerChatRoutes({
   app.get('/api/chat/threads/:threadId/messages', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
-    const thread = repo.getThread(req.params.threadId);
-    if (!chatHistoryAccess(binding).allowed || !thread || !ownsThread(repo, thread, binding)) {
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    const thread = scoped.getThread(req.params.threadId);
+    if (!thread) {
       return denyChatHistory(res, 'thread not found');
     }
     try {
@@ -1155,11 +1348,9 @@ export function registerChatRoutes({
   app.get('/api/chat/messages/:messageId', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
-    if (!chatHistoryAccess(binding).allowed) {
-      return denyChatHistory(res, 'message not found');
-    }
-    const message = repo.getMessage(req.params.messageId);
-    if (!message || !ownsMessage(repo, message, binding)) {
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    const message = scoped.getMessage(req.params.messageId);
+    if (!message) {
       return denyChatHistory(res, 'message not found');
     }
 
@@ -1169,7 +1360,8 @@ export function registerChatRoutes({
   app.get('/api/chat/threads/:threadId/object-refs', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
-    const thread = repo.getThread(req.params.threadId);
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    const thread = scoped.getThread(req.params.threadId);
     if (!thread) {
       return res.status(404).json({ error: 'thread not found' });
     }
@@ -1182,13 +1374,15 @@ export function registerChatRoutes({
   app.post('/api/chat/threads/:threadId/object-refs', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    if (!scoped.getThread(req.params.threadId)) return denyChatHistory(res, 'thread not found');
     try {
       const objectRef = parseObjectRefBody(req.body);
       const decision = chatObjectRefAccess(binding, objectRef);
       if (!decision.allowed) {
         return sendPermissionDenied(res, decision.reason ?? 'access denied by object policy');
       }
-      const thread = repo.linkThreadObject(req.params.threadId, objectRef);
+      const thread = scoped.linkThreadObject(req.params.threadId, objectRef);
       if (!thread) {
         return res.status(404).json({ error: 'thread not found' });
       }
@@ -1205,11 +1399,9 @@ export function registerChatRoutes({
   app.get('/api/chat/threads/by-parent/:parentMessageId', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
-    if (!chatHistoryAccess(binding).allowed) {
-      return denyChatHistory(res, 'thread not found');
-    }
-    const thread = repo.getThreadByParentMessage(req.params.parentMessageId);
-    if (!thread || !ownsThread(repo, thread, binding)) {
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    const thread = scoped.getThreadByParentMessage(req.params.parentMessageId);
+    if (!thread) {
       return res.status(404).json({ error: 'thread not found' });
     }
 
@@ -1240,9 +1432,9 @@ export function registerChatRoutes({
 
       const binding = requireRequestOrg(req, res);
       if (!binding) return undefined;
-      const channel = repo.createChannel({
+      const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+      const channel = scoped.createChannel({
         id: typeof req.body?.id === 'string' ? req.body.id : undefined,
-        org_id: binding.orgId,
         team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
         name: String(req.body?.name ?? '').trim(),
         description: typeof req.body?.description === 'string' ? req.body.description : undefined,
@@ -1259,8 +1451,12 @@ export function registerChatRoutes({
   });
 
   app.patch('/api/chat/channels/:channelId', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    if (!scoped.getChannel(req.params.channelId)) return denyChatHistory(res, 'channel not found');
     try {
-      const channel = repo.updateChannel(req.params.channelId, {
+      const channel = scoped.updateChannel(req.params.channelId, {
         name: typeof req.body?.name === 'string' ? req.body.name : undefined,
         description: typeof req.body?.description === 'string' ? req.body.description : undefined,
         category_id: typeof req.body?.categoryId === 'string' ? req.body.categoryId : undefined,
@@ -1280,7 +1476,11 @@ export function registerChatRoutes({
   });
 
   app.delete('/api/chat/channels/:channelId', (req, res) => {
-    const deleted = repo.deleteChannel(req.params.channelId);
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    if (!scoped.getChannel(req.params.channelId)) return denyChatHistory(res, 'channel not found');
+    const deleted = scoped.deleteChannel(req.params.channelId);
     if (!deleted) {
       return res.status(404).json({ error: 'channel not found' });
     }
@@ -1289,7 +1489,11 @@ export function registerChatRoutes({
   });
 
   app.post('/api/chat/channels/:channelId/read', (req, res) => {
-    repo.markChannelRead(req.params.channelId);
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    if (!scoped.getChannel(req.params.channelId)) return denyChatHistory(res, 'channel not found');
+    scoped.markChannelRead(req.params.channelId);
     return res.json({ success: true });
   });
 
@@ -1297,6 +1501,7 @@ export function registerChatRoutes({
     try {
       const binding = requireRequestOrg(req, res);
       if (!binding) return undefined;
+      const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
       const channelId = String(req.body?.channelId ?? '').trim();
       const parentMessageId = String(req.body?.parentMessageId ?? '').trim();
       const title = String(req.body?.title ?? 'Thread').trim() || 'Thread';
@@ -1304,21 +1509,20 @@ export function registerChatRoutes({
         return res.status(400).json({ error: 'channelId and parentMessageId are required' });
       }
 
-      const existing = repo.getThreadByParentMessage(parentMessageId);
+      const existing = scoped.getThreadByParentMessage(parentMessageId);
       if (existing) {
-        return ownsThread(repo, existing, binding)
-          ? res.json({ thread: toThread(existing) })
-          : denyChatHistory(res, 'thread not found');
+        return res.json({ thread: toThread(existing) });
       }
 
-      const thread = repo.createThread({
+      // THE-931: createThread resolves parent channel/message ownership at the
+      // repository boundary and inherits the owned channel's team scope.
+      const thread = scoped.createThread({
         id: typeof req.body?.id === 'string' ? req.body.id : undefined,
         channel_id: channelId,
         parent_message_id: parentMessageId,
         title,
-        org_id: binding.orgId,
-        team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
       });
+      if (!thread) return denyChatHistory(res, 'thread not found');
 
       return res.status(201).json({ thread: toThread(thread) });
     } catch (err) {
@@ -1327,9 +1531,19 @@ export function registerChatRoutes({
     }
   });
 
-  app.post('/api/chat/setup', async (_req, res) => {
+  app.post('/api/chat/setup', async (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+    if (!scoped.historyAllowed()) return denyChatHistory(res, 'chat setup unavailable');
     try {
       const snapshot = await ensureDefaults();
+      // THE-931: ensureDefaults bootstraps legacy unowned channels; the setup
+      // surface returns only channels the principal owns (legacy rows fail closed
+      // for every non-local-admin principal). Ownership is resolved at the
+      // repository boundary, so foreign/legacy metadata cannot leak here.
+      const ownedIds = new Set(scoped.listChannels().map((c) => c.id));
+      snapshot.channels = snapshot.channels.filter((channel) => ownedIds.has(channel.id));
       return res.json(snapshot);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1371,12 +1585,18 @@ export function registerChatRoutes({
       if (!binding) return undefined;
       const authoritativeSender = binding.principal.principal_id;
       const authoritativeTimestamp = new Date().toISOString();
+      const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+      // THE-931: the channel is resolved and owned at the repository boundary;
+      // every message/thread write below inherits the owned channel scope and
+      // ignores any caller-supplied teamId.
+      const ownedChannel = scoped.getChannel(channelId);
+      if (!ownedChannel) return denyChatHistory(res, 'channel not found');
       const userIsLocal = targets.length > 0 ? Boolean(modelByAgent.get(targets[0])?.isLocal) : false;
 
       if (sidecarBridge) {
         const threadId = typeof req.body?.threadId === 'string' ? req.body.threadId : undefined;
         const parentMessageId = typeof req.body?.parentMessageId === 'string' ? req.body.parentMessageId : undefined;
-        const userMessage = repo.createMessage({
+        const userMessage = scoped.createMessage({
           id: typeof req.body?.messageId === 'string' ? req.body.messageId : undefined,
           channel_id: channelId,
           thread_id: threadId,
@@ -1388,18 +1608,18 @@ export function registerChatRoutes({
           status: 'sent',
           timestamp: authoritativeTimestamp,
           reply_to: parentMessageId,
-          org_id: binding.orgId,
-          team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
         });
+        if (!userMessage) return denyChatHistory(res, 'channel not found');
 
         if (threadId) {
-          repo.incrementThreadCount(threadId, userMessage.timestamp);
+          scoped.incrementThreadCount(threadId, userMessage.timestamp);
         }
 
         // THE-930: apply the same noise guard to the ClickClack sidecar path so
         // muted/cooldown/concurrent-duplicate agents are suppressed consistently.
         const sidecarScope = { channelId, threadId };
         const sidecarTargets: string[] = [];
+        const sidecarTokens = new Map<string, string>();
         const sidecarSuppressed: Array<{ agent: string; reason: string }> = [];
         for (const agent of targets) {
           const reservation = noiseGuard.reserve(agent, sidecarScope, content);
@@ -1407,6 +1627,7 @@ export function registerChatRoutes({
             sidecarSuppressed.push({ agent, reason: reservation.reason ?? 'suppressed' });
           } else {
             sidecarTargets.push(agent);
+            if (reservation.ownerToken) sidecarTokens.set(agent, reservation.ownerToken);
           }
         }
         // THE-930 (blocker 2): every acquired reservation is released in a
@@ -1427,8 +1648,8 @@ export function registerChatRoutes({
           });
           sidecarDelivered = true;
 
-          const storedReplies = result.messages.map((message) => {
-            const stored = repo.createMessage({
+          const storedReplies = result.messages.map((message): ReturnType<typeof toMessage> | null => {
+            const stored = scoped.createMessage({
               id: message.id,
               channel_id: channelId,
               thread_id: threadId,
@@ -1440,16 +1661,15 @@ export function registerChatRoutes({
               status: 'sent',
               timestamp: compatibilityMessageTimestamp(message.createdAt),
               reply_to: parentMessageId,
-              org_id: binding.orgId,
-              team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
             });
+            if (!stored) return null;
 
             if (threadId) {
-              repo.incrementThreadCount(threadId, stored.timestamp);
+              scoped.incrementThreadCount(threadId, stored.timestamp);
             }
 
             return toMessage(stored);
-          });
+          }).filter((m): m is ReturnType<typeof toMessage> => m !== null);
 
           return res.status(201).json({
             ...result,
@@ -1473,7 +1693,7 @@ export function registerChatRoutes({
           });
         } finally {
           for (const agent of sidecarTargets) {
-            noiseGuard.release(agent, sidecarScope, content, { delivered: sidecarDelivered });
+            noiseGuard.release(agent, sidecarScope, content, { delivered: sidecarDelivered, ownerToken: sidecarTokens.get(agent) });
           }
         }
       }
@@ -1481,7 +1701,7 @@ export function registerChatRoutes({
       const threadId = typeof req.body?.threadId === 'string' ? req.body.threadId : undefined;
       const parentMessageId = typeof req.body?.parentMessageId === 'string' ? req.body.parentMessageId : undefined;
 
-      const userMessage = repo.createMessage({
+      const userMessage = scoped.createMessage({
         id: typeof req.body?.messageId === 'string' ? req.body.messageId : undefined,
         channel_id: channelId,
         thread_id: threadId,
@@ -1493,12 +1713,11 @@ export function registerChatRoutes({
         status: 'sent',
         timestamp: authoritativeTimestamp,
         reply_to: parentMessageId,
-        org_id: binding.orgId,
-        team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
       });
+      if (!userMessage) return denyChatHistory(res, 'channel not found');
 
       if (threadId) {
-        repo.incrementThreadCount(threadId, userMessage.timestamp);
+        scoped.incrementThreadCount(threadId, userMessage.timestamp);
       }
 
       // THE-930: atomic scoped reservation. Suppression keys only on the
@@ -1507,6 +1726,7 @@ export function registerChatRoutes({
       // generation+storage so concurrent duplicate sends are suppressed.
       const noiseScope = { channelId, threadId };
       const sendableTargets: string[] = [];
+      const reservationTokens = new Map<string, string>();
       const suppressedReplies: Array<{ agent: string; reason: string }> = [];
       for (const agent of targets) {
         const reservation = noiseGuard.reserve(agent, noiseScope, content);
@@ -1514,6 +1734,7 @@ export function registerChatRoutes({
           suppressedReplies.push({ agent, reason: reservation.reason ?? 'suppressed' });
         } else {
           sendableTargets.push(agent);
+          if (reservation.ownerToken) reservationTokens.set(agent, reservation.ownerToken);
         }
       }
 
@@ -1549,7 +1770,7 @@ export function registerChatRoutes({
             isLocal: Boolean(resolved?.isLocal),
           };
 
-          const stored = repo.createMessage({
+          const stored = scoped.createMessage({
             id: randomUUID(),
             channel_id: channelId,
             thread_id: threadId,
@@ -1561,18 +1782,17 @@ export function registerChatRoutes({
             status: 'sent',
             timestamp: new Date().toISOString(),
             reply_to: parentMessageId,
-            org_id: binding.orgId,
-            team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
           });
+          if (!stored) return;
 
           if (threadId) {
-            repo.incrementThreadCount(threadId, stored.timestamp);
+            scoped.incrementThreadCount(threadId, stored.timestamp);
           }
 
           replies.push(toMessage(stored));
           delivered = true;
         } finally {
-          noiseGuard.release(agent, noiseScope, content, { delivered });
+          noiseGuard.release(agent, noiseScope, content, { delivered, ownerToken: reservationTokens.get(agent) });
         }
       }));
 
