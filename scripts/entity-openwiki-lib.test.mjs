@@ -473,6 +473,15 @@ test("generated wiki verification rejects stale source fingerprints", async () =
 });
 
 
+test("generated wiki verification rejects unverifiable gitHead metadata", async () => {
+  const root = await fixture();
+  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-5.5" });
+  const lastUpdatePath = path.join(root, "openwiki", ".last-update.json");
+  await writeFile(lastUpdatePath, `${JSON.stringify({ lastUpdated: "2026-08-03T00:00:00.000Z", gitHead: "abc123", mode: "update" }, null, 2)}\n`);
+
+  await assert.rejects(() => verifyGeneratedWiki(root), /gitHead/i);
+});
+
 test("generation metadata has no unverifiable source commit claim", async () => {
   const root = await fixture();
   const metadata = await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-5.5" });
