@@ -124,6 +124,27 @@ export function validateTaskCreateScope(
   return { ok: true };
 }
 
+/**
+ * THE-933 — canonical grant/task-target compatibility for handoff authorization.
+ *
+ * Mirrors the team semantics of `permissions.ts` `grantCoversObject`: a
+ * team-restricted grant must NOT cover an org-wide (team-less) task, while an
+ * org-wide grant covers any team-scoped task in that org. Only write-capable
+ * roles (contributor/manager/admin) qualify a target as a new owner candidate.
+ */
+export function grantCoversTaskTarget(
+  grant: { org_id: string | null; team_id: string | null; role: string },
+  task: { org_id: string | null; team_id: string | null },
+): boolean {
+  if (grant.role !== "contributor" && grant.role !== "manager" && grant.role !== "admin") return false;
+  if (grant.org_id !== task.org_id) return false;
+  if (task.team_id !== null) {
+    return grant.team_id === null || grant.team_id === task.team_id;
+  }
+  // Org-wide task: only an org-wide (team-less) grant covers it.
+  return grant.team_id === null;
+}
+
 export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: RegisterTaskRoutesDeps): void {
   const {
     AGENT_CONFIG,
@@ -1522,11 +1543,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const orgId = task.org_id ?? null;
     const teamId = task.team_id ?? null;
     const grants = principalRepo.listGrantsForPrincipal(targetPrincipalId);
-    const compatible = grants.some(
-      (g) =>
-        g.org_id === orgId &&
-        (g.team_id === null || teamId === null || g.team_id === teamId) &&
-        (g.role === "contributor" || g.role === "manager" || g.role === "admin"),
+    const compatible = grants.some((g) =>
+      grantCoversTaskTarget(g, { org_id: orgId, team_id: teamId }),
     );
     if (!compatible) {
       return { ok: false, status: 400, code: "target_principal_out_of_scope", message: "target principal lacks a compatible grant for this task" };
