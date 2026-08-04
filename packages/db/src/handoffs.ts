@@ -42,6 +42,8 @@ export interface HandoffQueryScope {
   mode: HandoffMode;
   orgId: string;
   cloudId?: string | null;
+  /** Required for rollback: the handoff record must belong to this task. */
+  taskId?: number;
 }
 
 export interface HandoffRepository {
@@ -51,7 +53,21 @@ export interface HandoffRepository {
   rollback(id: string, scope: HandoffQueryScope): HandoffRecord;
 }
 
-function ensureHandoffSchema(db: Database.Database): void {
+const HANDOFF_REQUIRED_COLUMNS = [
+  'id',
+  'task_id',
+  'mode',
+  'cloud_id',
+  'source_principal_id',
+  'target_principal_id',
+  'org_id',
+  'team_id',
+  'note',
+  'created_by_principal_id',
+  'created_at',
+] as const;
+
+export function ensureHandoffSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS task_handoffs (
       id TEXT PRIMARY KEY,
@@ -66,6 +82,19 @@ function ensureHandoffSchema(db: Database.Database): void {
       created_by_principal_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+  `);
+  // THE-933: fail closed if a pre-existing legacy `task_handoffs` table is
+  // missing required columns. CREATE TABLE IF NOT EXISTS is a no-op on a legacy
+  // table, so an incompatible schema must not be silently used. This check runs
+  // before index creation (indexes reference the new columns).
+  const cols = db.prepare('PRAGMA table_info(task_handoffs)').all() as Array<{ name: string }>;
+  const present = new Set(cols.map((c) => c.name));
+  for (const col of HANDOFF_REQUIRED_COLUMNS) {
+    if (!present.has(col)) {
+      throw new Error('task_handoffs_schema_incompatible');
+    }
+  }
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_mode ON task_handoffs(task_id, mode);
     CREATE INDEX IF NOT EXISTS idx_task_handoffs_org ON task_handoffs(org_id);
   `);
@@ -134,6 +163,12 @@ export function createHandoffRepository(): HandoffRepository {
 
   return {
     create(input) {
+      // THE-933 (blocker 4): the local repository never serves cloud mode. The
+      // route must fail closed (503) before reaching here; this guard is defense
+      // in depth so a cloud id can never mutate a local task row.
+      if (input.mode === 'cloud') {
+        throw new Error('cloud_handoffs_unavailable');
+      }
       const source = normalizePrincipal(input.sourcePrincipalId);
       const target = normalizePrincipal(input.targetPrincipalId);
       const orgId = normalizePrincipal(input.orgId);
@@ -204,6 +239,17 @@ export function createHandoffRepository(): HandoffRepository {
       if (record.org_id !== scope.orgId) {
         throw new Error('rollback is outside the org scope');
       }
+      // THE-933 (gap): scope rollback by task id + mode + cloud id so a caller
+      // authorized for one task cannot replay another task's handoff id.
+      if (scope.taskId !== undefined && record.task_id !== scope.taskId) {
+        throw new Error('rollback task_id is outside the task scope');
+      }
+      if (record.mode !== scope.mode) {
+        throw new Error('rollback mode mismatch');
+      }
+      if (record.mode === 'cloud' && record.cloud_id !== (scope.cloudId ?? null)) {
+        throw new Error('rollback cloud_id mismatch');
+      }
       // Reverse the edge without destroying history; reassign the task back to the
       // original source so both panels converge.
       const rollbackId = randomUUID();
@@ -212,8 +258,8 @@ export function createHandoffRepository(): HandoffRepository {
         insertStmt.run(
           rollbackId,
           record.task_id,
-          scope.mode,
-          scope.mode === 'cloud' ? record.cloud_id : null,
+          record.mode,
+          record.cloud_id,
           record.target_principal_id,
           record.source_principal_id,
           record.org_id,

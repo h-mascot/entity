@@ -51,31 +51,36 @@ describe('task handoffs repository (THE-933)', () => {
     expect(record.target_principal_id).toBe('zora');
   });
 
-  it('never reads cloud handoffs from a local query (and vice versa)', () => {
+  it('never serves cloud mode from the local repository (cloud fails closed)', () => {
     const { handoffs, task } = setup();
     handoffs.create({ taskId: task.id, mode: 'local', sourcePrincipalId: 'ada', targetPrincipalId: 'zora', orgId: 'default-org', note: 'local' });
-    handoffs.create({ taskId: task.id, mode: 'cloud', cloudId: 'C-1', sourcePrincipalId: 'ada', targetPrincipalId: 'spock', orgId: 'default-org', note: 'cloud' });
+    // THE-933 (blocker 4): the local repository refuses cloud mode so a cloud id
+    // can never write a local handoff row or mutate a local task.
+    expect(() =>
+      handoffs.create({ taskId: task.id, mode: 'cloud', cloudId: 'C-1', sourcePrincipalId: 'ada', targetPrincipalId: 'spock', orgId: 'default-org', note: 'cloud' }),
+    ).toThrow(/cloud_handoffs_unavailable|cloud/i);
 
     const localOnly = handoffs.listForTask(task.id, { mode: 'local', orgId: 'default-org' });
     const cloudOnly = handoffs.listForTask(task.id, { mode: 'cloud', orgId: 'default-org' });
-
+    // Local rows are isolated; cloud queries return nothing (no cloud rows exist locally).
     expect(localOnly.every((h) => h.mode === 'local')).toBe(true);
-    expect(cloudOnly.every((h) => h.mode === 'cloud')).toBe(true);
     expect(localOnly).toHaveLength(1);
-    expect(cloudOnly).toHaveLength(1);
+    expect(cloudOnly).toEqual([]);
   });
 
-  it('isolates cloud handoffs by cloud id (cloud id never reads unrelated local handoffs)', () => {
+  it('never persists cloud handoffs locally, regardless of cloud id (fail closed)', () => {
     const { handoffs, task } = setup();
-    handoffs.create({ taskId: task.id, mode: 'cloud', cloudId: 'C-1', sourcePrincipalId: 'ada', targetPrincipalId: 'zora', orgId: 'default-org', note: 'c1' });
-    handoffs.create({ taskId: task.id, mode: 'cloud', cloudId: 'C-2', sourcePrincipalId: 'ada', targetPrincipalId: 'spock', orgId: 'default-org', note: 'c2' });
+    // THE-933 (blocker 4): every cloud create is refused; no local cloud rows are
+    // ever written, so one cloud context can never read another's local rows.
+    expect(() =>
+      handoffs.create({ taskId: task.id, mode: 'cloud', cloudId: 'C-1', sourcePrincipalId: 'ada', targetPrincipalId: 'zora', orgId: 'default-org', note: 'c1' }),
+    ).toThrow(/cloud_handoffs_unavailable|cloud/i);
+    expect(() =>
+      handoffs.create({ taskId: task.id, mode: 'cloud', cloudId: 'C-2', sourcePrincipalId: 'ada', targetPrincipalId: 'spock', orgId: 'default-org', note: 'c2' }),
+    ).toThrow(/cloud_handoffs_unavailable|cloud/i);
 
-    const c1 = handoffs.listForTask(task.id, { mode: 'cloud', orgId: 'default-org', cloudId: 'C-1' });
-    const c2 = handoffs.listForTask(task.id, { mode: 'cloud', orgId: 'default-org', cloudId: 'C-2' });
-    expect(c1).toHaveLength(1);
-    expect(c1[0]!.cloud_id).toBe('C-1');
-    expect(c2).toHaveLength(1);
-    expect(c2[0]!.cloud_id).toBe('C-2');
+    expect(handoffs.listForTask(task.id, { mode: 'cloud', orgId: 'default-org', cloudId: 'C-1' })).toEqual([]);
+    expect(handoffs.listForTask(task.id, { mode: 'cloud', orgId: 'default-org', cloudId: 'C-2' })).toEqual([]);
   });
 
   it('rejects cross-org handoffs (org/team scope enforced)', () => {

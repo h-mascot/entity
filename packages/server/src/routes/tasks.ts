@@ -12,6 +12,10 @@ import {
   sendPermissionDenied,
 } from "../request-permissions";
 import { createHandoffRepository, type HandoffMode } from "../../../db/src/handoffs";
+import {
+  createPrincipalRepository,
+  type PrincipalRepository,
+} from "../../../db/src/principals";
 
 type RegisterTaskRoutesDeps = Record<string, any>;
 
@@ -1489,6 +1493,45 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
 
   // ── Task handoffs (THE-933) ────────────────────────────────────────────
   const handoffRepo = createHandoffRepository();
+  const principalRepo: PrincipalRepository =
+    deps.principalRepository ?? createPrincipalRepository();
+  // Cloud handoffs require a cloud adapter that supports atomic handoff commits.
+  // The TaskAdapter surface exposes no handoff capability, so this is absent and
+  // cloud-mode handoffs fail closed (503) before any local repository access.
+  const cloudHandoffAdapter = deps.cloudHandoffAdapter as unknown;
+
+  /**
+   * THE-933 (blocker 5): authorize the handoff target principal — it must exist,
+   * be active, and hold a grant covering the task org (and team when scoped) at a
+   * write-capable role (contributor/manager/admin).
+   */
+  function authorizeHandoffTarget(
+    targetPrincipalId: string,
+    task: { org_id?: string | null; team_id?: string | null },
+  ):
+    | { ok: true }
+    | { ok: false; status: number; code: string; message: string } {
+    const target = principalRepo.getPrincipal(targetPrincipalId);
+    if (!target) {
+      return { ok: false, status: 400, code: "target_principal_not_found", message: "target principal does not exist" };
+    }
+    if (target.status !== "active") {
+      return { ok: false, status: 400, code: "target_principal_inactive", message: "target principal is not active" };
+    }
+    const orgId = task.org_id ?? null;
+    const teamId = task.team_id ?? null;
+    const grants = principalRepo.listGrantsForPrincipal(targetPrincipalId);
+    const compatible = grants.some(
+      (g) =>
+        g.org_id === orgId &&
+        (g.team_id === null || teamId === null || g.team_id === teamId) &&
+        (g.role === "contributor" || g.role === "manager" || g.role === "admin"),
+    );
+    if (!compatible) {
+      return { ok: false, status: 400, code: "target_principal_out_of_scope", message: "target principal lacks a compatible grant for this task" };
+    }
+    return { ok: true };
+  }
 
   app.get(`${tasksBase}/:id/handoffs`, asyncHandler(async (req, res) => {
     const id = parseTaskId(req.params.id);
@@ -1503,6 +1546,9 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     }
 
     const mode = req.query.mode === "cloud" ? "cloud" : "local";
+    if (mode === "cloud" && !cloudHandoffAdapter) {
+      return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
+    }
     const cloudId = typeof req.query.cloudId === "string" ? req.query.cloudId : null;
     const handoffs = handoffRepo.listForTask(id, { mode, orgId: binding.orgId, cloudId });
     return res.json({ handoffs });
@@ -1522,12 +1568,19 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
 
     const body = req.body ?? {};
     const mode: HandoffMode = body.mode === "cloud" ? "cloud" : "local";
+    // THE-933 (blocker 4): cloud mode has no atomic cloud adapter — fail closed
+    // before any local repository access so a cloud id can never mutate a local task.
+    if (mode === "cloud" && !cloudHandoffAdapter) {
+      return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
+    }
     const targetPrincipalId = typeof body.targetPrincipalId === "string" ? body.targetPrincipalId.trim() : "";
     // THE-933: validate/authorize the target principal.
-    if (!targetPrincipalId) return res.status(400).json({ error: "targetPrincipalId is required" });
+    if (!targetPrincipalId) return res.status(400).json({ code: "target_principal_required", error: "targetPrincipalId is required" });
     if (targetPrincipalId === binding.principal.principal_id) {
-      return res.status(400).json({ error: "target principal must differ from the requester" });
+      return res.status(400).json({ code: "target_principal_is_self", error: "target principal must differ from the requester" });
     }
+    const authz = authorizeHandoffTarget(targetPrincipalId, task);
+    if (!authz.ok) return res.status(authz.status).json({ code: authz.code, error: authz.message });
 
     try {
       const handoff = handoffRepo.create({
@@ -1542,6 +1595,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         createdByPrincipalId: binding.principal.principal_id,
       });
       const refreshed = await taskSyncLayer.getTask(id);
+      // THE-933 (gap): broadcast so both source and target panels refresh.
+      if (broadcast) broadcast({ type: "task:updated", taskId: id, task: refreshed });
       return res.status(201).json({ handoff, task: refreshed });
     } catch (err) {
       const message = err instanceof Error ? err.message : "handoff failed";
@@ -1564,13 +1619,19 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     }
 
     const mode: HandoffMode = req.query.mode === "cloud" ? "cloud" : "local";
+    if (mode === "cloud" && !cloudHandoffAdapter) {
+      return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
+    }
+    const cloudId = typeof req.query.cloudId === "string" ? req.query.cloudId : null;
     try {
-      const handoff = handoffRepo.rollback(req.params.handoffId, { mode, orgId: binding.orgId });
+      const handoff = handoffRepo.rollback(req.params.handoffId, { taskId: id, mode, orgId: binding.orgId, cloudId });
       const refreshed = await taskSyncLayer.getTask(id);
+      // THE-933 (gap): broadcast so both source and target panels refresh.
+      if (broadcast) broadcast({ type: "task:updated", taskId: id, task: refreshed });
       return res.json({ handoff, task: refreshed });
     } catch (err) {
       const message = err instanceof Error ? err.message : "rollback failed";
-      const isScope = /org|scope|not found/i.test(message);
+      const isScope = /org|scope|not found|task_id|mode|cloud/i.test(message);
       return res.status(isScope ? (message.includes("not found") ? 404 : 400) : 500).json({ error: message });
     }
   }));
