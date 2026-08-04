@@ -16,6 +16,10 @@ process.env.ENTITY_CHAT_AGENT_RUNTIME = '0';
 describe('chat ObjectRef links', () => {
   let server: http.Server;
   let baseUrl = '';
+  // THE-931 (R2): channel/thread ids are server-generated (caller ids ignored),
+  // so capture them from the creation responses.
+  let channelId = '';
+  let threadId = '';
 
   beforeAll(async () => {
     const { registerChatRoutes } = await import('./chat');
@@ -76,33 +80,32 @@ describe('chat ObjectRef links', () => {
 
   async function createChannelAndThread() {
     const orgHeaders = { 'Content-Type': 'application/json', 'x-entity-org-id': 'default-org', 'x-entity-role': 'manager' };
-    await fetch(`${baseUrl}/api/chat/categories`, {
-      method: 'POST',
-      headers: orgHeaders,
-      body: JSON.stringify({ id: 'entity-links', name: 'Entity Links' }),
-    });
+    const cat = await readJson(await fetch(`${baseUrl}/api/chat/categories`, {
+      method: 'POST', headers: orgHeaders,
+      body: JSON.stringify({ name: 'Entity Links' }),
+    })) as { category: { id: string } };
     const channelResponse = await fetch(`${baseUrl}/api/chat/channels`, {
-      method: 'POST',
-      headers: orgHeaders,
-      body: JSON.stringify({ id: 'object-ref-channel', name: 'ObjectRef Channel', categoryId: 'entity-links' }),
+      method: 'POST', headers: orgHeaders,
+      body: JSON.stringify({ name: 'ObjectRef Channel', categoryId: cat.category.id }),
     });
     expect(channelResponse.status).toBe(201);
+    channelId = ((await readJson(channelResponse)) as { channel: { id: string } }).channel.id;
     // THE-931: thread creation requires a real, owned parent message. Seed one
     // directly through the repository (the public send route would invoke the
     // agent runtime, which is undesirable here).
     createChatRepository().createMessage({
       id: 'parent-message',
-      channel_id: 'object-ref-channel',
+      channel_id: channelId,
       sender: 'user',
       content: 'parent',
       org_id: 'default-org',
     });
     const threadResponse = await fetch(`${baseUrl}/api/chat/threads`, {
-      method: 'POST',
-      headers: orgHeaders,
-      body: JSON.stringify({ id: 'object-ref-thread', channelId: 'object-ref-channel', parentMessageId: 'parent-message', title: 'ObjectRef Thread' }),
+      method: 'POST', headers: orgHeaders,
+      body: JSON.stringify({ channelId, parentMessageId: 'parent-message', title: 'ObjectRef Thread' }),
     });
     expect(threadResponse.status).toBe(201);
+    threadId = ((await readJson(threadResponse)) as { thread: { id: string } }).thread.id;
   }
 
   it('links channels and threads to Entity ObjectRefs with role metadata', async () => {
@@ -113,35 +116,32 @@ describe('chat ObjectRef links', () => {
       'x-entity-role': 'manager',
     };
 
-    const channelLinkResponse = await fetch(`${baseUrl}/api/chat/channels/object-ref-channel/object-refs`, {
-      method: 'POST',
-      headers,
+    const channelLinkResponse = await fetch(`${baseUrl}/api/chat/channels/${channelId}/object-refs`, {
+      method: 'POST', headers,
       body: JSON.stringify({ object_ref: { object_type: 'task', object_id: '77', link_role: 'chat_context' } }),
     });
     const channelLinkJson = await readJson(channelLinkResponse);
     expect(channelLinkResponse.status).toBe(201);
     expect(channelLinkJson).toMatchObject({
-      target: { type: 'channel', id: 'object-ref-channel' },
+      target: { type: 'channel', id: channelId },
       object_refs: [{ object_type: 'task', object_id: '77', link_role: 'chat_context' }],
       restricted_count: 0,
     });
 
-    const duplicateResponse = await fetch(`${baseUrl}/api/chat/channels/object-ref-channel/object-refs`, {
-      method: 'POST',
-      headers,
+    const duplicateResponse = await fetch(`${baseUrl}/api/chat/channels/${channelId}/object-refs`, {
+      method: 'POST', headers,
       body: JSON.stringify({ object_ref: { object_type: 'task', object_id: '77', link_role: 'chat_context' } }),
     });
     expect(duplicateResponse.status).toBe(201);
     expect((await readJson(duplicateResponse)).object_refs).toHaveLength(1);
 
-    const threadLinkResponse = await fetch(`${baseUrl}/api/chat/threads/object-ref-thread/object-refs`, {
-      method: 'POST',
-      headers,
+    const threadLinkResponse = await fetch(`${baseUrl}/api/chat/threads/${threadId}/object-refs`, {
+      method: 'POST', headers,
       body: JSON.stringify({ object_type: 'evidence_artifact', object_id: 'receipt-77', link_role: 'proof' }),
     });
     expect(threadLinkResponse.status).toBe(201);
     expect(await readJson(threadLinkResponse)).toMatchObject({
-      target: { type: 'thread', id: 'object-ref-thread' },
+      target: { type: 'thread', id: threadId },
       object_refs: [{ object_type: 'evidence_artifact', object_id: 'receipt-77', link_role: 'proof' }],
       restricted_count: 0,
     });
@@ -158,14 +158,13 @@ describe('chat ObjectRef links', () => {
       'x-entity-role': 'viewer',
     };
 
-    const linkResponse = await fetch(`${baseUrl}/api/chat/channels/object-ref-channel/object-refs`, {
-      method: 'POST',
-      headers: managerHeaders,
+    const linkResponse = await fetch(`${baseUrl}/api/chat/channels/${channelId}/object-refs`, {
+      method: 'POST', headers: managerHeaders,
       body: JSON.stringify({ object_ref: { object_type: 'native_document', object_id: 'people-doc', link_role: 'source_context' } }),
     });
     expect(linkResponse.status).toBe(201);
 
-    const viewerResponse = await fetch(`${baseUrl}/api/chat/channels/object-ref-channel/object-refs`, {
+    const viewerResponse = await fetch(`${baseUrl}/api/chat/channels/${channelId}/object-refs`, {
       headers: viewerHeaders,
     });
     expect(viewerResponse.status).toBe(200);
@@ -174,9 +173,8 @@ describe('chat ObjectRef links', () => {
       restricted_count: 1,
     });
 
-    const deniedResponse = await fetch(`${baseUrl}/api/chat/channels/object-ref-channel/object-refs`, {
-      method: 'POST',
-      headers: { ...viewerHeaders, 'Content-Type': 'application/json' },
+    const deniedResponse = await fetch(`${baseUrl}/api/chat/channels/${channelId}/object-refs`, {
+      method: 'POST', headers: { ...viewerHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ object_ref: { object_type: 'native_document', object_id: 'people-doc', link_role: 'source_context' } }),
     });
     expect(deniedResponse.status).toBe(403);
@@ -190,7 +188,7 @@ describe('chat ObjectRef links', () => {
       readiness: { state: 'unavailable', reason: 'clickclack_unreachable' },
     });
 
-    const refsResponse = await fetch(`${baseUrl}/api/chat/threads/object-ref-thread/object-refs`, {
+    const refsResponse = await fetch(`${baseUrl}/api/chat/threads/${threadId}/object-refs`, {
       headers: { 'x-entity-org-id': 'default-org', 'x-entity-role': 'manager' },
     });
     expect(refsResponse.status).toBe(200);
@@ -201,7 +199,7 @@ describe('chat ObjectRef links', () => {
   });
 
   it('uses default org binding when request org header is absent', async () => {
-    const response = await fetch(`${baseUrl}/api/chat/channels/object-ref-channel/object-refs`);
+    const response = await fetch(`${baseUrl}/api/chat/channels/${channelId}/object-refs`);
     expect(response.status).toBe(200);
     expect(await readJson(response)).toMatchObject({ restricted_count: expect.any(Number) });
   });

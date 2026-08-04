@@ -157,7 +157,10 @@ describe('chat routes', () => {
       };
 
       expect(sendResponse.status).toBe(201);
-      expect(sendPayload.message.id).toBe('user-message-1');
+      // THE-931 (R2): the user message id is server-generated; the caller
+      // messageId is ignored (no existence oracle).
+      expect(sendPayload.message.id).toBeTruthy();
+      expect(sendPayload.message.id).not.toBe('user-message-1');
       expect(sendPayload.messages).toHaveLength(1);
       expect(sendPayload.messages[0].id).toBeTruthy();
       expect(sendPayload.messages[0].channelId).toBe(channelPayload.channel.id);

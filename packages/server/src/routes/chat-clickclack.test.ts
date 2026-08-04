@@ -222,11 +222,14 @@ describe('chat ClickClack compatibility bridge', () => {
       expect(payload.degraded).toBe(true);
       expect(payload.error).toContain('sidecar down');
       expect(payload.message).toMatchObject({
-        id: 'entity-human-degraded-1',
         channelId: 'command-deck',
         content: 'persist despite sidecar outage',
         status: 'sent',
       });
+      // THE-931 (R2): the message id is server-generated (caller messageId ignored).
+      const degradedId = payload.message.id;
+      expect(degradedId).toBeTruthy();
+      expect(degradedId).not.toBe('entity-human-degraded-1');
       expect(payload.messages).toEqual([]);
 
       const historyResponse = await fetch(`${degradedBaseUrl}/api/chat/channels/command-deck/messages`);
@@ -235,7 +238,7 @@ describe('chat ClickClack compatibility bridge', () => {
       };
       expect(historyPayload.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({
-          id: 'entity-human-degraded-1',
+          id: degradedId,
           sender: 'entity-local-user',
           channelId: 'command-deck',
           content: 'persist despite sidecar outage',
@@ -274,7 +277,11 @@ describe('chat ClickClack compatibility bridge', () => {
     };
 
     expect(response.status).toBe(201);
-    expect(payload.message).toMatchObject({ id: 'entity-human-1', channelId: 'command-deck', content: 'prove sidecar send' });
+    // THE-931 (R2): the message id is server-generated (caller messageId ignored).
+    expect(payload.message).toMatchObject({ channelId: 'command-deck', content: 'prove sidecar send' });
+    expect(payload.message.id).toBeTruthy();
+    expect(payload.message.id).not.toBe('entity-human-1');
+    const humanId = payload.message.id;
     expect(payload.messages).toEqual([
       expect.objectContaining({ sender: 'geordi', channelId: 'command-deck', content: 'geordi reply through ClickClack' }),
     ]);
@@ -285,8 +292,8 @@ describe('chat ClickClack compatibility bridge', () => {
       messages: Array<{ id: string; sender: string; channelId: string; content: string }>;
     };
     expect(historyPayload.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'entity-human-1', sender: 'entity-local-user', channelId: 'command-deck', content: 'prove sidecar send' }),
-      expect.objectContaining({ id: 'msg_agent', sender: 'geordi', channelId: 'command-deck', content: 'geordi reply through ClickClack' }),
+      expect.objectContaining({ id: humanId, sender: 'entity-local-user', channelId: 'command-deck', content: 'prove sidecar send' }),
+      expect.objectContaining({ sender: 'geordi', channelId: 'command-deck', content: 'geordi reply through ClickClack' }),
     ]));
   }, 15000);
 });

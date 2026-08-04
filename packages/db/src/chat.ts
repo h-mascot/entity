@@ -8,6 +8,8 @@ export interface ChatCategoryRecord {
   name: string;
   emoji: string | null;
   order: number;
+  org_id: string | null;
+  team_id: string | null;
   created_at: string;
 }
 
@@ -62,6 +64,8 @@ export interface CreateChatCategoryInput {
   name: string;
   emoji?: string;
   order?: number;
+  org_id?: string;
+  team_id?: string;
 }
 
 export interface CreateChatChannelInput {
@@ -215,6 +219,8 @@ function ensureChatSchema(db: Database.Database): void {
       name TEXT NOT NULL UNIQUE,
       emoji TEXT,
       "order" INTEGER NOT NULL DEFAULT 0,
+      org_id TEXT,
+      team_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -271,7 +277,7 @@ function ensureChatSchema(db: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_parent_message ON chat_threads(parent_message_id);
   `);
 
-  for (const [table, column] of [['chat_channels', 'org_id'], ['chat_channels', 'team_id'], ['chat_messages', 'org_id'], ['chat_messages', 'team_id'], ['chat_threads', 'org_id'], ['chat_threads', 'team_id']] as const) {
+  for (const [table, column] of [['chat_channels', 'org_id'], ['chat_channels', 'team_id'], ['chat_messages', 'org_id'], ['chat_messages', 'team_id'], ['chat_threads', 'org_id'], ['chat_threads', 'team_id'], ['chat_categories', 'org_id'], ['chat_categories', 'team_id']] as const) {
     if (!hasColumn(db, table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
   }
   if (!hasColumn(db, 'chat_channels', 'linked_object_refs_json')) {
@@ -288,6 +294,8 @@ function mapCategoryRow(row: Record<string, unknown>): ChatCategoryRecord {
     name: String(row.name ?? ''),
     emoji: typeof row.emoji === 'string' ? row.emoji : null,
     order: Number.isFinite(Number(row.order)) ? Number(row.order) : 0,
+    org_id: typeof row.org_id === 'string' ? row.org_id : null,
+    team_id: typeof row.team_id === 'string' ? row.team_id : null,
     created_at: normalizeTimestamp(typeof row.created_at === 'string' ? row.created_at : undefined),
   };
 }
@@ -350,8 +358,8 @@ export function createChatRepository(): ChatRepository {
   const listCategoriesStmt = db.prepare('SELECT * FROM chat_categories ORDER BY "order" ASC, name COLLATE NOCASE ASC');
   const getCategoryByNameStmt = db.prepare('SELECT * FROM chat_categories WHERE lower(name) = lower(?)');
   const createCategoryStmt = db.prepare(`
-    INSERT INTO chat_categories (id, name, emoji, "order", created_at)
-    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO chat_categories (id, name, emoji, "order", org_id, team_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
   const getCategoryStmt = db.prepare('SELECT * FROM chat_categories WHERE id = ?');
 
@@ -407,7 +415,7 @@ export function createChatRepository(): ChatRepository {
       }
 
       const id = input.id?.trim() || randomUUID();
-      createCategoryStmt.run(id, name, input.emoji?.trim() || null, Number(input.order ?? 0));
+      createCategoryStmt.run(id, name, input.emoji?.trim() || null, Number(input.order ?? 0), input.org_id?.trim() || null, input.team_id?.trim() || null);
       const row = getCategoryStmt.get(id) as Record<string, unknown> | undefined;
       if (!row) throw new Error('Failed to create category');
       return mapCategoryRow(row);
@@ -610,6 +618,120 @@ export function createChatRepository(): ChatRepository {
 
     listThreadObjectRefs: (id) => {
       const row = getThreadStmt.get(id) as Record<string, unknown> | undefined;
+      return row ? mapThreadRow(row).linked_object_refs : [];
+    },
+  };
+}
+
+/**
+ * THE-931 (R2) — DB-layer tenant scope for chat resources.
+ *
+ * The authoritative org/team boundary at the repository/query layer. Reads are
+ * scoped by a resolved {orgId, mode, teamIds} predicate so the DB itself never
+ * returns another tenant's rows for tenant-facing operations. Legacy unowned
+ * rows (org_id null) are included only when `includeLegacy` is set (explicit
+ * local-admin compatibility); for every other principal they are invisible.
+ */
+export interface ChatDbScope {
+  orgId: string;
+  /** 'org-wide' sees every row in orgId; 'team' sees only teamIds rows. */
+  mode: 'org-wide' | 'team';
+  teamIds: string[];
+  /** local-admin compatibility: also return legacy org_id-null rows. */
+  includeLegacy: boolean;
+}
+
+export interface TenantChatRepository {
+  listChannels(): ChatChannelRecord[];
+  getChannel(id: string): ChatChannelRecord | undefined;
+  getChannelByName(name: string): ChatChannelRecord | undefined;
+  listCategories(): ChatCategoryRecord[];
+  listMessagesByChannel(channelId: string): ChatMessageRecord[];
+  listMessagesByThread(threadId: string): ChatMessageRecord[];
+  getMessage(id: string): ChatMessageRecord | undefined;
+  listThreadsByChannel(channelId: string): ChatThreadRecord[];
+  getThread(id: string): ChatThreadRecord | undefined;
+  getThreadByParentMessage(parentMessageId: string): ChatThreadRecord | undefined;
+  listChannelObjectRefs(id: string): ObjectRef[];
+  listThreadObjectRefs(id: string): ObjectRef[];
+}
+
+function scopeWhere(scope: ChatDbScope): { sql: string; params: Record<string, unknown> } {
+  // json_each lets a single prepared statement accept a variable team list.
+  return {
+    sql: `(
+      (org_id = @orgId AND (@orgWide = 1 OR team_id IN (SELECT value FROM json_each(@teamIdsJson))))
+      OR (@includeLegacy = 1 AND org_id IS NULL)
+    )`,
+    params: {
+      orgId: scope.orgId,
+      orgWide: scope.mode === 'org-wide' ? 1 : 0,
+      teamIdsJson: JSON.stringify(scope.teamIds ?? []),
+      includeLegacy: scope.includeLegacy ? 1 : 0,
+    },
+  };
+}
+
+export function createTenantChatRepository(scope: ChatDbScope, dbOverride?: Database.Database): TenantChatRepository {
+  const db = dbOverride ?? getEntityDatabase();
+  const where = scopeWhere(scope);
+
+  const listChannelsStmt = db.prepare(`SELECT * FROM chat_channels WHERE ${where.sql} ORDER BY category_id ASC, "order" ASC, name COLLATE NOCASE ASC`);
+  const getChannelStmt = db.prepare(`SELECT * FROM chat_channels WHERE id = @id AND ${where.sql}`);
+  const getChannelByNameStmt = db.prepare(`SELECT * FROM chat_channels WHERE lower(name) = lower(@name) AND ${where.sql}`);
+  const listCategoriesStmt = db.prepare(`SELECT * FROM chat_categories WHERE ${where.sql} ORDER BY "order" ASC, name COLLATE NOCASE ASC`);
+
+  const listMessagesByChannelStmt = db.prepare(`
+    SELECT * FROM chat_messages
+    WHERE channel_id = @channelId AND (thread_id IS NULL OR thread_id = '') AND ${where.sql}
+    ORDER BY datetime(timestamp) ASC, datetime(created_at) ASC, id ASC
+  `);
+  const listMessagesByThreadStmt = db.prepare(`
+    SELECT * FROM chat_messages
+    WHERE thread_id = @threadId AND ${where.sql}
+    ORDER BY datetime(timestamp) ASC, datetime(created_at) ASC, id ASC
+  `);
+  const getMessageStmt = db.prepare(`SELECT * FROM chat_messages WHERE id = @id AND ${where.sql}`);
+
+  const listThreadsByChannelStmt = db.prepare(`SELECT * FROM chat_threads WHERE channel_id = @channelId AND ${where.sql} ORDER BY datetime(last_message_at) DESC, id DESC`);
+  const getThreadStmt = db.prepare(`SELECT * FROM chat_threads WHERE id = @id AND ${where.sql}`);
+  const getThreadByParentStmt = db.prepare(`SELECT * FROM chat_threads WHERE parent_message_id = @parentMessageId AND ${where.sql}`);
+
+  const listChannelObjectRefsStmt = db.prepare(`SELECT * FROM chat_channels WHERE id = @id AND ${where.sql}`);
+  const listThreadObjectRefsStmt = db.prepare(`SELECT * FROM chat_threads WHERE id = @id AND ${where.sql}`);
+
+  return {
+    listChannels: () => (listChannelsStmt.all(where.params) as Array<Record<string, unknown>>).map(mapChannelRow),
+    getChannel: (id) => {
+      const row = getChannelStmt.get({ ...where.params, id }) as Record<string, unknown> | undefined;
+      return row ? mapChannelRow(row) : undefined;
+    },
+    getChannelByName: (name) => {
+      const row = getChannelByNameStmt.get({ ...where.params, name }) as Record<string, unknown> | undefined;
+      return row ? mapChannelRow(row) : undefined;
+    },
+    listCategories: () => (listCategoriesStmt.all(where.params) as Array<Record<string, unknown>>).map(mapCategoryRow),
+    listMessagesByChannel: (channelId) => (listMessagesByChannelStmt.all({ ...where.params, channelId }) as Array<Record<string, unknown>>).map(mapMessageRow),
+    listMessagesByThread: (threadId) => (listMessagesByThreadStmt.all({ ...where.params, threadId }) as Array<Record<string, unknown>>).map(mapMessageRow),
+    getMessage: (id) => {
+      const row = getMessageStmt.get({ ...where.params, id }) as Record<string, unknown> | undefined;
+      return row ? mapMessageRow(row) : undefined;
+    },
+    listThreadsByChannel: (channelId) => (listThreadsByChannelStmt.all({ ...where.params, channelId }) as Array<Record<string, unknown>>).map(mapThreadRow),
+    getThread: (id) => {
+      const row = getThreadStmt.get({ ...where.params, id }) as Record<string, unknown> | undefined;
+      return row ? mapThreadRow(row) : undefined;
+    },
+    getThreadByParentMessage: (parentMessageId) => {
+      const row = getThreadByParentStmt.get({ ...where.params, parentMessageId }) as Record<string, unknown> | undefined;
+      return row ? mapThreadRow(row) : undefined;
+    },
+    listChannelObjectRefs: (id) => {
+      const row = listChannelObjectRefsStmt.get({ ...where.params, id }) as Record<string, unknown> | undefined;
+      return row ? mapChannelRow(row).linked_object_refs : [];
+    },
+    listThreadObjectRefs: (id) => {
+      const row = listThreadObjectRefsStmt.get({ ...where.params, id }) as Record<string, unknown> | undefined;
       return row ? mapThreadRow(row).linked_object_refs : [];
     },
   };
