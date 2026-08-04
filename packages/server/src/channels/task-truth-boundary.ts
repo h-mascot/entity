@@ -163,6 +163,7 @@ const FORBIDDEN_ADAPTER_SOURCE_RULES: Array<{
 export const CHANNEL_ADAPTER_PRODUCTION_SOURCE_FILES = [
   'adapter.ts',
   'email-adapter.ts',
+  'email-config.ts',
   'feature-flag.ts',
   'index.ts',
   'registry.ts',

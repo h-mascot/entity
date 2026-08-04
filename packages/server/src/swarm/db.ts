@@ -295,6 +295,11 @@ export function getSwarmJob(id: string): SwarmJob | undefined {
   return db().prepare('SELECT * FROM swarm_jobs WHERE id = ?').get(id) as SwarmJob | undefined;
 }
 
+/** Read a swarm job from a specific connection (used by the healer dependency boundary). */
+export function getSwarmJobOn(conn: Database.Database, id: string): SwarmJob | undefined {
+  return conn.prepare('SELECT * FROM swarm_jobs WHERE id = ?').get(id) as SwarmJob | undefined;
+}
+
 export function createSwarmJob(input: CreateSwarmJobInput): SwarmJob {
   const id = generateId();
   const now = new Date().toISOString();
@@ -320,6 +325,11 @@ export function createSwarmJob(input: CreateSwarmJobInput): SwarmJob {
 }
 
 export function updateSwarmJob(id: string, updates: UpdateSwarmJobInput): SwarmJob | undefined {
+  return updateSwarmJobOn(db(), id, updates);
+}
+
+/** Update a swarm job on a specific connection (used by the healer dependency boundary). */
+export function updateSwarmJobOn(conn: Database.Database, id: string, updates: UpdateSwarmJobInput): SwarmJob | undefined {
   const sets: string[] = ['updated_at = @now'];
   const params: Record<string, unknown> = { id, now: new Date().toISOString() };
 
@@ -331,8 +341,8 @@ export function updateSwarmJob(id: string, updates: UpdateSwarmJobInput): SwarmJ
     }
   }
 
-  db().prepare(`UPDATE swarm_jobs SET ${sets.join(', ')} WHERE id = @id`).run(params);
-  return getSwarmJob(id);
+  conn.prepare(`UPDATE swarm_jobs SET ${sets.join(', ')} WHERE id = @id`).run(params);
+  return getSwarmJobOn(conn, id);
 }
 
 

@@ -1,38 +1,40 @@
-# RA-FU 930–934 Luna-Review Repair Plan (2026-08-04)
+# RA-FU 930–934 Luna-Review R2 Repair Plan (2026-08-04)
 
-Branch: `runnerqa/ra-fu-930-934-20260804` (base `4c9dd5c`, repair HEAD after `b7d302a`).
-Production forbidden. Gate: `cd packages/server && npm run build && npx vitest run` (Node 22) + app build.
+Branch: `runnerqa/ra-fu-930-934-20260804` (HEAD `13ab8bb`). Production forbidden.
+Gate: `cd packages/server && npm run build && npx vitest run` (Node 22) + `npm --prefix packages/app run build`.
+Review source: `clawd/output/entity/ra-fu-runnerqa-20260804/reviews/luna-review-r2.txt` (4 blockers + matrix gaps).
 
-## Luna blockers (5) + original-criteria gaps — ALL DONE
+## Slice 1 — THE-932 healer success-state restore (blocker 3)
+- [x] 1a RED: reload module after persisting success → restored `{result,timestamp,error:null}`.
+- [x] 1b GREEN: `loadPersistedHealOutcome` accepts `error: null`.
+- Files: `packages/server/src/swarm/healer.ts`, `packages/server/src/swarm/healer.test.ts`.
 
-### Slice A — THE-930 (blockers 1 & 2): chat trust boundary + reservation leak
-- [x] A1 noise guard — `release(...,{delivered})`; cooldown only on delivered=true.
-- [x] A2 `/api/chat/send` derives sender/emoji/timestamp/isLocal from principal + server clock; ignores forged body.
-- [x] A3 sidecar failure releases every reservation (try/finally); retry not duplicate-concurrent; no cooldown on failure.
-- [x] A4 native path `release(...,{delivered:true})` on success.
-- [x] A5 Chat UI surfaces `/api/chat/send` degraded state (Delivery degraded notice).
+## Slice 2 — THE-932 healer DB consistency (blocker 4)
+- [x] 2a RED: nonempty stuck-job; injected DB row healed; default/global DB untouched.
+- [x] 2b GREEN: add `updateSwarmJobOn(db,...)`; healer writes via injected db only.
+- Files: `packages/server/src/swarm/db.ts`, `packages/server/src/swarm/healer.ts`, `healer.test.ts`.
 
-### Slice B — THE-932 (blocker 3 + healer gap): SMTP validator wired live + healer DB
-- [x] B1 `createEmailChannelAdapter` validates SMTP at construction; plaintext auth fails closed.
-- [x] B2 production `/api/channel-adapters` route exposes public-safe registry; plaintext cannot be registered.
-- [x] B3 healer persistence uses injected `getDatabase` consistently.
+## Slice 3 — THE-933 cloud isolation (blocker 1)
+- [x] 3a RED: spies/counters prove ZERO taskSyncLayer + repo access in cloud mode (list/create/rollback, incl. cloud/local id collision); remove `cloudHandoffAdapter` branches.
+- [x] 3b GREEN: determine mode BEFORE getTask/authorization/repo; cloud permanently 503 before any local access; drop misleading adapter dep.
+- Files: `packages/server/src/routes/tasks.ts`, `tasks-handoffs-route.test.ts`.
 
-### Slice C — THE-933 (blockers 4 & 5 + gaps)
-- [x] C1 cloud-mode handoff returns 503 fail-closed before local repo; collision test.
-- [x] C2 target principal authorized (exists/active/org+team/role); negatives.
-- [x] C3 rollback scoped by id+task_id+mode+cloud_id+org; mismatch rejected.
-- [x] C4 source/target task broadcast after committed local handoff.
-- [x] C5 legacy `task_handoffs` schema fail-closed.
+## Slice 4 — THE-932 SMTP boundary (blocker 2)
+- [x] 4a RED: route tests — configured TLS registers with public-safe health; configured plaintext AUTH never registers/appears; no credential/internal leak; router errors sanitized.
+- [x] 4b GREEN: env config loader for email adapter; register via `createChannelAdapterRegistryForRuntime`; explicit no-send boundary; sanitize router errors.
+- Files: `packages/server/src/channels/router.ts`, `email-config.ts` (new), `email-adapter.test.ts`.
 
-### Slice D — gate & receipt
-- [x] D1 server build + vitest (Node 22): 1263 pass.
-- [x] D2 app build OK.
-- [x] D3 `npm run ctrl:gate` passed ✅ (db 44 + server 1263 + builds + 415).
-- [x] D4 diff reviewed; backend-health no longer orphan (used by email-adapter); no dead parallel API.
-- [x] D5 committed to branch.
-- [x] D6 receipts/worker-final.json replaced.
-- [x] D7 browser smoke: app loads, Chat composer renders, /api/channel-adapters + noise-settings + healer/status live, 0 console errors.
+## Slice 5 — THE-930 DB-backed atomic reservation + admin auth (matrix gap)
+- [x] 5a RED: two guard instances vs same DB → only one concurrent reservation wins; expiry/retry; mixed-target; admin negative route test.
+- [x] 5b GREEN: DB-backed reservation backend (tx compare-and-set, lease expiry, success-only cooldown, bounded cleanup, injectable clock); `createAgentNoiseGuard({db})`; chat route uses DB-backed guard + admin-only PATCH.
+- Files: `packages/server/src/routes/agent-noise-guard.ts`, `chat.ts`, `agent-noise-guard.test.ts`, `chat-noise-controls.test.ts`.
 
-## Preserved
-- THE-931 (chat-history auth) PASS — chat-history-auth + api-auth suites green.
-- THE-934 (doc-intelligence schema) PASS — doc-intelligence suites green.
+## Slice 6 — gate & receipt
+- [ ] 6a server build + vitest (Node 22).
+- [ ] 6b app build.
+- [ ] 6c `npm run ctrl:gate`.
+- [ ] 6d self-review full diff.
+- [ ] 6e commit on branch; replace worker-final receipt.
+
+## Preserved (must stay PASS)
+- THE-931 (chat-history auth), THE-934 (doc-intelligence schema), prior THE-930 reservation/cooldown, broadcasts, rollback scope.

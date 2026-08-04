@@ -127,4 +127,20 @@ describe('chat agent noise controls (THE-930)', () => {
     expect(after.settings.cooldownMs).toBe(5000);
     expect(after.settings.mutedAgents).toEqual(['zora']);
   });
+
+  it('rejects a non-admin principal mutating global noise settings (THE-930 admin auth)', async () => {
+    // A contributor (not the local admin, no admin grant) must be denied.
+    const res = await fetch(`${baseUrl}/noise-settings`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-entity-principal-id': 'worker-bee',
+        'x-entity-role': 'contributor',
+      },
+      body: JSON.stringify({ cooldownMs: 9999 }),
+    });
+    expect(res.status).toBe(403);
+    const payload = (await res.json()) as { code?: string; error?: string };
+    expect(payload.code).toBe('admin_required');
+  });
 });

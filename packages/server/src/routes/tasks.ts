@@ -1492,13 +1492,14 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
   }));
 
   // ── Task handoffs (THE-933) ────────────────────────────────────────────
-  const handoffRepo = createHandoffRepository();
+  const handoffRepo = deps.handoffRepository ?? createHandoffRepository();
   const principalRepo: PrincipalRepository =
     deps.principalRepository ?? createPrincipalRepository();
-  // Cloud handoffs require a cloud adapter that supports atomic handoff commits.
-  // The TaskAdapter surface exposes no handoff capability, so this is absent and
-  // cloud-mode handoffs fail closed (503) before any local repository access.
-  const cloudHandoffAdapter = deps.cloudHandoffAdapter as unknown;
+  // THE-933 (blocker): cloud handoffs have no atomic cloud adapter and are
+  // PERMANENTLY unavailable. Every cloud request must fail closed (503) BEFORE
+  // any local task/repository access (mode is resolved at the top of each
+  // handler). There is intentionally no `cloudHandoffAdapter` branch: a supplied
+  // adapter would still only reach this local repository, which is misleading.
 
   /**
    * THE-933 (blocker 5): authorize the handoff target principal — it must exist,
@@ -1537,6 +1538,15 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const id = parseTaskId(req.params.id);
     if (!id) return res.status(400).json({ error: "invalid task id" });
 
+    // THE-933 (blocker): resolve the authoritative mode FIRST and fail cloud
+    // closed before ANY local task read, object authorization, or repository
+    // access. A numeric cloud id that collides with a local task must never
+    // touch local state.
+    const mode: HandoffMode = req.query.mode === "cloud" ? "cloud" : "local";
+    if (mode === "cloud") {
+      return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
+    }
+
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
     const task = await taskSyncLayer.getTask(id);
@@ -1545,10 +1555,6 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       return undefined;
     }
 
-    const mode = req.query.mode === "cloud" ? "cloud" : "local";
-    if (mode === "cloud" && !cloudHandoffAdapter) {
-      return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
-    }
     const cloudId = typeof req.query.cloudId === "string" ? req.query.cloudId : null;
     const handoffs = handoffRepo.listForTask(id, { mode, orgId: binding.orgId, cloudId });
     return res.json({ handoffs });
@@ -1558,6 +1564,15 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const id = parseTaskId(req.params.id);
     if (!id) return res.status(400).json({ error: "invalid task id" });
 
+    const body = req.body ?? {};
+    // THE-933 (blocker): resolve the authoritative mode FIRST from the body and
+    // fail cloud closed before ANY local task read, object authorization, target
+    // authorization, or repository write.
+    const mode: HandoffMode = body.mode === "cloud" ? "cloud" : "local";
+    if (mode === "cloud") {
+      return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
+    }
+
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
     const task = await taskSyncLayer.getTask(id);
@@ -1566,13 +1581,6 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       return undefined;
     }
 
-    const body = req.body ?? {};
-    const mode: HandoffMode = body.mode === "cloud" ? "cloud" : "local";
-    // THE-933 (blocker 4): cloud mode has no atomic cloud adapter — fail closed
-    // before any local repository access so a cloud id can never mutate a local task.
-    if (mode === "cloud" && !cloudHandoffAdapter) {
-      return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
-    }
     const targetPrincipalId = typeof body.targetPrincipalId === "string" ? body.targetPrincipalId.trim() : "";
     // THE-933: validate/authorize the target principal.
     if (!targetPrincipalId) return res.status(400).json({ code: "target_principal_required", error: "targetPrincipalId is required" });
@@ -1610,6 +1618,13 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const id = parseTaskId(req.params.id);
     if (!id) return res.status(400).json({ error: "invalid task id" });
 
+    // THE-933 (blocker): resolve the authoritative mode FIRST and fail cloud
+    // closed before ANY local task read, object authorization, or repository access.
+    const mode: HandoffMode = req.query.mode === "cloud" ? "cloud" : "local";
+    if (mode === "cloud") {
+      return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
+    }
+
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
     const task = await taskSyncLayer.getTask(id);
@@ -1618,10 +1633,6 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       return undefined;
     }
 
-    const mode: HandoffMode = req.query.mode === "cloud" ? "cloud" : "local";
-    if (mode === "cloud" && !cloudHandoffAdapter) {
-      return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
-    }
     const cloudId = typeof req.query.cloudId === "string" ? req.query.cloudId : null;
     try {
       const handoff = handoffRepo.rollback(req.params.handoffId, { taskId: id, mode, orgId: binding.orgId, cloudId });

@@ -8,7 +8,7 @@
 
 import { getEntityDatabase } from '../../../db/src/entity-db';
 import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../config/settings-store';
-import { updateSwarmJob, getSwarmJob, listSwarmJobs, ensureSwarmSchema } from './db';
+import { updateSwarmJobOn, ensureSwarmSchema } from './db';
 import type { SwarmJob } from './types';
 import type Database from 'better-sqlite3';
 
@@ -57,7 +57,11 @@ function loadPersistedHealOutcome(getDatabase: () => Database.Database = default
     const stored = getSettingJson(db, HEALER_STATUS_KEY);
     if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return null;
     const record = stored as Partial<HealOutcome>;
-    if (typeof record.timestamp !== 'string' || typeof record.error !== 'string') return null;
+    // THE-932 (blocker 3): a successful outcome is persisted with `error: null`.
+    // Accept both string errors (failures) and null (success) so the normal
+    // successful state is restored across process/module restart.
+    if (typeof record.timestamp !== 'string') return null;
+    if (record.error !== null && typeof record.error !== 'string') return null;
     return { result: (record.result as HealResult) ?? null, timestamp: record.timestamp, error: record.error };
   } catch {
     return null;
@@ -101,8 +105,10 @@ export async function healStuckJobs(deps: HealDependencies = {}): Promise<HealRe
       const canRetry = job.retry_count < job.max_retries;
 
       if (canRetry) {
-        // Re-queue for retry
-        updateSwarmJob(job.id, {
+        // Re-queue for retry. THE-932 (blocker 4): mutate the SAME injected
+        // connection the stuck jobs were read from — never the module's
+        // default/global database.
+        updateSwarmJobOn(db, job.id, {
           status: 'queued',
           retry_count: job.retry_count + 1,
           feedback: `Auto-healed: stuck for >${STUCK_THRESHOLD_MINUTES}min. Retry ${job.retry_count + 1}/${job.max_retries}`,
@@ -111,8 +117,8 @@ export async function healStuckJobs(deps: HealDependencies = {}): Promise<HealRe
         result.retriedJobs++;
         console.log(`[healer] Re-queued stuck job ${job.id} (retry ${job.retry_count + 1}/${job.max_retries})`);
       } else {
-        // Max retries exhausted, mark as failed
-        updateSwarmJob(job.id, {
+        // Max retries exhausted, mark as failed.
+        updateSwarmJobOn(db, job.id, {
           status: 'failed',
           feedback: `Auto-failed: stuck for >${STUCK_THRESHOLD_MINUTES}min, max retries (${job.max_retries}) exhausted`,
         });

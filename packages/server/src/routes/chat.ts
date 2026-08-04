@@ -20,6 +20,7 @@ import { createAgentNoiseGuard, type AgentNoiseGuard, type NoiseReservation } fr
 import { getEntityDatabase } from '../../../db/src/entity-db';
 import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../config/settings-store';
 import { getTaskAgentSettings } from '../agent/settings';
+import { LOCAL_ADMIN_PRINCIPAL_ID } from '../principals/admin-identity';
 
 interface ChatObjectRefAccessDecision {
   allowed: boolean;
@@ -145,6 +146,16 @@ function chatNoiseSettingsView(guard: AgentNoiseGuard) {
     backend: getTaskAgentSettings().provider,
     maxCooldownMs: CHAT_NOISE_MAX_COOLDOWN_MS,
   };
+}
+
+/**
+ * THE-930: global noise settings are system-wide configuration. Only an admin
+ * principal may mutate them: a principal holding an admin grant, or the local
+ * admin principal in single-process/dev (no token auth). Non-admins are denied.
+ */
+function principalCanAdminNoise(principal: RequestOrgBinding['principal']): boolean {
+  if (principal.principal_id === LOCAL_ADMIN_PRINCIPAL_ID) return true;
+  return principal.grants.some((grant) => grant.role === 'admin');
 }
 const CHAT_MODELS_CACHE_TTL_MS = 60_000;
 const AGENT_REPLY_TIMEOUT_MS = 60_000;
@@ -885,9 +896,15 @@ export function registerChatRoutes({
     ?? createEnvClickClackReadinessProbe({ bridgeEnabled: Boolean(sidecarBridge) });
 
   // THE-930: agent noise guard built from persisted settings (mute/cooldown).
+  // When no guard is injected, use a DB-backed reservation so multiple server
+  // processes sharing the SQLite DB cannot both emit a duplicate reply.
   const noiseGuard = agentNoiseGuard ?? (() => {
     const stored = readChatNoiseSettings();
-    return createAgentNoiseGuard({ cooldownMs: stored.cooldownMs, mutedAgents: stored.mutedAgents });
+    return createAgentNoiseGuard({
+      cooldownMs: stored.cooldownMs,
+      mutedAgents: stored.mutedAgents,
+      db: getEntityDatabase(),
+    });
   })();
 
   app.get('/api/chat/me', (_req, res) => {
@@ -930,6 +947,13 @@ export function registerChatRoutes({
 
   app.patch('/api/chat/noise-settings', (req, res) => {
     try {
+      // THE-930: global noise settings are system-wide config — require an admin
+      // principal (explicit admin grant, or the local admin in single-process/dev).
+      const adminBinding = requireRequestOrg(req, res);
+      if (!adminBinding) return undefined;
+      if (!principalCanAdminNoise(adminBinding.principal)) {
+        return res.status(403).json({ error: 'admin role required', code: 'admin_required' });
+      }
       if (typeof req.body?.cooldownMs === 'number') {
         const clamped = Math.min(CHAT_NOISE_MAX_COOLDOWN_MS, Math.max(0, Math.floor(req.body.cooldownMs)) || 0);
         noiseGuard.setCooldownMs(clamped);

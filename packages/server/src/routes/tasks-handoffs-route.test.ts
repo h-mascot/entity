@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { registerTaskRoutes } from './tasks';
 import { createTaskRepository, type TaskRecord } from '../../../db/src';
 import { createPrincipalRepository } from '../../../db/src/principals';
+import { createHandoffRepository } from '../../../db/src/handoffs';
 
 const tmpDbPath = path.join(os.tmpdir(), `entity-handoffs-route-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
@@ -218,5 +219,102 @@ describe('task handoff routes (THE-933)', () => {
     expect(payload.handoff.note).toMatch(/rollback/i);
     expect(payload.task.owner_principal_id).toBeTruthy();
     expect(broadcasts.some((b) => b.type === 'task:updated' && b.taskId === taskId)).toBe(true);
+  });
+});
+
+describe('task handoff cloud isolation — zero local access before fail-closed (THE-933 blocker)', () => {
+  let server: http.Server;
+  let baseUrl = '';
+  let collisionTaskId = 0;
+
+  // Counters prove NO local task/repository access happens in cloud mode.
+  const counts = { getTask: 0, listForTask: 0, create: 0, rollback: 0 };
+
+  beforeAll(async () => {
+    process.env.ENTITY_TASK_DB_PATH = tmpDbPath;
+    const repo = createTaskRepository();
+    const created = repo.createTask({ name: 'cloud-collision-task', org_id: ORG, team_id: TEAM });
+    collisionTaskId = created.id;
+
+    const realHandoffRepo = createHandoffRepository();
+    const app = express();
+    app.use(express.json());
+    registerTaskRoutes(app, '/api', {
+      taskSyncLayer: {
+        getTask: async (id: number) => { counts.getTask++; return repo.getTask(id); },
+        listTasks: async () => repo.listTasks(),
+        listSubtasks: async () => [],
+        getActiveAdapter: () => undefined,
+      },
+      handoffRepository: {
+        create: (i: any) => { counts.create++; return realHandoffRepo.create(i); },
+        listForTask: (id: any, scope: any) => { counts.listForTask++; return realHandoffRepo.listForTask(id, scope); },
+        get: (id: string) => realHandoffRepo.get(id),
+        rollback: (id: string, scope: any) => { counts.rollback++; return realHandoffRepo.rollback(id, scope); },
+      },
+      parseTaskId: (value: unknown) => {
+        const n = Number(value);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      },
+      logActivity: () => {},
+      getTaskActorFromRequest: () => 'test-actor',
+      principalRepository: principalRepo,
+      broadcast: () => {},
+    });
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server failed to bind');
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+  });
+
+  const orgHeaders = { 'x-entity-org-id': ORG, 'Content-Type': 'application/json' };
+
+  it('cloud GET list fails closed (503) before any local task/repository read', async () => {
+    const before = { ...counts };
+    // The cloud request reuses a numeric id that collides with a REAL local task.
+    const res = await fetch(`${baseUrl}/api/tasks/${collisionTaskId}/handoffs?mode=cloud`, { headers: orgHeaders });
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { code?: string }).code).toBe('cloud_handoffs_unavailable');
+    expect(counts.getTask).toBe(before.getTask);
+    expect(counts.listForTask).toBe(before.listForTask);
+  });
+
+  it('cloud POST create fails closed (503) before any local task read, authz, or write', async () => {
+    const before = { ...counts };
+    const res = await fetch(`${baseUrl}/api/tasks/${collisionTaskId}/handoff`, {
+      method: 'POST',
+      headers: orgHeaders,
+      body: JSON.stringify({ mode: 'cloud', cloudId: 'cloud-ctx-1', targetPrincipalId: 'zora' }),
+    });
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { code?: string }).code).toBe('cloud_handoffs_unavailable');
+    expect(counts.getTask).toBe(before.getTask);
+    expect(counts.create).toBe(before.create);
+  });
+
+  it('cloud rollback fails closed (503) before any local task/repository access', async () => {
+    const before = { ...counts };
+    const res = await fetch(`${baseUrl}/api/tasks/${collisionTaskId}/handoffs/any-id/rollback?mode=cloud`, {
+      method: 'POST',
+      headers: orgHeaders,
+    });
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { code?: string }).code).toBe('cloud_handoffs_unavailable');
+    expect(counts.getTask).toBe(before.getTask);
+    expect(counts.rollback).toBe(before.rollback);
+  });
+
+  it('aggregates: every cloud operation left ZERO taskSyncLayer and repository access (numeric id collision)', () => {
+    // Across all three cloud operations above, no local access occurred even
+    // though every request targeted a numeric id that exists locally.
+    expect(counts.getTask).toBe(0);
+    expect(counts.listForTask).toBe(0);
+    expect(counts.create).toBe(0);
+    expect(counts.rollback).toBe(0);
   });
 });
