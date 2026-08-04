@@ -1,4 +1,4 @@
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import {
   DEFAULT_WORKSPACE_ORG_ID,
   EVIDENCE_ARTIFACT_KINDS,
@@ -25,7 +25,8 @@ import {
   type FileSourceRepository,
 } from '../../../db/src/file-sources';
 import { phase2FlagEnabled, resolvePhase2Flags, type Phase2FlagSnapshot } from '../phase2-flags';
-import { requireRequestOrg } from '../request-permissions';
+import { readRequestPrincipal, type RequestOrgBinding } from '../request-permissions';
+import { readDefaultOrgId } from '../config/admin-runtime';
 import { buildGoogleExternalDocumentMetadata } from '../google-docs-metadata';
 import {
   externalResult,
@@ -98,6 +99,25 @@ interface SearchFilters extends TaskProofSearchFilters {
 }
 
 class ScopedSearchRequestError extends Error {}
+
+/**
+ * SRCH-A-03 authority hardening: scoped search aggregates across documents, tasks,
+ * and proof artifacts, so the org used to scope every backend SQL query must come
+ * ONLY from the authenticated workspace header (`x-entity-org-id`/`x-entity-org`)
+ * — never from client-controlled query/body values. This is stricter than the
+ * legacy requireRequestOrg() used by single-object routes and closes the
+ * org-selector authority gap for this high-risk surface. Per-object visibility is
+ * still gated by the principal's org-scoped grants via permissionSafeRecord().
+ */
+function requireScopedSearchOrg(req: Request, res: Response): RequestOrgBinding | null {
+  const headerOrg = req.header('x-entity-org-id')?.trim() || req.header('x-entity-org')?.trim() || null;
+  const orgId = headerOrg ?? readDefaultOrgId();
+  if (!orgId) {
+    res.status(400).json({ error: 'request org required', code: 'request_org_required' });
+    return null;
+  }
+  return { orgId, principal: readRequestPrincipal(req, orgId) };
+}
 
 function readQuery(req: Request, key: string): string | undefined {
   const value = req.query[key];
@@ -388,7 +408,7 @@ export function createScopedSearchRouter(deps: ScopedSearchRouteDeps = {}): Rout
         flag: flags.search_permission_strictness,
       });
     }
-    const binding = requireRequestOrg(req, res);
+    const binding = requireScopedSearchOrg(req, res);
     if (!binding) return undefined;
 
     let filters: SearchFilters;

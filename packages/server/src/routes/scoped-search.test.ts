@@ -860,6 +860,43 @@ describe('Docs scoped search', () => {
       expect(deps.documentRepo?.listNativeDocuments).toHaveBeenCalledWith(expect.objectContaining({ org_id: 'org-b' }));
     });
   });
+
+  it('ignores client-controlled query/body org and binds the authenticated header org', async () => {
+    // SRCH-A-03 authority hardening: scoped search derives the org scope ONLY from the
+    // authenticated workspace header, never from query/body. A request supplying a
+    // conflicting query/body org must still bind (and query) the header org, so a
+    // caller cannot select a different org's data via the URL.
+    const orgADoc = nativeDocument({ id: 'native-a', org_id: 'org-a', title: 'alpha renewal note' });
+    const orgBDoc = nativeDocument({ id: 'native-b', org_id: 'org-b', title: 'beta renewal note' });
+    const deps: ScopedSearchRouteDeps = {
+      documentRepo: {
+        listNativeDocuments: vi.fn((input: { org_id: string }) =>
+          [orgADoc, orgBDoc].filter((r) => r.org_id === input.org_id)),
+        listExternalDocumentRefs: vi.fn(() => []),
+      },
+      indexRepo: {
+        search: vi.fn(() => []),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+      sourceRepo: {
+        listSources: vi.fn(() => [fileSource()]),
+        getSource: vi.fn(() => fileSource()),
+      },
+      now: () => new Date(now),
+    };
+    await withSearchServer(deps, async (baseUrl) => {
+      // Header says org-a; the query string tries to override to org-b.
+      const res = await fetch(`${baseUrl}/api/search/scoped?q=renewal&objectTypes=native_document&org_id=org-b`, {
+        headers: { 'x-entity-org-id': 'org-a' },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body.scope.orgId).toBe('org-a');
+      expect(body.results.map((r: any) => r.objectId)).toEqual(['native-a']);
+      expect(deps.documentRepo?.listNativeDocuments).toHaveBeenCalledWith(expect.objectContaining({ org_id: 'org-a' }));
+      expect(deps.documentRepo?.listNativeDocuments).not.toHaveBeenCalledWith(expect.objectContaining({ org_id: 'org-b' }));
+    });
+  });
 });
 
 describe('task and proof scoped search', () => {
