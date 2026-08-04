@@ -30,11 +30,11 @@ Review source: `clawd/output/entity/ra-fu-runnerqa-20260804/reviews/luna-review-
 - Files: `packages/server/src/routes/agent-noise-guard.ts`, `chat.ts`, `agent-noise-guard.test.ts`, `chat-noise-controls.test.ts`.
 
 ## Slice 6 — gate & receipt
-- [ ] 6a server build + vitest (Node 22).
-- [ ] 6b app build.
-- [ ] 6c `npm run ctrl:gate`.
-- [ ] 6d self-review full diff.
-- [ ] 6e commit on branch; replace worker-final receipt.
+- [x] 6a server build + vitest (Node 22).
+- [x] 6b app build.
+- [x] 6c `npm run ctrl:gate`.
+- [x] 6d self-review full diff.
+- [x] 6e commit on branch; replace worker-final receipt.
 
 ## Preserved (must stay PASS)
 - THE-931 (chat-history auth), THE-934 (doc-intelligence schema), prior THE-930 reservation/cooldown, broadcasts, rollback scope.
