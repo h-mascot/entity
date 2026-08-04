@@ -1,5 +1,6 @@
 import type { Request, Response, Router } from 'express';
 import { Router as createRouter } from 'express';
+import { createHash } from 'crypto';
 import {
   type AgentRegistryRecord,
   type AgentRegistryRepository,
@@ -12,13 +13,53 @@ import {
   type WorkspaceScopeRepository,
 } from '../../../db/src';
 import { getEntityDatabase } from '../../../db/src/entity-db';
-import { ensureAppSettingsTable } from '../config/settings-store';
+import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../config/settings-store';
 import { ADMIN_SETTINGS_KEYS } from '../config/admin-settings';
 import { getAdminSettings } from '../config/admin-settings-store';
 
 function readBusinessOnboardingSettings() {
   const db = getEntityDatabase(ensureAppSettingsTable);
   return getAdminSettings(db, ADMIN_SETTINGS_KEYS.businessOnboarding);
+}
+
+const SETTINGS_DOMAIN_TO_CATALOG_ID: Record<string, BusinessDomainId> = {
+  claims: 'claims-ops',
+  engineering: 'engineering-devops',
+  product: 'product',
+  sales: 'sales-bd',
+  marketing: 'marketing',
+  finance: 'finance',
+  customer_success: 'customer-success',
+  people_ops: 'people-ops',
+  health_business: 'health-business',
+  ai_ops: 'ai-ops',
+  other: 'other',
+};
+
+function resolveConfiguredDefaultDomain(settings: ReturnType<typeof readBusinessOnboardingSettings>): BusinessDomainId {
+  return SETTINGS_DOMAIN_TO_CATALOG_ID[settings.defaultDomain] ?? settings.defaultDomain as BusinessDomainId;
+}
+
+function dryRunReceiptKey(orgId: string): string {
+  return `onboarding.business.dryRun.${orgId}`;
+}
+
+function dryRunReceiptDigest(orgId: string, domains: BusinessDomainId[], mission: string): string {
+  return createHash('sha256').update(JSON.stringify({ orgId, domains, mission })).digest('hex');
+}
+
+function storeDryRunReceipt(orgId: string, domains: BusinessDomainId[], mission: string, generatedAt: string): string {
+  const db = getEntityDatabase(ensureAppSettingsTable);
+  const digest = dryRunReceiptDigest(orgId, domains, mission);
+  setSettingJson(db, dryRunReceiptKey(orgId), { digest, generatedAt }, 'business-onboarding');
+  return digest;
+}
+
+function hasDryRunReceipt(orgId: string, domains: BusinessDomainId[], mission: string): boolean {
+  const db = getEntityDatabase(ensureAppSettingsTable);
+  const stored = getSettingJson(db, dryRunReceiptKey(orgId)) as { digest?: string } | null;
+  if (!stored?.digest) return false;
+  return stored.digest === dryRunReceiptDigest(orgId, domains, mission);
 }
 
 export const BUSINESS_DOMAIN_CATALOG = [
@@ -414,6 +455,46 @@ async function getOrCreateSeedTasks(
   return results;
 }
 
+function previewBlueprint(
+  org: OrgRecord,
+  domains: BusinessDomainId[],
+  mission: string,
+  registryAgents: readonly AgentRegistryRecord[],
+  now: string,
+): BusinessBlueprint {
+  const teams: BlueprintTeam[] = [];
+  const agentAssignments: BlueprintAgentAssignment[] = [];
+
+  for (const domainId of domains) {
+    const domain = DOMAIN_BY_ID.get(domainId);
+    if (!domain) continue;
+    const teamId = `${org.id}-${domain.id}`;
+    const assignment = assignmentForDomain(domainId, domain.teamName, registryAgents);
+    if (assignment) agentAssignments.push(assignment);
+    teams.push({
+      domainId,
+      domainLabel: domain.label,
+      teamId,
+      teamName: domain.teamName,
+      projectId: 0,
+      projectName: domain.seedProject,
+      seedTaskIds: domain.seedTasks.map((_task, index) => -(index + 1)),
+      ...(assignment ? { assignedAgent: assignment } : {}),
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    orgId: org.id,
+    orgName: org.name,
+    mission,
+    domains,
+    teams,
+    agentAssignments,
+    generatedAt: now,
+  };
+}
+
 async function buildBlueprint(
   deps: Required<Pick<BusinessOnboardingRouterDeps, 'taskRepoFactory' | 'now'>> & Pick<BusinessOnboardingRouterDeps, 'workspaceRepo' | 'agentRegistryRepo'>,
   org: OrgRecord,
@@ -494,7 +575,7 @@ export function createBusinessOnboardingRouter({
         name,
         slug,
         mission: optionalString(body, 'mission') ?? null,
-        domains_json: JSON.stringify([settings.defaultDomain]),
+        domains_json: JSON.stringify([resolveConfiguredDefaultDomain(settings)]),
       });
       return res.status(201).json({ org, domains: BUSINESS_DOMAIN_CATALOG });
     } catch (error) {
@@ -533,7 +614,7 @@ export function createBusinessOnboardingRouter({
       const storedDomains = parseStoredDomains(org);
       const domains = 'domains' in body
         ? domainsFromUnknown(body.domains)
-        : (storedDomains.length > 0 ? storedDomains : [settings.defaultDomain]);
+        : (storedDomains.length > 0 ? storedDomains : [resolveConfiguredDefaultDomain(settings)]);
       if (domains.length === 0) {
         throw new BusinessOnboardingApiError(400, 'at least one business domain is required');
       }
@@ -542,10 +623,27 @@ export function createBusinessOnboardingRouter({
         throw new BusinessOnboardingApiError(400, 'mission is required');
       }
 
+      if (body.dryRun === true) {
+        const preview = previewBlueprint(
+          org,
+          domains,
+          mission,
+          blueprintDeps.agentRegistryRepo?.listAgents() ?? [],
+          blueprintDeps.now(),
+        );
+        storeDryRunReceipt(org.id, domains, mission, preview.generatedAt);
+        return res.json({ dryRun: true, org, blueprint: preview });
+      }
+
+      if (settings.requireDryRun && body.dryRunConfirmed === true && !hasDryRunReceipt(org.id, domains, mission)) {
+        return res.status(400).json({ error: 'matching dry-run receipt is required before provision' });
+      }
+
       const orgForBlueprint = workspaceRepo.updateOrg(org.id, {
         mission,
         domains_json: JSON.stringify(domains),
       }) ?? org;
+
       const blueprint = await buildBlueprint(blueprintDeps, orgForBlueprint, domains, mission);
       const updated = workspaceRepo.updateOrg(org.id, {
         mission,

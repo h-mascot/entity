@@ -108,13 +108,17 @@ describe('Search Router', () => {
       expect(res.json).toHaveBeenCalledWith({ error: 'full must be a boolean' });
     });
 
-    it('should require request org before executing search', async () => {
+    it('should use default org when request org header is absent', async () => {
       const handler = handlers['/']?.find(h => h.method === 'get')?.handler;
+      mockExecFile.mockImplementation(((_file: string, _args: readonly string[] | null | undefined, _options: unknown, callback: any) => {
+        callback(null, JSON.stringify([]), '');
+        return {} as any;
+      }) as any);
       const req = mockReq({ q: 'test' });
       const res = mockRes();
       await handler!(req, res);
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'request org required', code: 'request_org_required' });
+      expect(res.status).not.toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ query: 'test', count: 0 }));
     });
 
     it('should suppress restricted search result snippets and content before returning results', async () => {
@@ -180,13 +184,17 @@ describe('Search Router', () => {
       expect(res.json).toHaveBeenCalledWith({ error: 'lines must be a range like 40-50' });
     });
 
-    it('should require request org before returning document content', async () => {
+    it('should use default org when request org header is absent', async () => {
       const handler = handlers['/document']?.find(h => h.method === 'get')?.handler;
+      mockExecFile.mockImplementation(((_file: string, _args: readonly string[] | null | undefined, _options: unknown, callback: any) => {
+        callback(null, 'document body', '');
+        return {} as any;
+      }) as any);
       const req = mockReq({ id: 'test-doc' });
       const res = mockRes();
       await handler!(req, res);
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'request org required', code: 'request_org_required' });
+      expect(res.status).not.toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 'test-doc', content: 'document body' }));
     });
   });
 

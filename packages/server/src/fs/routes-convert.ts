@@ -15,7 +15,7 @@ function mapSourceError(message: string, res: Response): Response {
   if (message === 'Source not found.') return res.status(404).json({ error: message });
   if (message === 'Source is disabled.') return res.status(403).json({ error: message });
   if (message.includes('read-only') || message.includes('writable')) return res.status(403).json({ error: message });
-  if (message.includes('required') || message.includes('unsupported') || message.includes('Invalid')) {
+  if (message.includes('required') || message.includes('unsupported') || message.includes('Invalid') || message.includes('already exists')) {
     return res.status(400).json({ error: message });
   }
   return res.status(500).json({ error: message });
@@ -89,7 +89,11 @@ export function registerDocumentConvertRoutes(router: Router, deps: DocumentConv
         }
       }
 
-      await adapter.write(converted.targetPath, converted.content);
+      if (adapter.writeExclusive) {
+        await adapter.writeExclusive(converted.targetPath, converted.content);
+      } else {
+        await adapter.write(converted.targetPath, converted.content);
+      }
 
       return res.status(201).json({
         sourceId,

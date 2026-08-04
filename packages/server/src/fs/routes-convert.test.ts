@@ -97,6 +97,31 @@ describe('document convert routes', () => {
     await expect(fs.promises.readFile(path.join(root, 'source.md'), 'utf-8')).resolves.toContain('Convert me into a PRD.');
   });
 
+  it('rejects existing converted targets without overwriting', async () => {
+    const app = express();
+    app.use(express.json());
+    const router = express.Router();
+    registerDocumentConvertRoutes(router, { sourceRepo });
+    app.use(router);
+
+    await requestApp(app, {
+      sourceId,
+      path: 'source.md',
+      targetType: 'prd',
+      targetName: 'Collision Test',
+    });
+
+    const second = await requestApp(app, {
+      sourceId,
+      path: 'source.md',
+      targetType: 'prd',
+      targetName: 'Collision Test',
+    });
+
+    expect(second.status).toBe(400);
+    expect(second.body.error).toMatch(/already exists/i);
+  });
+
   it('rejects read-only sources clearly', async () => {
     const blockedRoot = await makeTempRoot();
     const blockedRepo = createFileSourceRepository();

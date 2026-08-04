@@ -504,6 +504,7 @@ export default function AdminView({
                 { kind: 'text', key: 'defaultOrgId', label: 'Default org ID' },
                 { kind: 'boolean', key: 'enforceStoredPrincipals', label: 'Enforce stored principals' },
                 { kind: 'boolean', key: 'allowHeaderCompat', label: 'Allow local header compatibility path' },
+                { kind: 'text', key: 'apiPrincipalId', label: 'API principal ID', hint: 'Principal bound to API token auth for admin mutations.' },
               ]}
             />
             <div className="grid gap-3 md:grid-cols-2">
@@ -619,8 +620,6 @@ export default function AdminView({
             fields={[
               { kind: 'select', key: 'defaultWorkDomain', label: 'Default work domain', options: [
                 { value: 'engineering', label: 'Engineering' },
-                { value: 'product', label: 'Product' },
-                { value: 'ops', label: 'Ops' },
               ] },
               { kind: 'boolean', key: 'importDryRunRequired', label: 'Require import dry-run' },
               { kind: 'boolean', key: 'showEmptyStateHints', label: 'Show empty-state hints' },

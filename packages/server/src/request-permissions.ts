@@ -12,10 +12,10 @@ import {
   resolveStoredPrincipalContext,
 } from './principals/resolver';
 import type { PrincipalRepository } from '../../db/src/principals';
-import { getEntityDatabase } from '../../db/src/entity-db';
-import { ensureAppSettingsTable } from './config/settings-store';
-import { ADMIN_SETTINGS_KEYS } from './config/admin-settings';
-import { getAdminSettings } from './config/admin-settings-store';
+import { createPrincipalRepository } from '../../db/src/principals';
+import { isApiAuthEnabled } from './middleware/api-auth';
+import { readAccessControlRuntimeSettings, readDefaultOrgId } from './config/admin-runtime';
+import { LOCAL_ADMIN_PRINCIPAL_ID, resolveTrustedPrincipalId } from './principals/admin-identity';
 
 export interface RequestOrgBinding {
   orgId: string;
@@ -32,13 +32,15 @@ export function readRequestOrg(req: Request): string | null {
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
   const bodyOrg = typeof body.org_id === 'string' ? body.org_id : typeof body.orgId === 'string' ? body.orgId : null;
   const candidate = headerOrg ?? queryOrg ?? bodyOrg;
-  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
+  if (typeof candidate === 'string' && candidate.trim()) {
+    return candidate.trim();
+  }
+  return readDefaultOrgId();
 }
 
 function readEnforceStoredPrincipals(): boolean {
   try {
-    const db = getEntityDatabase(ensureAppSettingsTable);
-    return getAdminSettings(db, ADMIN_SETTINGS_KEYS.accessControl).enforceStoredPrincipals;
+    return readAccessControlRuntimeSettings().enforceStoredPrincipals;
   } catch {
     return true;
   }
@@ -48,15 +50,29 @@ export interface ReadRequestPrincipalOptions {
   enforceStoredPrincipals?: boolean;
 }
 
+function readRequestPrincipalId(req: Request, repo?: PrincipalRepository): string {
+  if (isApiAuthEnabled()) {
+    const trusted = resolveTrustedPrincipalId(req, repo ?? createPrincipalRepository());
+    if (!trusted) {
+      return '__untrusted_principal__';
+    }
+    return trusted;
+  }
+  return req.header('x-entity-principal-id')?.trim() || LOCAL_ADMIN_PRINCIPAL_ID;
+}
+
 export function readRequestPrincipal(
   req: Request,
   orgId: string,
   repo?: PrincipalRepository,
   options?: ReadRequestPrincipalOptions,
 ): PrincipalPermissionContext {
-  const principalId = req.header('x-entity-principal-id')?.trim() || 'entity-local-user';
+  const principalId = readRequestPrincipalId(req, repo);
   const roleHeader = req.header('x-entity-role')?.trim().toLowerCase();
   const sensitivityHeader = req.header('x-entity-sensitivity') ?? undefined;
+  if (principalId === '__untrusted_principal__') {
+    return { principal_id: principalId, grants: [] };
+  }
   const stored = resolveStoredPrincipalContext(principalId, repo);
   const enforceStored = options?.enforceStoredPrincipals ?? readEnforceStoredPrincipals();
   if (stored.kind === 'stored') {

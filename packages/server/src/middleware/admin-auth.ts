@@ -1,17 +1,27 @@
 import type { NextFunction, Request, Response } from 'express';
 import { createPrincipalRepository, type PrincipalRepository } from '../../../db/src/principals';
 import { resolveStoredPrincipalContext } from '../principals/resolver';
+import {
+  hasGlobalAdminGrant,
+  LOCAL_ADMIN_PRINCIPAL_ID,
+  resolveTrustedPrincipalId,
+} from '../principals/admin-identity';
 import { getEntityDatabase } from '../../../db/src/entity-db';
 import { ensureAppSettingsTable } from '../config/settings-store';
 import { ADMIN_SETTINGS_KEYS } from '../config/admin-settings';
 import { getAdminSettings } from '../config/admin-settings-store';
 import { isApiAuthEnabled } from './api-auth';
 
-const LOCAL_ADMIN_PRINCIPAL_ID = 'entity-local-user';
+function isLocalPeer(req: Request): boolean {
+  const peer = req.socket?.remoteAddress ?? '';
+  return peer === '127.0.0.1'
+    || peer === '::1'
+    || peer === '::ffff:127.0.0.1'
+    || peer.endsWith('127.0.0.1');
+}
 
 function isLocalHost(req: Request): boolean {
-  const host = req.hostname;
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  return isLocalPeer(req);
 }
 
 function readAllowHeaderCompat(): boolean {
@@ -23,12 +33,6 @@ function readAllowHeaderCompat(): boolean {
   }
 }
 
-function principalHasAdminGrant(principalId: string, repo: PrincipalRepository): boolean {
-  const stored = resolveStoredPrincipalContext(principalId, repo);
-  if (stored.kind !== 'stored' || stored.status !== 'active') return false;
-  return stored.principal.grants.some((grant) => grant.role === 'admin');
-}
-
 function localHeaderCompatAdmin(req: Request): boolean {
   if (!isLocalHost(req) || isApiAuthEnabled() || !readAllowHeaderCompat()) return false;
   return req.header('x-entity-role')?.trim().toLowerCase() === 'admin';
@@ -38,22 +42,38 @@ export function createRequireAdminPrincipal(repo: PrincipalRepository = createPr
   return (req: Request, res: Response, next: NextFunction): void => {
     const principalCount = repo.listPrincipals({ includeDisabled: true }).length;
     if (principalCount === 0) {
+      if (isApiAuthEnabled()) {
+        const isCreatePrincipal =
+          req.method === 'POST'
+          && (req.path === '/principals' || req.path.endsWith('/principals'));
+        if (!isCreatePrincipal) {
+          res.status(403).json({
+            error: 'create the first principal before other admin mutations',
+            code: 'admin_bootstrap_required',
+          });
+          return;
+        }
+      }
       next();
       return;
     }
 
-    const principalId = req.header('x-entity-principal-id')?.trim()
-      || (isLocalHost(req) ? LOCAL_ADMIN_PRINCIPAL_ID : '');
+    const principalId = resolveTrustedPrincipalId(req, repo);
     if (!principalId) {
-      res.status(403).json({ error: 'admin principal required', code: 'admin_principal_required' });
+      res.status(403).json({
+        error: 'admin principal binding required when API auth is enabled',
+        code: 'admin_principal_binding_required',
+      });
       return;
     }
 
     const targetPrincipalId = typeof req.params.id === 'string' ? req.params.id : '';
+    const grantPrincipalId = typeof req.params.principalId === 'string' ? req.params.principalId : targetPrincipalId;
     const isSelfBootstrapGrant =
       req.method === 'POST'
-      && targetPrincipalId
-      && targetPrincipalId === principalId
+      && req.path.endsWith('/grants')
+      && grantPrincipalId
+      && grantPrincipalId === principalId
       && principalCount === 1
       && typeof req.body?.role === 'string'
       && req.body.role === 'admin';
@@ -69,12 +89,12 @@ export function createRequireAdminPrincipal(repo: PrincipalRepository = createPr
         res.status(403).json({ error: 'principal disabled', code: 'principal_disabled' });
         return;
       }
-      if (!principalHasAdminGrant(principalId, repo)) {
-        res.status(403).json({ error: 'admin grant required', code: 'admin_grant_required' });
+      if (!hasGlobalAdminGrant(principalId, repo)) {
+        res.status(403).json({ error: 'global admin grant required', code: 'admin_grant_required' });
         return;
       }
     } else if (!localHeaderCompatAdmin(req)) {
-      res.status(403).json({ error: 'admin grant required', code: 'admin_grant_required' });
+      res.status(403).json({ error: 'global admin grant required', code: 'admin_grant_required' });
       return;
     }
 
@@ -95,3 +115,5 @@ export function storedPrincipalFailsClosed(principalId: string): boolean {
   const stored = resolveStoredPrincipalContext(principalId);
   return stored.kind === 'stored' && stored.status === 'disabled';
 }
+
+export { LOCAL_ADMIN_PRINCIPAL_ID };

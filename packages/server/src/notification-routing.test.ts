@@ -120,9 +120,9 @@ describe('notification routing service', () => {
     });
     expect(result.deliveries.map((delivery) => ({ channel: delivery.channel, status: delivery.status }))).toEqual([
       { channel: 'entity_inbox', status: 'sent' },
-      { channel: 'email', status: 'failed' },
+      { channel: 'email', status: 'degraded' },
     ]);
-    expect(result.deliveries[1].failure_reason).toBe('provider authorization=[redacted] unavailable');
+    expect(result.deliveries[1].degraded_reason).toBe('provider authorization=[redacted] unavailable');
     expect(failingEmail.deliver).toHaveBeenCalledOnce();
   });
 
@@ -190,7 +190,7 @@ describe('notification routing service', () => {
     });
     expect(stored?.deliveries.map((delivery) => ({ channel: delivery.channel, status: delivery.status }))).toEqual([
       { channel: 'entity_inbox', status: 'sent' },
-      { channel: 'email', status: 'failed' },
+      { channel: 'email', status: 'degraded' },
       { channel: 'slack', status: 'skipped' },
       { channel: 'webhook', status: 'degraded' },
     ]);

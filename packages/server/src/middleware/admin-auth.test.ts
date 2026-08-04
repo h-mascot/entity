@@ -1,7 +1,7 @@
-import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPrincipalRepository, ensurePrincipalsSchema } from '../../../db/src/principals';
 import { createRequireAdminPrincipal } from './admin-auth';
+import Database from 'better-sqlite3';
 
 const db = new Database(':memory:');
 const repo = createPrincipalRepository(db);
@@ -17,8 +17,35 @@ describe('admin auth middleware', () => {
   it('allows bootstrap when no principals exist', () => {
     const middleware = createRequireAdminPrincipal(repo);
     const next = vi.fn();
-    middleware({ header: () => undefined, hostname: 'localhost' } as any, { status: () => ({ json: vi.fn() }) } as any, next);
+    middleware({
+      header: () => undefined,
+      hostname: 'localhost',
+      method: 'POST',
+      path: '/principals',
+      params: {},
+      body: {},
+      socket: { remoteAddress: '127.0.0.1' },
+    } as any, { status: () => ({ json: vi.fn() }) } as any, next);
     expect(next).toHaveBeenCalled();
+  });
+
+  it('blocks non-create admin routes during API-auth bootstrap', () => {
+    vi.stubEnv('ENTITY_API_TOKEN', 'secret-token');
+    const middleware = createRequireAdminPrincipal(repo);
+    const denied = vi.fn();
+    const res = { status: vi.fn(() => ({ json: denied })) };
+    const next = vi.fn();
+    middleware({
+      header: () => undefined,
+      hostname: 'localhost',
+      method: 'GET',
+      path: '/principals',
+      params: {},
+      body: {},
+      socket: { remoteAddress: '127.0.0.1' },
+    } as any, res as any, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 
   it('allows local header compat admin for unknown principals', () => {
@@ -34,6 +61,7 @@ describe('admin auth middleware', () => {
         return undefined;
       },
       hostname: 'localhost',
+      socket: { remoteAddress: '127.0.0.1' },
       method: 'PATCH',
       params: {},
       body: {},
@@ -41,7 +69,7 @@ describe('admin auth middleware', () => {
     expect(next).toHaveBeenCalled();
   });
 
-  it('requires admin grant once principals exist', () => {
+  it('requires global admin grant once principals exist', () => {
     repo.createPrincipal({ id: 'admin', principal_type: 'human', display_name: 'Admin', created_by: 'seed' });
     repo.createGrant({ principal_id: 'admin', role: 'admin', created_by: 'seed' });
     repo.createPrincipal({ id: 'viewer', principal_type: 'human', display_name: 'Viewer', created_by: 'seed' });
@@ -54,6 +82,30 @@ describe('admin auth middleware', () => {
       header: () => 'viewer',
       hostname: 'localhost',
       method: 'GET',
+      params: {},
+      body: {},
+    } as any, res as any, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  it('rejects scoped admin grants for admin mutations', () => {
+    repo.createPrincipal({ id: 'scoped-admin', principal_type: 'human', display_name: 'Scoped', created_by: 'seed' });
+    repo.createGrant({
+      principal_id: 'scoped-admin',
+      role: 'admin',
+      org_id: 'org-a',
+      created_by: 'seed',
+    });
+
+    const middleware = createRequireAdminPrincipal(repo);
+    const denied = vi.fn();
+    const res = { status: vi.fn(() => ({ json: denied })) };
+    const next = vi.fn();
+    middleware({
+      header: (name: string) => (name === 'x-entity-principal-id' ? 'scoped-admin' : undefined),
+      hostname: 'localhost',
+      method: 'PATCH',
       params: {},
       body: {},
     } as any, res as any, next);

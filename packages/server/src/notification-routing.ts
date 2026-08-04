@@ -9,10 +9,7 @@ import type {
   ObjectRef,
   PolicyReasonChainEntry,
 } from '../../db/src';
-import { getEntityDatabase } from '../../db/src/entity-db';
-import { ADMIN_SETTINGS_KEYS } from './config/admin-settings';
-import { getAdminSettings } from './config/admin-settings-store';
-import { ensureAppSettingsTable } from './config/settings-store';
+import { readChannelsRuntimeSettings } from './config/admin-runtime';
 
 export type NotificationUrgency = 'low' | 'normal' | 'high' | 'critical';
 export type NotificationChannelAvailability = 'available' | 'degraded' | 'unavailable';
@@ -110,12 +107,16 @@ function defaultChannels(input: Pick<NotificationRoutingInput, 'urgency' | 'risk
 }
 
 function configuredPreferredChannels(): NotificationDeliveryChannel[] {
-  const settings = getAdminSettings(getEntityDatabase(ensureAppSettingsTable), ADMIN_SETTINGS_KEYS.channels);
+  const settings = readChannelsRuntimeSettings();
   const channels = [...settings.preferredChannels] as NotificationDeliveryChannel[];
   if (!settings.referenceAdapterEnabled) {
     return channels.filter((channel) => channel !== 'other');
   }
   return channels;
+}
+
+function shouldDegradeOnAdapterFailure(): boolean {
+  return readChannelsRuntimeSettings().degradeOnAdapterFailure;
 }
 
 export function resolveNotificationChannels(input: NotificationRoutingInput): NotificationDeliveryChannel[] {
@@ -257,10 +258,12 @@ export function createNotificationRoutingService(deps: NotificationRoutingServic
           metadata_json: toMetadataJson(result.metadata),
         }));
       } catch (err) {
+        const failureMessage = redactSensitiveText(err instanceof Error ? err.message : 'unknown delivery failure');
         deliveries.push(deps.notificationRepository.addDeliveryAttempt(notification.id, {
           channel,
-          status: 'failed',
-          failure_reason: redactSensitiveText(err instanceof Error ? err.message : 'unknown delivery failure'),
+          status: shouldDegradeOnAdapterFailure() ? 'degraded' : 'failed',
+          failure_reason: shouldDegradeOnAdapterFailure() ? null : failureMessage,
+          degraded_reason: shouldDegradeOnAdapterFailure() ? failureMessage : null,
           policy_reason_json: toPolicyReasonJson(input, channel),
           metadata_json: toMetadataJson({ adapter_error: true }),
         }));

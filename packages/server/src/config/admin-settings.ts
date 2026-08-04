@@ -17,6 +17,10 @@ export const AccessControlSettingsSchema = z.object({
   defaultOrgId: z.string().min(1),
   enforceStoredPrincipals: z.boolean(),
   allowHeaderCompat: z.boolean(),
+  apiPrincipalId: z.preprocess(
+    (value) => (typeof value === 'string' && !value.trim() ? null : value),
+    z.string().min(1).nullable(),
+  ).default(null),
 });
 
 export const BusinessOnboardingSettingsSchema = z.object({
@@ -83,6 +87,7 @@ export const ADMIN_SETTINGS_DEFAULTS = {
     defaultOrgId: 'default-org',
     enforceStoredPrincipals: true,
     allowHeaderCompat: true,
+    apiPrincipalId: null,
   },
   [ADMIN_SETTINGS_KEYS.businessOnboarding]: {
     enabled: true,

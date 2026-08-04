@@ -45,6 +45,7 @@ import {
 } from './lib/agentRegistry';
 import { readUserProfile, useUserProfile } from './lib/userProfile';
 import { buildApiCandidates, HttpRequestError, requestJsonWithFallback } from './lib/http';
+import { loadAdminRuntimeSettings } from './lib/adminRuntimeSettings';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
 import { buildFileLoadKey } from './lib/fileLoadIdentity';
 import {
@@ -2353,6 +2354,18 @@ export default function App() {
   useEffect(() => {
     persistLoginRequired(loginRequired);
   }, [loginRequired]);
+
+  useEffect(() => {
+    void loadAdminRuntimeSettings(runtime.apiBase).then((settings) => {
+      if (!settings) return;
+      if (typeof window !== 'undefined' && window.localStorage.getItem(LOGIN_REQUIRED_KEY) === null) {
+        setLoginRequired(settings.accessControl.loginRequiredDefault);
+      }
+      if (settings.engineering.defaultWorkDomain === 'engineering') {
+        setCreateTaskWorkDomain('engineering');
+      }
+    });
+  }, [runtime.apiBase]);
 
   useEffect(() => {
     persistAuthSession(authSession);

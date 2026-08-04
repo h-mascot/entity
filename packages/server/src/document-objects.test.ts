@@ -958,23 +958,22 @@ describe('document object routes', () => {
     expect(await readJson(response)).toEqual({ error: 'ObjectRef requires object_type, object_id, and link_role' });
   });
 
-  it('requires request org binding before returning document objects', async () => {
-    const app = express();
-    app.use(express.json());
-    app.use('/api/document-objects', createDocumentObjectRouter(createFakeRepos()));
-    const isolated = http.createServer(app);
-    await new Promise<void>((resolve) => isolated.listen(0, resolve));
-    const address = isolated.address();
-    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
-    const isolatedBaseUrl = `http://127.0.0.1:${address.port}`;
+  it('uses default org binding when request org header is absent', async () => {
+    const createRes = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'default-org-binding-doc',
+        org_id: 'org-a',
+        title: 'Default org binding',
+        content_hash: 'sha256:default-org-binding',
+      }),
+    });
+    expect(createRes.status).toBe(201);
 
-    try {
-      const response = await fetch(`${isolatedBaseUrl}/api/document-objects/native-documents/native-api-doc`);
-      expect(response.status).toBe(400);
-      expect(await readJson(response)).toEqual({ error: 'request org required', code: 'request_org_required' });
-    } finally {
-      await new Promise<void>((resolve, reject) => isolated.close((error) => (error ? reject(error) : resolve())));
-    }
+    const response = await fetch(`${baseUrl}/api/document-objects/native-documents/default-org-binding-doc`);
+    expect(response.status).not.toBe(400);
+    expect(await readJson(response)).not.toMatchObject({ code: 'request_org_required' });
   });
 
   it('denies cross-org document access without leaking the object body', async () => {
