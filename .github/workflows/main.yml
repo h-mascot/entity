@@ -30,6 +30,9 @@ jobs:
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
+      - name: Install PR head dependencies for generated-doc freshness
+        if: github.event_name == 'pull_request'
+        run: npm ci
       - run: npm run docs:wiki:verify
 
   deploy:

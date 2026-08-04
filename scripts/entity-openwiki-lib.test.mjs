@@ -252,8 +252,12 @@ test("pull request CI verifies generated docs against the PR head after merge-tr
   assert.ok(testPosition >= 0 && headPosition > testPosition && verifyPosition > headPosition);
   assert.match(workflow, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+  const prHeadCheckout = workflow.indexOf("Check out PR head for generated-doc freshness");
+  const prHeadInstall = workflow.indexOf("Install PR head dependencies for generated-doc freshness");
+  const docsVerify = workflow.indexOf("npm run docs:wiki:verify");
+  assert.ok(prHeadCheckout < prHeadInstall);
+  assert.ok(prHeadInstall < docsVerify);
 });
-
 test("OpenWiki runner uses and removes an isolated credential-file home", async () => {
   const runner = await readFile(new URL("./entity-openwiki.mjs", import.meta.url), "utf8");
   assert.match(runner, /mkdtemp\(path\.join\(os\.tmpdir\(\), "entity-openwiki-home-"\)\)/);
