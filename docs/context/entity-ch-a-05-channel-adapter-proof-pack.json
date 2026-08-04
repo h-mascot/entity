@@ -1,0 +1,58 @@
+{
+  "code": "CH-A-05",
+  "issue": "THE-921",
+  "parent": "THE-836",
+  "decision": "PROOF_PACK_IMPLEMENTED",
+  "dependencies": ["CH-A-03", "CH-A-04"],
+  "dependencyIssues": ["THE-919", "THE-920"],
+  "dependencyCommits": {
+    "CH-A-03": "096eb314a857b834898984d0df71345657d66936",
+    "CH-A-04": "4139917f2ab2c5323c10fd0f80bde454536f2e61"
+  },
+  "sourceSha256": "84541727830ef8f4018ad2b9fdf587d653dfbba940b38b279ae3f90ca18ba895",
+  "proof": "E2E + negative proof",
+  "contractVersion": "entity.channel-adapter.v1",
+  "taskTruthOwner": "host_task_service",
+  "adaptersWriteTaskTruth": false,
+  "liveOutboundSends": false,
+  "modulePath": "packages/server/src/channels",
+  "files": [
+    "packages/server/src/channels/channel-adapter-proof-pack.e2e.test.ts",
+    "packages/server/src/channels/index.ts",
+    "docs/context/entity-ch-a-05-channel-adapter-proof-pack.md",
+    "docs/context/entity-ch-a-05-channel-adapter-proof-pack.json"
+  ],
+  "e2eChain": [
+    "feature_flag_on",
+    "register_slack_reference_offline",
+    "parse_intake_proposals",
+    "assert_not_task_truth_store",
+    "host_apply_channel_intake_proposals",
+    "notify_status_offline_degraded",
+    "notification_delivery_bridge_degraded"
+  ],
+  "negativePaths": [
+    "feature_flag_off",
+    "host_writers_required",
+    "transport_unavailable",
+    "forbidden_truth_methods",
+    "malformed_intake",
+    "architecture_scan_clean",
+    "secret_redaction"
+  ],
+  "nonGoals": [
+    "No live Slack/Telegram/Discord/email production sends",
+    "No Doc Hub rebuild",
+    "No Provider Registry duplicate",
+    "No secret exposure",
+    "No Skill Workshop in Entity core",
+    "No adapter-owned task repository",
+    "No user-facing UI"
+  ],
+  "uiBrowserProof": "N/A",
+  "related": [
+    "docs/context/entity-ch-a-02-channel-adapter-interface.md",
+    "docs/context/entity-ch-a-03-slack-reference-adapter.md",
+    "docs/context/entity-ch-a-04-channel-adapter-task-truth-boundary.md"
+  ]
+}

@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
+import type { PublicExecutionEngineListItem } from '../lib/executionEnginePublicHealth';
+import {
+  buildSwarmDispatchPayload,
+  buildSwarmOperatorPresets,
+  findSwarmOperatorPreset,
+  listSelectableSwarmOperatorPresets,
+  selectDefaultSwarmOperatorPreset,
+  type SwarmOperatorPreset,
+} from '../lib/swarmOperatorPresets';
 import type { PluginComponentProps } from './plugins/componentRegistry';
 
 interface SwarmJob {
@@ -389,8 +398,20 @@ export default function SwarmBoard({ apiBase = '', plugin }: PluginComponentProp
   const [newTaskId, setNewTaskId] = useState('');
   const [newSummary, setNewSummary] = useState('');
   const [newSpec, setNewSpec] = useState('');
-  const [newProvider, setNewProvider] = useState<'eforge' | 'symphony'>('eforge');
+  const [presets, setPresets] = useState<SwarmOperatorPreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(true);
+  const [presetsError, setPresetsError] = useState<string | null>(null);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<SwarmJob | null>(null);
+
+  const selectablePresets = useMemo(
+    () => listSelectableSwarmOperatorPresets(presets),
+    [presets],
+  );
+  const selectedPreset = useMemo(
+    () => findSwarmOperatorPreset(presets, selectedPresetId),
+    [presets, selectedPresetId],
+  );
 
   const fetchJobs = useCallback(() => {
     requestJsonWithFallback<{ jobs: SwarmJob[] }>({
@@ -408,11 +429,50 @@ export default function SwarmBoard({ apiBase = '', plugin }: PluginComponentProp
       .finally(() => setLoading(false));
   }, [apiBase]);
 
+  const fetchPresets = useCallback(() => {
+    setPresetsLoading(true);
+    const applyEngines = (engines: PublicExecutionEngineListItem[]) => {
+      const next = buildSwarmOperatorPresets(engines);
+      setPresets(next);
+      setSelectedPresetId((current) => {
+        if (current && next.some((p) => p.provider === current && p.selectable)) return current;
+        return selectDefaultSwarmOperatorPreset(next)?.provider ?? null;
+      });
+      setPresetsError(next.length === 0 ? 'No execution engines registered for dispatch.' : null);
+    };
+
+    requestJsonWithFallback<{ engines?: PublicExecutionEngineListItem[] }>({
+      urls: buildApiCandidates('/swarm/execution-engines', apiBase),
+      fallbackError: 'Unable to load execution engines.',
+    })
+      .then((data) => {
+        applyEngines(data?.engines ?? []);
+      })
+      .catch(async () => {
+        try {
+          const fallback = await requestJsonWithFallback<{
+            providers?: PublicExecutionEngineListItem[];
+            engines?: PublicExecutionEngineListItem[];
+          }>({
+            urls: buildApiCandidates('/swarm/providers', apiBase),
+            fallbackError: 'Unable to load swarm providers.',
+          });
+          applyEngines(fallback?.engines ?? fallback?.providers ?? []);
+        } catch (err) {
+          setPresets([]);
+          setSelectedPresetId(null);
+          setPresetsError(toErrorMessage(err, 'Unable to load operator dispatch presets.'));
+        }
+      })
+      .finally(() => setPresetsLoading(false));
+  }, [apiBase]);
+
   useEffect(() => {
     fetchJobs();
+    fetchPresets();
     const interval = setInterval(fetchJobs, 10000);
     return () => clearInterval(interval);
-  }, [fetchJobs]);
+  }, [fetchJobs, fetchPresets]);
 
   const jobsByColumn = useMemo(() => {
     const grouped: Record<string, SwarmJob[]> = {};
@@ -427,20 +487,23 @@ export default function SwarmBoard({ apiBase = '', plugin }: PluginComponentProp
   const handleCreate = useCallback(async () => {
     const taskId = parseInt(newTaskId, 10);
     if (!taskId && !newSpec.trim()) return;
+    if (!selectedPreset) {
+      setError('Select a contract-backed operator preset before dispatch.');
+      return;
+    }
     setCreating(true);
     try {
+      const body = buildSwarmDispatchPayload(selectedPreset, {
+        taskId: Number.isFinite(taskId) ? taskId : null,
+        summary: newSummary,
+        spec: newSpec,
+      });
       await requestJsonWithFallback({
         urls: buildApiCandidates('/swarm/jobs', apiBase),
         init: {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...(taskId ? { task_id: taskId } : {}),
-            summary: newSummary || undefined,
-            spec: newSpec || undefined,
-            provider: newProvider,
-            auto_dispatch: true,
-          }),
+          body: JSON.stringify(body),
         },
         fallbackError: 'Failed to create job.',
       });
@@ -453,7 +516,7 @@ export default function SwarmBoard({ apiBase = '', plugin }: PluginComponentProp
     } finally {
       setCreating(false);
     }
-  }, [apiBase, fetchJobs, newSummary, newTaskId, newSpec, newProvider]);
+  }, [apiBase, fetchJobs, newSummary, newTaskId, newSpec, selectedPreset]);
 
   const handleStatusChange = useCallback(
     async (e: React.MouseEvent, jobId: string, newStatus: string) => {
@@ -503,17 +566,76 @@ export default function SwarmBoard({ apiBase = '', plugin }: PluginComponentProp
         </button>
       </div>
 
-      {/* Create Job */}
-      <div className="mb-4 flex flex-col gap-2 rounded-xl border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-3">
-        <div className="flex items-center gap-2">
-          <select
-            value={newProvider}
-            onChange={(e) => setNewProvider(e.target.value as 'eforge' | 'symphony')}
-            className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-1.5 text-sm text-[var(--text-primary)]"
+      {/* Create Job — contract-backed operator presets (EEPC-B-03) */}
+      <div
+        className="mb-4 flex flex-col gap-2 rounded-xl border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-3"
+        data-testid="swarm-operator-presets"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
+            Operator presets
+          </span>
+          {presetsLoading ? (
+            <span className="text-xs text-[var(--text-muted)]" data-testid="swarm-presets-loading">
+              Loading engines…
+            </span>
+          ) : selectablePresets.length === 0 ? (
+            <span className="text-xs text-[var(--error)]" data-testid="swarm-presets-empty">
+              {presetsError || 'No dispatchable engines under contract.'}
+            </span>
+          ) : (
+            selectablePresets.map((preset) => {
+              const selected = selectedPresetId === preset.provider;
+              const tone =
+                preset.availability === 'ready'
+                  ? 'border-[var(--accent)]/50 text-[var(--accent)]'
+                  : preset.availability === 'degraded'
+                    ? 'border-[#f59e0b]/50 text-[#f59e0b]'
+                    : 'border-[var(--border-primary)] text-[var(--text-muted)]';
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  data-testid={`swarm-preset-${preset.provider}`}
+                  data-availability={preset.availability}
+                  title={preset.healthMessage ?? preset.description}
+                  onClick={() => setSelectedPresetId(preset.provider)}
+                  className={`rounded-lg border px-2.5 py-1 text-xs transition-colors ${tone} ${
+                    selected
+                      ? 'bg-[var(--accent)]/10 ring-1 ring-[var(--accent)]/40'
+                      : 'bg-[var(--bg-primary)] hover:bg-[var(--bg-tertiary)]'
+                  }`}
+                >
+                  <span className="font-medium text-[var(--text-primary)]">{preset.label}</span>
+                  <span className="ml-1.5 opacity-80">{preset.statusLabel}</span>
+                  {preset.executionMode ? (
+                    <span className="ml-1 opacity-60">· {preset.executionMode}</span>
+                  ) : null}
+                </button>
+              );
+            })
+          )}
+          <button
+            type="button"
+            onClick={fetchPresets}
+            className="ml-auto rounded-lg border border-[var(--border-secondary)] px-2 py-1 text-[10px] text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)]"
           >
-            <option value="eforge">eforge</option>
-            <option value="symphony">symphony</option>
-          </select>
+            ↻ Engines
+          </button>
+        </div>
+        {selectedPreset && (
+          <div
+            className="text-xs text-[var(--text-muted)]"
+            data-testid="swarm-operator-preset-detail"
+            data-provider={selectedPreset.provider}
+          >
+            {selectedPreset.description}
+            {selectedPreset.availability !== 'ready' && selectedPreset.healthMessage ? (
+              <span className="ml-2 text-[#f59e0b]">— {selectedPreset.healthMessage}</span>
+            ) : null}
+          </div>
+        )}
+        <div className="flex items-center gap-2">
           <input
             type="number"
             placeholder="Task ID (optional)"
@@ -540,8 +662,14 @@ export default function SwarmBoard({ apiBase = '', plugin }: PluginComponentProp
           />
           <button
             onClick={handleCreate}
-            disabled={creating || (!newTaskId && !newSpec.trim())}
+            disabled={
+              creating ||
+              (!newTaskId && !newSpec.trim()) ||
+              !selectedPreset?.selectable ||
+              selectablePresets.length === 0
+            }
             className="rounded-lg bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[var(--accent-dim)] disabled:opacity-40"
+            data-testid="swarm-dispatch-button"
           >
             {creating ? '...' : '▶ Dispatch'}
           </button>

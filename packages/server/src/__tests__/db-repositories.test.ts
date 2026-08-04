@@ -1730,6 +1730,33 @@ describe('ActivityRepository', () => {
     );
   });
 
+  it('registers Workplane ActivityEvent spine types (THE-869 / WP1-C-01) as first-class ActivityEventTypes', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+
+    expect(dbMod.ACTIVITY_EVENT_SPINE_TYPES).toEqual([
+      'plan',
+      'progress',
+      'log',
+      'proof',
+      'status',
+      'blocker',
+    ]);
+    for (const spineType of dbMod.ACTIVITY_EVENT_SPINE_TYPES) {
+      expect(dbMod.ACTIVITY_EVENT_TYPES).toContain(spineType);
+    }
+    expect(dbMod.isActivityEventSpineType('proof')).toBe(true);
+    expect(dbMod.classifyActivityEventToSpineType('receipt_failed')).toBe('proof');
+    expect(dbMod.normalizeActivityEventSpine({
+      task_id: 9,
+      event_type: 'status',
+      sequence: 1,
+      actor_type: 'system',
+    })).toMatchObject({
+      ok: true,
+      event: { taskId: 9, eventType: 'status', sequence: 1 },
+    });
+  });
+
   it('should create and list activities', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const repo = dbMod.createActivityRepository();

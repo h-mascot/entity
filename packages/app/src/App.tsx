@@ -74,6 +74,8 @@ import {
   type DocHubTool,
 } from './lib/docHubRoute';
 import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
+import { shouldBypassGatesForWorkplaneDeepLink } from './lib/workplaneRefreshRestore';
+import { isWorkplaneRoutePath } from './lib/workplaneShellModel';
 import { mobileCommentsPermissionMessage } from './lib/mobileCommentsState';
 import { emitDocHubTelemetry } from './lib/docHubTelemetry';
 import {
@@ -131,6 +133,7 @@ const NewCommentPopover = lazy(() => import('./components/NewCommentPopover').th
 const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
 const MCCreateTaskModal = lazy(() => import('./components/mission-control/MCCreateTaskModal'));
 const ShowClawFeaturedPage = lazy(() => import('./ShowClawFeaturedPage'));
+const WorkplaneShell = lazy(() => import('./components/workplane/WorkplaneShell'));
 const AdminView = lazy(() => import('./views/AdminView'));
 const DocumentConvertDialog = lazy(() => import('./components/doc-hub/DocumentConvertDialog'));
 const MobileView = lazy(() => import('./views/MobileView'));
@@ -219,6 +222,14 @@ function LazyBusinessOnboardingFlow(props: ComponentProps<typeof BusinessOnboard
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading business onboarding" />}>
       <BusinessOnboardingFlow {...props} />
+    </Suspense>
+  );
+}
+
+function LazyWorkplaneShell(props: ComponentProps<typeof WorkplaneShell>) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading Workplane" />}>
+      <WorkplaneShell {...props} />
     </Suspense>
   );
 }
@@ -1529,6 +1540,12 @@ export default function App() {
   const [activeDocHubTool, setActiveDocHubTool] = useState<DocHubTool | null>(
     () => initialDocHubRouteState?.tool ?? null,
   );
+  // THE-859/THE-861: track Workplane route for Open Workplane + cold-load refresh restore.
+  const [workplaneRouteActive, setWorkplaneRouteActive] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      shouldBypassGatesForWorkplaneDeepLink(window.location.pathname),
+  );
   const [fileContent, setFileContent] = useState('');
   const [currentFileLoadState, setCurrentFileLoadState] = useState<CurrentFileLoadState>({ status: 'idle' });
   const [currentFileLoadRevision, setCurrentFileLoadRevision] = useState(0);
@@ -1576,6 +1593,11 @@ export default function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') {
+      return;
+    }
+
+    // THE-858: Workplane owns `/workplane/:taskId` URL state; do not rewrite to Doc Hub.
+    if (isWorkplaneRoutePath(window.location.pathname)) {
       return;
     }
 
@@ -2143,6 +2165,13 @@ export default function App() {
     }
 
     const syncRouteState = () => {
+      // THE-858/THE-859/THE-861: Workplane shell owns deep-link + refresh restore.
+      // Skip Doc Hub/task sync; keep route flag so client navigation remounts the shell.
+      const onWorkplane = shouldBypassGatesForWorkplaneDeepLink(window.location.pathname);
+      setWorkplaneRouteActive(onWorkplane);
+      if (onWorkplane) {
+        return;
+      }
       const synchronized = resolveDocHubRouteSynchronization(
         window.location.pathname,
         window.location.search,
@@ -2150,6 +2179,12 @@ export default function App() {
       );
       const target = synchronized.target;
       const routeTaskId = extractTaskRouteId(window.location.pathname);
+      const historyRecord =
+        window.history.state && typeof window.history.state === 'object'
+          ? (window.history.state as Record<string, unknown>)
+          : null;
+      const historyBoard =
+        typeof historyRecord?.board === 'string' ? historyRecord.board.trim() : '';
       setActiveDocHubTool(synchronized.activeTool);
       if (target) {
         pendingDeepLinkRestorationRef.current = {
@@ -2165,8 +2200,24 @@ export default function App() {
         setCurrentFile(null);
         setSidebarTab('tasks');
         setMobileTab('tasks');
-        setMcBoardTab('kanban');
+        // THE-860: restore board tab from return navigation history state when present.
+        setMcBoardTab(historyBoard ? normalizeStoredMCBoardTab(historyBoard) : 'kanban');
         setHighlightTaskId(routeTaskId);
+      } else if (
+        window.location.pathname === '/tasks' ||
+        (window.location.pathname === '/' &&
+          new URLSearchParams(window.location.search).get('tab') === 'tasks')
+      ) {
+        // THE-860: board/list return lands on tasks workspace (not Doc Hub).
+        setDocIntelligenceFocus(null);
+        setCurrentSourceId(null);
+        setCurrentFile(null);
+        setSidebarTab('tasks');
+        setMobileTab('tasks');
+        if (historyBoard) {
+          setMcBoardTab(normalizeStoredMCBoardTab(historyBoard));
+        }
+        setHighlightTaskId(null);
       } else {
         if (window.location.pathname === '/docs' || window.location.pathname.startsWith('/docs/')) {
           emitDocHubTelemetry({
@@ -4515,7 +4566,7 @@ export default function App() {
       { key: 'strategicRoadmap', title: 'Strategic roadmap', hint: 'Roadmap data + ordering' },
       { key: 'scopedSearch', title: 'Scoped search', hint: 'Docs/task/proof search' },
       { key: 'channels', title: 'Channels', hint: 'Adapter intake + notifications' },
-      { key: 'agents', title: 'Agent registry', hint: 'Crew + scopes' },
+      { key: 'agents', title: 'Agent settings', hint: 'TTL, modules, revoke audit + registry' },
       { key: 'integrations', title: 'Integrations', hint: 'Gateway + sync' },
       { key: 'plugins', title: 'Plugins', hint: 'Registry + runtime toggles' },
       { key: 'voice', title: 'Voice / TTS', hint: 'TTS provider + settings' },
@@ -5341,6 +5392,7 @@ export default function App() {
               onDocsLinkNavigate={handleTaskOutputDocsNavigation}
               showArchiveColumn={showArchiveColumn}
               onArchiveColumnVisibilityChange={setShowArchiveColumn}
+              returnBoard="engineering"
             />
           ) : mcBoardTab === 'strategic' ? (
             <LazyMCStrategicView />
@@ -5361,6 +5413,7 @@ export default function App() {
               tasks={filteredBoardTasks}
               loading={tasksLoading}
               error={tasksError}
+              returnBoard={mcBoardTab}
             />
           )}
         </div>
@@ -5620,6 +5673,13 @@ export default function App() {
   const onboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === '/onboarding';
   const businessOnboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === BUSINESS_ONBOARDING_ROUTE;
   const shouldShowOnboarding = Boolean(onboardingToken) || onboardingRouteActive || onboardingCompleted === false;
+
+  // THE-858 / WP1-A-03 — Workplane route + shell (URL state from THE-857).
+  // THE-859 — workplaneRouteActive updates on Open Workplane pushState/popstate.
+  // THE-861 — cold load / hard refresh must restore Workplane ahead of onboarding gates.
+  if (workplaneRouteActive) {
+    return <LazyWorkplaneShell />;
+  }
 
   if (businessOnboardingRouteActive) {
     if (onboardingCompleted === null) {

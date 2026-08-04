@@ -1,0 +1,53 @@
+{
+  "code": "CH-A-04",
+  "issue": "THE-920",
+  "parent": "THE-836",
+  "decision": "ARCHITECTURE_GUARD_IMPLEMENTED",
+  "dependencies": ["CH-A-03"],
+  "dependencyIssues": ["THE-919"],
+  "dependencyCommit": "096eb314a857b834898984d0df71345657d66936",
+  "sourceSha256": "84541727830ef8f4018ad2b9fdf587d653dfbba940b38b279ae3f90ca18ba895",
+  "proof": "architecture test/receipt",
+  "contractVersion": "entity.channel-adapter.v1",
+  "taskTruthOwner": "host_task_service",
+  "adapterAllowedRoles": ["intake_proposal", "status_notification"],
+  "hostApply": "applyChannelIntakeProposals",
+  "adaptersWriteTaskTruth": false,
+  "modulePath": "packages/server/src/channels",
+  "files": [
+    "packages/server/src/channels/task-truth-boundary.ts",
+    "packages/server/src/channels/task-truth-boundary.test.ts",
+    "packages/server/src/channels/index.ts",
+    "packages/server/src/channels/types.ts",
+    "packages/server/src/channels/adapter.ts",
+    "docs/context/entity-ch-a-04-channel-adapter-task-truth-boundary.md",
+    "docs/context/entity-ch-a-04-channel-adapter-task-truth-boundary.json"
+  ],
+  "guards": {
+    "sourceScan": true,
+    "runtimeForbiddenMethods": true,
+    "hostWritersRequired": true,
+    "importTypeFromDbAllowed": true,
+    "dbValueImportForbidden": true
+  },
+  "nonGoals": [
+    "No live Slack/Telegram/Discord/email production sends",
+    "No Doc Hub rebuild",
+    "No Provider Registry duplicate",
+    "No secret exposure",
+    "No Skill Workshop in Entity core",
+    "No adapter-owned task repository"
+  ],
+  "next": {
+    "code": "CH-A-05",
+    "issue": "THE-921",
+    "title": "Channel adapter proof pack",
+    "proof": "E2E + negative proof",
+    "docs": "docs/context/entity-ch-a-05-channel-adapter-proof-pack.md",
+    "test": "packages/server/src/channels/channel-adapter-proof-pack.e2e.test.ts"
+  },
+  "related": [
+    "docs/context/entity-ch-a-02-channel-adapter-interface.md",
+    "docs/context/entity-ch-a-03-slack-reference-adapter.md"
+  ]
+}

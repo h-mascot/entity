@@ -25,11 +25,20 @@ import {
   acceptJob,
   rejectJob,
   cancelJob,
-  listProviders,
-  checkProviderHealth,
   kickAutoDispatch,
 } from './dispatcher';
+import {
+  getRegisteredExecutionEngineHealth,
+  listRegisteredExecutionEngines,
+  toLegacyProviderListEntry,
+} from './execution-engines';
 import { SWARM_JOB_STATUSES, SWARM_PRIORITIES, type CreateSwarmJobInput, type UpdateSwarmJobInput } from './types';
+import {
+  createExecutionCallbackIntakeRouter,
+  createExecutionCallbackIntakeService,
+  getValidatedManifestByProvider,
+  resolveCallbackAuthSecretFromEnv,
+} from './callback-intake';
 
 function readTrimmedString(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -108,6 +117,25 @@ function buildJobUpdates(body: Record<string, unknown>): UpdateSwarmJobInput {
 
 export function createSwarmRouter(): Router {
   const router = Router();
+
+  // EEPC-A-03 — callback intake → ActivityEvents (does not replace legacy mutation routes).
+  // EEPC-A-07 — authRequired callbacks resolve secrets from env (never logged / never in errors).
+  const callbackIntake = createExecutionCallbackIntakeService({
+    getManifest: getValidatedManifestByProvider,
+    getJob: (jobId) => {
+      const job = getSwarmJob(jobId);
+      if (!job) return undefined;
+      return {
+        id: job.id,
+        provider: job.provider,
+        task_id: job.task_id,
+        status: job.status,
+      };
+    },
+    getCallbackAuthSecret: (provider) =>
+      resolveCallbackAuthSecretFromEnv(provider, getValidatedManifestByProvider(provider)),
+  });
+  router.use(createExecutionCallbackIntakeRouter(callbackIntake));
 
   // ── Jobs CRUD ──
 
@@ -440,17 +468,35 @@ export function createSwarmRouter(): Router {
     res.json({ proofs });
   });
 
-  // ── Providers ──
+  // ── Providers / execution engines (EEPC-B-01 public, secret-safe) ──
 
-  // GET /api/swarm/providers
-  router.get('/providers', (_req: Request, res: Response) => {
-    res.json({ providers: listProviders() });
+  // GET /api/swarm/execution-engines — registered engines + public health
+  router.get('/execution-engines', async (_req: Request, res: Response) => {
+    try {
+      const engines = await listRegisteredExecutionEngines();
+      res.json({ engines });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to list execution engines' });
+    }
   });
 
-  // GET /api/swarm/providers/:name/health
+  // GET /api/swarm/providers — back-compat list with public health attached
+  router.get('/providers', async (_req: Request, res: Response) => {
+    try {
+      const engines = await listRegisteredExecutionEngines();
+      res.json({
+        providers: engines.map(toLegacyProviderListEntry),
+        engines,
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to list providers' });
+    }
+  });
+
+  // GET /api/swarm/providers/:name/health — public projection only
   router.get('/providers/:name/health', async (req: Request, res: Response) => {
     try {
-      const health = await checkProviderHealth(req.params.name);
+      const { health } = await getRegisteredExecutionEngineHealth(req.params.name);
       res.json(health);
     } catch (error) {
       res.status(500).json({ error: 'Health check failed' });

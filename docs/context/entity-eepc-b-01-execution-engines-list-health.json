@@ -1,0 +1,18 @@
+{
+  "code": "EEPC-B-01",
+  "issue": "THE-896",
+  "decision": "IMPLEMENTED",
+  "dependency": "EEPC-A-04",
+  "sourceSha256": "84541727830ef8f4018ad2b9fdf587d653dfbba940b38b279ae3f90ca18ba895",
+  "surfaces": {
+    "list": "GET /api/swarm/execution-engines",
+    "compatList": "GET /api/swarm/providers",
+    "health": "GET /api/swarm/providers/:name/health",
+    "ui": "PluginAdminPanel Execution Engines tab"
+  },
+  "redaction": {
+    "server": "projectPublicHealth / projectLegacyPublicHealth",
+    "client": "executionEnginePublicHealth.ts defense-in-depth"
+  },
+  "proof": "API + UI redaction tests"
+}

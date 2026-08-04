@@ -114,6 +114,7 @@ describe('task repository persistence', () => {
     const tasks = db.createTaskRepository();
     const comments = db.createTaskCommentRepository();
     const activities = db.createActivityRepository();
+    const spineEvents = db.createActivityEventSpineRepository();
     const rawDbModule = await import('./entity-db');
     const rawDb = rawDbModule.getEntityDatabase();
 
@@ -126,21 +127,25 @@ describe('task repository persistence', () => {
       description: 'Activity row scoped to first task',
       task_id: first.id,
     });
+    expect(spineEvents.appendForTask(first.id, { eventType: 'progress' }).ok).toBe(true);
     expect(db.addTaskProject(first.id, project.id)).toBe(true);
 
     expect(countRows(rawDb, 'SELECT COUNT(*) AS count FROM task_comments WHERE task_id = ?', first.id)).toBe(1);
     expect(countRows(rawDb, 'SELECT COUNT(*) AS count FROM activities WHERE task_id = ?', first.id)).toBe(1);
+    expect(countRows(rawDb, 'SELECT COUNT(*) AS count FROM task_activity_spine_events WHERE task_id = ?', first.id)).toBe(1);
     expect(countRows(rawDb, 'SELECT COUNT(*) AS count FROM task_projects WHERE task_id = ?', first.id)).toBe(1);
 
     expect(tasks.deleteTask(first.id)).toBe(true);
     expect(countRows(rawDb, 'SELECT COUNT(*) AS count FROM task_comments WHERE task_id = ?', first.id)).toBe(0);
     expect(countRows(rawDb, 'SELECT COUNT(*) AS count FROM activities WHERE task_id = ?', first.id)).toBe(0);
+    expect(countRows(rawDb, 'SELECT COUNT(*) AS count FROM task_activity_spine_events WHERE task_id = ?', first.id)).toBe(0);
     expect(countRows(rawDb, 'SELECT COUNT(*) AS count FROM task_projects WHERE task_id = ?', first.id)).toBe(0);
 
     const replacement = tasks.createTask({ name: 'Replacement task' });
     expect(replacement.id).toBe(first.id);
     expect(comments.listComments(replacement.id)).toEqual([]);
     expect(activities.listActivitiesByTaskId(replacement.id)).toEqual([]);
+    expect(spineEvents.listForTask(replacement.id).empty).toBe(true);
     expect(db.getTaskProjects(replacement.id)).toEqual([]);
   });
 

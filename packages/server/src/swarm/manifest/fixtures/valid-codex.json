@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "execution-engine",
+  "identity": {
+    "id": "swarm.codex",
+    "name": "codex",
+    "label": "Codex (app server)",
+    "version": "1.0.0",
+    "category": "build-system",
+    "description": "Push-based Codex app-server WebSocket RPC adapter."
+  },
+  "execution": {
+    "mode": "push",
+    "acceptsDispatch": true,
+    "entityPollsProvider": true,
+    "expectsClaimCallbacks": false
+  },
+  "lifecycle": {
+    "dispatch": true,
+    "status": true,
+    "cancel": true,
+    "collectProof": true,
+    "claimCallback": false,
+    "releaseCallback": false,
+    "proofCallback": false,
+    "completeCallback": false,
+    "failCallback": false
+  },
+  "callbacks": {
+    "intake": []
+  },
+  "statusMapping": {
+    "afterDispatch": "running",
+    "runStateToJobStatus": {
+      "queued": "queued",
+      "running": "running",
+      "completed": "proof",
+      "failed": "failed",
+      "cancelled": "cancelled"
+    }
+  },
+  "health": {
+    "publicFields": ["available", "latencyMs", "message"],
+    "privateFields": ["appServerUrl", "codexHome"],
+    "allowUrlsInPublicMessage": false,
+    "allowPathsInPublicMessage": false
+  },
+  "config": {
+    "bindings": [
+      {
+        "key": "CODEX_APP_SERVER_URL",
+        "source": "env",
+        "required": false,
+        "secret": false,
+        "description": "Codex app server WebSocket URL (private diagnostic)"
+      },
+      {
+        "key": "CODEX_CODEX_HOME",
+        "source": "env",
+        "required": false,
+        "secret": false,
+        "description": "Codex home directory path (private; never public health)"
+      }
+    ]
+  },
+  "dangerousActions": [],
+  "activityEvents": {
+    "emits": ["status", "proof", "log"]
+  }
+}

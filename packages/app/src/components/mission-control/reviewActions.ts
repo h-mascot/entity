@@ -28,6 +28,10 @@ function readSupportedReviewType(value: unknown): string {
 
 export function normalizeReviewDecision(value: unknown): ReviewDecision {
   const normalized = readString(value).toLowerCase().replace(/[\s-]+/g, '_');
+  // Task API / human-gate vocabulary uses request_fix; checklist UI uses needs_fix.
+  if (normalized === 'request_fix') {
+    return 'needs_fix';
+  }
   if (normalized === 'accepted' || normalized === 'needs_fix' || normalized === 'rejected') {
     return normalized;
   }

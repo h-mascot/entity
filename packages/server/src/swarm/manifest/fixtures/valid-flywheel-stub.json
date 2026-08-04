@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "execution-engine",
+  "identity": {
+    "id": "swarm.flywheel",
+    "name": "flywheel",
+    "label": "Flywheel (environment)",
+    "version": "0.0.0",
+    "category": "environment",
+    "description": "Registry stub for environment arm — acceptsDispatch=false."
+  },
+  "execution": {
+    "mode": "stub",
+    "acceptsDispatch": false,
+    "entityPollsProvider": false,
+    "expectsClaimCallbacks": false
+  },
+  "lifecycle": {
+    "dispatch": false,
+    "status": true,
+    "cancel": true,
+    "collectProof": true,
+    "claimCallback": false,
+    "releaseCallback": false,
+    "proofCallback": false,
+    "completeCallback": false,
+    "failCallback": false
+  },
+  "callbacks": {
+    "intake": []
+  },
+  "statusMapping": {
+    "runStateToJobStatus": {
+      "queued": "queued",
+      "failed": "failed",
+      "cancelled": "cancelled"
+    }
+  },
+  "health": {
+    "publicFields": ["available", "message"],
+    "privateFields": [],
+    "allowUrlsInPublicMessage": false,
+    "allowPathsInPublicMessage": false
+  },
+  "config": {
+    "bindings": []
+  },
+  "dangerousActions": [],
+  "activityEvents": {
+    "emits": ["status"]
+  }
+}
