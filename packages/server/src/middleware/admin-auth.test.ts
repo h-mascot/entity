@@ -69,6 +69,23 @@ describe('admin auth middleware', () => {
     expect(next).toHaveBeenCalled();
   });
 
+  it('allows sole principal to bootstrap a global admin grant', () => {
+    repo.createPrincipal({ id: 'bootstrap-admin', principal_type: 'human', display_name: 'Bootstrap', created_by: 'seed' });
+
+    const middleware = createRequireAdminPrincipal(repo);
+    const next = vi.fn();
+    middleware({
+      header: (name: string) => (name === 'x-entity-principal-id' ? 'bootstrap-admin' : undefined),
+      hostname: 'localhost',
+      method: 'POST',
+      path: '/principals/bootstrap-admin/grants',
+      params: {},
+      body: { role: 'admin' },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as any, { status: vi.fn(() => ({ json: vi.fn() })) } as any, next);
+    expect(next).toHaveBeenCalled();
+  });
+
   it('requires global admin grant once principals exist', () => {
     repo.createPrincipal({ id: 'admin', principal_type: 'human', display_name: 'Admin', created_by: 'seed' });
     repo.createGrant({ principal_id: 'admin', role: 'admin', created_by: 'seed' });
