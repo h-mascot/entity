@@ -7,6 +7,9 @@ const SECURITY_HEADERS: Record<string, string> = {
     "connect-src 'self' http: https: ws: wss:",
     "form-action 'self'",
     "frame-ancestors 'none'",
+    // Static Entity Wiki previews use revocable blob URLs so the browser can
+    // perform fragment scrolling while the iframe remains scriptless and opaque.
+    "frame-src 'self' blob:",
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: https:",
     "object-src 'none'",
