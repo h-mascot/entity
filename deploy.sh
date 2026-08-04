@@ -141,6 +141,9 @@ fi
 [[ -n "${REMOTE_NODE_BIN}" ]] || error "Remote Node.js path is empty for ${PROD_HOST}"
 [[ "${REMOTE_NODE_BIN}" =~ ^/[A-Za-z0-9._/+@-]+$ ]] || error "Remote Node.js path contains unsupported characters: ${REMOTE_NODE_BIN}"
 [[ "${ENTITY_DIR}" =~ ^/[A-Za-z0-9._/+@-]+$ ]] || error "Remote Entity path contains unsupported characters: ${ENTITY_DIR}"
+REMOTE_NODE_VERSION="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "'${REMOTE_NODE_BIN}' --version" 2>/dev/null)" || error "Remote Node.js preflight failed for ${REMOTE_NODE_BIN} on ${PROD_HOST}"
+[[ "${REMOTE_NODE_VERSION}" =~ ^v([0-9]+)(\.[0-9]+){2}$ ]] || error "Remote Node.js preflight returned an invalid version from ${REMOTE_NODE_BIN}: ${REMOTE_NODE_VERSION}"
+(( BASH_REMATCH[1] >= 20 )) || error "Remote Node.js ${REMOTE_NODE_VERSION} is unsupported; Entity requires Node 20 or newer"
 
 log "Pre-flight: checking production DB on ${PROD_HOST}..."
 TASK_COUNT=$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "sqlite3 '${PROD_DB}' 'select count(*) from tasks;'" 2>/dev/null || echo "0")
@@ -206,26 +209,14 @@ if [[ "$SYMLINK_TARGET" != "$PROD_DB" ]]; then
   ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "rm -f '${SERVER_DIST}/db/entity-tasks.db' && ln -s '${PROD_DB}' '${SERVER_DIST}/db/entity-tasks.db'"
 fi
 
-if [[ -n "$RELEASE_SHA" ]]; then
-  log "Writing release identity metadata for ${RELEASE_SHA} on ${PROD_HOST}..."
-  RELEASE_METADATA_PAYLOAD="$(python3 - "${ENTITY_DIR}" "${RELEASE_SHA}" "${RELEASE_BRANCH}" "${RELEASE_ENVIRONMENT}" <<'PY'
-import json
-import sys
-root, sha, branch, environment = sys.argv[1:]
-print(json.dumps({
-    "script": f"{root}/scripts/entity-release-info.mjs",
-    "root": root,
-    "sha": sha,
-    "branch": branch,
-    "environment": environment,
-}))
-PY
-)"
-  printf '%s' "${RELEASE_METADATA_PAYLOAD}" | ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "'${REMOTE_NODE_BIN}' '${ENTITY_DIR}/scripts/entity-release-info-stdin.mjs'" >/dev/null
-fi
-
 log "Writing server runtime .env for configured TTS providers..."
 RUNTIME_ENV_TMP=$(mktemp)
+cleanup_runtime_env() {
+  if [[ -n "${RUNTIME_ENV_TMP:-}" ]]; then
+    rm -f "${RUNTIME_ENV_TMP}"
+  fi
+}
+trap cleanup_runtime_env EXIT
 python3 - "${RUNTIME_ENV_TMP}" <<'PY'
 import os
 import sys
@@ -255,7 +246,27 @@ PY
 ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; mkdir -p '${ENTITY_DIR}/packages/server/dist'"
 rsync -az -e "ssh ${SSH_OPTS[*]}" "${RUNTIME_ENV_TMP}" "${PROD_HOST}:${ENTITY_DIR}/packages/server/.env"
 rsync -az -e "ssh ${SSH_OPTS[*]}" "${RUNTIME_ENV_TMP}" "${PROD_HOST}:${ENTITY_DIR}/packages/server/dist/.env"
-rm -f "${RUNTIME_ENV_TMP}"
+cleanup_runtime_env
+RUNTIME_ENV_TMP=""
+trap - EXIT
+
+if [[ -n "$RELEASE_SHA" ]]; then
+  log "Writing release identity metadata for ${RELEASE_SHA} on ${PROD_HOST}..."
+  RELEASE_METADATA_PAYLOAD="$(python3 - "${ENTITY_DIR}" "${RELEASE_SHA}" "${RELEASE_BRANCH}" "${RELEASE_ENVIRONMENT}" <<'PY'
+import json
+import sys
+root, sha, branch, environment = sys.argv[1:]
+print(json.dumps({
+    "script": f"{root}/scripts/entity-release-info.mjs",
+    "root": root,
+    "sha": sha,
+    "branch": branch,
+    "environment": environment,
+}))
+PY
+)"
+  printf '%s' "${RELEASE_METADATA_PAYLOAD}" | ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "'${REMOTE_NODE_BIN}' '${ENTITY_DIR}/scripts/entity-release-info-stdin.mjs'" >/dev/null
+fi
 
 if [[ "$SKIP_RESTART" == "1" ]]; then
   log "ENTITY_DEPLOY_SKIP_RESTART=1 set; skipping service restart and live API verification."

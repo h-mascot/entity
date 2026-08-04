@@ -250,6 +250,7 @@ export function codexAuthToOpenWikiEnv(auth) {
 }
 
 export async function writeGenerationMetadata(root, { provider, model }) {
+  await removeUnverifiableGitHead(root);
   const metadataPath = path.join(root, OPENWIKI_METADATA_PATH);
   const sourceFingerprint = await computeSourceFingerprint(root);
   try {
@@ -277,6 +278,19 @@ export async function writeGenerationMetadata(root, { provider, model }) {
   };
   await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
   return metadata;
+}
+
+async function removeUnverifiableGitHead(root) {
+  const lastUpdatePath = path.join(root, "openwiki", ".last-update.json");
+  try {
+    const lastUpdate = JSON.parse(await readFile(lastUpdatePath, "utf8"));
+    if (!Object.hasOwn(lastUpdate, "gitHead")) return;
+    delete lastUpdate.gitHead;
+    await writeFile(lastUpdatePath, `${JSON.stringify(lastUpdate, null, 2)}\n`);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
 }
 
 
