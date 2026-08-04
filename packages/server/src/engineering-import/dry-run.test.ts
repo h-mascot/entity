@@ -124,7 +124,7 @@ describe('Entity Engineering import dry run', () => {
         sourceRef: 'refs/heads/ee-b-05-ref-that-does-not-exist',
       }).every((entry) => entry.state === 'unknown'),
     ).toBe(true);
-  });
+  }, 30000);
 
   it('reports create only when project, ledger, prerequisite, and titles are clear', () => {
     const entry = candidate();

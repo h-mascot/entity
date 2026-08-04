@@ -131,6 +131,7 @@ const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
 const MCCreateTaskModal = lazy(() => import('./components/mission-control/MCCreateTaskModal'));
 const ShowClawFeaturedPage = lazy(() => import('./ShowClawFeaturedPage'));
 const AdminView = lazy(() => import('./views/AdminView'));
+const DocumentConvertDialog = lazy(() => import('./components/doc-hub/DocumentConvertDialog'));
 const MobileView = lazy(() => import('./views/MobileView'));
 const FilesView = lazy(() => import('./views/FilesView'));
 
@@ -497,7 +498,14 @@ type MCProjectFilter = (typeof PROJECT_FILTER_OPTIONS)[number];
 type AdminSection =
   | 'general'
   | 'profile'
+  | 'accessControl'
+  | 'businessOnboarding'
   | 'missionControl'
+  | 'engineering'
+  | 'workplanes'
+  | 'strategicRoadmap'
+  | 'scopedSearch'
+  | 'channels'
   | 'agents'
   | 'integrations'
   | 'tts'
@@ -509,7 +517,14 @@ type AdminSection =
 const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   general: 'General',
   profile: 'User Profile',
+  accessControl: 'Access Control',
+  businessOnboarding: 'Business Onboarding',
   missionControl: 'Mission Control',
+  engineering: 'Engineering',
+  workplanes: 'Workplanes',
+  strategicRoadmap: 'Strategic Roadmap',
+  scopedSearch: 'Scoped Search',
+  channels: 'Channels',
   agents: 'Agent Registry',
   integrations: 'Integrations',
   tts: 'Listen / TTS',
@@ -4479,7 +4494,14 @@ export default function App() {
     const items: Array<{ key: AdminSection; title: string; hint: string }> = [
       { key: 'general', title: 'General settings', hint: 'Workspace + security' },
       { key: 'profile', title: 'User profile', hint: 'Name + avatar' },
+      { key: 'accessControl', title: 'Access control', hint: 'Auth + RBAC posture' },
+      { key: 'businessOnboarding', title: 'Business onboarding', hint: 'Setup flow + modules' },
       { key: 'missionControl', title: 'Mission Control', hint: 'Board + data behavior' },
+      { key: 'engineering', title: 'Engineering', hint: 'Domain board + import gates' },
+      { key: 'workplanes', title: 'Workplanes', hint: 'Task cockpit + proof panels' },
+      { key: 'strategicRoadmap', title: 'Strategic roadmap', hint: 'Roadmap data + ordering' },
+      { key: 'scopedSearch', title: 'Scoped search', hint: 'Docs/task/proof search' },
+      { key: 'channels', title: 'Channels', hint: 'Adapter intake + notifications' },
       { key: 'agents', title: 'Agent registry', hint: 'Crew + scopes' },
       { key: 'integrations', title: 'Integrations', hint: 'Gateway + sync' },
       { key: 'plugins', title: 'Plugins', hint: 'Registry + runtime toggles' },
@@ -4699,8 +4721,29 @@ export default function App() {
             <button type="button" onClick={() => setAdminSection('general')} className="mc-shell-btn px-2 py-1 text-xs">
               General
             </button>
+            <button type="button" onClick={() => setAdminSection('accessControl')} className="mc-shell-btn px-2 py-1 text-xs">
+              Access
+            </button>
+            <button type="button" onClick={() => setAdminSection('businessOnboarding')} className="mc-shell-btn px-2 py-1 text-xs">
+              Onboarding
+            </button>
             <button type="button" onClick={() => setAdminSection('missionControl')} className="mc-shell-btn px-2 py-1 text-xs">
               Mission Control
+            </button>
+            <button type="button" onClick={() => setAdminSection('engineering')} className="mc-shell-btn px-2 py-1 text-xs">
+              Engineering
+            </button>
+            <button type="button" onClick={() => setAdminSection('workplanes')} className="mc-shell-btn px-2 py-1 text-xs">
+              Workplanes
+            </button>
+            <button type="button" onClick={() => setAdminSection('strategicRoadmap')} className="mc-shell-btn px-2 py-1 text-xs">
+              Strategic
+            </button>
+            <button type="button" onClick={() => setAdminSection('scopedSearch')} className="mc-shell-btn px-2 py-1 text-xs">
+              Search
+            </button>
+            <button type="button" onClick={() => setAdminSection('channels')} className="mc-shell-btn px-2 py-1 text-xs">
+              Channels
             </button>
             <button type="button" onClick={() => setAdminSection('agents')} className="mc-shell-btn px-2 py-1 text-xs">
               Agents
@@ -5154,7 +5197,14 @@ export default function App() {
       const miniItems: Array<{ key: AdminSection; icon: string; label: string }> = [
         { key: 'general', icon: '🧩', label: 'General settings' },
         { key: 'profile', icon: '👤', label: 'User profile' },
+        { key: 'accessControl', icon: '🔐', label: 'Access control' },
+        { key: 'businessOnboarding', icon: '🏢', label: 'Business onboarding' },
         { key: 'missionControl', icon: '📋', label: 'Mission Control' },
+        { key: 'engineering', icon: '🛠️', label: 'Engineering' },
+        { key: 'workplanes', icon: '🧾', label: 'Workplanes' },
+        { key: 'strategicRoadmap', icon: '🗺️', label: 'Strategic roadmap' },
+        { key: 'scopedSearch', icon: '🔎', label: 'Scoped search' },
+        { key: 'channels', icon: '📣', label: 'Channels' },
         { key: 'integrations', icon: '🔌', label: 'Integrations' },
         { key: 'plugins', icon: '🧠', label: 'Plugins' },
         { key: 'voice', icon: '🎙️', label: 'Voice / TTS' },
@@ -5867,6 +5917,26 @@ export default function App() {
           />
         </Suspense>
       ) : null}
+
+      <Suspense fallback={null}>
+        <DocumentConvertDialog
+          open={activeDocHubTool === 'convert'}
+          sourceId={currentSourceId}
+          sourcePath={currentFile}
+          readOnly={currentFileReadOnly}
+          apiBase={runtime.apiBase}
+          onClose={() => {
+            setActiveDocHubTool(null);
+            window.dispatchEvent(new CustomEvent('entity:doc-convert-closed'));
+          }}
+          onConverted={({ targetPath }) => {
+            if (currentSourceId) {
+              void handleSourceFileSelect(currentSourceId, targetPath);
+            }
+          }}
+          pushToast={pushToast}
+        />
+      </Suspense>
 
       <div
         id="loginOverlay"

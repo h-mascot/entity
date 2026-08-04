@@ -52,6 +52,31 @@ describe('settings-backed effective config', () => {
     vi.unstubAllEnvs();
   });
 
+  it('applies public api and websocket URL env overrides to effective config', () => {
+    vi.stubEnv('ENTITY_PUBLIC_BASE_URL', 'http://sandbox.entity');
+    vi.stubEnv('ENTITY_CLOUD_API_BASE', 'http://sandbox.entity/api');
+    vi.stubEnv('VITE_ENTITY_WS_URL', 'ws://sandbox.entity/ws');
+
+    const result = buildEffectiveConfig({
+      loaded: {
+        defaults: EntityConfigSchema.parse({}),
+        profile: null,
+        config: null,
+        configPath: '/tmp/entity.config.yaml',
+        profilePath: null,
+        warnings: [],
+      },
+    });
+
+    expect((result.settings as any).server.publicBaseUrl).toBe('http://sandbox.entity');
+    expect((result.settings as any).server.apiBaseUrl).toBe('http://sandbox.entity/api');
+    expect((result.settings as any).server.wsBaseUrl).toBe('ws://sandbox.entity/ws');
+    expect(result.sources['server.publicBaseUrl'].source).toBe('env');
+    expect(result.sources['server.apiBaseUrl'].source).toBe('env');
+    expect(result.sources['server.wsBaseUrl'].source).toBe('env');
+    vi.unstubAllEnvs();
+  });
+
   it('preserves read-only file-source capabilities from the database', () => {
     const db = new Database(':memory:');
     db.exec(`

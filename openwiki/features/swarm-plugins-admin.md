@@ -65,7 +65,7 @@ The plugin management router supports listing plugins, toggling enablement, upda
 - `deploy.mode`, `preserveDatabase`, and `dryRunByDefault` are already modeled;
 - voice provider defaults exist, including `browser` as the default provider.
 
-The app's admin view is therefore the place to expose and edit these runtime knobs, but the source of truth for the underlying behavior still lives in the server config and plugin registry.
+The app's admin view is therefore the place to expose and edit these runtime knobs, but the source of truth for the underlying behavior still lives in the server config and plugin registry. Recent changes also added a Users & roles section to Admin, so the same shell now manages stored principals, scoped grants, and the bootstrap admin path. That admin access model is stored-principal backed, with a localhost-only compatibility fallback for legacy setups.
 
 ## Evidence to check before changing behavior
 

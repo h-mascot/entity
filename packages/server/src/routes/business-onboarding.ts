@@ -11,6 +11,15 @@ import {
   type TeamRecord,
   type WorkspaceScopeRepository,
 } from '../../../db/src';
+import { getEntityDatabase } from '../../../db/src/entity-db';
+import { ensureAppSettingsTable } from '../config/settings-store';
+import { ADMIN_SETTINGS_KEYS } from '../config/admin-settings';
+import { getAdminSettings } from '../config/admin-settings-store';
+
+function readBusinessOnboardingSettings() {
+  const db = getEntityDatabase(ensureAppSettingsTable);
+  return getAdminSettings(db, ADMIN_SETTINGS_KEYS.businessOnboarding);
+}
 
 export const BUSINESS_DOMAIN_CATALOG = [
   {
@@ -470,6 +479,10 @@ export function createBusinessOnboardingRouter({
 
   router.post('/onboarding/business/start', (req, res) => {
     try {
+      const settings = readBusinessOnboardingSettings();
+      if (!settings.enabled) {
+        return res.status(403).json({ error: 'business onboarding is disabled by admin settings' });
+      }
       const body = parseBody(req);
       const name = requiredString(body, 'orgName', 'name');
       const slug = optionalString(body, 'slug') ?? slugify(name);
@@ -481,7 +494,7 @@ export function createBusinessOnboardingRouter({
         name,
         slug,
         mission: optionalString(body, 'mission') ?? null,
-        domains_json: '[]',
+        domains_json: JSON.stringify([settings.defaultDomain]),
       });
       return res.status(201).json({ org, domains: BUSINESS_DOMAIN_CATALOG });
     } catch (error) {
@@ -508,11 +521,19 @@ export function createBusinessOnboardingRouter({
 
   router.post('/onboarding/business/:orgId/provision', async (req, res) => {
     try {
+      const settings = readBusinessOnboardingSettings();
+      if (!settings.enabled) {
+        return res.status(403).json({ error: 'business onboarding is disabled by admin settings' });
+      }
+      if (settings.requireDryRun && req.body?.dryRun !== true && req.body?.dryRunConfirmed !== true) {
+        return res.status(400).json({ error: 'dryRun=true or dryRunConfirmed=true is required before business onboarding provision' });
+      }
       const org = getOrgOrThrow(workspaceRepo, String(req.params.orgId));
       const body = parseBody(req);
+      const storedDomains = parseStoredDomains(org);
       const domains = 'domains' in body
         ? domainsFromUnknown(body.domains)
-        : parseStoredDomains(org);
+        : (storedDomains.length > 0 ? storedDomains : [settings.defaultDomain]);
       if (domains.length === 0) {
         throw new BusinessOnboardingApiError(400, 'at least one business domain is required');
       }
