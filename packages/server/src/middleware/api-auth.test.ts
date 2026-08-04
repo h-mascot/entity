@@ -126,6 +126,20 @@ describe("createApiAuthMiddleware", () => {
     expect(status).toHaveBeenCalledWith(401);
   });
 
+  it("THE-931: chat history routes are NOT self-auth exempt and require a bearer token", () => {
+    // The /api/documents self-auth exemption must be exact: chat must stay behind
+    // the global bearer check even with the agent-native editor enabled.
+    const mw = createApiAuthMiddleware();
+    const req = makeReq("/api/chat/channels");
+    const { res, status } = makeRes();
+    const next = vi.fn();
+
+    mw(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(401);
+  });
+
   it("does not treat static asset paths like /agent-avatars as protected", () => {
     const mw = createApiAuthMiddleware();
     const req = makeReq("/agent-avatars/ada.jpg");

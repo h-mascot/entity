@@ -15,6 +15,7 @@ import {
 } from '../../../db/src';
 import { ChatModelRegistry, type ChatModelOption } from './chat-model-registry';
 import { requireRequestOrg, sendPermissionDenied, type RequestOrgBinding } from '../request-permissions';
+import { resolveInheritedRole } from '../permissions';
 
 interface ChatObjectRefAccessDecision {
   allowed: boolean;
@@ -29,6 +30,40 @@ interface ChatRouteDependencies {
   clickClackBridge?: ClickClackChatBridge;
   clickClackReadiness?: ClickClackReadinessProbe;
   chatObjectRefAccess?: ChatObjectRefAccess;
+  /**
+   * THE-931: gate chat *history* reads (message/channel/thread content) on the
+   * org/team-grant ownership model. Defaults to principalCanReadChatHistory.
+   */
+  chatHistoryAccess?: ChatHistoryAccess;
+}
+
+interface ChatHistoryDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+type ChatHistoryAccess = (binding: RequestOrgBinding) => ChatHistoryDecision;
+
+/**
+ * THE-931 — coherent org/team-grant ownership model for chat history.
+ *
+ * A principal may read chat history scoped to an org when they hold at least a
+ * viewer-level grant covering that org. In dev mode (no API token) the local
+ * admin principal carries a manager grant for the default org, so existing
+ * flows stay green. An agent principal with no assignments resolves to role
+ * 'none' and is denied.
+ */
+export function principalCanReadChatHistory(binding: RequestOrgBinding): ChatHistoryDecision {
+  const role = resolveInheritedRole(binding.principal, { org_id: binding.orgId });
+  if (role === 'none') {
+    return { allowed: false, reason: 'chat history requires an org/team assignment' };
+  }
+  return { allowed: true };
+}
+
+/** Uniform no-leak 404 for chat history resources (unauthorized == missing). */
+function denyChatHistory(res: express.Response, missingError: string) {
+  return res.status(404).json({ error: missingError });
 }
 
 interface OpenClawReply {
@@ -775,6 +810,7 @@ export function registerChatRoutes({
   clickClackBridge,
   clickClackReadiness,
   chatObjectRefAccess = allowChatObjectRef,
+  chatHistoryAccess = principalCanReadChatHistory,
 }: ChatRouteDependencies): void {
   const repo = createChatRepository();
   const modelRegistry = new ChatModelRegistry({
@@ -822,6 +858,14 @@ export function registerChatRoutes({
         return res.status(400).json({ error: 'taskId is required' });
       }
 
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      // THE-931: denied principals get the same empty shape as a task with no
+      // channel — no existence leak.
+      if (!chatHistoryAccess(binding).allowed) {
+        return res.json({ taskId, channel: null, messages: [], threads: [] });
+      }
+
       const candidateIds = [`task-${taskId}`, taskId];
       const channel = candidateIds
         .map((id) => repo.getChannel(id) ?? repo.getChannelByName(id))
@@ -856,7 +900,12 @@ export function registerChatRoutes({
     }
   });
 
-  app.get('/api/chat/channels', (_req, res) => {
+  app.get('/api/chat/channels', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    if (!chatHistoryAccess(binding).allowed) {
+      return sendPermissionDenied(res, 'chat history requires an org/team assignment');
+    }
     try {
       return res.json({
         categories: repo.listCategories().map(toCategory),
@@ -869,6 +918,12 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/channels/:channelId/messages', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    // THE-931: unauthorized is indistinguishable from missing (uniform no-leak 404).
+    if (!chatHistoryAccess(binding).allowed || !repo.getChannel(req.params.channelId)) {
+      return denyChatHistory(res, 'channel not found');
+    }
     try {
       const messages = repo.listMessagesByChannel(req.params.channelId).map(toMessage);
       return res.json({ messages });
@@ -879,6 +934,11 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/channels/:channelId/threads', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    if (!chatHistoryAccess(binding).allowed || !repo.getChannel(req.params.channelId)) {
+      return denyChatHistory(res, 'channel not found');
+    }
     try {
       const threads = repo.listThreadsByChannel(req.params.channelId).map(toThread);
       return res.json({ threads });
@@ -925,6 +985,11 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/threads/:threadId/messages', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    if (!chatHistoryAccess(binding).allowed || !repo.getThread(req.params.threadId)) {
+      return denyChatHistory(res, 'thread not found');
+    }
     try {
       const messages = repo.listMessagesByThread(req.params.threadId).map(toMessage);
       return res.json({ messages });
@@ -935,6 +1000,11 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/messages/:messageId', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    if (!chatHistoryAccess(binding).allowed) {
+      return denyChatHistory(res, 'message not found');
+    }
     const message = repo.getMessage(req.params.messageId);
     if (!message) {
       return res.status(404).json({ error: 'message not found' });
@@ -980,6 +1050,11 @@ export function registerChatRoutes({
   });
 
   app.get('/api/chat/threads/by-parent/:parentMessageId', (req, res) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return undefined;
+    if (!chatHistoryAccess(binding).allowed) {
+      return denyChatHistory(res, 'thread not found');
+    }
     const thread = repo.getThreadByParentMessage(req.params.parentMessageId);
     if (!thread) {
       return res.status(404).json({ error: 'thread not found' });
