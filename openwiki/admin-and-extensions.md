@@ -32,25 +32,13 @@ The main source seams are:
 - The effective config that the app is actually using.
 - Principals, scoped grants, and bootstrap admin access.
 
-## Users, roles, and bootstrap access
+## Users and roles
 
 The Admin surface now includes a **Users & roles** section labeled **Principals and scoped grants**. It lets operators list principals, create a principal, disable a principal, and add or revoke grants from that principal. The UI exposes the principal types `human`, `agent`, and `service_account`, plus the grant roles `viewer`, `contributor`, `manager`, and `admin`.
 
-The recent server changes make that section behave like a true control plane instead of a loose settings panel. `packages/server/src/routes/principals.ts` now exposes principal CRUD plus grant CRUD under `/api/admin`, and the server serializes grant sensitivity categories back to the UI so scoped access can be inspected consistently. `packages/server/src/principals/admin-identity.ts` resolves the trusted admin identity from stored access-control settings, `ENTITY_API_PRINCIPAL_ID`, a direct request header when the store is empty, or the local fallback principal. `packages/server/src/middleware/admin-auth.ts` then enforces the resulting trust boundary: the first principal may bootstrap itself, the last global admin cannot be disabled, disabled principals are rejected, and non-local callers need API auth and an active global admin grant.
+The first principal is special: when the store is empty, bootstrap access is allowed and creating that first principal auto-attaches an `admin` grant so the workspace can be initialized. After that bootstrap window closes, admin routes require a stored principal with an active admin grant. Disabled principals are rejected, and non-admin principals cannot reach the admin API. The backend guard in `packages/server/src/middleware/admin-auth.ts` resolves stored principals, requires an active admin grant, and only allows the localhost header compatibility fallback when API auth is off and the admin settings keep compatibility enabled.
 
-There is still a deliberate local compatibility path for legacy setups. On localhost, when API auth is off and compatibility is enabled, header-based access such as `x-entity-role: admin` can still open admin functionality. That path is intentionally retained for local and migration use, but it is not the primary authorization model.
-
-Admin settings themselves are stored through a dedicated settings store and routed through the admin config endpoints, so save/reset behavior is persisted rather than purely derived from the UI session. The React Admin shell now also loads runtime admin settings from `/api/runtime/admin-settings`, which is how it picks up onboarding and access-control flags without hardcoding them into the view.
-
-### Business onboarding
-
-The Admin view now has a dedicated **Business onboarding** section backed by `packages/app/src/components/BusinessOnboardingFlow.tsx` and `packages/server/src/routes/business-onboarding.ts`. That flow walks through workspace fork, org identity, domain selection, mission drafting, blueprint generation, and agent assignment.
-
-The router persists the onboarding blueprint and related dry-run receipts through the settings store, and it depends on injected task and workspace repositories rather than a loose global default. The UI mirrors that contract by loading `/api/runtime/admin-settings` first, then calling `/onboarding/business/catalog`, `/onboarding/business/start`, `/onboarding/business/provision`, and `/onboarding/business/confirm` through the runtime API base.
-
-The flow is intentionally domain-oriented: the built-in catalog includes claims, engineering/devops, product, sales/BD, marketing, finance, customer success, people ops, health business, AI ops, and other. Some domains have named agent mappings such as Atlas, Mafa, Kashy, and Sabi, which means the onboarding blueprint can pre-associate work with existing agent identities when the registry matches.
-
-If you change the onboarding flow, check the runtime settings loader, the business onboarding router, and the Admin view together so the UI, config, and persistence stay aligned.
+Admin settings themselves are now stored through a dedicated settings store and routed through the admin config endpoints, so save/reset behavior is persisted rather than purely derived from the UI session. `packages/app/src/components/settings/AdminSettingsForm.tsx` loads a section, edits the draft locally, and saves or resets through `/api/admin/settings/:section`; `packages/app/src/components/settings/UsersAndRolesSettings.tsx` manages the principals list, bootstrap admin creation, disable flow, and grant editing through `/api/admin/principals`.
 
 ## File sources and docs settings
 

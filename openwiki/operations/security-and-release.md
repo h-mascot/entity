@@ -108,3 +108,5 @@ When asked whether a feature “exists” or “is live”:
 5. Do not equate a route, type, TODO, plan, proof fixture, or UI placeholder with a working end-to-end capability.
 
 This distinction applies especially to [execution providers and proof](../platform/execution-and-proof.md), [plugin mounts](../platform/configuration-and-plugins.md), and desktop/mobile packaging described in the [quickstart](../quickstart.md#desktop-and-mobile).
+(../platform/execution-and-proof.md), [plugin mounts](../platform/configuration-and-plugins.md), and desktop/mobile packaging described in the [quickstart](../quickstart.md#desktop-and-mobile).
+er/src/middleware/admin-auth.ts`.

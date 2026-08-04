@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -22,10 +22,10 @@ const manifest = {
   builtAt,
   nodeVersion: process.version,
   packageLockHash: existsSync(packageLock) ? `sha256:${sha256File(packageLock)}` : null,
-  artifactHash: `sha256:${treeHash(root, ['.git', 'node_modules', 'output'])}`,
+  artifactHash: `sha256:${treeHash(root, ['.git', 'node_modules', 'output'], 'repo')}`,
   distHashes: {
     'packages/app/dist': maybeTreeHash(join(root, 'packages/app/dist')),
-    'packages/server/dist': maybeTreeHash(join(root, 'packages/server/dist')),
+    'packages/server/dist': maybeTreeHash(join(root, 'packages/server/dist'), 'server-dist'),
     'packages/db/dist': maybeTreeHash(join(root, 'packages/db/dist')),
   },
 };
@@ -82,36 +82,58 @@ function sha256File(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
 
-function maybeTreeHash(dir) {
-  return existsSync(dir) ? `sha256:${treeHash(dir, [])}` : null;
+function maybeTreeHash(dir, scope = 'immutable') {
+  return existsSync(dir) ? `sha256:${treeHash(dir, [], scope)}` : null;
 }
 
-function treeHash(dir, excludeNames) {
+function treeHash(dir, excludeNames, scope = 'immutable') {
   const hash = createHash('sha256');
   const excludes = new Set(excludeNames);
-  for (const file of walk(dir, excludes)) {
-    hash.update(relative(dir, file));
+  for (const entry of walk(dir, excludes, dir, scope)) {
+    hash.update(relative(dir, entry.path));
     hash.update('\0');
-    hash.update(readFileSync(file));
+    hash.update(entry.kind === 'symlink' ? `symlink:${readlinkSync(entry.path)}` : readFileSync(entry.path));
     hash.update('\0');
   }
   return hash.digest('hex');
 }
 
-function walk(dir, excludes) {
+function walk(dir, excludes, hashRoot, scope) {
   const out = [];
   for (const name of readdirSync(dir).sort()) {
     if (excludes.has(name)) continue;
     const p = join(dir, name);
+    const relativePath = relative(hashRoot, p).split('\\').join('/');
+    if (isMutableRuntimePath(relativePath, scope)) continue;
     let st;
     try {
-      st = statSync(p);
+      st = lstatSync(p);
     } catch (error) {
       if (error?.code === 'ENOENT') continue;
       throw error;
     }
-    if (st.isDirectory()) out.push(...walk(p, excludes));
-    else if (st.isFile()) out.push(p);
+    if (st.isDirectory()) out.push(...walk(p, excludes, hashRoot, scope));
+    else if (st.isFile()) out.push({ path: p, kind: 'file' });
+    else if (st.isSymbolicLink()) out.push({ path: p, kind: 'symlink' });
   }
   return out;
+}
+
+function isMutableRuntimePath(relativePath, scope) {
+  if (scope === 'repo') {
+    if (new Set(['RELEASE.json', 'VERSION', '.env', 'packages/server/.env', 'packages/server/dist/.env']).has(relativePath)) return true;
+    if (relativePath.startsWith('packages/server/dist/')) {
+      return isServerDistRuntimeName(basename(relativePath));
+    }
+    return false;
+  }
+  return scope === 'server-dist' && isServerDistRuntimeName(basename(relativePath));
+}
+
+function isServerDistRuntimeName(name) {
+  return name === '.env'
+    || name.endsWith('.db')
+    || name.endsWith('.db-shm')
+    || name.endsWith('.db-wal')
+    || name.endsWith('.log');
 }
