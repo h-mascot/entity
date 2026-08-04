@@ -441,8 +441,7 @@ export function registerDocIntelligenceRoutes(
 
     const validated = validateDocAskInput(req.body);
     if (!validated.ok) {
-      const status = validated.code === 'schema_invalid' ? 400 : 400;
-      res.status(status).json({ error: validated.error, code: validated.code ?? 'invalid_input' });
+      res.status(400).json({ error: validated.error, code: validated.code ?? 'invalid_input' });
       return;
     }
 

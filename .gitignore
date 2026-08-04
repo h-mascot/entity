@@ -76,6 +76,10 @@ entity.db
 *.sqlite-shm
 *.sqlite-wal
 *.sqlite-journal
+# SQLite litter from tests that pass ":memory:" as a DB path
+:memory:
+:memory:-shm
+:memory:-wal
 *.db.backup*
 *.db.bak*
 *.db.corrupt*

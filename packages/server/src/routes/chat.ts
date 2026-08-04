@@ -1318,11 +1318,24 @@ export function registerChatRoutes({
         }
 
         let result;
+        // THE-930: apply the same noise guard to the ClickClack sidecar path so
+        // muted/cooldown/concurrent-duplicate agents are suppressed consistently.
+        const sidecarScope = { channelId, threadId };
+        const sidecarTargets: string[] = [];
+        const sidecarSuppressed: Array<{ agent: string; reason: string }> = [];
+        for (const agent of targets) {
+          const reservation = noiseGuard.reserve(agent, sidecarScope, content);
+          if (reservation.suppressed) {
+            sidecarSuppressed.push({ agent, reason: reservation.reason ?? 'suppressed' });
+          } else {
+            sidecarTargets.push(agent);
+          }
+        }
         try {
           result = await sidecarBridge.sendCompatibilityMessage({
             channelId,
             content,
-            targets,
+            targets: sidecarTargets,
             messageId: userMessage.id,
             threadId: typeof req.body?.threadId === 'string' ? req.body.threadId : undefined,
             // Entity message ids are local; keep ClickClack sidecar sends channel-scoped until we persist an id map.
@@ -1342,6 +1355,10 @@ export function registerChatRoutes({
               error: message,
             },
           });
+        }
+
+        for (const agent of sidecarTargets) {
+          noiseGuard.release(agent, sidecarScope, content);
         }
 
         const storedReplies = result.messages.map((message) => {
@@ -1370,6 +1387,7 @@ export function registerChatRoutes({
           ...result,
           message: toMessage(userMessage),
           messages: storedReplies,
+          suppressed: sidecarSuppressed,
         });
       }
 
