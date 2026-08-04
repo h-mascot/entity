@@ -64,3 +64,38 @@ chat tenant isolation to the repository boundary. Plan:
 - [x] Gate: `npm run ctrl:gate` (Node 22) ✅ — app 415 + db 44 + server 1327.
 - [x] Commits: 6 coherent commits; HEAD `daf320e`; worktree clean.
 - [x] Not merged/pushed/deployed; production untouched; blockers=[].
+
+---
+
+## Final Focused Correction — THE-930/931/933 (R2 split reviews) — COMPLETE
+
+Follow-on to address the three new full re-review summaries
+(`clawd/output/entity/ra-fu-runnerqa-20260804/reviews/split-r2/`). Plan:
+`docs/plans/2026-08-04-final-focused-correction-plan.md`. THE-932/THE-934
+already PASS and were not regressed.
+
+- [x] THE-930: tokenless stale release is a no-op (fail-closed). `release()`
+  requires the exact `ownerToken` returned by the reservation; the `heldTokens`
+  fallback is removed. `NoiseReleaseOptions.ownerToken` is required (typed);
+  chat callers guard the token. Regression: `agent-noise-guard-tokenless.test.ts`
+  (DB + in-memory: A reserve/expires, B reacquires, A tokenless release → B
+  lease/owner/last_sent unchanged, C duplicate-concurrent, delivered tokenless
+  writes no cooldown). Existing suites → explicit-token semantics.
+- [x] THE-931: creation/category/repository isolation at the DB boundary.
+  `resolveChatCreationScope`/`resolveChatReadScope` derive scope from grants
+  (caller teamId/id ignored; zero/revoked/inactive/ambiguous fail closed).
+  `createTenantChatRepository` (DB layer) emits only owned rows via scoped SQL;
+  all tenant-facing routes go through it. Closed raw bypasses (task lookup,
+  thread messages, category list/create, setup). `chat_categories` gains
+  migration-safe org_id/team_id; legacy unowned fail-closed for agents
+  (local-admin compat only). Server-generated authoritative ids remove the
+  foreign-ID existence oracle. Regression: `chat-creation-isolation.test.ts`
+  (10) + updated object-refs/clickclack/chat tests.
+- [x] THE-933: namespaced table `entity_task_handoffs_v2` — the new feature no
+  longer touches the deployed legacy `task_handoffs` table. Compat test
+  (`handoffs-compat.test.ts`) precreates the legacy schema + rows, initializes
+  the new repo without throwing, proves legacy rows unchanged and new handoff
+  atomicity/rollback work in v2.
+- [x] Gate: `npm run ctrl:gate` (Node 22) ✅ — app 415 + db 48 + server 1340.
+- [x] Commits: 4 coherent commits; HEAD `9d6c1ad`; worktree clean.
+- [x] Not merged/pushed/deployed; production untouched; blockers=[].
