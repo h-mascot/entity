@@ -30,6 +30,9 @@ describe('securityHeaders', () => {
 
     expect(headers.get('Content-Security-Policy')).toContain("default-src 'self'");
     expect(headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
+    expect(headers.get('Content-Security-Policy')).toContain("frame-src 'self' blob:");
+    expect(headers.get('Content-Security-Policy')).not.toContain('frame-src *');
+    expect(headers.get('Content-Security-Policy')).not.toContain('frame-src data:');
     expect(headers.get('Content-Security-Policy')).toContain(
       "script-src 'self' 'unsafe-inline' blob:",
     );
