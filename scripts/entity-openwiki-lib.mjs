@@ -9,7 +9,7 @@ export const OPENWIKI_METADATA_PATH = "openwiki/.entity-openwiki.json";
 
 const FALLBACK_EXCLUDED_DIRECTORY_NAMES = new Set([".git", ".next", ".tmp", "coverage", "node_modules"]);
 const EXCLUDED_SOURCE_PREFIXES = [
-  ".claude/", ".cursor/run-state/", ".next/", ".tmp/", "artifacts/", "build/", "coverage/", "data/", "dist/", "docs/internal/", "logs/", "memory/", "node_modules/", "openwiki/", "output/", "var/",
+  ".claude/", ".cursor/run-state/", ".next/", ".openwiki-html-backup-", ".openwiki-html-tmp-", ".tmp/", "artifacts/", "build/", "coverage/", "data/", "dist/", "docs/internal/", "logs/", "memory/", "node_modules/", "openwiki/", "openwiki-html/", "output/", "var/",
 ];
 const INCLUDED_OPENWIKI_INPUTS = new Set(["openwiki/INSTRUCTIONS.md"]);
 const EXCLUDED_FILE_PATTERN = /(?:^|\/)(?:[^/]*\.db(?:-|$)|[^/]*\.sqlite(?:3)?(?:-|$)|[^/]*\.log$)/;
@@ -51,6 +51,9 @@ const REQUIRED_OPENWIKI_IGNORE_PATTERNS = [
   "/artifacts/",
   "/.claude/",
   "/.cursor/run-state/",
+  "/openwiki-html/",
+  "/.openwiki-html-backup-*/",
+  "/.openwiki-html-tmp-*/",
 ];
 
 export function buildCredentialFreeEnvironment(processEnvironment = process.env, { isolatedHome } = {}) {

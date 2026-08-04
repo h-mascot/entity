@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
+<meta name="color-scheme" content="dark">
+<title>Mission Control and Task Governance · Entity Wiki</title>
+<style>
+:root{color-scheme:dark;--bg:#090b0e;--panel:#101318;--panel-2:#151920;--line:#252b34;--text:#f4f7fb;--muted:#9aa4b2;--quiet:#6f7a88;--accent:#63e6ff;--accent-soft:rgba(99,230,255,.1);--code:#0c1015;font-family:Inter,Geist,"SF Pro Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px}*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}body{line-height:1.65}.skip-link{position:fixed;left:1rem;top:-4rem;z-index:10;padding:.65rem .9rem;background:var(--accent);color:#041014;border-radius:.45rem;font-weight:700}.skip-link:focus{top:1rem}.wiki-shell{display:grid;grid-template-columns:minmax(15rem,19rem) minmax(0,1fr);min-height:100vh}.wiki-sidebar{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);background:var(--panel);padding:1.5rem 1rem}.wiki-brand{display:flex;align-items:center;gap:.65rem;margin:0 .5rem 1.5rem;font-size:.76rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.wiki-brand-mark{width:.7rem;height:.7rem;border-radius:50%;background:var(--accent);box-shadow:0 0 1rem rgba(99,230,255,.38)}.wiki-nav-list{display:grid;gap:.25rem;margin:0;padding:0;list-style:none}.wiki-nav-link{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.65rem .75rem;border:1px solid transparent;border-radius:.55rem;color:var(--muted);text-decoration:none;font-size:.88rem}.wiki-nav-link:hover,.wiki-nav-link:focus-visible{border-color:var(--line);background:var(--panel-2);color:var(--text);outline:none}.wiki-nav-link.is-active{border-color:rgba(99,230,255,.24);background:var(--accent-soft);color:var(--accent)}.wiki-nav-link small{color:var(--quiet);font-size:.64rem;text-transform:uppercase;letter-spacing:.08em}.wiki-main{min-width:0}.mobile-nav{display:none;border-bottom:1px solid var(--line);background:var(--panel);padding:.8rem 1rem}.mobile-nav summary{cursor:pointer;font-weight:700}.mobile-nav nav{margin-top:.75rem}.wiki-article{width:min(100%,74rem);margin:0 auto;padding:clamp(2rem,5vw,5rem) clamp(1.25rem,5vw,5rem) 4rem}.page-header{padding-bottom:2rem;border-bottom:1px solid var(--line);margin-bottom:2.5rem}.eyebrow{display:flex;align-items:center;gap:.65rem;color:var(--accent);font-size:.72rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.eyebrow-type:before{content:"/";margin-right:.65rem;color:var(--quiet)}h1{margin:.75rem 0 0;font-size:clamp(2.15rem,5vw,4.5rem);line-height:1.02;letter-spacing:-.045em;max-width:18ch}h2,h3,h4{scroll-margin-top:1.5rem;line-height:1.2;letter-spacing:-.02em}h2{margin:3rem 0 1rem;font-size:1.75rem;padding-top:.5rem}h3{margin:2.25rem 0 .75rem;font-size:1.25rem}.description{max-width:68ch;margin:1.1rem 0 0;color:var(--muted);font-size:1.04rem}.tags{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:1.25rem}.tag{border:1px solid var(--line);border-radius:999px;padding:.22rem .55rem;color:var(--muted);font-size:.7rem}.prose{max-width:78ch}.prose p,.prose li{color:#cbd2dc}.prose a{color:var(--accent);text-underline-offset:.2em}.prose a:hover{text-decoration-thickness:.13em}.prose code{border:1px solid var(--line);border-radius:.35rem;background:var(--code);padding:.12rem .32rem;color:#d9f8ff;font-size:.86em}.prose pre{overflow:auto;border:1px solid var(--line);border-radius:.7rem;background:var(--code);padding:1rem}.prose pre code{border:0;padding:0;background:transparent}.prose blockquote{margin:1.5rem 0;padding:.2rem 1rem;border-left:3px solid var(--accent);color:var(--muted)}.prose table{display:block;width:max-content;max-width:100%;overflow:auto;border-collapse:collapse;margin:1.5rem 0}.prose th,.prose td{border:1px solid var(--line);padding:.65rem .8rem;text-align:left}.prose th{background:var(--panel-2);color:var(--text)}.prose img{max-width:100%;height:auto;border-radius:.7rem}.image-unavailable{color:var(--quiet);font-style:italic}.pager{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:4rem;padding-top:1.5rem;border-top:1px solid var(--line)}.pager-link{display:flex;flex-direction:column;gap:.15rem;padding:.85rem 1rem;border:1px solid var(--line);border-radius:.65rem;color:var(--text);text-decoration:none}.pager-link:hover,.pager-link:focus-visible{border-color:var(--accent);outline:none}.pager-link small{color:var(--quiet);text-transform:uppercase;letter-spacing:.08em}.pager-next{text-align:right}@media(max-width:760px){.wiki-shell{display:block}.wiki-sidebar{display:none}.mobile-nav{display:block;position:sticky;top:0;z-index:2}.wiki-article{padding-top:2.5rem}h1{font-size:2.55rem}.pager{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#wiki-content">Skip to content</a>
+<div class="wiki-shell">
+<aside class="wiki-sidebar"><div class="wiki-brand"><span class="wiki-brand-mark"></span>Entity Wiki</div><nav aria-label="Wiki pages"><ul class="wiki-nav-list"><li><a class="wiki-nav-link" href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top"><span>Admin and extensions</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/agents-and-activity.html" target="_top"><span>Agents and activity</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/index.html" target="_top"><span>Files</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link is-active" href="/docs/source/entity-wiki/features/mission-control.html" target="_top" aria-current="page"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/swarm-plugins-admin.html" target="_top"><span>Swarm, plugins, and admin</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top"><span>Workspace and files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/files-and-docs.html" target="_top"><span>Files and documents</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/index.html" target="_top"><span>Files</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/mission-control.html" target="_top"><span>Mission Control</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/index.html" target="_top"><span>Files</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top"><span>Security, Testing, and Release Flow</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top"><span>Configuration, Admin, Plugins, and Services</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top"><span>Execution Engines and Proof</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/index.html" target="_top"><span>Files</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/desktop-mobile.html" target="_top"><span>Desktop and mobile shells</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/index.html" target="_top"><span>Files</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/quickstart.html" target="_top"><span>Entity Quickstart</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></aside>
+<main class="wiki-main" id="wiki-content">
+<details class="mobile-nav"><summary>Wiki navigation · Mission Control and Task Governance</summary><nav aria-label="Wiki pages"><ul class="wiki-nav-list"><li><a class="wiki-nav-link" href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top"><span>Admin and extensions</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/agents-and-activity.html" target="_top"><span>Agents and activity</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/index.html" target="_top"><span>Files</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link is-active" href="/docs/source/entity-wiki/features/mission-control.html" target="_top" aria-current="page"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/swarm-plugins-admin.html" target="_top"><span>Swarm, plugins, and admin</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top"><span>Workspace and files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/files-and-docs.html" target="_top"><span>Files and documents</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/index.html" target="_top"><span>Files</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/mission-control.html" target="_top"><span>Mission Control</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/index.html" target="_top"><span>Files</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top"><span>Security, Testing, and Release Flow</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top"><span>Configuration, Admin, Plugins, and Services</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top"><span>Execution Engines and Proof</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/index.html" target="_top"><span>Files</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/desktop-mobile.html" target="_top"><span>Desktop and mobile shells</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/index.html" target="_top"><span>Files</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/quickstart.html" target="_top"><span>Entity Quickstart</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></details>
+<article class="wiki-article">
+<header class="page-header"><div class="eyebrow"><span>Entity Wiki</span><span class="eyebrow-type">Feature Guide</span></div><h1>Mission Control and Task Governance</h1><p class="description">Entity task workflows across Mission Control, Task Master, comments, reviews, human gates, handoffs, offline replay, accountability, and completion receipts.</p><div class="tags" aria-label="Tags"><span class="tag">entity</span><span class="tag">tasks</span><span class="tag">mission-control</span><span class="tag">governance</span></div></header>
+<div class="prose"><p>Mission Control is Entity&#39;s work-management surface. Users can create and organize tasks, assign accountable principals, move work across columns, inspect history and outputs, discuss work, require review or human approval, and follow completion evidence. Task creation now has an engineering-specific default path that preselects the canonical <code>entity-engineering</code> project when the work domain is <code>engineering</code>, and it fails closed when that project is unavailable. Its main frontend seams are <code>TaskBoard.tsx</code>, <code>mission-control/TaskDetailPanel.tsx</code>, the Insights/Strategic/Ops views, and <code>hooks/useTaskBoard.ts</code>.</p>
+<h2 id="user-capabilities">User capabilities</h2>
+<ul>
+<li>Kanban, Insights, and Strategic views with project, assignee, archive, and pagination behavior.</li>
+<li>Task creation, update, movement, deletion, dependencies/subtasks, projects, outputs, notes, activity, and duplicate handling.</li>
+<li>Threaded task comments, review acceptance/request-fix, human-gate request/approve/reject, and governance/provenance inspection.</li>
+<li>Offline optimistic create/update, queued writes, reconnect replay, and visible queued-change status.</li>
+<li>Task Master status/settings/trigger/log and task claim behavior where configured.</li>
+<li>Plugin-owned Mission Control subviews when the plugin registry supplies a valid mount.</li>
+</ul>
+<h2 id="task-lifecycle-and-gates">Task lifecycle and gates</h2>
+<pre><code class="language-mermaid">stateDiagram-v2
+    [*] --&gt; todo
+    todo --&gt; doing: start work
+    doing --&gt; review: submit
+    review --&gt; doing: request fix
+    review --&gt; done: accepted and gates pass
+    doing --&gt; done: completion allowed
+    todo --&gt; done: completion allowed
+    done --&gt; [*]
+</code></pre>
+<p><em>Configured columns are flexible, but review and human-gate checks can reject a transition to <code>done</code>.</em></p>
+<p>Tasks persist both board fields and accountability/policy fields: org/team/project scope; creator, initiator, owner, and executor; assignment state; <code>taskmaster_drivable</code>; worktype; risk; agent trust; policy inputs; external side effects; review requirement/state; and human-gate requirement/state. See the <a href="/docs/source/entity-wiki/architecture/runtime-and-data.html#core-data-model" target="_top">data architecture</a>.</p>
+<h3 id="review">Review</h3>
+<p>Required review uses explicit review endpoints and can lock completion until accepted. Legacy or non-required decisions may be recorded through task metadata/general updates. Board-level <code>accept_done</code> also moves the task to Done. Task review is not the same as a document review run described in <a href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top">Files and documents</a>.</p>
+<h3 id="human-gates">Human gates</h3>
+<p>The task detail panel calls request, approve, and reject endpoints. Governance UI presents eligibility, provenance, receipts, output/evidence artifacts, and external-document policy. Server validation remains authoritative; hiding a control is not an authorization boundary.</p>
+<h3 id="comments-and-handoffs">Comments and handoffs</h3>
+<p>Task comments support replies. If the comments endpoint is absent, the frontend deliberately degrades by writing a task activity entry instead. That preserves a visible record but is not equivalent to a persisted threaded comment.</p>
+<p>“Continue work” currently records activity with <code>type: &quot;handoff&quot;</code> and selected context. It does <strong>not</strong> itself invoke a runtime or prove execution. A follow-up action creates a separate task and activity record. Runtime execution, when used, belongs to <a href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top">Swarm and provider contracts</a>.</p>
+<h2 id="request-and-persistence-flow">Request and persistence flow</h2>
+<pre><code class="language-mermaid">sequenceDiagram
+    participant User
+    participant Board as Mission Control UI
+    participant API as Task routes
+    participant Sync as Task sync layer
+    participant Repo as Local or cloud adapter
+    participant Receipt as Receipt writer
+
+    User-&gt;&gt;Board: Create or update task
+    Board-&gt;&gt;API: Task mutation
+    API-&gt;&gt;Sync: Validate and apply operation
+    Sync-&gt;&gt;Repo: Persist through selected adapter
+    Repo--&gt;&gt;API: Task record
+    API--&gt;&gt;Board: Updated task and activity
+    User-&gt;&gt;Board: Move task to done
+    Board-&gt;&gt;API: Completion mutation
+    API-&gt;&gt;API: Validate review and human gates
+    API-&gt;&gt;Receipt: Create canonical completion evidence
+    Receipt-&gt;&gt;Repo: Commit final done transition
+    Repo--&gt;&gt;Board: Completed task
+</code></pre>
+<p><em>Completion is a governed server flow; canonical receipt creation can precede the final <code>done</code> mutation.</em></p>
+<p>Core route seams include <code>packages/server/src/routes/tasks.ts</code>, <code>task-review-gates.ts</code>, helpers/accountability/claims modules, and canonical plus legacy task mounts in <code>packages/server/src/index.ts</code>. <code>packages/server/src/routes/tasks.ts</code> now also carries strict task-create scope validation and normalized <code>work_domain</code> filtering for list requests. Persistence is adapter-neutral through <code>packages/db/src/task-sync.ts</code>, but only task operations use this local/cloud abstraction.</p>
+<h2 id="task-master">Task Master</h2>
+<p>Task Master is bounded automation, separate from Swarm. <code>packages/server/src/agent/</code> implements stale-task, review-hygiene, ownership, and missing-output scans, optional language-model generation, bounded tools, agent logs, and structured activity. The scheduler interval is 30 minutes and <code>ENTITY_AGENT_ENABLED</code> defaults to false.</p>
+<p>Model configuration is exposed through Admin and <code>PATCH /api/agent/settings</code>. If no usable key/model exists, pickup can still work and mention responders can post a graceful configuration message while generated text is skipped. See <a href="/docs/source/entity-wiki/platform/configuration-and-plugins.html#model-settings" target="_top">Configuration and plugins</a>.</p>
+<h2 id="offline-create-scope-and-degraded-behavior">Offline, create-scope, and degraded behavior</h2>
+<p><code>useTaskBoard.ts</code> caches tasks, creates optimistic offline records, queues writes, and merges/replays changes after reconnection. This is client resilience, not proof that the server accepted the final state. Activity uses WebSocket updates with polling fallback through the <a href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top">agent/activity surface</a>.</p>
+<p>Mission Control&#39;s create flow is intentionally narrow for engineering work: <code>packages/app/src/components/mission-control/taskCreateDefaults.ts</code> and <code>packages/app/src/components/mission-control/MCCreateTaskModal.tsx</code> preselect the canonical <code>entity-engineering</code> project for <code>engineering</code> work domains, while <code>packages/server/src/routes/task-create-scope.test.ts</code> shows the HTTP create route preserving org/team/project scope and rejecting malformed or out-of-hierarchy defaults. <code>packages/app/src/components/mission-control/projectOptions.ts</code> keeps the picker aligned with work-domain-aware project options from the <code>/projects</code> payload.</p>
+<p>Several <code>mission-control/</code> extraction components currently return <code>null</code>; active behavior remains in the large board/detail/MC view components. Do not infer an implemented screen solely from a placeholder filename.</p>
+<h2 id="change-and-test-guidance">Change and test guidance</h2>
+<ul>
+<li>Board/data mutations: inspect <code>useTaskBoard.ts</code>, both task route mounts, <code>task-sync.ts</code>, and repository tests.</li>
+<li>Governance: inspect <code>TaskDetailPanel.tsx</code>, <code>GovernanceSection.tsx</code>, review-action helpers, <code>task-accountability.ts</code>, <code>task-master-claims.ts</code>, and receipt tests.</li>
+<li>Output links: verify Doc Hub and standalone document routing.</li>
+<li>Task deletion: remember SQLite can reuse plain integer task IDs; repository deletion purges child comments, project links, and task-scoped activity to avoid inherited state.</li>
+</ul>
+<p>Run app build, server build/Vitest, and browser proof for mutation, review, gate, comment fallback, offline/reconnect, and deep-link behavior. High-risk authority, receipt, provider, or dangerous-action changes require the repository&#39;s adversarial review gates described in <a href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top">Security and release</a>.</p>
+</div>
+<nav class="pager" aria-label="Adjacent wiki pages"><a href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top" class="pager-link"><small>Previous</small><strong>← Mission Control and tasks</strong></a><a href="/docs/source/entity-wiki/features/swarm-plugins-admin.html" target="_top" class="pager-link pager-next"><small>Next</small><strong>Swarm, plugins, and admin →</strong></a></nav>
+</article>
+</main>
+</div>
+</body>
+</html>

@@ -34,6 +34,7 @@ RUNTIME_WORKSPACE="${ENTITY_RUNTIME_WORKSPACE:-}"
 RUNTIME_LOG_PATH="${ENTITY_PROD_LOG_PATH:-/tmp/entity-server.log}"
 RUNTIME_LAUNCHD_SERVICE="${ENTITY_PROD_LAUNCHD_SERVICE:-}"
 RUNTIME_NODE_ENTRY="${ENTITY_PROD_NODE_ENTRY:-packages/server/dist/server/src/index.js}"
+RUNTIME_CONFIG_PATH="${ENTITY_PROD_CONFIG_PATH:-}"
 RELEASE_CHECK_SCRIPT="${SCRIPT_DIR}/scripts/entity-release-check.sh"
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 SERVER_DIST="${ENTITY_DIR}/packages/server/dist"
@@ -68,6 +69,7 @@ missing=()
 [[ -n "$ENTITY_DIR" ]] || missing+=("ENTITY_PROD_DIR")
 [[ -n "$PROD_DB" ]] || missing+=("ENTITY_PROD_DB")
 
+
 if [[ "$PRINT_CONFIG" == "1" ]]; then
   cat <<EOF
 mode=${MODE}
@@ -79,6 +81,7 @@ prodPort=${PROD_PORT}
 prodBaseUrl=${PROD_BASE_URL:-<missing>}
 prodDir=${ENTITY_DIR:-<missing>}
 prodDb=${PROD_DB:-<missing>}
+runtimeConfigPath=${RUNTIME_CONFIG_PATH:-<migration-disabled>}
 runtimeWorkspace=${RUNTIME_WORKSPACE:-<unset>}
 runtimeLogPath=${RUNTIME_LOG_PATH}
 runtimeLaunchdService=${RUNTIME_LAUNCHD_SERVICE:-<unset>}
@@ -141,6 +144,9 @@ fi
 [[ -n "${REMOTE_NODE_BIN}" ]] || error "Remote Node.js path is empty for ${PROD_HOST}"
 [[ "${REMOTE_NODE_BIN}" =~ ^/[A-Za-z0-9._/+@-]+$ ]] || error "Remote Node.js path contains unsupported characters: ${REMOTE_NODE_BIN}"
 [[ "${ENTITY_DIR}" =~ ^/[A-Za-z0-9._/+@-]+$ ]] || error "Remote Entity path contains unsupported characters: ${ENTITY_DIR}"
+if [[ -n "$RUNTIME_CONFIG_PATH" ]]; then
+  [[ "${RUNTIME_CONFIG_PATH}" =~ ^/[A-Za-z0-9._/+@-]+$ ]] || error "Remote Entity config path contains unsupported characters: ${RUNTIME_CONFIG_PATH}"
+fi
 REMOTE_NODE_VERSION="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "'${REMOTE_NODE_BIN}' --version" 2>/dev/null)" || error "Remote Node.js preflight failed for ${REMOTE_NODE_BIN} on ${PROD_HOST}"
 [[ "${REMOTE_NODE_VERSION}" =~ ^v([0-9]+)(\.[0-9]+){2}$ ]] || error "Remote Node.js preflight returned an invalid version from ${REMOTE_NODE_BIN}: ${REMOTE_NODE_VERSION}"
 (( BASH_REMATCH[1] >= 20 )) || error "Remote Node.js ${REMOTE_NODE_VERSION} is unsupported; Entity requires Node 20 or newer"
@@ -182,7 +188,7 @@ if [[ "$MODE" == "--all" || "$MODE" == "--frontend-only" ]]; then
 fi
 
 log "Syncing built files to configured target; DB files are excluded."
-ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; mkdir -p '${ENTITY_DIR}/packages/server/src/plugins' '${ENTITY_DIR}/packages/db/dist' '${SERVER_DIST}' '${FRONTEND_DIST}' '${ENTITY_DIR}/openwiki' '${ENTITY_DIR}/scripts'"
+ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; mkdir -p '${ENTITY_DIR}/packages/server/src/plugins' '${ENTITY_DIR}/packages/db/dist' '${SERVER_DIST}' '${FRONTEND_DIST}' '${ENTITY_DIR}/openwiki' '${ENTITY_DIR}/openwiki-html' '${ENTITY_DIR}/scripts'"
 if [[ "$MODE" == "--all" || "$MODE" == "--server-only" ]]; then
   rsync -avz -e "ssh ${SSH_OPTS[*]}" --delete --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/server/src/plugins/" "${PROD_HOST}:${ENTITY_DIR}/packages/server/src/plugins/"
   rsync -avz -e "ssh ${SSH_OPTS[*]}" --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/db/dist/" "${PROD_HOST}:${ENTITY_DIR}/packages/db/dist/"
@@ -194,9 +200,17 @@ if [[ "$MODE" == "--all" || "$MODE" == "--frontend-only" ]]; then
   rsync -avz --delete -e "ssh ${SSH_OPTS[*]}" --exclude='*.db' --exclude='*.db-*' --exclude='*.db-shm' --exclude='*.db-wal' "${MAC_ENTITY_DIR}/packages/app/dist/" "${PROD_HOST}:${FRONTEND_DIST}/"
 fi
 
-log "Syncing generated OpenWiki documentation and release metadata writer."
+log "Syncing canonical OpenWiki Markdown, generated HTML presentation, config migrator, and release metadata writer."
 rsync -avz --delete -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/openwiki/" "${PROD_HOST}:${ENTITY_DIR}/openwiki/"
-rsync -avz -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/scripts/entity-release-info.mjs" "${MAC_ENTITY_DIR}/scripts/entity-release-info-stdin.mjs" "${PROD_HOST}:${ENTITY_DIR}/scripts/"
+rsync -avz --delete -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/openwiki-html/" "${PROD_HOST}:${ENTITY_DIR}/openwiki-html/"
+rsync -avz -e "ssh ${SSH_OPTS[*]}" "${MAC_ENTITY_DIR}/scripts/entity-wiki-config-migrate.mjs" "${MAC_ENTITY_DIR}/scripts/entity-release-info.mjs" "${MAC_ENTITY_DIR}/scripts/entity-release-info-stdin.mjs" "${PROD_HOST}:${ENTITY_DIR}/scripts/"
+
+if [[ -n "$RUNTIME_CONFIG_PATH" ]]; then
+  log "Migrating the configured Entity Wiki source to generated HTML presentation..."
+  ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; test -f '${RUNTIME_CONFIG_PATH}'; '${REMOTE_NODE_BIN}' '${ENTITY_DIR}/scripts/entity-wiki-config-migrate.mjs' '${RUNTIME_CONFIG_PATH}' '${ENTITY_DIR}/openwiki-html'"
+else
+  log "Skipping Entity Wiki config migration (ENTITY_PROD_CONFIG_PATH is not configured)."
+fi
 
 if [[ -n "$RELEASE_SHA" ]]; then
   log "Syncing runtime dependencies into immutable release..."

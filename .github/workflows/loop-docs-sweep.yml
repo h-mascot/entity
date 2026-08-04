@@ -31,8 +31,11 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install renderer dependencies
+        run: npm ci
+
       - name: Test OpenWiki integration
-        run: node --test scripts/entity-openwiki-lib.test.mjs
+        run: node --test scripts/entity-openwiki-lib.test.mjs && npm run test:wiki-html
 
       - name: Verify generated docs match Entity source
         run: npm run docs:wiki:verify

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
+<meta name="color-scheme" content="dark">
+<title>Configuration, Admin, Plugins, and Services · Entity Wiki</title>
+<style>
+:root{color-scheme:dark;--bg:#090b0e;--panel:#101318;--panel-2:#151920;--line:#252b34;--text:#f4f7fb;--muted:#9aa4b2;--quiet:#6f7a88;--accent:#63e6ff;--accent-soft:rgba(99,230,255,.1);--code:#0c1015;font-family:Inter,Geist,"SF Pro Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px}*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}body{line-height:1.65}.skip-link{position:fixed;left:1rem;top:-4rem;z-index:10;padding:.65rem .9rem;background:var(--accent);color:#041014;border-radius:.45rem;font-weight:700}.skip-link:focus{top:1rem}.wiki-shell{display:grid;grid-template-columns:minmax(15rem,19rem) minmax(0,1fr);min-height:100vh}.wiki-sidebar{position:sticky;top:0;height:100vh;overflow:auto;border-right:1px solid var(--line);background:var(--panel);padding:1.5rem 1rem}.wiki-brand{display:flex;align-items:center;gap:.65rem;margin:0 .5rem 1.5rem;font-size:.76rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.wiki-brand-mark{width:.7rem;height:.7rem;border-radius:50%;background:var(--accent);box-shadow:0 0 1rem rgba(99,230,255,.38)}.wiki-nav-list{display:grid;gap:.25rem;margin:0;padding:0;list-style:none}.wiki-nav-link{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.65rem .75rem;border:1px solid transparent;border-radius:.55rem;color:var(--muted);text-decoration:none;font-size:.88rem}.wiki-nav-link:hover,.wiki-nav-link:focus-visible{border-color:var(--line);background:var(--panel-2);color:var(--text);outline:none}.wiki-nav-link.is-active{border-color:rgba(99,230,255,.24);background:var(--accent-soft);color:var(--accent)}.wiki-nav-link small{color:var(--quiet);font-size:.64rem;text-transform:uppercase;letter-spacing:.08em}.wiki-main{min-width:0}.mobile-nav{display:none;border-bottom:1px solid var(--line);background:var(--panel);padding:.8rem 1rem}.mobile-nav summary{cursor:pointer;font-weight:700}.mobile-nav nav{margin-top:.75rem}.wiki-article{width:min(100%,74rem);margin:0 auto;padding:clamp(2rem,5vw,5rem) clamp(1.25rem,5vw,5rem) 4rem}.page-header{padding-bottom:2rem;border-bottom:1px solid var(--line);margin-bottom:2.5rem}.eyebrow{display:flex;align-items:center;gap:.65rem;color:var(--accent);font-size:.72rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.eyebrow-type:before{content:"/";margin-right:.65rem;color:var(--quiet)}h1{margin:.75rem 0 0;font-size:clamp(2.15rem,5vw,4.5rem);line-height:1.02;letter-spacing:-.045em;max-width:18ch}h2,h3,h4{scroll-margin-top:1.5rem;line-height:1.2;letter-spacing:-.02em}h2{margin:3rem 0 1rem;font-size:1.75rem;padding-top:.5rem}h3{margin:2.25rem 0 .75rem;font-size:1.25rem}.description{max-width:68ch;margin:1.1rem 0 0;color:var(--muted);font-size:1.04rem}.tags{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:1.25rem}.tag{border:1px solid var(--line);border-radius:999px;padding:.22rem .55rem;color:var(--muted);font-size:.7rem}.prose{max-width:78ch}.prose p,.prose li{color:#cbd2dc}.prose a{color:var(--accent);text-underline-offset:.2em}.prose a:hover{text-decoration-thickness:.13em}.prose code{border:1px solid var(--line);border-radius:.35rem;background:var(--code);padding:.12rem .32rem;color:#d9f8ff;font-size:.86em}.prose pre{overflow:auto;border:1px solid var(--line);border-radius:.7rem;background:var(--code);padding:1rem}.prose pre code{border:0;padding:0;background:transparent}.prose blockquote{margin:1.5rem 0;padding:.2rem 1rem;border-left:3px solid var(--accent);color:var(--muted)}.prose table{display:block;width:max-content;max-width:100%;overflow:auto;border-collapse:collapse;margin:1.5rem 0}.prose th,.prose td{border:1px solid var(--line);padding:.65rem .8rem;text-align:left}.prose th{background:var(--panel-2);color:var(--text)}.prose img{max-width:100%;height:auto;border-radius:.7rem}.image-unavailable{color:var(--quiet);font-style:italic}.pager{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:4rem;padding-top:1.5rem;border-top:1px solid var(--line)}.pager-link{display:flex;flex-direction:column;gap:.15rem;padding:.85rem 1rem;border:1px solid var(--line);border-radius:.65rem;color:var(--text);text-decoration:none}.pager-link:hover,.pager-link:focus-visible{border-color:var(--accent);outline:none}.pager-link small{color:var(--quiet);text-transform:uppercase;letter-spacing:.08em}.pager-next{text-align:right}@media(max-width:760px){.wiki-shell{display:block}.wiki-sidebar{display:none}.mobile-nav{display:block;position:sticky;top:0;z-index:2}.wiki-article{padding-top:2.5rem}h1{font-size:2.55rem}.pager{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#wiki-content">Skip to content</a>
+<div class="wiki-shell">
+<aside class="wiki-sidebar"><div class="wiki-brand"><span class="wiki-brand-mark"></span>Entity Wiki</div><nav aria-label="Wiki pages"><ul class="wiki-nav-list"><li><a class="wiki-nav-link" href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top"><span>Admin and extensions</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/agents-and-activity.html" target="_top"><span>Agents and activity</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/index.html" target="_top"><span>Files</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/swarm-plugins-admin.html" target="_top"><span>Swarm, plugins, and admin</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top"><span>Workspace and files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/files-and-docs.html" target="_top"><span>Files and documents</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/index.html" target="_top"><span>Files</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/mission-control.html" target="_top"><span>Mission Control</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/index.html" target="_top"><span>Files</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top"><span>Security, Testing, and Release Flow</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link is-active" href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top" aria-current="page"><span>Configuration, Admin, Plugins, and Services</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top"><span>Execution Engines and Proof</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/index.html" target="_top"><span>Files</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/desktop-mobile.html" target="_top"><span>Desktop and mobile shells</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/index.html" target="_top"><span>Files</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/quickstart.html" target="_top"><span>Entity Quickstart</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></aside>
+<main class="wiki-main" id="wiki-content">
+<details class="mobile-nav"><summary>Wiki navigation · Configuration, Admin, Plugins, and Services</summary><nav aria-label="Wiki pages"><ul class="wiki-nav-list"><li><a class="wiki-nav-link" href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top"><span>Admin and extensions</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/agents-and-activity.html" target="_top"><span>Agents and activity</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/index.html" target="_top"><span>Files</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/swarm-plugins-admin.html" target="_top"><span>Swarm, plugins, and admin</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top"><span>Workspace and files</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/files-and-docs.html" target="_top"><span>Files and documents</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/index.html" target="_top"><span>Files</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/mission-control.html" target="_top"><span>Mission Control</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/index.html" target="_top"><span>Files</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top"><span>Security, Testing, and Release Flow</span><small>Operations</small></a></li>
+<li><a class="wiki-nav-link is-active" href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top" aria-current="page"><span>Configuration, Admin, Plugins, and Services</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top"><span>Execution Engines and Proof</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platform/index.html" target="_top"><span>Files</span><small>Platform</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/desktop-mobile.html" target="_top"><span>Desktop and mobile shells</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/platforms/index.html" target="_top"><span>Files</span><small>Platforms</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/quickstart.html" target="_top"><span>Entity Quickstart</span><small>Overview</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></details>
+<article class="wiki-article">
+<header class="page-header"><div class="eyebrow"><span>Entity Wiki</span><span class="eyebrow-type">Platform Guide</span></div><h1>Configuration, Admin, Plugins, and Services</h1><p class="description">Entity configuration precedence, runtime seeding, Admin behavior, model settings, plugin lifecycle and UI mounts, Entity Services, and feature flags.</p><div class="tags" aria-label="Tags"><span class="tag">entity</span><span class="tag">configuration</span><span class="tag">admin</span><span class="tag">plugins</span><span class="tag">services</span></div></header>
+<div class="prose"><p>Entity uses layered configuration: files establish portable defaults, SQLite holds runtime settings and registries, selected environment variables override deployment-sensitive behavior, and Admin exposes safe parts of those systems. Configuration should describe capability; <a href="/docs/source/entity-wiki/operations/security-and-release.html#release-and-rollout-truth" target="_top">release evidence</a> determines whether it is active in a deployment.</p>
+<h2 id="configuration-precedence-and-seeding">Configuration precedence and seeding</h2>
+<pre><code class="language-mermaid">flowchart TD
+    Defaults[&quot;Built-in defaults&quot;] --&gt; Merge[&quot;Effective config merge&quot;]
+    Profile[&quot;Optional profile YAML&quot;] --&gt; Merge
+    YAML[&quot;entity.config.yaml&quot;] --&gt; Merge
+    Runtime[&quot;SQLite runtime settings&quot;] --&gt; Merge
+    Registry[&quot;Database agents and file sources&quot;] --&gt; Merge
+    Env[&quot;Selected environment overrides&quot;] --&gt; Merge
+    Merge --&gt; Redacted[&quot;Redacted effective config for display&quot;]
+    Merge --&gt; Seeds[&quot;Startup runtime seeds&quot;]
+    Seeds --&gt; Agents[&quot;Agent registry&quot;]
+    Seeds --&gt; Sources[&quot;File sources&quot;]
+    Seeds --&gt; PluginDefaults[&quot;Plugin settings&quot;]
+</code></pre>
+<p><em>Layered input produces effective configuration and materializes selected records at startup.</em></p>
+<p><code>packages/server/src/config/load.ts</code>, <code>effective.ts</code>, <code>runtime.ts</code>, and <code>schema.ts</code> implement this flow. Entity arrays with IDs are merged by ID; ordinary arrays are replaced. Bootstrap paths such as database/workspace configuration are restart-required rather than safely editable at runtime.</p>
+<p><code>entity.config.example.yaml</code> demonstrates local-safe server paths, agents, file sources, task columns/priorities/projects, empty public services, plugin defaults, voice, deploy behavior, and terminal targets. Keep secrets in environment/provider mechanisms, not this file. Effective-config responses redact recognized secret paths. Config-managed file sources keep their <code>entity.config.yaml</code> ownership marker through storage, reject API attempts to replace their adapter type with a different one, and remain non-deletable through the file-source API.</p>
+<h2 id="admin-surfaces">Admin surfaces</h2>
+<p><code>packages/app/src/views/AdminView.tsx</code> organizes General/session/PWA/theme, profile, Mission Control, integrations, TTS, plugins, agent registry, voice, Task Master, Docs, and an embedded OpenClaw/enterprise view. Users can inspect effective runtime configuration, manage file sources, configure document credentials, tune Task Master, manage plugins, and set TTS behavior.</p>
+<p>The embedded OpenClaw view includes timeout, retry, and open-external degradation. Admin availability does not imply an integration endpoint is reachable.</p>
+<h2 id="model-settings">Model settings</h2>
+<p>There is no single general “Models Admin” domain. Keep these separate:</p>
+<ul>
+<li>chat/onboarding models from <code>/api/chat/models</code> and the chat picker;</li>
+<li>per-task execution model choices in Mission Control;</li>
+<li>the model resolved for an agent/runtime in the Agents surface;</li>
+<li>Task Master language-model provider/settings;</li>
+<li>the TTS provider/model under Admin.</li>
+</ul>
+<p>Task Master supports Google and OpenAI-compatible configuration in <code>packages/server/src/agent/settings.ts</code>; without usable credentials, generated text degrades while non-generative task pickup can remain available. Never document or request credential values.</p>
+<h2 id="plugin-lifecycle">Plugin lifecycle</h2>
+<p>A plugin manifest declares ID, version, kind, capabilities, hooks, routes, settings, storage/migrations, entrypoints, and an optional UI mount. Mount types are top-level tab, module subview, detail-panel section, Admin section, or none.</p>
+<pre><code class="language-mermaid">sequenceDiagram
+    participant Boot as Server startup
+    participant Registry as Plugin registry
+    participant DB as Plugin settings and migrations
+    participant Router as Express routes
+    participant API as Plugin metadata API
+    participant UI as Frontend component registry
+
+    Boot-&gt;&gt;Registry: Discover and validate manifests
+    Registry-&gt;&gt;DB: Load enablement and settings
+    Registry-&gt;&gt;DB: Run plugin migrations
+    Registry-&gt;&gt;Router: Mount enabled guarded routes
+    Registry-&gt;&gt;API: Expose UI and status metadata
+    UI-&gt;&gt;API: Load plugin entries
+    UI-&gt;&gt;UI: Resolve compiled component name
+</code></pre>
+<p><em>Runtime plugin metadata is necessary but not sufficient for UI rendering: the component must also be compiled into the frontend registry.</em></p>
+<p>The frontend component registry currently resolves <code>EntityServicesBoard</code> and <code>SwarmBoard</code>. Unknown component names display unavailable/unregistered behavior; Entity does not dynamically download arbitrary plugin UI code. If a Mission Control plugin subview disappears or becomes disabled, the app resets to built-in Kanban after registry initialization.</p>
+<p>Built-in server plugins include Entity Linker, Entity Services, and Geordi Swarm. The plugin registry supports DB-backed settings/enablement, migrations, hooks, runtime modules, route loading, and disabled-route guards. However, <a href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top">Swarm</a> is also mounted as a core route before plugin mounts, so plugin disablement is not a reliable kill switch for the core <code>/api/swarm</code> surface.</p>
+<h2 id="entity-services">Entity Services</h2>
+<p>The active Services tab is supplied by the <code>entity-services</code> top-level plugin. It groups internal plugins, explicitly configured external HTTP services, and optional discovered listeners into service families; it models operational, degraded, offline, and unknown states with health/latency/links.</p>
+<p>Default public configuration contains no private services and disables gateway/Mac discovery. Availability depends on both server plugin registration and the compiled <code>EntityServicesBoard</code>. A separate simpler <code>ServicesPage</code> exists in source but is not registered in the current component registry and should not be claimed as the active surface.</p>
+<h2 id="important-flags-and-degraded-states">Important flags and degraded states</h2>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default/source behavior</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ENTITY_FS_MULTISOURCE</code> / <code>VITE_ENTITY_FS_MULTISOURCE</code></td>
+<td>Multi-source Files defaults true on server/client; align both sides</td>
+</tr>
+<tr>
+<td><code>ENTITY_AGENT_NATIVE_EDITOR</code> / <code>VITE_ENTITY_AGENT_NATIVE_EDITOR</code></td>
+<td>Native editor defaults true but still requires document/source identity and scoped auth</td>
+</tr>
+<tr>
+<td><code>ENTITY_FS_INDEXER_ENABLED</code></td>
+<td>File indexer defaults true</td>
+</tr>
+<tr>
+<td><code>ENTITY_AGENT_ENABLED</code></td>
+<td>Task Master scheduler defaults false</td>
+</tr>
+<tr>
+<td><code>ENTITY_CHAT_CLICKCLACK_BRIDGE</code></td>
+<td>Optional compatibility routing to ClickClack</td>
+</tr>
+<tr>
+<td>plugin <code>enabled</code> state</td>
+<td>Guards normal plugin routes/UI metadata, subject to separately core-mounted routes</td>
+</tr>
+</tbody></table>
+<p>See <a href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top">Files and documents</a> and <a href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top">Agents and collaboration</a> for user-visible degradation.</p>
+<h2 id="change-and-test-guidance">Change and test guidance</h2>
+<ul>
+<li>Config changes: update schema, merge/effective behavior, redaction, example config, runtime seeding, and focused config tests together.</li>
+<li>Admin changes: establish whether a setting is persisted, environment-only, restart-required, or merely display state.</li>
+<li>Plugin changes: validate manifest, settings migration, route guard, hook lifecycle, frontend component registry, disable/restart behavior, and mount cleanup.</li>
+<li>Services changes: test discovery target validation, health timeout/cache/concurrency, family classification, and empty public defaults.</li>
+</ul>
+<p>Run server Vitest, app build, and browser-check enabled, disabled, missing-component, unreachable-integration, and restart-required states.</p>
+</div>
+<nav class="pager" aria-label="Adjacent wiki pages"><a href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top" class="pager-link"><small>Previous</small><strong>← Security, Testing, and Release Flow</strong></a><a href="/docs/source/entity-wiki/platform/execution-and-proof.html" target="_top" class="pager-link pager-next"><small>Next</small><strong>Execution Engines and Proof →</strong></a></nav>
+</article>
+</main>
+</div>
+</body>
+</html>

@@ -23,14 +23,14 @@ Entity treats files and documents as first-class workspace objects. The main UI 
 - `packages/server/src/routes/docs.ts` serves documents from a constrained allow-list of roots and file types.
 - `packages/server/src/routes/legacy-files.ts` supports older file routes that still need compatibility handling.
 - `packages/server/src/document-objects.ts` and `packages/db/src/file-sources.ts` carry document and file-source persistence details.
-- `entity.config.example.yaml` defines the default local file sources and the allowed document extensions.
+- `entity.config.example.yaml` defines the default local file sources and the allowed document extensions. The sample `entity-wiki` source now points at `./openwiki-html`, which matches the generated presentation tree used by the runtime docs flow and the file-source bootstrap path documented in [Admin and extensions](../admin-and-extensions.md).
 
 ## File-source configuration
 
 The sample config shows two built-in local file sources:
 
 - `workspace` at `./workspace`;
-- `entity-wiki` at `./openwiki`.
+- `entity-wiki` at `./openwiki-html`.
 
 Those sources are enabled by default in the example config and bound to the sample assistant agent. The config also defines allowed document extensions for the docs surface, including markdown, text, JSON, YAML, CSV, TSV, and log-like files.
 
