@@ -16,6 +16,10 @@ import {
 import { ChatModelRegistry, type ChatModelOption } from './chat-model-registry';
 import { requireRequestOrg, sendPermissionDenied, type RequestOrgBinding } from '../request-permissions';
 import { resolveInheritedRole } from '../permissions';
+import { createAgentNoiseGuard, type AgentNoiseGuard, type NoiseReservation } from './agent-noise-guard';
+import { getEntityDatabase } from '../../../db/src/entity-db';
+import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../config/settings-store';
+import { getTaskAgentSettings } from '../agent/settings';
 
 interface ChatObjectRefAccessDecision {
   allowed: boolean;
@@ -35,6 +39,11 @@ interface ChatRouteDependencies {
    * org/team-grant ownership model. Defaults to principalCanReadChatHistory.
    */
   chatHistoryAccess?: ChatHistoryAccess;
+  /**
+   * THE-930: agent noise guard (mute/cooldown/atomic duplicate reservation).
+   * Defaults to one built from persisted chat noise settings.
+   */
+  agentNoiseGuard?: AgentNoiseGuard;
 }
 
 interface ChatHistoryDecision {
@@ -86,6 +95,54 @@ const DEFAULT_AGENT_EMOJI: Record<string, string> = {
 };
 
 const OLLAMA_MODEL_FETCH_TIMEOUT_MS = 750;
+const CHAT_NOISE_SETTINGS_KEY = 'chat.noiseSettings';
+const CHAT_NOISE_MAX_MUTED = 64;
+const CHAT_NOISE_MAX_COOLDOWN_MS = 60 * 60 * 1000;
+
+interface StoredChatNoiseSettings {
+  cooldownMs?: number;
+  mutedAgents?: string[];
+}
+
+function normalizeMutedAgents(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : ''))
+    .filter(Boolean)
+    .slice(0, CHAT_NOISE_MAX_MUTED);
+}
+
+function readChatNoiseSettings(): Required<StoredChatNoiseSettings> {
+  try {
+    const db = getEntityDatabase(ensureAppSettingsTable);
+    const stored = getSettingJson(db, CHAT_NOISE_SETTINGS_KEY);
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+      return { cooldownMs: 0, mutedAgents: [] };
+    }
+    const record = stored as StoredChatNoiseSettings;
+    const cooldownMs = Math.min(CHAT_NOISE_MAX_COOLDOWN_MS, Math.max(0, Number(record.cooldownMs ?? 0) || 0));
+    return { cooldownMs, mutedAgents: normalizeMutedAgents(record.mutedAgents) };
+  } catch {
+    return { cooldownMs: 0, mutedAgents: [] };
+  }
+}
+
+function writeChatNoiseSettings(settings: Required<StoredChatNoiseSettings>): void {
+  const db = getEntityDatabase(ensureAppSettingsTable);
+  setSettingJson(db, CHAT_NOISE_SETTINGS_KEY, settings, 'admin-ui');
+}
+
+function chatNoiseSettingsView(guard: AgentNoiseGuard) {
+  const snapshot = guard.snapshot();
+  return {
+    cooldownMs: snapshot.cooldownMs,
+    mutedAgents: snapshot.mutedAgents,
+    // THE-930: surface the selected model backend so the UI can show it alongside
+    // muted/cooldown/degraded state.
+    backend: getTaskAgentSettings().provider,
+    maxCooldownMs: CHAT_NOISE_MAX_COOLDOWN_MS,
+  };
+}
 const CHAT_MODELS_CACHE_TTL_MS = 60_000;
 const AGENT_REPLY_TIMEOUT_MS = 60_000;
 const HERMES_REPLY_AGENT_IDS = new Set(['book', 'hermes']);
@@ -811,6 +868,7 @@ export function registerChatRoutes({
   clickClackReadiness,
   chatObjectRefAccess = allowChatObjectRef,
   chatHistoryAccess = principalCanReadChatHistory,
+  agentNoiseGuard,
 }: ChatRouteDependencies): void {
   const repo = createChatRepository();
   const modelRegistry = new ChatModelRegistry({
@@ -822,6 +880,12 @@ export function registerChatRoutes({
     ?? (process.env.ENTITY_CHAT_CLICKCLACK_BRIDGE === '1' ? createClickClackBridge() : undefined);
   const readinessProbe = clickClackReadiness
     ?? createEnvClickClackReadinessProbe({ bridgeEnabled: Boolean(sidecarBridge) });
+
+  // THE-930: agent noise guard built from persisted settings (mute/cooldown).
+  const noiseGuard = agentNoiseGuard ?? (() => {
+    const stored = readChatNoiseSettings();
+    return createAgentNoiseGuard({ cooldownMs: stored.cooldownMs, mutedAgents: stored.mutedAgents });
+  })();
 
   app.get('/api/chat/me', (_req, res) => {
     res.json({
@@ -848,6 +912,37 @@ export function registerChatRoutes({
           checkedAt: new Date().toISOString(),
         },
       });
+    }
+  });
+
+  // THE-930: agent noise controls (mute/cooldown) + selected backend.
+  app.get('/api/chat/noise-settings', (_req, res) => {
+    try {
+      return res.json({ settings: chatNoiseSettingsView(noiseGuard) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      return res.status(500).json({ error: message });
+    }
+  });
+
+  app.patch('/api/chat/noise-settings', (req, res) => {
+    try {
+      if (typeof req.body?.cooldownMs === 'number') {
+        const clamped = Math.min(CHAT_NOISE_MAX_COOLDOWN_MS, Math.max(0, Math.floor(req.body.cooldownMs)) || 0);
+        noiseGuard.setCooldownMs(clamped);
+      }
+      if (Array.isArray(req.body?.mutedAgents)) {
+        // Replace the mute set wholesale (bounded + normalized).
+        const current = noiseGuard.snapshot().mutedAgents;
+        for (const agent of current) noiseGuard.setMuted(agent, false);
+        for (const agent of normalizeMutedAgents(req.body.mutedAgents)) noiseGuard.setMuted(agent, true);
+      }
+      const snapshot = noiseGuard.snapshot();
+      writeChatNoiseSettings({ cooldownMs: snapshot.cooldownMs, mutedAgents: snapshot.mutedAgents });
+      return res.json({ settings: chatNoiseSettingsView(noiseGuard) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      return res.status(400).json({ error: message });
     }
   });
 
@@ -1303,7 +1398,23 @@ export function registerChatRoutes({
         repo.incrementThreadCount(threadId, userMessage.timestamp);
       }
 
-      const openClawTargets = targets.filter((agent) => OPENCLAW_REPLY_AGENT_IDS.has(agent));
+      // THE-930: atomic scoped reservation. Suppression keys only on the
+      // server-resolved target identity + guard clock; client sender/timestamps
+      // can neither bypass nor trigger it. Reservations are held across reply
+      // generation+storage so concurrent duplicate sends are suppressed.
+      const noiseScope = { channelId, threadId };
+      const sendableTargets: string[] = [];
+      const suppressedReplies: Array<{ agent: string; reason: string }> = [];
+      for (const agent of targets) {
+        const reservation = noiseGuard.reserve(agent, noiseScope, content);
+        if (reservation.suppressed) {
+          suppressedReplies.push({ agent, reason: reservation.reason ?? 'suppressed' });
+        } else {
+          sendableTargets.push(agent);
+        }
+      }
+
+      const openClawTargets = sendableTargets.filter((agent) => OPENCLAW_REPLY_AGENT_IDS.has(agent));
       const batchedOpenClawReplies = openClawTargets.length > 1
         ? await requestOpenClawAgentReplyMap(openClawTargets, content, {
           modelId: modelId && modelId !== 'auto' ? modelByAgent.get(openClawTargets[0])?.modelId : undefined,
@@ -1312,54 +1423,56 @@ export function registerChatRoutes({
         })
         : new Map<string, OpenClawReply>();
 
-      const replyPayloads = await Promise.all(targets.map(async (agent) => {
-        const resolved = modelByAgent.get(agent);
-        const runtimeModelId = modelId && modelId !== 'auto' ? resolved?.modelId : undefined;
-        const remote = batchedOpenClawReplies.get(agent)
-          ?? (openClawTargets.length > 1 && OPENCLAW_REPLY_AGENT_IDS.has(agent)
-            ? null
-            : await requestRuntimeAgentReply(agent, content, {
-              modelId: runtimeModelId,
-              channelId,
-              threadId,
-            }))
-          ?? await requestLlmResponse(agent, content, resolved?.modelId);
-        const reply = remote ?? {
-          sender: agent,
-          senderEmoji: DEFAULT_AGENT_EMOJI[agent] ?? '🤖',
-          content: `(${agent}) Received. OpenClaw reply unavailable right now.`,
-          model: resolved?.modelId ?? 'fallback',
-          isLocal: Boolean(resolved?.isLocal),
-        };
-        return { reply, parentMessageId, threadId };
-      }));
-
       const replies: ReturnType<typeof toMessage>[] = [];
-      for (const { reply } of replyPayloads) {
-        const stored = repo.createMessage({
-          id: randomUUID(),
-          channel_id: channelId,
-          thread_id: threadId,
-          sender: reply.sender,
-          sender_emoji: reply.senderEmoji,
-          content: reply.content,
-          model: reply.model,
-          is_local: Boolean(reply.isLocal),
-          status: 'sent',
-          timestamp: new Date().toISOString(),
-          reply_to: parentMessageId,
-        });
+      await Promise.all(sendableTargets.map(async (agent) => {
+        try {
+          const resolved = modelByAgent.get(agent);
+          const runtimeModelId = modelId && modelId !== 'auto' ? resolved?.modelId : undefined;
+          const remote = batchedOpenClawReplies.get(agent)
+            ?? (openClawTargets.length > 1 && OPENCLAW_REPLY_AGENT_IDS.has(agent)
+              ? null
+              : await requestRuntimeAgentReply(agent, content, {
+                modelId: runtimeModelId,
+                channelId,
+                threadId,
+              }))
+            ?? await requestLlmResponse(agent, content, resolved?.modelId);
+          const reply = remote ?? {
+            sender: agent,
+            senderEmoji: DEFAULT_AGENT_EMOJI[agent] ?? '🤖',
+            content: `(${agent}) Received. OpenClaw reply unavailable right now.`,
+            model: resolved?.modelId ?? 'fallback',
+            isLocal: Boolean(resolved?.isLocal),
+          };
 
-        if (threadId) {
-          repo.incrementThreadCount(threadId, stored.timestamp);
+          const stored = repo.createMessage({
+            id: randomUUID(),
+            channel_id: channelId,
+            thread_id: threadId,
+            sender: reply.sender,
+            sender_emoji: reply.senderEmoji,
+            content: reply.content,
+            model: reply.model,
+            is_local: Boolean(reply.isLocal),
+            status: 'sent',
+            timestamp: new Date().toISOString(),
+            reply_to: parentMessageId,
+          });
+
+          if (threadId) {
+            repo.incrementThreadCount(threadId, stored.timestamp);
+          }
+
+          replies.push(toMessage(stored));
+        } finally {
+          noiseGuard.release(agent, noiseScope, content);
         }
-
-        replies.push(toMessage(stored));
-      }
+      }));
 
       return res.status(201).json({
         message: toMessage(userMessage),
         messages: replies,
+        suppressed: suppressedReplies,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';

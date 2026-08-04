@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import ChatNoiseStatus from './ChatNoiseStatus';
 import { CHAT_AGENT_OPTIONS, type ChatCategory, type ChatChannel } from '../../hooks/useChat';
 
 interface ChatSidebarProps {
@@ -357,6 +358,7 @@ export default function ChatSidebar({
           +
         </button>
       </div>
+      <ChatNoiseStatus />
 
       <div className="min-h-0 flex-1 overflow-auto px-2 py-3">
         {categories.map((category) => {
