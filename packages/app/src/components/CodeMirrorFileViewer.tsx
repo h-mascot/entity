@@ -678,6 +678,9 @@ export default function CodeMirrorFileViewer({
   const staticHtmlPreview = isStaticHtmlPreviewSource(sourceId);
   const [routeHash, setRouteHash] = useState(() => (typeof window === 'undefined' ? '' : window.location.hash));
   const [staticPreviewUrl, setStaticPreviewUrl] = useState<string | null>(null);
+  const remountedStaticPreviewRef = useRef<string | null>(null);
+  const remountTimerRef = useRef<number | null>(null);
+  const htmlPreviewFrameRef = useRef<HTMLIFrameElement | null>(null);
   const wantsTextEditor = previewKind === 'text' || (previewKind === 'html' && htmlView === 'source');
   const languageKey = useMemo(() => resolveLanguageKey(filePath), [filePath]);
   const languageExtension = useMemo(() => languageExtensionFor(languageKey), [languageKey]);
@@ -725,6 +728,28 @@ export default function CodeMirrorFileViewer({
     setStaticPreviewUrl(preview.src);
     return () => URL.revokeObjectURL(preview.objectUrl);
   }, [content, previewKind, routeHash, staticHtmlPreview]);
+
+  useEffect(
+    () => () => {
+      if (remountTimerRef.current !== null) {
+        window.clearTimeout(remountTimerRef.current);
+        remountTimerRef.current = null;
+      }
+    },
+    [staticPreviewUrl]
+  );
+
+  const handleStaticPreviewLoad = () => {
+    if (!staticHtmlPreview || !staticPreviewUrl || !routeHash || remountedStaticPreviewRef.current === staticPreviewUrl) return;
+    if (remountTimerRef.current !== null) window.clearTimeout(remountTimerRef.current);
+    remountedStaticPreviewRef.current = staticPreviewUrl;
+    remountTimerRef.current = window.setTimeout(() => {
+      remountTimerRef.current = null;
+      const frame = htmlPreviewFrameRef.current;
+      const src = frame?.getAttribute('src');
+      if (frame && src === staticPreviewUrl) frame.setAttribute('src', src);
+    }, 1_000);
+  };
 
   useEffect(() => {
     if (!wantsTextEditor || !containerRef.current) {
@@ -840,10 +865,11 @@ export default function CodeMirrorFileViewer({
           <div className="min-h-0 flex-1 overflow-hidden bg-white">
             {staticHtmlPreview && !staticPreviewUrl ? null : (
               <iframe
-                key={staticHtmlPreview ? staticPreviewUrl ?? undefined : undefined}
+                ref={htmlPreviewFrameRef}
                 src={staticHtmlPreview ? staticPreviewUrl ?? undefined : undefined}
                 srcDoc={staticHtmlPreview ? undefined : content}
                 sandbox={htmlPreviewSandboxForSource(sourceId)}
+                onLoad={staticHtmlPreview ? handleStaticPreviewLoad : undefined}
                 title={`HTML preview for ${fileName}`}
                 className="h-full w-full border-0"
               />
