@@ -840,6 +840,7 @@ export default function CodeMirrorFileViewer({
           <div className="min-h-0 flex-1 overflow-hidden bg-white">
             {staticHtmlPreview && !staticPreviewUrl ? null : (
               <iframe
+                key={staticHtmlPreview ? staticPreviewUrl ?? undefined : undefined}
                 src={staticHtmlPreview ? staticPreviewUrl ?? undefined : undefined}
                 srcDoc={staticHtmlPreview ? undefined : content}
                 sandbox={htmlPreviewSandboxForSource(sourceId)}
