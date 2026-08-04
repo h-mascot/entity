@@ -10,7 +10,7 @@ import {
   type UpdatePrincipalInput,
 } from '../../../db/src/principals';
 import { parseGrantSensitivityCategories } from '../../../db/src/principals';
-import { createRequireAdminPrincipal } from '../middleware/admin-auth';
+import { createRequireAdminPrincipal, ADMIN_BOOTSTRAP_READ_LOCALS } from '../middleware/admin-auth';
 import { hasGlobalAdminGrant, resolveTrustedAdminPrincipalId } from '../principals/admin-identity';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -137,6 +137,13 @@ export function createPrincipalsRouter(deps: { repo?: PrincipalRepository; skipA
   }
 
   router.get('/principals', (_req, res) => {
+    // A bootstrap-authorized read (empty state, API auth on) must always
+    // surface an empty list, eliminating any TOCTOU window between the
+    // middleware's empty-state check and this read.
+    if (res.locals[ADMIN_BOOTSTRAP_READ_LOCALS]) {
+      res.json({ principals: [] });
+      return;
+    }
     const principals = repo.listPrincipals({ includeDisabled: true }).map((principal) => ({
       ...principal,
       grants: repo.listGrantsForPrincipal(principal.id).map((grant) => ({

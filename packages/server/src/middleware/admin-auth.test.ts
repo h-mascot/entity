@@ -29,11 +29,13 @@ describe('admin auth middleware', () => {
     expect(next).toHaveBeenCalled();
   });
 
-  it('blocks non-create admin routes during API-auth bootstrap', () => {
+  it('allows the read-only principal list during API-auth bootstrap', () => {
+    // The browser UI must GET /api/admin/principals to discover the empty
+    // bootstrap state and render the create form. Blocking this read produces
+    // the "Failed to load principals (403)" regression. The list is empty
+    // during bootstrap, so allowing the read leaks nothing.
     vi.stubEnv('ENTITY_API_TOKEN', 'secret-token');
     const middleware = createRequireAdminPrincipal(repo);
-    const denied = vi.fn();
-    const res = { status: vi.fn(() => ({ json: denied })) };
     const next = vi.fn();
     middleware({
       header: () => undefined,
@@ -43,9 +45,28 @@ describe('admin auth middleware', () => {
       params: {},
       body: {},
       socket: { remoteAddress: '127.0.0.1' },
+    } as any, { status: vi.fn(() => ({ json: vi.fn() })) } as any, next);
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('blocks non-create mutations during API-auth bootstrap', () => {
+    vi.stubEnv('ENTITY_API_TOKEN', 'secret-token');
+    const middleware = createRequireAdminPrincipal(repo);
+    const denied = vi.fn();
+    const res = { status: vi.fn(() => ({ json: denied })) };
+    const next = vi.fn();
+    middleware({
+      header: () => undefined,
+      hostname: 'localhost',
+      method: 'PATCH',
+      path: '/principals/some-id',
+      params: {},
+      body: {},
+      socket: { remoteAddress: '127.0.0.1' },
     } as any, res as any, next);
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(403);
+    expect(denied).toHaveBeenCalledWith(expect.objectContaining({ code: 'admin_bootstrap_required' }));
   });
 
   it('allows local header compat admin for unknown principals', () => {

@@ -338,6 +338,15 @@ export async function verifyGeneratedWiki(root) {
   if (metadata.openwikiVersion !== OPENWIKI_VERSION) {
     throw new Error(`OpenWiki metadata version ${metadata.openwikiVersion} does not match pinned ${OPENWIKI_VERSION}`);
   }
+  const lastUpdatePath = path.join(root, "openwiki", ".last-update.json");
+  try {
+    const lastUpdate = JSON.parse(await readFile(lastUpdatePath, "utf8"));
+    if (Object.hasOwn(lastUpdate, "gitHead")) {
+      throw new Error("OpenWiki .last-update.json must not contain an unverifiable gitHead claim");
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
   const currentFingerprint = await computeSourceFingerprint(root);
   if (metadata.sourceFingerprint !== currentFingerprint) {
     throw new Error("Generated OpenWiki documentation is stale for the current Entity source fingerprint");
