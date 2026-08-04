@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { migrateEntityWikiConfig, migrateEntityWikiConfigFile } from "./entity-wiki-config-migrate.mjs";
 
@@ -92,4 +94,20 @@ test("migrateEntityWikiConfigFile supports config and presentation in the same r
   assert.equal(result.changed, true);
   assert.equal(result.presentationLink, presentationPath);
   assert.equal((await lstat(presentationPath)).isDirectory(), true);
+});
+
+test("config migrator CLI runs when invoked through a deployment symlink", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "entity-wiki-config-cli-link-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configPath = path.join(root, "entity.config.yaml");
+  const presentationPath = path.join(root, "runtime", "openwiki-html");
+  const cliPath = path.join(root, "entity-wiki-config-migrate.mjs");
+  await mkdir(presentationPath, { recursive: true });
+  await writeFile(configPath, CONFIG);
+  await symlink(fileURLToPath(new URL("./entity-wiki-config-migrate.mjs", import.meta.url)), cliPath);
+
+  const result = spawnSync(process.execPath, [cliPath, configPath, presentationPath], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /migrated/);
+  assert.match(await readFile(configPath, "utf8"), /basePath: \.\/openwiki-html/);
 });

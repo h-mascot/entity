@@ -15,7 +15,7 @@ The main source seams are:
 - `packages/server/src/config/runtime.ts`, `packages/server/src/config/schema.ts`, and `packages/server/src/config/runtime.test.ts` for bootstrap config, local-source allowlisting, and config-derived runtime env.
 - `scripts/entity-release-info.mjs` and `scripts/entity-release-info-stdin.mjs` for release metadata.
 - `scripts/entity-verify-sandbox.sh`, `scripts/entity-deploy-sandbox.sh`, and `scripts/entity-promote-prod.sh` for deployment checks and promotion flow.
-- `scripts/entity-openwiki.mjs`, `scripts/entity-openwiki-lib.mjs`, `scripts/entity-openwiki-html.mjs`, and `packages/app/scripts/entity-openwiki-html-lib.mjs` for local OpenWiki generation, HTML presentation rendering, isolated credential handling, fingerprinting, and verification. `scripts/entity-wiki-config-migrate.mjs` updates older configs so the `entity-wiki` source points at `./openwiki-html` instead of the generated wiki input tree.
+- `scripts/entity-openwiki.mjs`, `scripts/entity-openwiki-lib.mjs`, `scripts/entity-openwiki-html.mjs`, and `packages/app/scripts/entity-openwiki-html-lib.mjs` for local OpenWiki generation, HTML presentation rendering, isolated credential handling, fingerprinting, and verification. `scripts/entity-wiki-config-migrate.mjs` updates older configs so the `entity-wiki` source points at `./openwiki-html` instead of the generated wiki input tree, and `packages/server/src/fs/classify.ts` plus `packages/server/src/fs/index-runner.ts` strip HTML tags and entities before indexing the generated presentation pages.
 - `package.json` for the command surface that ties those checks together.
 
 ## What operators can verify
