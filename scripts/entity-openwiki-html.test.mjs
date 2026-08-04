@@ -134,5 +134,8 @@ test("HTML wiki presentation is wired into setup, verification, CI, and deployme
   assert.match(ignore, /^\/openwiki-html\/$/m);
   assert.match(ignore, /^\/\.openwiki-html-tmp-\*\/$/m);
   assert.match(ignore, /^\/\.openwiki-html-backup-\*\/$/m);
-  assert.match(viewer, /key=\{staticHtmlPreview \? staticPreviewUrl \?\? undefined : undefined\}/);
+  assert.match(viewer, /ref=\{htmlPreviewFrameRef\}/);
+  assert.match(viewer, /onLoad=\{staticHtmlPreview \? handleStaticPreviewLoad : undefined\}/);
+  assert.match(viewer, /setTimeout\([\s\S]*1_000/);
+  assert.match(viewer, /frame\.setAttribute\('src', src\)/);
 });
