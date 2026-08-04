@@ -102,7 +102,7 @@ test("renderOpenWikiHtml refuses a symlinked output directory", async () => {
 
 test("HTML wiki presentation is wired into setup, verification, CI, and deployment", async () => {
   const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-  const [rootPackage, appPackage, setup, example, docsExample, runner, deploy, workflow, loopWorkflow, ignore] = await Promise.all([
+  const [rootPackage, appPackage, setup, example, docsExample, runner, deploy, workflow, loopWorkflow, ignore, viewer] = await Promise.all([
     readFile(path.join(repo, "package.json"), "utf8"),
     readFile(path.join(repo, "packages", "app", "package.json"), "utf8"),
     readFile(path.join(repo, "scripts", "entity-setup.js"), "utf8"),
@@ -113,6 +113,7 @@ test("HTML wiki presentation is wired into setup, verification, CI, and deployme
     readFile(path.join(repo, ".github", "workflows", "main.yml"), "utf8"),
     readFile(path.join(repo, ".github", "workflows", "loop-docs-sweep.yml"), "utf8"),
     readFile(path.join(repo, ".openwikiignore"), "utf8"),
+    readFile(path.join(repo, "packages", "app", "src", "components", "CodeMirrorFileViewer.tsx"), "utf8"),
   ]);
 
   assert.match(rootPackage, /"docs:wiki:render"/);
@@ -133,4 +134,5 @@ test("HTML wiki presentation is wired into setup, verification, CI, and deployme
   assert.match(ignore, /^\/openwiki-html\/$/m);
   assert.match(ignore, /^\/\.openwiki-html-tmp-\*\/$/m);
   assert.match(ignore, /^\/\.openwiki-html-backup-\*\/$/m);
+  assert.match(viewer, /key=\{staticHtmlPreview \? staticPreviewUrl \?\? undefined : undefined\}/);
 });
