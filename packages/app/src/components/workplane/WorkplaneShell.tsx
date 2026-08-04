@@ -22,6 +22,7 @@ import type { WorkplanePanelId } from '../mission-control/taskDetailWorkplaneSea
 
 const ScopedSearchPanel = lazy(() => import('../scoped-search/ScopedSearchPanel'));
 import { navigateWorkplaneReturn } from '../../lib/workplaneReturnNavigation.ts';
+import { isPermittedWorkplaneScopedRoute } from '../../lib/workplaneScopedSearch.ts';
 import { restoreWorkplaneAfterRefresh } from '../../lib/workplaneRefreshRestore.ts';
 import {
   resolveLockedWorkplaneLayout,
@@ -98,6 +99,8 @@ export interface WorkplaneShellProps {
   onNavigate?: (href: string, options?: { replace?: boolean; state?: unknown }) => void;
   /** Optional API base for task summary / proof bundle / files-docs fetch. */
   apiBase?: string;
+  /** Optional org scope for scoped search (defaults to the default workspace org). */
+  orgId?: string;
   /**
    * Optional summary loader override (tests / Storybook).
    * Return null → empty; throw → error; summary → ready.
@@ -166,6 +169,7 @@ export default function WorkplaneShell({
   search: searchProp,
   onNavigate,
   apiBase = '',
+  orgId,
   loadTaskSummary,
   taskSummaryState: controlledSummary,
   loadProofBundle,
@@ -268,6 +272,12 @@ export default function WorkplaneShell({
   );
 
   const navigate = onNavigate ?? defaultNavigate;
+  const handleScopedSearchNavigate = useCallback((route: string) => {
+    // Fail-closed: only dispatch permitted Workplane task routes (`/workplane/:taskId`).
+    // Document/external deep links are Doc Hub concerns and must not route into Workplane.
+    if (!isPermittedWorkplaneScopedRoute(route)) return;
+    navigate(route);
+  }, [navigate]);
 
   const selectPanel = useCallback(
     (panel: WorkplanePanelId) => {
@@ -857,7 +867,7 @@ export default function WorkplaneShell({
       {scopedSearchOpen ? (
         <div id="workplane-scoped-search-panel" className="border-b border-[var(--border-primary)] px-4 py-2" data-testid="workplane-scoped-search-slot">
           <Suspense fallback={<div className="text-xs text-[var(--text-muted)]">Loading search…</div>}>
-            <ScopedSearchPanel surface="workplane" apiBase={apiBase} open={scopedSearchOpen} />
+            <ScopedSearchPanel surface="workplane" apiBase={apiBase} orgId={orgId} onNavigate={handleScopedSearchNavigate} open={scopedSearchOpen} />
           </Suspense>
         </div>
       ) : null}

@@ -46,6 +46,8 @@ export interface UpsertFileIndexInput {
 }
 
 export interface FileIndexSearchFilters {
+  orgId?: string;
+  includeUnscoped?: boolean;
   sourceId?: string;
   type?: string;
   agent?: string;
@@ -300,10 +302,20 @@ export function createFileIndexRepository(): FileIndexRepository {
     search: (query: string, filters: FileIndexSearchFilters = {}) => {
       const clauses: string[] = [];
       const values: unknown[] = [];
+      let titleLike: string | undefined;
+
+      // Org-scoped at the SQL layer; orgId is sourced exclusively from requireRequestOrg().
+      if (filters.orgId) {
+        clauses.push(filters.includeUnscoped
+          ? "(org_id = ? OR org_id IS NULL OR TRIM(org_id) = '')"
+          : 'org_id = ?');
+        values.push(filters.orgId);
+      }
 
       if (query.trim()) {
         clauses.push('(LOWER(title) LIKE ? OR LOWER(path) LIKE ? OR LOWER(preview) LIKE ?)');
         const like = `%${query.trim().toLowerCase()}%`;
+        titleLike = like;
         values.push(like, like, like);
       }
 
@@ -338,11 +350,16 @@ export function createFileIndexRepository(): FileIndexRepository {
       }
 
       const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-      const limit = Math.max(1, Math.min(filters.limit ?? 50, 200));
-      values.push(limit);
+      const scoreSelect = titleLike
+        ? ', CASE WHEN LOWER(title) LIKE ? THEN 1 ELSE 0 END AS search_title_score'
+        : ', 0 AS search_title_score';
+      const limit = Math.max(1, Math.min(filters.limit ?? 50, 10_101));
+      const boundValues = titleLike
+        ? [titleLike, ...values, limit]
+        : [...values, limit];
 
-      const sql = `SELECT * FROM file_index ${where} ORDER BY datetime(COALESCE(updated_at, indexed_at)) DESC, datetime(indexed_at) DESC LIMIT ?`;
-      const rows = db.prepare(sql).all(...values) as Array<Record<string, unknown>>;
+      const sql = `SELECT *${scoreSelect} FROM file_index ${where} ORDER BY search_title_score DESC, datetime(COALESCE(updated_at, indexed_at)) DESC, datetime(indexed_at) DESC, id ASC LIMIT ?`;
+      const rows = db.prepare(sql).all(...boundValues) as Array<Record<string, unknown>>;
       return rows.map(mapIndexRow);
     },
 

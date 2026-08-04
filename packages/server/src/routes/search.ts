@@ -8,6 +8,7 @@ import {
   type Phase2FlagSnapshot,
 } from '../phase2-flags';
 import { readScopedSearchRuntimeSettings } from '../config/admin-runtime';
+import { createScopedSearchRouter, type ScopedSearchRouteDeps } from './scoped-search';
 
 type SearchMode = 'keyword' | 'semantic' | 'hybrid';
 type SearchCollection = 'all' | 'obsidian' | 'superada' | 'sessions' | 'scotty' | 'spock' | 'memory';
@@ -34,6 +35,7 @@ interface QmdCollectionListEntry {
 
 export interface SearchRouterDependencies {
   flags?: Phase2FlagSnapshot;
+  scoped?: Omit<ScopedSearchRouteDeps, 'flags'>;
 }
 
 interface LineRange {
@@ -549,6 +551,10 @@ function classifyExecError(err: unknown): { status: number; error: string } {
 export function createSearchRouter(dependencies: SearchRouterDependencies = {}): Router {
   const router = Router();
   const flags = dependencies.flags ?? resolvePhase2Flags();
+
+  // SRCH-A-03/A-04: permission-safe scoped search envelope (entity.scoped-search.v1).
+  // Org-scoped at the SQL layer; orgId is sourced exclusively from requireRequestOrg().
+  router.use('/scoped', createScopedSearchRouter({ ...dependencies.scoped, flags }));
 
   router.get('/collections', async (_req: Request, res: Response) => {
     const { sshTarget, qmdBin, timeoutMs, maxBufferBytes } = getQmdExecConfig();

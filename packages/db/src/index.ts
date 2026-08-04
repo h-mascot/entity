@@ -831,6 +831,18 @@ export interface CreateNativeDocumentInput {
   metadata_json?: string;
 }
 
+export interface ListNativeDocumentsInput {
+  org_id: string;
+  query?: string | null;
+  team_id?: string | null;
+  project_id?: number | null;
+  lifecycle_state?: NativeDocumentLifecycleState;
+  sensitivity?: string | null;
+  from?: string | null;
+  to?: string | null;
+  limit?: number | null;
+}
+
 export interface UpdateNativeDocumentVersionInput {
   title?: string;
   stable_path?: string;
@@ -904,12 +916,18 @@ export interface ListExternalDocumentRefsInput {
   connector_type?: ExternalDocumentConnectorType;
   query?: string | null;
   linked_object_ref?: ObjectRef | null;
+  auth_state?: ExternalDocumentAuthState;
+  readiness_state?: ExternalDocumentReadinessState;
+  external_ref_state?: ExternalDocumentRefState;
+  from?: string | null;
+  to?: string | null;
   limit?: number | null;
 }
 
 export interface DocumentObjectRepository {
   createNativeDocument: (input: CreateNativeDocumentInput) => NativeDocumentRecord;
   getNativeDocument: (id: string) => NativeDocumentRecord | undefined;
+  listNativeDocuments: (input: ListNativeDocumentsInput) => NativeDocumentRecord[];
   updateNativeDocumentVersion: (id: string, input: UpdateNativeDocumentVersionInput) => NativeDocumentRecord | undefined;
   listNativeDocumentVersions: (id: string) => NativeDocumentVersionRecord[];
   linkNativeDocumentObject: (id: string, objectRef: ObjectRef) => NativeDocumentRecord | undefined;
@@ -2638,6 +2656,25 @@ export interface CreateEvidenceArtifactInput {
   metadata_json?: string;
 }
 
+export interface ListEvidenceArtifactsInput {
+  org_id: string;
+  query?: string | null;
+  artifact_kinds?: EvidenceArtifactKind[];
+  team_id?: string | null;
+  project_id?: number | null;
+  sensitivity?: string | null;
+  availability_state?: EvidenceArtifactAvailabilityState | null;
+  query_origin_task_ids?: number[];
+  origin_task_ids?: number[];
+  team_origin_task_ids?: number[];
+  project_origin_task_ids?: number[];
+  sensitivity_origin_task_ids?: number[];
+  require_origin_task_match?: boolean;
+  from?: string | null;
+  to?: string | null;
+  limit?: number | null;
+}
+
 export interface UpdateEvidenceArtifactVersionInput {
   title?: string;
   stable_path?: string;
@@ -2649,6 +2686,7 @@ export interface UpdateEvidenceArtifactVersionInput {
 export interface EvidenceArtifactRepository {
   createArtifact: (input: CreateEvidenceArtifactInput) => EvidenceArtifactRecord;
   getArtifact: (id: string) => EvidenceArtifactRecord | undefined;
+  listArtifacts: (input: ListEvidenceArtifactsInput) => EvidenceArtifactRecord[];
   listArtifactsByOriginTask: (taskId: number) => EvidenceArtifactRecord[];
   updateArtifactVersion: (id: string, input: UpdateEvidenceArtifactVersionInput) => EvidenceArtifactRecord | undefined;
   listArtifactVersions: (id: string) => EvidenceArtifactVersionRecord[];
@@ -8885,6 +8923,12 @@ export function createTaskRepository(): TaskRepository {
 export function createDocumentObjectRepository(): DocumentObjectRepository {
   const db = openEntityDatabase();
   const getNativeStmt = db.prepare('SELECT * FROM native_documents WHERE id = ?');
+  const listNativeByOrgStmt = db.prepare(`
+    SELECT *
+    FROM native_documents
+    WHERE org_id = ?
+    ORDER BY updated_at DESC, title ASC, id ASC
+  `);
   const getExternalStmt = db.prepare('SELECT * FROM external_document_refs WHERE id = ?');
   const listExternalByOrgStmt = db.prepare(`
     SELECT *
@@ -9032,6 +9076,46 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
       return row ? mapNativeDocumentRow(row) : undefined;
     },
 
+    listNativeDocuments: (input: ListNativeDocumentsInput) => {
+      // Org-scoped at the SQL layer; org_id is sourced exclusively from requireRequestOrg().
+      const orgId = normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID);
+      const query = normalizeBlockerReason(input.query)?.toLowerCase() ?? null;
+      const teamId = normalizeBlockerReason(input.team_id);
+      const projectId = normalizePositiveInteger(input.project_id);
+      const sensitivity = normalizeBlockerReason(input.sensitivity)?.toLowerCase() ?? null;
+      const fromMs = input.from ? Date.parse(input.from) : Number.NaN;
+      const toMs = input.to ? Date.parse(input.to) : Number.NaN;
+      const limit = Math.min(normalizePositiveInteger(input.limit) ?? 50, 10_101);
+      const rows = listNativeByOrgStmt.all(orgId) as Array<Record<string, unknown>>;
+      return rows
+        .map(mapNativeDocumentRow)
+        .filter((record) => !teamId || record.team_id === teamId)
+        .filter((record) => !projectId || record.project_id === projectId)
+        .filter((record) => !input.lifecycle_state || record.lifecycle_state === input.lifecycle_state)
+        .filter((record) => !sensitivity || record.sensitivity?.toLowerCase() === sensitivity)
+        .filter((record) => {
+          if (!query) return true;
+          return [
+            record.title,
+            record.stable_path,
+            record.metadata_json,
+          ].join(' ').toLowerCase().includes(query);
+        })
+        .filter((record) => {
+          const updatedAtMs = Date.parse(record.updated_at);
+          if (Number.isFinite(fromMs) && updatedAtMs < fromMs) return false;
+          if (Number.isFinite(toMs) && updatedAtMs > toMs) return false;
+          return true;
+        })
+        .sort((left, right) =>
+          Number(Boolean(query && right.title.toLowerCase().includes(query)))
+          - Number(Boolean(query && left.title.toLowerCase().includes(query)))
+          || Date.parse(right.updated_at) - Date.parse(left.updated_at)
+          || left.id.localeCompare(right.id)
+        )
+        .slice(0, limit);
+    },
+
     updateNativeDocumentVersion: (id: string, input: UpdateNativeDocumentVersionInput) => {
       const normalizedId = id.trim();
       const updatedId = db.transaction(() => {
@@ -9131,15 +9215,21 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
     },
 
     listExternalDocumentRefs: (input: ListExternalDocumentRefsInput) => {
+      // Org-scoped at the SQL layer; org_id is sourced exclusively from requireRequestOrg().
       const orgId = normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID);
       const connectorType = input.connector_type ? normalizeExternalConnectorType(input.connector_type) : undefined;
       const query = normalizeBlockerReason(input.query)?.toLowerCase() ?? null;
-      const limit = Math.min(normalizePositiveInteger(input.limit) ?? 50, 100);
+      const fromMs = input.from ? Date.parse(input.from) : Number.NaN;
+      const toMs = input.to ? Date.parse(input.to) : Number.NaN;
+      const limit = Math.min(normalizePositiveInteger(input.limit) ?? 50, 10_101);
       const objectRef = input.linked_object_ref ?? null;
       const rows = listExternalByOrgStmt.all(orgId) as Array<Record<string, unknown>>;
       const matches = rows
         .map(mapExternalDocumentRefRow)
         .filter((record) => !connectorType || record.connector_type === connectorType)
+        .filter((record) => !input.auth_state || record.auth_state === input.auth_state)
+        .filter((record) => !input.readiness_state || record.readiness_state === input.readiness_state)
+        .filter((record) => !input.external_ref_state || record.external_ref_state === input.external_ref_state)
         .filter((record) => {
           if (!query) return true;
           const searchable = [
@@ -9160,7 +9250,19 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
             entry.object_id === objectRef.object_id &&
             (!objectRef.link_role || entry.link_role === objectRef.link_role)
           );
-        });
+        })
+        .filter((record) => {
+          const updatedAtMs = Date.parse(record.updated_at);
+          if (Number.isFinite(fromMs) && updatedAtMs < fromMs) return false;
+          if (Number.isFinite(toMs) && updatedAtMs > toMs) return false;
+          return true;
+        })
+        .sort((left, right) =>
+          Number(Boolean(query && right.title.toLowerCase().includes(query)))
+          - Number(Boolean(query && left.title.toLowerCase().includes(query)))
+          || Date.parse(right.updated_at) - Date.parse(left.updated_at)
+          || left.id.localeCompare(right.id)
+        );
       return matches.slice(0, limit);
     },
 
@@ -9181,6 +9283,12 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
 export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
   const db = openEntityDatabase();
   const getStmt = db.prepare('SELECT * FROM evidence_artifacts WHERE id = ?');
+  const listByOrgStmt = db.prepare(`
+    SELECT *
+    FROM evidence_artifacts
+    WHERE org_id = ?
+    ORDER BY updated_at DESC, title ASC, id ASC
+  `);
   const listVersionsStmt = db.prepare(`
     SELECT *
     FROM evidence_artifact_versions
@@ -9314,6 +9422,92 @@ export function createEvidenceArtifactRepository(): EvidenceArtifactRepository {
         return [];
       }
       return (listByOriginTaskStmt.all(safeTaskId) as Array<Record<string, unknown>>).map(mapEvidenceArtifactRow);
+    },
+
+    listArtifacts: (input: ListEvidenceArtifactsInput) => {
+      // Org-scoped at the SQL layer; org_id is sourced exclusively from requireRequestOrg().
+      const orgId = normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID);
+      const query = normalizeBlockerReason(input.query)?.toLowerCase() ?? null;
+      const kinds = input.artifact_kinds?.length ? new Set(input.artifact_kinds) : null;
+      const teamId = normalizeBlockerReason(input.team_id);
+      const projectId = normalizePositiveInteger(input.project_id);
+      const sensitivity = normalizeBlockerReason(input.sensitivity)?.toLowerCase() ?? null;
+      const queryOriginTaskIds = new Set(
+        (input.query_origin_task_ids ?? []).map(normalizePositiveInteger).filter((id): id is number => Boolean(id)),
+      );
+      const originTaskIds = input.origin_task_ids
+        ? new Set(input.origin_task_ids.map(normalizePositiveInteger).filter((id): id is number => Boolean(id)))
+        : null;
+      const teamOriginTaskIds = new Set(
+        (input.team_origin_task_ids ?? []).map(normalizePositiveInteger).filter((id): id is number => Boolean(id)),
+      );
+      const projectOriginTaskIds = new Set(
+        (input.project_origin_task_ids ?? []).map(normalizePositiveInteger).filter((id): id is number => Boolean(id)),
+      );
+      const sensitivityOriginTaskIds = new Set(
+        (input.sensitivity_origin_task_ids ?? []).map(normalizePositiveInteger).filter((id): id is number => Boolean(id)),
+      );
+      const fromMs = input.from ? Date.parse(input.from) : Number.NaN;
+      const toMs = input.to ? Date.parse(input.to) : Number.NaN;
+      const limit = Math.min(normalizePositiveInteger(input.limit) ?? 50, 10_101);
+      return (listByOrgStmt.all(orgId) as Array<Record<string, unknown>>)
+        .map(mapEvidenceArtifactRow)
+        .filter((record) => !kinds || kinds.has(record.artifact_kind))
+        .filter((record) => !input.availability_state || record.availability_state === input.availability_state)
+        .filter((record) => {
+          const originMatches = Boolean(
+            record.origin_task_id && originTaskIds?.has(record.origin_task_id),
+          );
+          if (input.require_origin_task_match && !originMatches) return false;
+          if (teamId && (
+            record.team_id
+              ? record.team_id !== teamId
+              : !record.origin_task_id || !teamOriginTaskIds.has(record.origin_task_id)
+          )) return false;
+          if (projectId && (
+            record.project_id
+              ? record.project_id !== projectId
+              : !record.origin_task_id || !projectOriginTaskIds.has(record.origin_task_id)
+          )) return false;
+          if (sensitivity) {
+            const metadata = parseJsonObject(record.metadata_json);
+            const artifactSensitivity = normalizeBlockerReason(
+              metadata.sensitivity ?? metadata.sensitivity_class,
+            )?.toLowerCase();
+            const artifactSensitivityMatches = artifactSensitivity
+              ?.split(',')
+              .some((entry) => entry.trim() === sensitivity) ?? false;
+            if (
+              !artifactSensitivityMatches
+              && (!record.origin_task_id || !sensitivityOriginTaskIds.has(record.origin_task_id))
+            ) return false;
+          }
+          return true;
+        })
+        .filter((record) => {
+          if (!query) return true;
+          const directMatch = [
+            record.title,
+            record.artifact_kind,
+            record.human_path_alias,
+          ].filter(Boolean).join(' ').toLowerCase().includes(query);
+          return directMatch || Boolean(
+            record.origin_task_id && queryOriginTaskIds.has(record.origin_task_id),
+          );
+        })
+        .filter((record) => {
+          const updatedAtMs = Date.parse(record.updated_at);
+          if (Number.isFinite(fromMs) && updatedAtMs < fromMs) return false;
+          if (Number.isFinite(toMs) && updatedAtMs > toMs) return false;
+          return true;
+        })
+        .sort((left, right) =>
+          Number(Boolean(query && right.title.toLowerCase().includes(query)))
+          - Number(Boolean(query && left.title.toLowerCase().includes(query)))
+          || Date.parse(right.updated_at) - Date.parse(left.updated_at)
+          || left.id.localeCompare(right.id)
+        )
+        .slice(0, limit);
     },
 
     updateArtifactVersion: (id: string, input: UpdateEvidenceArtifactVersionInput) => {
