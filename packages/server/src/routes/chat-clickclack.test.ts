@@ -236,7 +236,7 @@ describe('chat ClickClack compatibility bridge', () => {
       expect(historyPayload.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({
           id: 'entity-human-degraded-1',
-          sender: 'user',
+          sender: 'entity-local-user',
           channelId: 'command-deck',
           content: 'persist despite sidecar outage',
         }),
@@ -285,7 +285,7 @@ describe('chat ClickClack compatibility bridge', () => {
       messages: Array<{ id: string; sender: string; channelId: string; content: string }>;
     };
     expect(historyPayload.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'entity-human-1', sender: 'user', channelId: 'command-deck', content: 'prove sidecar send' }),
+      expect.objectContaining({ id: 'entity-human-1', sender: 'entity-local-user', channelId: 'command-deck', content: 'prove sidecar send' }),
       expect.objectContaining({ id: 'msg_agent', sender: 'geordi', channelId: 'command-deck', content: 'geordi reply through ClickClack' }),
     ]));
   }, 15000);

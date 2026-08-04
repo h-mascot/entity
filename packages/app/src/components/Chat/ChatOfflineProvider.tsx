@@ -31,6 +31,8 @@ interface ChatCompletionResponse {
 }
 
 interface ServerChatSendResponse {
+  degraded?: boolean;
+  error?: string;
   message?: {
     id?: string;
     channelId?: string;
@@ -276,7 +278,7 @@ async function requestServerAgentReply(params: {
   agents: string[];
   model?: string;
   messageId?: string;
-}): Promise<ChatMessage[]> {
+}): Promise<{ messages: ChatMessage[]; degraded: boolean; degradedReason?: string }> {
   const response = await fetchWithTimeout(
     '/api/chat/send',
     {
@@ -304,11 +306,16 @@ async function requestServerAgentReply(params: {
 
   const payload = (await response.json()) as ServerChatSendResponse;
   const messages = normalizeServerMessages(payload);
-  if (messages.length === 0) {
+  // THE-930: a 202 degraded response carries degraded:true (and possibly an
+  // empty messages list). Surface it explicitly rather than as a generic error.
+  const degraded = payload.degraded === true;
+  const degradedReason =
+    typeof payload.error === 'string' && payload.error.trim() ? payload.error.trim() : undefined;
+  if (messages.length === 0 && !degraded) {
     throw new Error('Server returned no chat messages.');
   }
 
-  return messages;
+  return { messages, degraded, degradedReason };
 }
 
 export function ChatOfflineProvider({ children }: { children: ReactNode }) {
@@ -477,7 +484,7 @@ export function ChatOfflineProvider({ children }: { children: ReactNode }) {
 
         try {
           if (preferCloud) {
-            const serverMessages = await requestServerAgentReply({
+            const { messages: serverMessages, degraded, degradedReason } = await requestServerAgentReply({
               channelId: input.channel.id,
               threadId: input.threadId,
               parentMessageId: input.parentMessageId,
@@ -508,6 +515,33 @@ export function ChatOfflineProvider({ children }: { children: ReactNode }) {
               };
 
               await addMessage(agentMessage, {
+                parentMessageId: input.parentMessageId,
+                threadTitle: input.threadTitle,
+              });
+            }
+
+            // THE-930: surface the /api/chat/send degraded state visibly in the
+            // chat UI so the user sees delivery failed without a misleading
+            // silent success.
+            if (degraded) {
+              const noticeSender = findAgent(agents[0] ?? 'ada');
+              const degradedNotice: ChatMessage = {
+                id: createMessageId('msg'),
+                channelId: input.channel.id,
+                threadId: input.threadId,
+                sender: noticeSender.id,
+                senderEmoji: '⚠️',
+                content: degradedReason
+                  ? `Delivery degraded — agent replies unavailable (${degradedReason}).`
+                  : 'Delivery degraded — agent replies unavailable right now.',
+                timestamp: new Date().toISOString(),
+                createdAt: new Date().toISOString(),
+                replyTo: input.parentMessageId,
+                status: 'error',
+                model: selectedModel?.id,
+                isLocal: false,
+              };
+              await addMessage(degradedNotice, {
                 parentMessageId: input.parentMessageId,
                 threadTitle: input.threadTitle,
               });

@@ -40,9 +40,14 @@ export interface AgentNoiseGuardSnapshot {
   trackedScopes: number;
 }
 
+export interface NoiseReleaseOptions {
+  /** When true, the delivery succeeded and the cooldown window is recorded. */
+  delivered?: boolean;
+}
+
 export interface AgentNoiseGuard {
   reserve(agent: string, scope: NoiseScope, content: string): NoiseReservation;
-  release(agent: string, scope: NoiseScope, content: string): void;
+  release(agent: string, scope: NoiseScope, content: string, options?: NoiseReleaseOptions): void;
   isMuted(agent: string): boolean;
   setMuted(agent: string, muted: boolean): void;
   getCooldownMs(): number;
@@ -111,15 +116,20 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
       if (last !== undefined && ts - last < currentCooldown) {
         return { suppressed: true, reason: 'cooldown', agent: normalized };
       }
+      // Acquire the in-flight reservation only. The cooldown window is recorded
+      // on release({ delivered: true }) so a failed provider call cannot consume
+      // the cooldown and block a legitimate retry.
       inFlight.set(key, ts);
-      lastSend.set(key, ts);
-      evictIfNeeded();
       return { suppressed: false, agent: normalized };
     },
 
-    release(agent, scopeArg, content) {
+    release(agent, scopeArg, content, options) {
       const key = reserveKey(normalizeAgent(agent), scopeArg, content);
       inFlight.delete(key);
+      if (options?.delivered) {
+        lastSend.set(key, now());
+        evictIfNeeded();
+      }
     },
 
     isMuted(agent) {

@@ -94,6 +94,9 @@ const DEFAULT_AGENT_EMOJI: Record<string, string> = {
   book: '📚',
 };
 
+/** THE-930: server-authoritative emoji for human-authored messages. */
+const USER_MESSAGE_EMOJI = '🧑';
+
 const OLLAMA_MODEL_FETCH_TIMEOUT_MS = 750;
 const CHAT_NOISE_SETTINGS_KEY = 'chat.noiseSettings';
 const CHAT_NOISE_MAX_MUTED = 64;
@@ -1295,21 +1298,30 @@ export function registerChatRoutes({
         modelByAgent.set(agent, { modelId: resolved.modelId, isLocal: resolved.isLocal });
       }
 
+      // THE-930 (blocker 1): identity and time are server-authoritative. The
+      // sender is the authenticated/server-resolved principal; the timestamp is
+      // the server clock; locality is derived from the resolved target model.
+      // Caller-supplied sender/senderEmoji/timestamp/isLocal are NEVER trusted.
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      const authoritativeSender = binding.principal.principal_id;
+      const authoritativeTimestamp = new Date().toISOString();
+      const userIsLocal = targets.length > 0 ? Boolean(modelByAgent.get(targets[0])?.isLocal) : false;
+
       if (sidecarBridge) {
         const threadId = typeof req.body?.threadId === 'string' ? req.body.threadId : undefined;
         const parentMessageId = typeof req.body?.parentMessageId === 'string' ? req.body.parentMessageId : undefined;
-        const timestamp = typeof req.body?.timestamp === 'string' ? req.body.timestamp : new Date().toISOString();
         const userMessage = repo.createMessage({
           id: typeof req.body?.messageId === 'string' ? req.body.messageId : undefined,
           channel_id: channelId,
           thread_id: threadId,
-          sender: typeof req.body?.sender === 'string' ? req.body.sender : 'user',
-          sender_emoji: typeof req.body?.senderEmoji === 'string' ? req.body.senderEmoji : '🧑',
+          sender: authoritativeSender,
+          sender_emoji: USER_MESSAGE_EMOJI,
           content,
           model: modelId && modelId !== 'auto' ? modelId : undefined,
-          is_local: Boolean(req.body?.isLocal),
+          is_local: userIsLocal,
           status: 'sent',
-          timestamp,
+          timestamp: authoritativeTimestamp,
           reply_to: parentMessageId,
         });
 
@@ -1317,7 +1329,6 @@ export function registerChatRoutes({
           repo.incrementThreadCount(threadId, userMessage.timestamp);
         }
 
-        let result;
         // THE-930: apply the same noise guard to the ClickClack sidecar path so
         // muted/cooldown/concurrent-duplicate agents are suppressed consistently.
         const sidecarScope = { channelId, threadId };
@@ -1331,8 +1342,13 @@ export function registerChatRoutes({
             sidecarTargets.push(agent);
           }
         }
+        // THE-930 (blocker 2): every acquired reservation is released in a
+        // finally so a failed sidecar delivery cannot leak in-flight slots and
+        // suppress a legitimate retry as duplicate-concurrent. Cooldown is
+        // recorded only when the delivery was accepted.
+        let sidecarDelivered = false;
         try {
-          result = await sidecarBridge.sendCompatibilityMessage({
+          const result = await sidecarBridge.sendCompatibilityMessage({
             channelId,
             content,
             targets: sidecarTargets,
@@ -1342,6 +1358,36 @@ export function registerChatRoutes({
             parentMessageId: undefined,
             modelByAgent,
           });
+          sidecarDelivered = true;
+
+          const storedReplies = result.messages.map((message) => {
+            const stored = repo.createMessage({
+              id: message.id,
+              channel_id: channelId,
+              thread_id: threadId,
+              sender: message.sender,
+              sender_emoji: DEFAULT_AGENT_EMOJI[message.sender] ?? '🤖',
+              content: message.content,
+              model: message.model,
+              is_local: Boolean(message.isLocal),
+              status: 'sent',
+              timestamp: compatibilityMessageTimestamp(message.createdAt),
+              reply_to: parentMessageId,
+            });
+
+            if (threadId) {
+              repo.incrementThreadCount(threadId, stored.timestamp);
+            }
+
+            return toMessage(stored);
+          });
+
+          return res.status(201).json({
+            ...result,
+            message: toMessage(userMessage),
+            messages: storedReplies,
+            suppressed: sidecarSuppressed,
+          });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'ClickClack delivery failed';
           return res.status(202).json({
@@ -1349,66 +1395,34 @@ export function registerChatRoutes({
             error: message,
             message: toMessage(userMessage),
             messages: [],
+            suppressed: sidecarSuppressed,
             clickclack: {
               mode: 'dev-sidecar',
               baseUrl: process.env.ENTITY_CLICKCLACK_BASE_URL ?? 'http://127.0.0.1:3091',
               error: message,
             },
           });
-        }
-
-        for (const agent of sidecarTargets) {
-          noiseGuard.release(agent, sidecarScope, content);
-        }
-
-        const storedReplies = result.messages.map((message) => {
-          const stored = repo.createMessage({
-            id: message.id,
-            channel_id: channelId,
-            thread_id: threadId,
-            sender: message.sender,
-            sender_emoji: DEFAULT_AGENT_EMOJI[message.sender] ?? '🤖',
-            content: message.content,
-            model: message.model,
-            is_local: Boolean(message.isLocal),
-            status: 'sent',
-            timestamp: compatibilityMessageTimestamp(message.createdAt),
-            reply_to: parentMessageId,
-          });
-
-          if (threadId) {
-            repo.incrementThreadCount(threadId, stored.timestamp);
+        } finally {
+          for (const agent of sidecarTargets) {
+            noiseGuard.release(agent, sidecarScope, content, { delivered: sidecarDelivered });
           }
-
-          return toMessage(stored);
-        });
-
-        return res.status(201).json({
-          ...result,
-          message: toMessage(userMessage),
-          messages: storedReplies,
-          suppressed: sidecarSuppressed,
-        });
+        }
       }
 
-      const timestamp = typeof req.body?.timestamp === 'string' ? req.body.timestamp : new Date().toISOString();
       const threadId = typeof req.body?.threadId === 'string' ? req.body.threadId : undefined;
       const parentMessageId = typeof req.body?.parentMessageId === 'string' ? req.body.parentMessageId : undefined;
-
-      const sender = typeof req.body?.sender === 'string' ? req.body.sender : 'user';
-      const senderEmoji = typeof req.body?.senderEmoji === 'string' ? req.body.senderEmoji : '🧑';
 
       const userMessage = repo.createMessage({
         id: typeof req.body?.messageId === 'string' ? req.body.messageId : undefined,
         channel_id: channelId,
         thread_id: threadId,
-        sender,
-        sender_emoji: senderEmoji,
+        sender: authoritativeSender,
+        sender_emoji: USER_MESSAGE_EMOJI,
         content,
         model: modelId && modelId !== 'auto' ? modelId : undefined,
-        is_local: Boolean(req.body?.isLocal),
+        is_local: userIsLocal,
         status: 'sent',
-        timestamp,
+        timestamp: authoritativeTimestamp,
         reply_to: parentMessageId,
       });
 
@@ -1443,6 +1457,7 @@ export function registerChatRoutes({
 
       const replies: ReturnType<typeof toMessage>[] = [];
       await Promise.all(sendableTargets.map(async (agent) => {
+        let delivered = false;
         try {
           const resolved = modelByAgent.get(agent);
           const runtimeModelId = modelId && modelId !== 'auto' ? resolved?.modelId : undefined;
@@ -1482,8 +1497,9 @@ export function registerChatRoutes({
           }
 
           replies.push(toMessage(stored));
+          delivered = true;
         } finally {
-          noiseGuard.release(agent, noiseScope, content);
+          noiseGuard.release(agent, noiseScope, content, { delivered });
         }
       }));
 
