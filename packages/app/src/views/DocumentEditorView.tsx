@@ -326,6 +326,7 @@ export default function DocumentEditorView(props: any) {
             <LazyCodeMirrorFileViewer
               content={fileContent}
               filePath={currentFile ?? ''}
+              sourceId={currentSourceId}
               contentType={currentFilePreviewMeta.contentType}
               fileSize={currentFilePreviewMeta.size}
               isBinary={currentFilePreviewMeta.isBinary}
@@ -438,6 +439,7 @@ export default function DocumentEditorView(props: any) {
                       <LazyCodeMirrorFileViewer
                         content={rightPaneContent}
                         filePath={rightPaneFile ?? ''}
+                        sourceId={rightPaneSourceId}
                         contentType={rightPanePreviewMeta.contentType}
                         fileSize={rightPanePreviewMeta.size}
                         isBinary={rightPanePreviewMeta.isBinary}
