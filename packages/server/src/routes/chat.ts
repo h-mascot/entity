@@ -76,6 +76,27 @@ function denyChatHistory(res: express.Response, missingError: string) {
   return res.status(404).json({ error: missingError });
 }
 
+// Legacy rows without ownership are retained by migration but fail closed for
+// agent history. The local admin remains the explicit compatibility principal.
+function ownsChatResource(resource: { org_id: string | null; team_id: string | null }, binding: RequestOrgBinding): boolean {
+  return resource.org_id === binding.orgId || (resource.org_id === null && binding.principal.principal_id === LOCAL_ADMIN_PRINCIPAL_ID);
+}
+
+function ownsThread(repo: ReturnType<typeof createChatRepository>, thread: ChatThreadRecord, binding: RequestOrgBinding): boolean {
+  if (!ownsChatResource(thread, binding)) return false;
+  const channel = repo.getChannel(thread.channel_id);
+  return Boolean(channel && ownsChatResource(channel, binding));
+}
+
+function ownsMessage(repo: ReturnType<typeof createChatRepository>, message: ChatMessageRecord, binding: RequestOrgBinding): boolean {
+  if (!ownsChatResource(message, binding)) return false;
+  const channel = repo.getChannel(message.channel_id);
+  if (!channel || !ownsChatResource(channel, binding)) return false;
+  if (!message.thread_id) return true;
+  const thread = repo.getThread(message.thread_id);
+  return Boolean(thread && ownsThread(repo, thread, binding));
+}
+
 interface OpenClawReply {
   sender: string;
   senderEmoji?: string;
@@ -904,6 +925,7 @@ export function registerChatRoutes({
       cooldownMs: stored.cooldownMs,
       mutedAgents: stored.mutedAgents,
       db: getEntityDatabase(),
+      policy: readChatNoiseSettings,
     });
   })();
 
@@ -954,18 +976,24 @@ export function registerChatRoutes({
       if (!principalCanAdminNoise(adminBinding.principal)) {
         return res.status(403).json({ error: 'admin role required', code: 'admin_required' });
       }
-      if (typeof req.body?.cooldownMs === 'number') {
-        const clamped = Math.min(CHAT_NOISE_MAX_COOLDOWN_MS, Math.max(0, Math.floor(req.body.cooldownMs)) || 0);
-        noiseGuard.setCooldownMs(clamped);
-      }
-      if (Array.isArray(req.body?.mutedAgents)) {
-        // Replace the mute set wholesale (bounded + normalized).
-        const current = noiseGuard.snapshot().mutedAgents;
-        for (const agent of current) noiseGuard.setMuted(agent, false);
-        for (const agent of normalizeMutedAgents(req.body.mutedAgents)) noiseGuard.setMuted(agent, true);
-      }
-      const snapshot = noiseGuard.snapshot();
-      writeChatNoiseSettings({ cooldownMs: snapshot.cooldownMs, mutedAgents: snapshot.mutedAgents });
+      const current = readChatNoiseSettings();
+      const next = {
+        cooldownMs: typeof req.body?.cooldownMs === 'number'
+          ? Math.min(CHAT_NOISE_MAX_COOLDOWN_MS, Math.max(0, Math.floor(req.body.cooldownMs)) || 0)
+          : current.cooldownMs,
+        mutedAgents: Array.isArray(req.body?.mutedAgents)
+          ? normalizeMutedAgents(req.body.mutedAgents)
+          : current.mutedAgents,
+      };
+      // Persist first. Every reservation refreshes this shared policy, so other
+      // already-running instances observe the update without restart.
+      writeChatNoiseSettings(next);
+      // Keep an explicitly injected/test guard in sync while the default guard
+      // will refresh the same persisted policy on its next reservation.
+      noiseGuard.setCooldownMs(next.cooldownMs);
+      const currentMuted = noiseGuard.snapshot().mutedAgents;
+      for (const agent of currentMuted) noiseGuard.setMuted(agent, false);
+      for (const agent of next.mutedAgents) noiseGuard.setMuted(agent, true);
       return res.json({ settings: chatNoiseSettingsView(noiseGuard) });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -993,12 +1021,12 @@ export function registerChatRoutes({
         .map((id) => repo.getChannel(id) ?? repo.getChannelByName(id))
         .find(Boolean);
 
-      if (!channel) {
+      if (!channel || !ownsChatResource(channel, binding)) {
         return res.json({ taskId, channel: null, messages: [], threads: [] });
       }
 
-      const messages = repo.listMessagesByChannel(channel.id).map(toMessage);
-      const threads = repo.listThreadsByChannel(channel.id).map(toThread);
+      const messages = repo.listMessagesByChannel(channel.id).filter((message) => ownsMessage(repo, message, binding)).map(toMessage);
+      const threads = repo.listThreadsByChannel(channel.id).filter((thread) => ownsThread(repo, thread, binding)).map(toThread);
       return res.json({ taskId, channel: toChannel(channel), messages, threads });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1031,7 +1059,7 @@ export function registerChatRoutes({
     try {
       return res.json({
         categories: repo.listCategories().map(toCategory),
-        channels: repo.listChannels().map(toChannel),
+        channels: repo.listChannels().filter((channel) => ownsChatResource(channel, binding)).map(toChannel),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1043,11 +1071,12 @@ export function registerChatRoutes({
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
     // THE-931: unauthorized is indistinguishable from missing (uniform no-leak 404).
-    if (!chatHistoryAccess(binding).allowed || !repo.getChannel(req.params.channelId)) {
+    const channel = repo.getChannel(req.params.channelId);
+    if (!chatHistoryAccess(binding).allowed || !channel || !ownsChatResource(channel, binding)) {
       return denyChatHistory(res, 'channel not found');
     }
     try {
-      const messages = repo.listMessagesByChannel(req.params.channelId).map(toMessage);
+      const messages = repo.listMessagesByChannel(req.params.channelId).filter((message) => ownsMessage(repo, message, binding)).map(toMessage);
       return res.json({ messages });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1058,11 +1087,12 @@ export function registerChatRoutes({
   app.get('/api/chat/channels/:channelId/threads', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
-    if (!chatHistoryAccess(binding).allowed || !repo.getChannel(req.params.channelId)) {
+    const channel = repo.getChannel(req.params.channelId);
+    if (!chatHistoryAccess(binding).allowed || !channel || !ownsChatResource(channel, binding)) {
       return denyChatHistory(res, 'channel not found');
     }
     try {
-      const threads = repo.listThreadsByChannel(req.params.channelId).map(toThread);
+      const threads = repo.listThreadsByChannel(req.params.channelId).filter((thread) => ownsThread(repo, thread, binding)).map(toThread);
       return res.json({ threads });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1109,11 +1139,12 @@ export function registerChatRoutes({
   app.get('/api/chat/threads/:threadId/messages', (req, res) => {
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
-    if (!chatHistoryAccess(binding).allowed || !repo.getThread(req.params.threadId)) {
+    const thread = repo.getThread(req.params.threadId);
+    if (!chatHistoryAccess(binding).allowed || !thread || !ownsThread(repo, thread, binding)) {
       return denyChatHistory(res, 'thread not found');
     }
     try {
-      const messages = repo.listMessagesByThread(req.params.threadId).map(toMessage);
+      const messages = repo.listMessagesByThread(req.params.threadId).filter((message) => ownsMessage(repo, message, binding)).map(toMessage);
       return res.json({ messages });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -1128,8 +1159,8 @@ export function registerChatRoutes({
       return denyChatHistory(res, 'message not found');
     }
     const message = repo.getMessage(req.params.messageId);
-    if (!message) {
-      return res.status(404).json({ error: 'message not found' });
+    if (!message || !ownsMessage(repo, message, binding)) {
+      return denyChatHistory(res, 'message not found');
     }
 
     return res.json({ message: toMessage(message) });
@@ -1178,7 +1209,7 @@ export function registerChatRoutes({
       return denyChatHistory(res, 'thread not found');
     }
     const thread = repo.getThreadByParentMessage(req.params.parentMessageId);
-    if (!thread) {
+    if (!thread || !ownsThread(repo, thread, binding)) {
       return res.status(404).json({ error: 'thread not found' });
     }
 
@@ -1207,8 +1238,12 @@ export function registerChatRoutes({
         return res.status(400).json({ error: 'categoryId is required' });
       }
 
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
       const channel = repo.createChannel({
         id: typeof req.body?.id === 'string' ? req.body.id : undefined,
+        org_id: binding.orgId,
+        team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
         name: String(req.body?.name ?? '').trim(),
         description: typeof req.body?.description === 'string' ? req.body.description : undefined,
         category_id: categoryId,
@@ -1260,6 +1295,8 @@ export function registerChatRoutes({
 
   app.post('/api/chat/threads', (req, res) => {
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
       const channelId = String(req.body?.channelId ?? '').trim();
       const parentMessageId = String(req.body?.parentMessageId ?? '').trim();
       const title = String(req.body?.title ?? 'Thread').trim() || 'Thread';
@@ -1269,7 +1306,9 @@ export function registerChatRoutes({
 
       const existing = repo.getThreadByParentMessage(parentMessageId);
       if (existing) {
-        return res.json({ thread: toThread(existing) });
+        return ownsThread(repo, existing, binding)
+          ? res.json({ thread: toThread(existing) })
+          : denyChatHistory(res, 'thread not found');
       }
 
       const thread = repo.createThread({
@@ -1277,6 +1316,8 @@ export function registerChatRoutes({
         channel_id: channelId,
         parent_message_id: parentMessageId,
         title,
+        org_id: binding.orgId,
+        team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
       });
 
       return res.status(201).json({ thread: toThread(thread) });
@@ -1347,6 +1388,8 @@ export function registerChatRoutes({
           status: 'sent',
           timestamp: authoritativeTimestamp,
           reply_to: parentMessageId,
+          org_id: binding.orgId,
+          team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
         });
 
         if (threadId) {
@@ -1397,6 +1440,8 @@ export function registerChatRoutes({
               status: 'sent',
               timestamp: compatibilityMessageTimestamp(message.createdAt),
               reply_to: parentMessageId,
+              org_id: binding.orgId,
+              team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
             });
 
             if (threadId) {
@@ -1448,6 +1493,8 @@ export function registerChatRoutes({
         status: 'sent',
         timestamp: authoritativeTimestamp,
         reply_to: parentMessageId,
+        org_id: binding.orgId,
+        team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
       });
 
       if (threadId) {
@@ -1514,6 +1561,8 @@ export function registerChatRoutes({
             status: 'sent',
             timestamp: new Date().toISOString(),
             reply_to: parentMessageId,
+            org_id: binding.orgId,
+            team_id: typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : undefined,
           });
 
           if (threadId) {

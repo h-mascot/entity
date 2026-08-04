@@ -116,11 +116,20 @@ describe('AgentNoiseGuard — DB-backed atomic reservation (THE-930 matrix gap)'
     expect(guard2.reserve('eve', scope('c5', 't1'), 'hello').suppressed).toBe(false);
   });
 
-  it('honors the mute set independent of the DB backend', () => {
-    const guard1 = createAgentNoiseGuard({ db: db1, cooldownMs: 0, leaseMs: 30_000, mutedAgents: ['spock'] });
-    const r = guard1.reserve('spock', scope('c7'), 'hi');
-    expect(r.suppressed).toBe(true);
-    expect(r.reason).toBe('muted');
+  it('refreshes shared mute and cooldown policy on every reservation across instances (THE-930)', () => {
+    let policy = { cooldownMs: 0, mutedAgents: [] as string[] };
+    const guardA = createAgentNoiseGuard({ db: db1, policy: () => policy, leaseMs: 30_000 });
+    const guardB = createAgentNoiseGuard({ db: db2, policy: () => policy, leaseMs: 30_000 });
+
+    policy = { cooldownMs: 60_000, mutedAgents: ['spock'] };
+    expect(guardB.reserve('spock', scope('policy'), 'hello').reason).toBe('muted');
+    expect(guardB.reserve('ada', scope('policy'), 'hello').suppressed).toBe(false);
+    guardB.release('ada', scope('policy'), 'hello', { delivered: true });
+    expect(guardA.reserve('ada', scope('policy'), 'hello').reason).toBe('cooldown');
+
+    policy = { cooldownMs: 0, mutedAgents: [] };
+    expect(guardA.reserve('spock', scope('policy'), 'hello').suppressed).toBe(false);
+    expect(guardB.reserve('spock', scope('policy'), 'hello').reason).toBe('duplicate-concurrent');
   });
 
   it('bounds stored state (cleanup keeps the table from growing unbounded)', () => {

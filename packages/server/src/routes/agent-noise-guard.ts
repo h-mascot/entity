@@ -14,8 +14,8 @@
  *    reservation. The DB path uses a transactional compare-and-set with lease
  *    expiry (crash safety), success-only cooldown, and bounded cleanup.
  *
- * The mute set is held in memory (rebuilt from persisted settings) in both modes;
- * it is configuration, not contention state.
+ * Policy is refreshed from the shared settings store before every reservation when
+ * a policy reader is supplied; this makes already-running instances authoritative.
  */
 import { createHash } from 'crypto';
 import type Database from 'better-sqlite3';
@@ -55,6 +55,8 @@ export interface AgentNoiseGuardOptions {
    * in-memory backend, which releases synchronously.
    */
   leaseMs?: number;
+  /** Read the current shared policy before every reservation/snapshot. */
+  policy?: () => { cooldownMs: number; mutedAgents: string[] };
 }
 
 export interface AgentNoiseGuardSnapshot {
@@ -297,6 +299,16 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
     ? new DbReservationBackend(options.db, Math.max(1, Number(options.leaseMs ?? DEFAULT_LEASE_MS) || DEFAULT_LEASE_MS), maxStateEntries)
     : new InMemoryReservationBackend(maxStateEntries);
   let currentCooldown = cooldownMs;
+  const refreshPolicy = () => {
+    if (!options.policy) return;
+    const policy = options.policy();
+    currentCooldown = Math.max(0, Number(policy.cooldownMs) || 0);
+    muted.clear();
+    for (const agent of policy.mutedAgents ?? []) {
+      const normalized = normalizeAgent(agent);
+      if (normalized) muted.add(normalized);
+    }
+  };
 
   function reserveKey(agent: string, scope: NoiseScope, content: string): string {
     return `${buildScopeKey(agent, scope)}::${hashContent(content, maxContentBytes)}`;
@@ -304,6 +316,7 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
 
   return {
     reserve(agent, scopeArg, content) {
+      refreshPolicy();
       const normalized = normalizeAgent(agent);
       if (muted.has(normalized)) {
         return { suppressed: true, reason: 'muted', agent: normalized };
@@ -322,6 +335,7 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
     },
 
     isMuted(agent) {
+      refreshPolicy();
       return muted.has(normalizeAgent(agent));
     },
 
@@ -332,6 +346,7 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
     },
 
     getCooldownMs() {
+      refreshPolicy();
       return currentCooldown;
     },
 
@@ -340,6 +355,7 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
     },
 
     snapshot() {
+      refreshPolicy();
       return {
         cooldownMs: currentCooldown,
         mutedAgents: [...muted].sort(),

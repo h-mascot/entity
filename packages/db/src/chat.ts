@@ -13,6 +13,8 @@ export interface ChatCategoryRecord {
 
 export interface ChatChannelRecord {
   id: string;
+  org_id: string | null;
+  team_id: string | null;
   name: string;
   description: string | null;
   category_id: string;
@@ -26,6 +28,8 @@ export interface ChatChannelRecord {
 
 export interface ChatMessageRecord {
   id: string;
+  org_id: string | null;
+  team_id: string | null;
   channel_id: string;
   thread_id: string | null;
   sender: string;
@@ -42,6 +46,8 @@ export interface ChatMessageRecord {
 
 export interface ChatThreadRecord {
   id: string;
+  org_id: string | null;
+  team_id: string | null;
   channel_id: string;
   parent_message_id: string;
   title: string;
@@ -65,6 +71,8 @@ export interface CreateChatChannelInput {
   category_id: string;
   order?: number;
   agents?: string[];
+  org_id?: string;
+  team_id?: string;
 }
 
 export interface UpdateChatChannelInput {
@@ -87,6 +95,8 @@ export interface CreateChatMessageInput {
   status?: string;
   timestamp?: string;
   reply_to?: string;
+  org_id?: string;
+  team_id?: string;
 }
 
 export interface UpdateChatMessageStatusInput {
@@ -98,6 +108,8 @@ export interface CreateChatThreadInput {
   channel_id: string;
   parent_message_id: string;
   title: string;
+  org_id?: string;
+  team_id?: string;
 }
 
 export interface ChatRepository {
@@ -216,6 +228,8 @@ function ensureChatSchema(db: Database.Database): void {
       unread_count INTEGER NOT NULL DEFAULT 0,
       last_message_at TEXT,
       linked_object_refs_json TEXT NOT NULL DEFAULT '[]',
+      org_id TEXT,
+      team_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -232,7 +246,9 @@ function ensureChatSchema(db: Database.Database): void {
       timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      reply_to TEXT
+      reply_to TEXT,
+      org_id TEXT,
+      team_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS chat_threads (
@@ -243,6 +259,8 @@ function ensureChatSchema(db: Database.Database): void {
       message_count INTEGER NOT NULL DEFAULT 0,
       last_message_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       linked_object_refs_json TEXT NOT NULL DEFAULT '[]',
+      org_id TEXT,
+      team_id TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -253,6 +271,9 @@ function ensureChatSchema(db: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_parent_message ON chat_threads(parent_message_id);
   `);
 
+  for (const [table, column] of [['chat_channels', 'org_id'], ['chat_channels', 'team_id'], ['chat_messages', 'org_id'], ['chat_messages', 'team_id'], ['chat_threads', 'org_id'], ['chat_threads', 'team_id']] as const) {
+    if (!hasColumn(db, table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+  }
   if (!hasColumn(db, 'chat_channels', 'linked_object_refs_json')) {
     db.exec("ALTER TABLE chat_channels ADD COLUMN linked_object_refs_json TEXT NOT NULL DEFAULT '[]'");
   }
@@ -274,6 +295,8 @@ function mapCategoryRow(row: Record<string, unknown>): ChatCategoryRecord {
 function mapChannelRow(row: Record<string, unknown>): ChatChannelRecord {
   return {
     id: String(row.id ?? ''),
+    org_id: typeof row.org_id === 'string' ? row.org_id : null,
+    team_id: typeof row.team_id === 'string' ? row.team_id : null,
     name: String(row.name ?? ''),
     description: typeof row.description === 'string' ? row.description : null,
     category_id: String(row.category_id ?? ''),
@@ -289,6 +312,8 @@ function mapChannelRow(row: Record<string, unknown>): ChatChannelRecord {
 function mapMessageRow(row: Record<string, unknown>): ChatMessageRecord {
   return {
     id: String(row.id ?? ''),
+    org_id: typeof row.org_id === 'string' ? row.org_id : null,
+    team_id: typeof row.team_id === 'string' ? row.team_id : null,
     channel_id: String(row.channel_id ?? ''),
     thread_id: typeof row.thread_id === 'string' ? row.thread_id : null,
     sender: String(row.sender ?? 'assistant'),
@@ -307,6 +332,8 @@ function mapMessageRow(row: Record<string, unknown>): ChatMessageRecord {
 function mapThreadRow(row: Record<string, unknown>): ChatThreadRecord {
   return {
     id: String(row.id ?? ''),
+    org_id: typeof row.org_id === 'string' ? row.org_id : null,
+    team_id: typeof row.team_id === 'string' ? row.team_id : null,
     channel_id: String(row.channel_id ?? ''),
     parent_message_id: String(row.parent_message_id ?? ''),
     title: String(row.title ?? 'Thread'),
@@ -333,8 +360,8 @@ export function createChatRepository(): ChatRepository {
   const getChannelStmt = db.prepare('SELECT * FROM chat_channels WHERE id = ?');
   const getChannelByNameStmt = db.prepare('SELECT * FROM chat_channels WHERE lower(name) = lower(?)');
   const createChannelStmt = db.prepare(`
-    INSERT INTO chat_channels (id, name, description, category_id, "order", agents, unread_count, last_message_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 0, NULL, CURRENT_TIMESTAMP)
+    INSERT INTO chat_channels (id, name, description, category_id, "order", agents, unread_count, last_message_at, org_id, team_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, CURRENT_TIMESTAMP)
   `);
   const deleteChannelStmt = db.prepare('DELETE FROM chat_channels WHERE id = ?');
   const markChannelReadStmt = db.prepare('UPDATE chat_channels SET unread_count = 0 WHERE id = ?');
@@ -355,8 +382,8 @@ export function createChatRepository(): ChatRepository {
   const getMessageStmt = db.prepare('SELECT * FROM chat_messages WHERE id = ?');
   const createMessageStmt = db.prepare(`
     INSERT INTO chat_messages (
-      id, channel_id, thread_id, sender, sender_emoji, content, model, is_local, status, timestamp, created_at, updated_at, reply_to
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+      id, channel_id, thread_id, sender, sender_emoji, content, model, is_local, status, timestamp, created_at, updated_at, reply_to, org_id, team_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?)
   `);
   const updateMessageStatusStmt = db.prepare('UPDATE chat_messages SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
 
@@ -364,8 +391,8 @@ export function createChatRepository(): ChatRepository {
   const getThreadStmt = db.prepare('SELECT * FROM chat_threads WHERE id = ?');
   const getThreadByParentStmt = db.prepare('SELECT * FROM chat_threads WHERE parent_message_id = ?');
   const createThreadStmt = db.prepare(`
-    INSERT INTO chat_threads (id, channel_id, parent_message_id, title, message_count, last_message_at, created_at)
-    VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    INSERT INTO chat_threads (id, channel_id, parent_message_id, title, message_count, last_message_at, org_id, team_id, created_at)
+    VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP)
   `);
   const incrementThreadStmt = db.prepare('UPDATE chat_threads SET message_count = message_count + 1, last_message_at = ? WHERE id = ?');
   const updateThreadObjectRefsStmt = db.prepare('UPDATE chat_threads SET linked_object_refs_json = ? WHERE id = ?');
@@ -418,7 +445,9 @@ export function createChatRepository(): ChatRepository {
         input.description?.trim() || null,
         input.category_id,
         Number(input.order ?? 0),
-        JSON.stringify(parseAgents(input.agents ?? []))
+        JSON.stringify(parseAgents(input.agents ?? [])),
+        input.org_id?.trim() || null,
+        input.team_id?.trim() || null
       );
       const row = getChannelStmt.get(id) as Record<string, unknown> | undefined;
       if (!row) throw new Error('Failed to create channel');
@@ -523,7 +552,9 @@ export function createChatRepository(): ChatRepository {
         input.is_local ? 1 : 0,
         input.status?.trim() || 'sent',
         timestamp,
-        input.reply_to?.trim() || null
+        input.reply_to?.trim() || null,
+        input.org_id?.trim() || null,
+        input.team_id?.trim() || null
       );
 
       const row = getMessageStmt.get(id) as Record<string, unknown> | undefined;
@@ -558,7 +589,7 @@ export function createChatRepository(): ChatRepository {
     createThread: (input) => {
       const id = input.id?.trim() || randomUUID();
       const title = input.title.trim() || 'Thread';
-      createThreadStmt.run(id, input.channel_id, input.parent_message_id, title);
+      createThreadStmt.run(id, input.channel_id, input.parent_message_id, title, input.org_id?.trim() || null, input.team_id?.trim() || null);
       const row = getThreadStmt.get(id) as Record<string, unknown> | undefined;
       if (!row) throw new Error('Failed to create thread');
       return mapThreadRow(row);

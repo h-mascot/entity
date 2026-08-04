@@ -1,6 +1,6 @@
 # RA-FU 930–934 Luna-Review R2 Repair Plan (2026-08-04)
 
-Branch: `runnerqa/ra-fu-930-934-20260804` (HEAD `13ab8bb`). Production forbidden.
+Branch: `runnerqa/ra-fu-930-934-20260804` (production forbidden).
 Gate: `cd packages/server && npm run build && npx vitest run` (Node 22) + `npm --prefix packages/app run build`.
 Review source: `clawd/output/entity/ra-fu-runnerqa-20260804/reviews/luna-review-r2.txt` (4 blockers + matrix gaps).
 
