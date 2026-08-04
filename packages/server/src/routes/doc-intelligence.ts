@@ -10,6 +10,8 @@ const MAX_DOC_CHARS = 24_000;
 const MAX_QUESTION_CHARS = 2_000;
 const MAX_NOTE_CHARS = 4_000;
 const MAX_NOTES_PER_DOC = 200;
+const MAX_SCHEMA_FIELDS = 20;
+const MAX_SCHEMA_FIELD_LEN = 64;
 
 export interface StoredDocIntelligenceSettings {
   enabled?: boolean;
@@ -107,9 +109,19 @@ export interface DocAskInput {
   content: string;
   path?: string;
   filename?: string;
+  /** Caller-supplied required field names; the answer must address each by exact name. */
+  schema?: string[];
 }
 
-export function validateDocAskInput(body: unknown): { ok: true; input: DocAskInput } | { ok: false; error: string } {
+export type DocAskValidation =
+  | { ok: true; input: DocAskInput }
+  | { ok: false; error: string; code?: string };
+
+export type DocSchemaExtractionDecision =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; missingFields: string[]; reason: string };
+
+export function validateDocAskInput(body: unknown): DocAskValidation {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return { ok: false, error: 'Request body must be a JSON object.' };
   }
@@ -128,6 +140,12 @@ export function validateDocAskInput(body: unknown): { ok: true; input: DocAskInp
     return { ok: false, error: 'content is required.' };
   }
 
+  // THE-934: fail-closed schema validation BEFORE any model call.
+  const schemaResult = validateDocSchemaShape(record.schema);
+  if (!schemaResult.ok) {
+    return { ok: false, error: schemaResult.error, code: 'schema_invalid' };
+  }
+
   return {
     ok: true,
     input: {
@@ -135,12 +153,122 @@ export function validateDocAskInput(body: unknown): { ok: true; input: DocAskInp
       content: content.slice(0, MAX_DOC_CHARS),
       path: typeof record.path === 'string' ? record.path.slice(0, 500) : undefined,
       filename: typeof record.filename === 'string' ? record.filename.slice(0, 200) : undefined,
+      schema: schemaResult.fields,
     },
   };
 }
 
+function validateDocSchemaShape(
+  value: unknown,
+): { ok: true; fields: string[] | undefined } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, fields: undefined };
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false, error: 'schema must be an array of field name strings.' };
+  }
+  if (value.length === 0) {
+    return { ok: false, error: 'schema must contain at least one field name.' };
+  }
+  if (value.length > MAX_SCHEMA_FIELDS) {
+    return { ok: false, error: `schema must contain at most ${MAX_SCHEMA_FIELDS} fields.` };
+  }
+
+  const seen = new Set<string>();
+  const fields: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') {
+      return { ok: false, error: 'schema field names must be strings.' };
+    }
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      return { ok: false, error: 'schema field names must not be empty.' };
+    }
+    if (trimmed.length > MAX_SCHEMA_FIELD_LEN) {
+      return { ok: false, error: `schema field names must be at most ${MAX_SCHEMA_FIELD_LEN} characters.` };
+    }
+    if (seen.has(trimmed)) {
+      return { ok: false, error: `schema field names must be unique (duplicate: "${trimmed}").` };
+    }
+    seen.add(trimmed);
+    fields.push(trimmed);
+  }
+  return { ok: true, fields };
+}
+
+/**
+ * THE-934: exact-match post-validation of a schema extraction.
+ *
+ * Requires the model answer to be a JSON object whose own-properties include
+ * every required field name exactly. A required `Owner` is NOT satisfied by a
+ * `Homeowner` key (no substring/prefix/case folding). Null and non-scalar
+ * values count as missing.
+ */
+export function validateDocSchemaExtraction(
+  answer: string,
+  requiredFields: string[] | undefined,
+): DocSchemaExtractionDecision {
+  if (!requiredFields || requiredFields.length === 0) {
+    return { ok: true, data: {} };
+  }
+
+  const data = tryParseJsonObject(answer);
+  if (!data) {
+    return {
+      ok: false,
+      missingFields: requiredFields.slice(),
+      reason: 'Model answer was not a JSON object keyed by the requested schema fields.',
+    };
+  }
+
+  const missing: string[] = [];
+  for (const field of requiredFields) {
+    const value = data[field];
+    if (value === undefined || value === null || typeof value === 'object') {
+      missing.push(field);
+    }
+  }
+
+  if (missing.length > 0) {
+    return { ok: false, missingFields: missing, reason: 'Required schema fields are missing.' };
+  }
+  return { ok: true, data };
+}
+
+function tryParseJsonObject(text: string): Record<string, unknown> | null {
+  if (typeof text !== 'string') {
+    return null;
+  }
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+  // Tolerate ```json fences and leading prose, but require a top-level object.
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start < 0 || end <= start) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed.slice(start, end + 1)) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function buildDocAskPrompt(input: DocAskInput): { system: string; user: string } {
   const docLabel = input.filename || input.path || 'the document';
+  const schemaLines = Array.isArray(input.schema) && input.schema.length > 0
+    ? [
+        '',
+        'Answer as a single JSON object keyed EXACTLY by these field names (case-sensitive, no aliases):',
+        input.schema.map((name) => `- "${name}"`).join('\n'),
+        'If a field is not present in the document, set its value to an empty string. Do not rename keys.',
+      ].join('\n')
+    : '';
   return {
     system: [
       'You are Entity Doc Intelligence, a focused assistant that answers questions about a single document.',
@@ -155,7 +283,8 @@ export function buildDocAskPrompt(input: DocAskInput): { system: string; user: s
       '--- DOCUMENT CONTENT END ---',
       '',
       `Question: ${input.question}`,
-    ].join('\n'),
+      schemaLines,
+    ].filter(Boolean).join('\n'),
   };
 }
 
@@ -312,7 +441,8 @@ export function registerDocIntelligenceRoutes(
 
     const validated = validateDocAskInput(req.body);
     if (!validated.ok) {
-      res.status(400).json({ error: validated.error });
+      const status = validated.code === 'schema_invalid' ? 400 : 400;
+      res.status(status).json({ error: validated.error, code: validated.code ?? 'invalid_input' });
       return;
     }
 
@@ -324,6 +454,21 @@ export function registerDocIntelligenceRoutes(
           code: 'no-answer',
         });
         return;
+      }
+
+      // THE-934: exact-match schema validation AFTER the model call. Fail closed
+      // (no silent partial extraction) but never leak model internals beyond the
+      // caller-supplied field names.
+      if (validated.input.schema && validated.input.schema.length > 0) {
+        const extraction = validateDocSchemaExtraction(answer, validated.input.schema);
+        if (!extraction.ok) {
+          res.status(422).json({
+            error: 'The model answer did not satisfy the required document schema.',
+            code: 'schema_incomplete',
+            missingFields: extraction.missingFields,
+          });
+          return;
+        }
       }
 
       res.json({

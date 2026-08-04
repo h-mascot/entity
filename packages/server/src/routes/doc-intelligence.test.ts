@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildDocAskPrompt, buildDocNotesKey, validateDocAskInput } from './doc-intelligence';
+import {
+  buildDocAskPrompt,
+  buildDocNotesKey,
+  validateDocAskInput,
+  validateDocSchemaExtraction,
+} from './doc-intelligence';
 
 describe('buildDocNotesKey', () => {
   it('builds keys scoped by source and path', () => {
@@ -79,5 +84,71 @@ describe('buildDocAskPrompt', () => {
     expect(prompt.user).toContain('Body text');
     expect(prompt.user).toContain('Question: What changed?');
     expect(prompt.system).toContain('If the answer is not in the document, say so plainly.');
+  });
+
+  it('injects a schema-extraction instruction keyed by exact field names when schema is provided', () => {
+    const prompt = buildDocAskPrompt({
+      question: 'q',
+      content: 'c',
+      schema: ['Owner', 'Address'],
+    });
+    expect(prompt.user).toContain('Owner');
+    expect(prompt.user).toContain('Address');
+    expect(prompt.user.toLowerCase()).toContain('json');
+  });
+});
+
+describe('validateDocAskInput — schema (THE-934)', () => {
+  it('accepts a well-formed schema and preserves field order/case', () => {
+    const result = validateDocAskInput({ question: 'q', content: 'c', schema: ['Owner', 'Homeowner'] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.input.schema).toEqual(['Owner', 'Homeowner']);
+    }
+  });
+
+  it('rejects a non-array schema with a structured schema_invalid code before any model call', () => {
+    const result = validateDocAskInput({ question: 'q', content: 'c', schema: 'Owner' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('schema_invalid');
+    }
+  });
+
+  it('rejects duplicate, empty, and non-string field names', () => {
+    expect(validateDocAskInput({ question: 'q', content: 'c', schema: ['Owner', 'Owner'] }).ok).toBe(false);
+    expect(validateDocAskInput({ question: 'q', content: 'c', schema: ['Owner', '   '] }).ok).toBe(false);
+    expect(validateDocAskInput({ question: 'q', content: 'c', schema: ['Owner', 42] }).ok).toBe(false);
+  });
+
+  it('rejects oversized field names and too many fields (bounded state)', () => {
+    expect(validateDocAskInput({ question: 'q', content: 'c', schema: ['x'.repeat(65)] }).ok).toBe(false);
+    const tooMany = Array.from({ length: 25 }, (_, i) => `field${i}`);
+    expect(validateDocAskInput({ question: 'q', content: 'c', schema: tooMany }).ok).toBe(false);
+  });
+});
+
+describe('validateDocSchemaExtraction — exact field match (THE-934)', () => {
+  it('passes when every required field is present as an exact own-property', () => {
+    const decision = validateDocSchemaExtraction('{"Owner": "Alice", "Address": "123 St"}', ['Owner', 'Address']);
+    expect(decision.ok).toBe(true);
+  });
+
+  it('fails when a required Owner is answered only as Homeowner (no substring/prefix match)', () => {
+    const decision = validateDocSchemaExtraction('{"Homeowner": "Alice"}', ['Owner']);
+    expect(decision.ok).toBe(false);
+    if (!decision.ok) {
+      expect(decision.missingFields).toEqual(['Owner']);
+    }
+  });
+
+  it('fails when the model returns non-JSON free text', () => {
+    const decision = validateDocSchemaExtraction('The owner is Alice.', ['Owner']);
+    expect(decision.ok).toBe(false);
+  });
+
+  it('does not treat null or nested objects as present scalar fields', () => {
+    const decision = validateDocSchemaExtraction('{"Owner": null}', ['Owner']);
+    expect(decision.ok).toBe(false);
   });
 });

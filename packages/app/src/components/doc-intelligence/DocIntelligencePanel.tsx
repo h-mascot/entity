@@ -7,7 +7,7 @@ import type {
   DocumentSuggestionUiRecord,
 } from '../../types/collaboration';
 import type { EditorSelectionSnapshot } from '../SuggestionPanel';
-import { buildApiCandidates, requestJsonWithFallback } from '../../lib/http';
+import { buildApiCandidates, HttpRequestError, requestJsonWithFallback } from '../../lib/http';
 import {
   docFilenameStem,
   filterRelatedDocResults,
@@ -494,7 +494,27 @@ export default function DocIntelligencePanel({
         }
       })
       .catch((error) => {
-        setAskError(error instanceof Error ? error.message : 'Ask request failed.');
+        // THE-934: surface server validation as generic copy without leaking
+        // model internals. Schema errors carry caller-supplied field names only.
+        if (error instanceof HttpRequestError) {
+          const payload = (error.payload ?? null) as { code?: string; missingFields?: string[]; error?: string } | null;
+          if (payload?.code === 'schema_invalid') {
+            setAskError('The document schema is malformed. Correct the requested fields and try again.');
+          } else if (payload?.code === 'schema_incomplete') {
+            const missing = Array.isArray(payload.missingFields) && payload.missingFields.length > 0
+              ? payload.missingFields.join(', ')
+              : 'some fields';
+            setAskError(`The answer did not cover every requested field (${missing}). Refine the document or fields.`);
+          } else if (payload?.code === 'no-model') {
+            setAskError('No model is configured for Doc Intelligence.');
+          } else if (payload?.error) {
+            setAskError(payload.error);
+          } else {
+            setAskError(error instanceof Error ? error.message : 'Ask request failed.');
+          }
+        } else {
+          setAskError(error instanceof Error ? error.message : 'Ask request failed.');
+        }
       })
       .finally(() => {
         setAskLoading(false);
