@@ -14,6 +14,7 @@
  * in docs/plans/2026-08-04-curacel-pilot-integration.md.
  */
 
+import Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
@@ -232,5 +233,261 @@ describe('Curacel pilot acceptance — workflow + lease + history (targets #3, #
     const crossOrg = beta.claimTaskForTaskMaster(task.id, { claim_request_id: 'req-evil' });
     expect(crossOrg.status).toBe('not_found');
     expect(crossOrg.claimed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Target #3: linked project -> task -> evidence (file/proof) -> PR workflow.
+// Proves the canonical current-main evidence-artifact facility ties a proof
+// file + content hash to a task, links a pull-request object reference, and
+// stays org-scoped (cross-org evidence never leaks between tenant listings).
+// ---------------------------------------------------------------------------
+
+describe('Curacel pilot acceptance — linked task/file/evidence/PR workflow (target #3)', () => {
+  it('binds an evidence artifact (file + content hash) to a task, links a PR, and stays org-scoped', async () => {
+    const db = await loadDbModule();
+    const workspace = db.createWorkspaceScopeRepository();
+    workspace.createOrg({ id: 'org-acme', name: 'Acme' });
+    workspace.createOrg({ id: 'org-beta', name: 'Beta' });
+
+    const acmeTasks = db.createOrgScopedTaskRepository({ orgId: 'org-acme' });
+    const betaTasks = db.createOrgScopedTaskRepository({ orgId: 'org-beta' });
+    const claimTask = acmeTasks.createTask({
+      name: 'Settle claim CL-0001',
+      assignee: 'agent-atlas',
+      column: 'review',
+      review_required: true,
+    });
+    const betaTask = betaTasks.createTask({ name: 'Beta work', assignee: 'agent-beta' });
+
+    const evidence = db.createEvidenceArtifactRepository();
+
+    // Canonical pilot artifact: a proof file at a stable docs path plus a
+    // content hash (the integrity anchor the reviewer compares against), tied
+    // to the originating task.
+    const acmeArtifact = evidence.createArtifact({
+      org_id: 'org-acme',
+      origin_task_id: claimTask.id,
+      artifact_kind: 'review_packet',
+      mutability_policy: 'editable_versioned',
+      title: 'Claim CL-0001 review packet',
+      stable_path: 'output/claims/CL-0001.md',
+      content_hash: 'sha256:abc123',
+      integrity_state: 'valid',
+      availability_state: 'available',
+    });
+    expect(acmeArtifact.origin_task_id).toBe(claimTask.id);
+    expect(acmeArtifact.stable_path).toBe('output/claims/CL-0001.md');
+    expect(acmeArtifact.content_hash).toBe('sha256:abc123');
+
+    // Link the artifact to the pull request that ships the settlement
+    // (ObjectRef accepts an arbitrary object_type, e.g. a pull request).
+    const linked = evidence.linkArtifactObject(acmeArtifact.id, {
+      object_type: 'pull_request',
+      object_id: '42',
+      link_role: 'proof',
+    });
+    expect(linked?.linked_object_refs).toContainEqual({
+      object_type: 'pull_request',
+      object_id: '42',
+      link_role: 'proof',
+    });
+
+    // A separate org's artifact is tied to its own task + org.
+    const betaArtifact = evidence.createArtifact({
+      org_id: 'org-beta',
+      origin_task_id: betaTask.id,
+      artifact_kind: 'review_packet',
+      mutability_policy: 'editable_versioned',
+      title: 'Beta proof',
+      stable_path: 'output/beta.md',
+      content_hash: 'sha256:zzz',
+    });
+
+    // The reviewer / audit surface reads a task's evidence by origin task.
+    expect(evidence.listArtifactsByOriginTask(claimTask.id).map((a) => a.id)).toContain(acmeArtifact.id);
+
+    // Tenant isolation: the org-scoped listing never leaks across orgs.
+    const acmeList = evidence.listArtifacts({ org_id: 'org-acme' }).map((a) => a.id);
+    const betaList = evidence.listArtifacts({ org_id: 'org-beta' }).map((a) => a.id);
+    expect(acmeList).toContain(acmeArtifact.id);
+    expect(acmeList).not.toContain(betaArtifact.id);
+    expect(betaList).toContain(betaArtifact.id);
+    expect(betaList).not.toContain(acmeArtifact.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Target #4: safe retry / resume via compare-and-swap. The handoff lifecycle
+// is guarded by an optimistic-concurrency version: a stale transition is
+// rejected, the caller reloads, and the retry succeeds against the new
+// version — proving failures are resumable rather than lost or clobbering.
+// ---------------------------------------------------------------------------
+
+describe('Curacel pilot acceptance — safe retry/resume via CAS (target #4)', () => {
+  it('rejects a stale handoff transition and safely resumes after reload', async () => {
+    const db = await loadDbModule();
+    const workspace = db.createWorkspaceScopeRepository();
+    workspace.createOrg({ id: 'org-acme', name: 'Acme' });
+    const tasks = db.createOrgScopedTaskRepository({ orgId: 'org-acme' });
+    const a = tasks.createTask({ name: 'Source', assignee: 'agent-a' });
+    const b = tasks.createTask({ name: 'Target', assignee: 'unassigned' });
+    const handoffRepo = db.createTaskHandoffRepository();
+    const handoff = handoffRepo.create({
+      sourceTaskId: a.id,
+      targetTaskId: b.id,
+      targetAgentId: 'agent-b',
+      actorPrincipalId: 'operator-1',
+    });
+    expect(handoff.version).toBe(1);
+
+    // A concurrent transition bumps the live version to 2.
+    handoffRepo.transition({
+      orgId: 'org-acme',
+      handoffId: handoff.id,
+      status: 'accepted',
+      actorPrincipalId: 'approver-1',
+      expectedVersion: 1,
+    });
+
+    // A stale retry (version 1) is rejected — the caller must reload, never
+    // clobber a transition it did not observe.
+    expect(() =>
+      handoffRepo.transition({
+        orgId: 'org-acme',
+        handoffId: handoff.id,
+        status: 'completed',
+        actorPrincipalId: 'approver-1',
+        expectedVersion: 1,
+      }),
+    ).toThrow(/changed/);
+
+    // Safe resume: reload observes version 2, and the retry completes cleanly.
+    const reloaded = handoffRepo.get('org-acme', handoff.id);
+    expect(reloaded?.version).toBe(2);
+    const completed = handoffRepo.transition({
+      orgId: 'org-acme',
+      handoffId: handoff.id,
+      status: 'completed',
+      actorPrincipalId: 'approver-1',
+      expectedVersion: reloaded!.version,
+    });
+    expect(completed.status).toBe('completed');
+    expect(completed.version).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Target #7: backup/restore durability contract. Proves the SQLite data
+// layer's online backup + restore round-trips every pilot table (orgs, tasks,
+// task-master lease, task_handoffs, evidence_artifacts) and the handoff
+// schema/indexes — the recoverability primitive the pilot's backup/restore
+// requirement rests on, exercised against a throwaway temp DB only.
+// ---------------------------------------------------------------------------
+
+describe('Curacel pilot acceptance — backup/restore durability contract (target #7)', () => {
+  it('online-backs-up the live DB and restores every pilot table intact', async () => {
+    const db = await loadDbModule();
+    const { getEntityDatabase } = await import('./entity-db');
+
+    // Populate the full pilot data model: org -> project/task -> lease ->
+    // handoff -> evidence (file + PR link).
+    const workspace = db.createWorkspaceScopeRepository();
+    workspace.createOrg({ id: 'org-acme', name: 'Acme' });
+    workspace.createTeam({ orgId: 'org-acme' }, { id: 'team-claims', name: 'Claims' });
+    const project = workspace.createProject(
+      { orgId: 'org-acme', teamId: 'team-claims' },
+      { name: 'Claims Control Room' },
+    );
+    const tasks = db.createOrgScopedTaskRepository({ orgId: 'org-acme', teamId: 'team-claims' });
+    const task = tasks.createTask({
+      name: 'Settle CL-0001',
+      project_id: project.id,
+      assignee: 'agent-1',
+    });
+    const backlog = tasks.createTask({
+      name: 'Auto CL-0002',
+      project_id: project.id,
+      taskmaster_drivable: true,
+      assignee: 'unassigned',
+    });
+    tasks.claimTaskForTaskMaster(backlog.id, {
+      taskmaster_principal_id: 'tm-1',
+      claim_request_id: 'r1',
+    });
+
+    const handoffRepo = db.createTaskHandoffRepository();
+    handoffRepo.create({
+      sourceTaskId: task.id,
+      targetTaskId: backlog.id,
+      targetAgentId: 'agent-2',
+      actorPrincipalId: 'operator-1',
+    });
+
+    const evidence = db.createEvidenceArtifactRepository();
+    const artifact = evidence.createArtifact({
+      org_id: 'org-acme',
+      origin_task_id: task.id,
+      artifact_kind: 'review_packet',
+      mutability_policy: 'editable_versioned',
+      title: 'Proof',
+      stable_path: 'output/proof.md',
+      content_hash: 'sha256:h',
+    });
+    evidence.linkArtifactObject(artifact.id, {
+      object_type: 'pull_request',
+      object_id: '42',
+      link_role: 'proof',
+    });
+
+    // Canonical online backup of the live (WAL-mode) database.
+    const source = getEntityDatabase();
+    const backupPath = path.join(
+      os.tmpdir(),
+      `curacel-backup-${process.pid}-${randomUUID()}.sqlite`,
+    );
+    cleanupDbPaths.push(backupPath);
+    await source.backup(backupPath);
+    expect(fs.existsSync(backupPath)).toBe(true);
+    expect(fs.statSync(backupPath).size).toBeGreaterThan(0);
+
+    // Restore: open the backup read-only and assert every pilot table + the
+    // lease ownership + the handoff index round-tripped.
+    const restored = new Database(backupPath, { readonly: true });
+    try {
+      expect(restored.prepare('SELECT count(*) AS n FROM orgs').get()).toMatchObject({ n: expect.any(Number) });
+      expect(restored.prepare('SELECT id FROM orgs WHERE id = ?').get('org-acme')).toMatchObject({ id: 'org-acme' });
+      expect(restored.prepare('SELECT count(*) AS n FROM tasks').get()).toMatchObject({ n: 2 });
+      const leaseRow = restored
+        .prepare('SELECT executor_principal_id, assignment_state FROM tasks WHERE id = ?')
+        .get(backlog.id) as { executor_principal_id: string; assignment_state: string };
+      expect(leaseRow.executor_principal_id).toBe('tm-1');
+      expect(leaseRow.assignment_state).toBe('claimed');
+      expect(restored.prepare('SELECT count(*) AS n FROM task_handoffs').get()).toMatchObject({ n: 1 });
+      const evidenceRow = restored
+        .prepare('SELECT origin_task_id, content_hash, linked_object_refs_json FROM evidence_artifacts WHERE id = ?')
+        .get(artifact.id) as {
+          origin_task_id: number;
+          content_hash: string;
+          linked_object_refs_json: string;
+        };
+      expect(evidenceRow.origin_task_id).toBe(task.id);
+      expect(evidenceRow.content_hash).toBe('sha256:h');
+      expect(JSON.parse(evidenceRow.linked_object_refs_json)).toContainEqual({
+        object_type: 'pull_request',
+        object_id: '42',
+        link_role: 'proof',
+      });
+      // Schema integrity carries over to the restored copy.
+      expect(
+        restored
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_task_handoffs_source'",
+          )
+          .get(),
+      ).toMatchObject({ name: 'idx_task_handoffs_source' });
+    } finally {
+      restored.close();
+    }
   });
 });

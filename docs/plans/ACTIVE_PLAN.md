@@ -42,7 +42,8 @@ Preserve and independently validate the two-commit Curacel checkpoint, close onl
 | Time | Step | Status | Notes |
 |------|------|--------|-------|
 | 20:30 BST | Initialization | ✅ | Recorded routes, base/head, budgets, scope, and production prohibition. |
-| 20:35 BST | Recon | ⏳ | Historical plans and current two-commit diff under independent inspection. |
+| 20:35 BST | Recon | ✅ | Historical plans and current two-commit diff under independent inspection. |
+| 20:45 BST | Worker 01-initial | ✅ | citadel/glm5.2. Closed deterministic-proof gaps (#3/#4/#7); verified auth/tenant boundary preserved; gates green. Candidate committed. |
 
 ## Initial criterion matrix (recon, subject to worker verification)
 | Criterion | Status | Initial evidence / actionable gap |
@@ -54,6 +55,14 @@ Preserve and independently validate the two-commit Curacel checkpoint, close onl
 | 5 Provider health/chat controls/handoffs/onboarding/operations | PARTIAL | Handoffs ported. Historical onboarding/provider/chat/operations capabilities are absent from current diff. |
 | 6 Reproducible release/sandbox compatibility | PARTIAL | Release endpoint contract tested; current exact candidate not yet gated/deployed. |
 | 7 Deterministic pilot acceptance suite | PARTIAL | New suite exists but explicitly describes remaining capabilities and lacks backup/restore proof. |
+
+## Worker validation (01-initial — citadel/glm5.2, bounded initial generation)
+
+See `docs/plans/2026-08-04-curacel-pilot-integration.md` for the full worker validation section (auth/tenant-boundary scrutiny, actionable gaps closed, verified criterion matrix, deferred items with rationale, and gate counts). Summary: closed deterministic-proof gaps #3 (linked task/file/evidence/PR workflow), #4 (CAS safe-retry/resume), #7 (backup/restore durability) with additive test-only proof in `packages/db/src/curacel-pilot-acceptance.test.ts`; verified PR #71/#72 server-trusted principal and the org-keyed tenant boundary are preserved and not regressed; no production/server/db source code changed.
+
+Gates (Node 22, `/Users/enterprise/.hermes/node/bin`): db 53/53; server build clean; server 1201/1201 (163 files).
+
+Deferred (exact rationale in main plan): #1 customer membership/session auth port; #2 remaining object-type tenant negatives; #5 historical onboarding/provider-health/chat/operations (port-now = NO at this stage). Worker does NOT claim full pilot PASS.
 
 ## Files Touched
 - `docs/plans/2026-08-04-curacel-pilot-integration.md` — governed durable plan and matrix
