@@ -466,7 +466,7 @@ test("source fingerprint changes for product source but ignores generated wiki",
 
 test("generated wiki verification rejects stale source fingerprints", async () => {
   const root = await fixture();
-  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-5.5", sourceSha: "abc123" });
+  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-5.5" });
   await verifyGeneratedWiki(root);
   await writeFile(path.join(root, "packages", "server", "src", "feature.ts"), "export const feature = false;\n");
   await assert.rejects(() => verifyGeneratedWiki(root), /stale/i);
@@ -483,12 +483,25 @@ test("generation metadata has no unverifiable source commit claim", async () => 
   await assert.rejects(() => verifyGeneratedWiki(root), /schema version/i);
 });
 
+test("generation removes OpenWiki gitHead while preserving non-commit update metadata", async () => {
+  const root = await fixture();
+  const lastUpdatePath = path.join(root, "openwiki", ".last-update.json");
+  await writeFile(lastUpdatePath, `${JSON.stringify({ lastUpdated: "2026-08-03T00:00:00.000Z", gitHead: "abc123", mode: "update" }, null, 2)}\n`);
+
+  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-5.5" });
+
+  const lastUpdate = JSON.parse(await readFile(lastUpdatePath, "utf8"));
+  assert.equal(Object.hasOwn(lastUpdate, "gitHead"), false);
+  assert.equal(lastUpdate.lastUpdated, "2026-08-03T00:00:00.000Z");
+  assert.equal(lastUpdate.mode, "update");
+});
+
 test("generation metadata is stable when source and model are unchanged", async () => {
   const root = await fixture();
-  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-5.5", sourceSha: "first" });
+  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-5.5" });
   const first = await readFile(path.join(root, "openwiki", ".entity-openwiki.json"), "utf8");
   await new Promise((resolve) => setTimeout(resolve, 5));
-  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-5.5", sourceSha: "docs-only-commit" });
+  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-5.5" });
   const second = await readFile(path.join(root, "openwiki", ".entity-openwiki.json"), "utf8");
   assert.equal(second, first);
 });
@@ -496,7 +509,7 @@ test("generation metadata is stable when source and model are unchanged", async 
 
 test("generated wiki verification rejects an uninitialized index skeleton", async () => {
   const root = await fixture({ withConcept: false });
-  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-4.1", sourceSha: "abc123" });
+  await writeGenerationMetadata(root, { provider: "copilot", model: "gpt-4.1" });
   await assert.rejects(() => verifyGeneratedWiki(root), /concept/i);
 });
 

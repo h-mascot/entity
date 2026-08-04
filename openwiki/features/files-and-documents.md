@@ -83,6 +83,7 @@ The broader [runtime and data architecture](../architecture/runtime-and-data.md)
 | External Google reference lacks auth/scope or is deleted/restricted | Preview and link-out are reduced or hidden; external documents remain intentionally read-only |
 | Read-only source in the convert dialog | Document conversion is blocked and the UI explains that the source is read-only |
 | Binary source or unsupported conversion target | The backend rejects the request rather than creating a derivative document |
+| Writable local source opened in the convert dialog | The UI can preview or create a new derivative document with preserved provenance |
 
 Admin stores/configures Documents API access, but credentials are scoped bearer/service credentials and must not be embedded in documentation. The [security page](../operations/security-and-release.md) explains why object-permission enforcement is route-specific.
 
@@ -106,3 +107,4 @@ Start with the owning surface rather than `App.tsx` unless navigation or shared 
 - tests under `packages/server/src/fs/` and `packages/server/src/editor/`
 
 Build the app and run server Vitest. Browser-check search, source switching, open/close/restore, save behavior, task return navigation, restricted results, and the responsive layout; utility tests do not cover the full cross-package workflow.
+ity tests do not cover the full cross-package workflow.

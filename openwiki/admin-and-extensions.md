@@ -36,11 +36,9 @@ The main source seams are:
 
 The Admin surface now includes a **Users & roles** section labeled **Principals and scoped grants**. It lets operators list principals, create a principal, disable a principal, and add or revoke grants from that principal. The UI exposes the principal types `human`, `agent`, and `service_account`, plus the grant roles `viewer`, `contributor`, `manager`, and `admin`.
 
-The first principal is special: when the store is empty, bootstrap access is allowed and creating that first principal auto-attaches an `admin` grant so the workspace can be initialized. After that bootstrap window closes, admin routes require a stored principal with an active admin grant. Disabled principals are rejected, and non-admin principals cannot reach the admin API.
+The first principal is special: when the store is empty, bootstrap access is allowed and creating that first principal auto-attaches an `admin` grant so the workspace can be initialized. After that bootstrap window closes, admin routes require a stored principal with an active admin grant. Disabled principals are rejected, and non-admin principals cannot reach the admin API. The backend guard in `packages/server/src/middleware/admin-auth.ts` resolves stored principals, requires an active admin grant, and only allows the localhost header compatibility fallback when API auth is off and the admin settings keep compatibility enabled.
 
-There is also a deliberate local compatibility path for legacy setups. On localhost, when API auth is off and compatibility is enabled, header-based access such as `x-entity-role: admin` can still open admin functionality. That path is intentionally retained for local and migration use, but it is not the primary authorization model.
-
-Admin settings themselves are now stored through a dedicated settings store and routed through the admin config endpoints, so save/reset behavior is persisted rather than purely derived from the UI session.
+Admin settings themselves are now stored through a dedicated settings store and routed through the admin config endpoints, so save/reset behavior is persisted rather than purely derived from the UI session. `packages/app/src/components/settings/AdminSettingsForm.tsx` loads a section, edits the draft locally, and saves or resets through `/api/admin/settings/:section`; `packages/app/src/components/settings/UsersAndRolesSettings.tsx` manages the principals list, bootstrap admin creation, disable flow, and grant editing through `/api/admin/principals`.
 
 ## File sources and docs settings
 
