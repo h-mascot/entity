@@ -146,7 +146,7 @@ describe('THE-930 — truly bounded state (isolated DB/clock)', () => {
     for (let i = 0; i < 3; i += 1) {
       const r = guard.reserve('g', scope(`cap${i}`), `m${i}`);
       expect(r.suppressed).toBe(false);
-      guard.release('g', scope(`cap${i}`), `m${i}`, { delivered: true, ownerToken: r.ownerToken });
+      guard.release('g', scope(`cap${i}`), `m${i}`, { delivered: true, ownerToken: r.ownerToken! });
       clock += 1;
     }
     // At cap with 3 live-cooldown rows. A 4th reservation must FAIL CLOSED with
@@ -173,7 +173,7 @@ describe('THE-930 — truly bounded state (isolated DB/clock)', () => {
     // Two delivered rows fill the cap; both are within the 10s cooldown window.
     for (let i = 0; i < 2; i += 1) {
       const r = guard.reserve('g', scope(`p${i}`), `m${i}`);
-      guard.release('g', scope(`p${i}`), `m${i}`, { delivered: true, ownerToken: r.ownerToken });
+      guard.release('g', scope(`p${i}`), `m${i}`, { delivered: true, ownerToken: r.ownerToken! });
     }
     // A 3rd distinct scope at capacity with no safely-evictable row fails closed.
     const blocked = guard.reserve('g', scope('p2'), 'm2');
@@ -199,7 +199,7 @@ describe('THE-930 — truly bounded state (isolated DB/clock)', () => {
     // Fill cap, then let cooldowns fully elapse so rows become safely evictable.
     for (let i = 0; i < 2; i += 1) {
       const r = guard.reserve('g', scope(`e${i}`), `m${i}`);
-      guard.release('g', scope(`e${i}`), `m${i}`, { delivered: true, ownerToken: r.ownerToken });
+      guard.release('g', scope(`e${i}`), `m${i}`, { delivered: true, ownerToken: r.ownerToken! });
     }
     clock += 2_000; // cooldown (1s) has elapsed -> rows are stale.
     // New reservation should succeed by evicting a fully-stale row, staying <= cap.

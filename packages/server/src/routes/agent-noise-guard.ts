@@ -70,7 +70,15 @@ export interface AgentNoiseGuardSnapshot {
 export interface NoiseReleaseOptions {
   /** When true, the delivery succeeded and the cooldown window is recorded. */
   delivered?: boolean;
-  ownerToken?: string;
+  /**
+   * THE-930 (R2): the exact owner token returned by the reservation that this
+   * release corresponds to. Required — a release without the matching token is
+   * a no-op. The guard MUST NOT infer "latest owner" from the scope key: a
+   * stale owner who omitted the token (e.g. after its lease expired and another
+   * owner reacquired the same scope) cannot clear the current owner's lease or
+   * write its own cooldown.
+   */
+  ownerToken: string;
 }
 
 export interface AgentNoiseGuard {
@@ -327,7 +335,6 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
     ? new DbReservationBackend(options.db, Math.max(1, Number(options.leaseMs ?? DEFAULT_LEASE_MS) || DEFAULT_LEASE_MS), maxStateEntries)
     : new InMemoryReservationBackend(maxStateEntries);
   let currentCooldown = cooldownMs;
-  const heldTokens = new Map<string, string>();
   const refreshPolicy = (): boolean => {
     if (!options.policy) return true;
     let policy: { cooldownMs: number; mutedAgents: string[] };
@@ -357,16 +364,19 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
       if (!decision.acquired) {
         return { suppressed: true, reason: decision.reason, agent: normalized };
       }
-      if (decision.ownerToken) heldTokens.set(key, decision.ownerToken);
       return { suppressed: false, agent: normalized, ownerToken: decision.ownerToken };
     },
 
     release(agent, scopeArg, content, options) {
-      const key = reserveKey(normalizeAgent(agent), scopeArg, content);
-      const ownerToken = options?.ownerToken ?? heldTokens.get(key);
+      // THE-930 (R2): fail closed. A release requires the exact owner token
+      // returned by the corresponding reservation. There is deliberately no
+      // "latest held token" fallback: a stale owner whose lease expired (and was
+      // reacquired by another owner) must not be able to clear the current
+      // owner's lease or record its own cooldown by omitting the token.
+      const ownerToken = options?.ownerToken;
       if (!ownerToken) return;
+      const key = reserveKey(normalizeAgent(agent), scopeArg, content);
       backend.release(key, ownerToken, now(), Boolean(options?.delivered));
-      if (heldTokens.get(key) === ownerToken) heldTokens.delete(key);
     },
 
     isMuted(agent) {

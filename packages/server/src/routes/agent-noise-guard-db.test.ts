@@ -69,10 +69,11 @@ describe('AgentNoiseGuard — DB-backed atomic reservation (THE-930 matrix gap)'
     const guard1 = createAgentNoiseGuard({ db: db1, cooldownMs: 0, leaseMs: 30_000, now: () => clock });
     const guard2 = createAgentNoiseGuard({ db: db2, cooldownMs: 0, leaseMs: 30_000, now: () => clock });
 
-    expect(guard1.reserve('bob', scope('c2'), 'retry-me').suppressed).toBe(false);
+    const bobRes = guard1.reserve('bob', scope('c2'), 'retry-me');
+    expect(bobRes.suppressed).toBe(false);
     expect(guard2.reserve('bob', scope('c2'), 'retry-me').reason).toBe('duplicate-concurrent');
     // Failed delivery: release without consuming cooldown.
-    guard1.release('bob', scope('c2'), 'retry-me');
+    guard1.release('bob', scope('c2'), 'retry-me', { ownerToken: bobRes.ownerToken! });
     // The other instance can now acquire immediately.
     expect(guard2.reserve('bob', scope('c2'), 'retry-me').suppressed).toBe(false);
   });
@@ -95,8 +96,9 @@ describe('AgentNoiseGuard — DB-backed atomic reservation (THE-930 matrix gap)'
     const guard1 = createAgentNoiseGuard({ db: db1, cooldownMs: 5_000, leaseMs: 30_000, now: () => clock });
     const guard2 = createAgentNoiseGuard({ db: db2, cooldownMs: 5_000, leaseMs: 30_000, now: () => clock });
 
-    expect(guard1.reserve('dan', scope('c4'), 'cooldown').suppressed).toBe(false);
-    guard1.release('dan', scope('c4'), 'cooldown', { delivered: true });
+    const danRes = guard1.reserve('dan', scope('c4'), 'cooldown');
+    expect(danRes.suppressed).toBe(false);
+    guard1.release('dan', scope('c4'), 'cooldown', { delivered: true, ownerToken: danRes.ownerToken! });
     // Within the cooldown window, the OTHER instance is suppressed.
     expect(guard2.reserve('dan', scope('c4'), 'cooldown').reason).toBe('cooldown');
     // After the window elapses, it is allowed.
@@ -123,8 +125,9 @@ describe('AgentNoiseGuard — DB-backed atomic reservation (THE-930 matrix gap)'
 
     policy = { cooldownMs: 60_000, mutedAgents: ['spock'] };
     expect(guardB.reserve('spock', scope('policy'), 'hello').reason).toBe('muted');
-    expect(guardB.reserve('ada', scope('policy'), 'hello').suppressed).toBe(false);
-    guardB.release('ada', scope('policy'), 'hello', { delivered: true });
+    const adaRes = guardB.reserve('ada', scope('policy'), 'hello');
+    expect(adaRes.suppressed).toBe(false);
+    guardB.release('ada', scope('policy'), 'hello', { delivered: true, ownerToken: adaRes.ownerToken! });
     expect(guardA.reserve('ada', scope('policy'), 'hello').reason).toBe('cooldown');
 
     policy = { cooldownMs: 0, mutedAgents: [] };
@@ -142,8 +145,8 @@ describe('AgentNoiseGuard — DB-backed atomic reservation (THE-930 matrix gap)'
       now: () => clock,
     });
     for (let i = 0; i < 6; i += 1) {
-      guard.reserve('g', scope(`cb${i}`), `m${i}`);
-      guard.release('g', scope(`cb${i}`), `m${i}`, { delivered: true });
+      const r = guard.reserve('g', scope(`cb${i}`), `m${i}`);
+      guard.release('g', scope(`cb${i}`), `m${i}`, { delivered: true, ownerToken: r.ownerToken! });
       clock += 1;
     }
     expect(guard.snapshot().trackedScopes).toBeLessThanOrEqual(3);

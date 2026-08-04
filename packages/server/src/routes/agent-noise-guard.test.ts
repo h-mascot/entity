@@ -19,7 +19,8 @@ describe('AgentNoiseGuard — atomic scoped reservation (THE-930)', () => {
     expect(second.suppressed).toBe(true);
     expect(second.reason).toBe('duplicate-concurrent');
 
-    guard.release('ada', scope('c1'), 'hello');
+    // THE-930 (R2): release requires the exact owner token returned by reserve.
+    guard.release('ada', scope('c1'), 'hello', { ownerToken: first.ownerToken! });
     // After release without delivery confirmation, a new send is allowed (no cooldown consumed).
     expect(guard.reserve('ada', scope('c1'), 'hello').suppressed).toBe(false);
   });
@@ -27,12 +28,14 @@ describe('AgentNoiseGuard — atomic scoped reservation (THE-930)', () => {
   it('records cooldown only on confirmed delivery (release delivered=true)', () => {
     let clock = 2_000;
     const guard = createAgentNoiseGuard({ cooldownMs: 5_000, now: () => clock });
-    expect(guard.reserve('ada', scope('c1'), 'hi').suppressed).toBe(false);
+    const r1 = guard.reserve('ada', scope('c1'), 'hi');
+    expect(r1.suppressed).toBe(false);
     // A failed/unknown delivery consumes NO cooldown: retry is immediately allowed.
-    guard.release('ada', scope('c1'), 'hi');
-    expect(guard.reserve('ada', scope('c1'), 'hi').suppressed).toBe(false);
+    guard.release('ada', scope('c1'), 'hi', { ownerToken: r1.ownerToken! });
+    const r2 = guard.reserve('ada', scope('c1'), 'hi');
+    expect(r2.suppressed).toBe(false);
     // A confirmed delivery records the cooldown window.
-    guard.release('ada', scope('c1'), 'hi', { delivered: true });
+    guard.release('ada', scope('c1'), 'hi', { delivered: true, ownerToken: r2.ownerToken! });
     expect(guard.reserve('ada', scope('c1'), 'hi').reason).toBe('cooldown');
     clock += 5_000;
     expect(guard.reserve('ada', scope('c1'), 'hi').suppressed).toBe(false);
@@ -40,18 +43,21 @@ describe('AgentNoiseGuard — atomic scoped reservation (THE-930)', () => {
 
   it('does NOT suppress different content, different agents, or different scopes (mixed-target behavior)', () => {
     const guard = createAgentNoiseGuard({ cooldownMs: 0 });
-    guard.reserve('ada', scope('c1'), 'hello');
+    const r = guard.reserve('ada', scope('c1'), 'hello');
+    expect(r.suppressed).toBe(false);
     expect(guard.reserve('ada', scope('c1'), 'different').suppressed).toBe(false);
     expect(guard.reserve('zora', scope('c1'), 'hello').suppressed).toBe(false);
     expect(guard.reserve('ada', scope('c2'), 'hello').suppressed).toBe(false);
     expect(guard.reserve('ada', scope('c1', 't9'), 'hello').suppressed).toBe(false);
+    guard.release('ada', scope('c1'), 'hello', { ownerToken: r.ownerToken! });
   });
 
   it('suppresses on cooldown within the window and allows after it elapses', () => {
     let clock = 1_000;
     const guard = createAgentNoiseGuard({ cooldownMs: 5_000, now: () => clock });
-    expect(guard.reserve('ada', scope('c1'), 'hi').suppressed).toBe(false);
-    guard.release('ada', scope('c1'), 'hi', { delivered: true });
+    const r = guard.reserve('ada', scope('c1'), 'hi');
+    expect(r.suppressed).toBe(false);
+    guard.release('ada', scope('c1'), 'hi', { delivered: true, ownerToken: r.ownerToken! });
     expect(guard.reserve('ada', scope('c1'), 'hi').reason).toBe('cooldown');
     clock += 5_000;
     expect(guard.reserve('ada', scope('c1'), 'hi').suppressed).toBe(false);
@@ -79,8 +85,9 @@ describe('AgentNoiseGuard — atomic scoped reservation (THE-930)', () => {
   it('uses the guard clock, not any caller-supplied timestamp, for cooldown', () => {
     let clock = 10_000;
     const guard = createAgentNoiseGuard({ cooldownMs: 1_000, now: () => clock });
-    expect(guard.reserve('ada', scope('c1'), 'hi').suppressed).toBe(false);
-    guard.release('ada', scope('c1'), 'hi', { delivered: true });
+    const r = guard.reserve('ada', scope('c1'), 'hi');
+    expect(r.suppressed).toBe(false);
+    guard.release('ada', scope('c1'), 'hi', { delivered: true, ownerToken: r.ownerToken! });
     // Caller cannot advance or rewind cooldown by supplying timestamps — only the
     // guard's own clock advances time.
     expect(guard.reserve('ada', scope('c1'), 'hi').reason).toBe('cooldown');
@@ -91,10 +98,11 @@ describe('AgentNoiseGuard — atomic scoped reservation (THE-930)', () => {
   it('bounds stored state (evicts oldest entries beyond the cap)', () => {
     let clock = 0;
     const guard = createAgentNoiseGuard({ cooldownMs: 10_000, maxStateEntries: 3, now: () => clock });
-    guard.reserve('ada', scope('c1'), 'm1'); guard.release('ada', scope('c1'), 'm1', { delivered: true }); clock += 1;
-    guard.reserve('ada', scope('c2'), 'm2'); guard.release('ada', scope('c2'), 'm2', { delivered: true }); clock += 1;
-    guard.reserve('ada', scope('c3'), 'm3'); guard.release('ada', scope('c3'), 'm3', { delivered: true }); clock += 1;
-    guard.reserve('ada', scope('c4'), 'm4'); guard.release('ada', scope('c4'), 'm4', { delivered: true }); clock += 1;
+    for (const [ch, content] of [['c1', 'm1'], ['c2', 'm2'], ['c3', 'm3'], ['c4', 'm4']] as const) {
+      const r = guard.reserve('ada', scope(ch), content);
+      guard.release('ada', scope(ch), content, { delivered: true, ownerToken: r.ownerToken! });
+      clock += 1;
+    }
     // c1 should have been evicted; reserving it again is allowed (not in cooldown).
     const r = guard.reserve('ada', scope('c1'), 'm1');
     expect(r.suppressed).toBe(false);
