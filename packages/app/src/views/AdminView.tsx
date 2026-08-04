@@ -620,8 +620,6 @@ export default function AdminView({
             fields={[
               { kind: 'select', key: 'defaultWorkDomain', label: 'Default work domain', options: [
                 { value: 'engineering', label: 'Engineering' },
-                { value: 'product', label: 'Product' },
-                { value: 'ops', label: 'Ops' },
               ] },
               { kind: 'boolean', key: 'importDryRunRequired', label: 'Require import dry-run' },
               { kind: 'boolean', key: 'showEmptyStateHints', label: 'Show empty-state hints' },

@@ -8,6 +8,11 @@ export interface AdminRuntimeSettings {
     allowHeaderCompat: boolean;
     apiPrincipalId: string | null;
   };
+  businessOnboarding: {
+    enabled: boolean;
+    defaultDomain: string;
+    requireDryRun: boolean;
+  };
   engineering: {
     defaultWorkDomain: 'engineering' | 'product' | 'ops';
     importDryRunRequired: boolean;

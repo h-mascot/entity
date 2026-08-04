@@ -11,6 +11,7 @@ import {
 } from '../../../db/src/principals';
 import { parseGrantSensitivityCategories } from '../../../db/src/principals';
 import { createRequireAdminPrincipal } from '../middleware/admin-auth';
+import { resolveTrustedAdminPrincipalId } from '../principals/admin-identity';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -20,8 +21,8 @@ function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function readActor(req: Request): string {
-  return req.header('x-entity-principal-id')?.trim() || 'admin-local';
+function readActor(req: Request, repo: PrincipalRepository): string {
+  return resolveTrustedAdminPrincipalId(req, repo) || 'admin-local';
 }
 
 function serializePrincipal(repo: PrincipalRepository, id: string) {
@@ -149,7 +150,7 @@ export function createPrincipalsRouter(deps: { repo?: PrincipalRepository; skipA
   router.post('/principals', (req, res) => {
     try {
       const input = parseCreatePrincipal(req.body);
-      input.created_by = readActor(req);
+      input.created_by = readActor(req, repo);
       const created = repo.createPrincipal(input);
       res.status(201).json(serializePrincipal(repo, created.id));
     } catch (error) {
@@ -169,7 +170,7 @@ export function createPrincipalsRouter(deps: { repo?: PrincipalRepository; skipA
   router.patch('/principals/:id', (req, res) => {
     try {
       const patch = parseUpdatePrincipal(req.body);
-      patch.updated_by = readActor(req);
+      patch.updated_by = readActor(req, repo);
       const updated = repo.updatePrincipal(req.params.id, patch);
       if (!updated) {
         res.status(404).json({ error: 'principal not found' });
@@ -182,7 +183,7 @@ export function createPrincipalsRouter(deps: { repo?: PrincipalRepository; skipA
   });
 
   router.post('/principals/:id/disable', (req, res) => {
-    const updated = repo.disablePrincipal(req.params.id, readActor(req));
+    const updated = repo.disablePrincipal(req.params.id, readActor(req, repo));
     if (!updated) {
       res.status(404).json({ error: 'principal not found' });
       return;
@@ -198,7 +199,7 @@ export function createPrincipalsRouter(deps: { repo?: PrincipalRepository; skipA
         return;
       }
       const input = parseCreateGrant(req.body, principal.id);
-      input.created_by = readActor(req);
+      input.created_by = readActor(req, repo);
       const grant = repo.createGrant(input);
       res.status(201).json({
         ...grant,
@@ -217,7 +218,7 @@ export function createPrincipalsRouter(deps: { repo?: PrincipalRepository; skipA
         return;
       }
       const patch = parseUpdateGrant(req.body);
-      patch.updated_by = readActor(req);
+      patch.updated_by = readActor(req, repo);
       const updated = repo.updateGrant(grant.id, patch);
       res.json({
         ...updated,

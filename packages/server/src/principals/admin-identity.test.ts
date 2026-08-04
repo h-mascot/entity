@@ -28,12 +28,13 @@ describe('admin identity resolution', () => {
     expect(resolveTrustedAdminPrincipalId(mockReq(), repo)).toBe(LOCAL_ADMIN_PRINCIPAL_ID);
   });
 
-  it('requires configured api principal when API auth is enabled', () => {
+  it('allows bootstrap principal binding when API auth is enabled for a sole principal', () => {
     vi.stubEnv('ENTITY_API_TOKEN', 'secret-token');
-    repo.createPrincipal({ id: 'admin', principal_type: 'human', display_name: 'Admin', created_by: 'seed' });
-    expect(resolveTrustedAdminPrincipalId(mockReq({ 'x-entity-principal-id': 'admin' }), repo)).toBeNull();
-    vi.stubEnv('ENTITY_API_PRINCIPAL_ID', 'admin');
-    expect(resolveTrustedAdminPrincipalId(mockReq({ 'x-entity-principal-id': 'spoofed' }), repo)).toBe('admin');
+    repo.createPrincipal({ id: 'bootstrap-admin', principal_type: 'human', display_name: 'Bootstrap', created_by: 'seed' });
+    expect(resolveTrustedAdminPrincipalId(
+      mockReq({ 'x-entity-principal-id': 'bootstrap-admin' }),
+      repo,
+    )).toBe('bootstrap-admin');
   });
 
   it('uses header principal in local dev without API auth', () => {

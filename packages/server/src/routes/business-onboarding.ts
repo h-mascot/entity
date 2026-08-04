@@ -21,6 +21,24 @@ function readBusinessOnboardingSettings() {
   return getAdminSettings(db, ADMIN_SETTINGS_KEYS.businessOnboarding);
 }
 
+const SETTINGS_DOMAIN_TO_CATALOG_ID: Record<string, BusinessDomainId> = {
+  claims: 'claims-ops',
+  engineering: 'engineering-devops',
+  product: 'product',
+  sales: 'sales-bd',
+  marketing: 'marketing',
+  finance: 'finance',
+  customer_success: 'customer-success',
+  people_ops: 'people-ops',
+  health_business: 'health-business',
+  ai_ops: 'ai-ops',
+  other: 'other',
+};
+
+function resolveConfiguredDefaultDomain(settings: ReturnType<typeof readBusinessOnboardingSettings>): BusinessDomainId {
+  return SETTINGS_DOMAIN_TO_CATALOG_ID[settings.defaultDomain] ?? settings.defaultDomain as BusinessDomainId;
+}
+
 export const BUSINESS_DOMAIN_CATALOG = [
   {
     id: 'claims-ops',
@@ -414,6 +432,46 @@ async function getOrCreateSeedTasks(
   return results;
 }
 
+function previewBlueprint(
+  org: OrgRecord,
+  domains: BusinessDomainId[],
+  mission: string,
+  registryAgents: readonly AgentRegistryRecord[],
+  now: string,
+): BusinessBlueprint {
+  const teams: BlueprintTeam[] = [];
+  const agentAssignments: BlueprintAgentAssignment[] = [];
+
+  for (const domainId of domains) {
+    const domain = DOMAIN_BY_ID.get(domainId);
+    if (!domain) continue;
+    const teamId = `${org.id}-${domain.id}`;
+    const assignment = assignmentForDomain(domainId, domain.teamName, registryAgents);
+    if (assignment) agentAssignments.push(assignment);
+    teams.push({
+      domainId,
+      domainLabel: domain.label,
+      teamId,
+      teamName: domain.teamName,
+      projectId: 0,
+      projectName: domain.seedProject,
+      seedTaskIds: domain.seedTasks.map((_task, index) => -(index + 1)),
+      ...(assignment ? { assignedAgent: assignment } : {}),
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    orgId: org.id,
+    orgName: org.name,
+    mission,
+    domains,
+    teams,
+    agentAssignments,
+    generatedAt: now,
+  };
+}
+
 async function buildBlueprint(
   deps: Required<Pick<BusinessOnboardingRouterDeps, 'taskRepoFactory' | 'now'>> & Pick<BusinessOnboardingRouterDeps, 'workspaceRepo' | 'agentRegistryRepo'>,
   org: OrgRecord,
@@ -494,7 +552,7 @@ export function createBusinessOnboardingRouter({
         name,
         slug,
         mission: optionalString(body, 'mission') ?? null,
-        domains_json: JSON.stringify([settings.defaultDomain]),
+        domains_json: JSON.stringify([resolveConfiguredDefaultDomain(settings)]),
       });
       return res.status(201).json({ org, domains: BUSINESS_DOMAIN_CATALOG });
     } catch (error) {
@@ -533,7 +591,7 @@ export function createBusinessOnboardingRouter({
       const storedDomains = parseStoredDomains(org);
       const domains = 'domains' in body
         ? domainsFromUnknown(body.domains)
-        : (storedDomains.length > 0 ? storedDomains : [settings.defaultDomain]);
+        : (storedDomains.length > 0 ? storedDomains : [resolveConfiguredDefaultDomain(settings)]);
       if (domains.length === 0) {
         throw new BusinessOnboardingApiError(400, 'at least one business domain is required');
       }
@@ -542,10 +600,22 @@ export function createBusinessOnboardingRouter({
         throw new BusinessOnboardingApiError(400, 'mission is required');
       }
 
+      if (body.dryRun === true) {
+        const preview = previewBlueprint(
+          org,
+          domains,
+          mission,
+          blueprintDeps.agentRegistryRepo?.listAgents() ?? [],
+          blueprintDeps.now(),
+        );
+        return res.json({ dryRun: true, org, blueprint: preview });
+      }
+
       const orgForBlueprint = workspaceRepo.updateOrg(org.id, {
         mission,
         domains_json: JSON.stringify(domains),
       }) ?? org;
+
       const blueprint = await buildBlueprint(blueprintDeps, orgForBlueprint, domains, mission);
       const updated = workspaceRepo.updateOrg(org.id, {
         mission,

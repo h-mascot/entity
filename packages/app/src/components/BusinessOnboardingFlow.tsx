@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { runtime } from '../config/runtime';
 import { buildApiCandidates, requestJsonWithFallback } from '../lib/http';
+import { loadAdminRuntimeSettings } from '../lib/adminRuntimeSettings';
 import { resolveBusinessDomainCatalog } from './businessOnboardingCatalog';
 
 type BusinessDomainId =
@@ -234,7 +235,16 @@ export default function BusinessOnboardingFlow({
   const [blueprint, setBlueprint] = useState<BusinessBlueprint | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requireProvisionDryRun, setRequireProvisionDryRun] = useState(false);
+  const [dryRunPreview, setDryRunPreview] = useState<BusinessBlueprint | null>(null);
 
+  useEffect(() => {
+    void loadAdminRuntimeSettings(apiBase).then((settings) => {
+      if (settings) {
+        setRequireProvisionDryRun(settings.businessOnboarding.requireDryRun);
+      }
+    });
+  }, [apiBase]);
   const activeStepIndex = stepIndex(step);
   const missionDraft = mission.trim() || defaultMission(orgName.trim());
   const selectedDomainsSummary = useMemo(
@@ -322,17 +332,37 @@ export default function BusinessOnboardingFlow({
     }
     setBusy(true);
     try {
+      const payload = { domains: selectedDomains, mission: missionDraft };
+      if (requireProvisionDryRun && !dryRunPreview) {
+        const preview = await requestJsonWithFallback<ProvisionResponse & { dryRun?: boolean }>({
+          urls: buildApiCandidates(`/onboarding/business/${encodeURIComponent(org.id)}/provision`, apiBase),
+          fallbackError: 'Unable to preview business blueprint.',
+          init: {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ...payload, dryRun: true }),
+          },
+        });
+        setDryRunPreview(preview.blueprint);
+        setBlueprint(preview.blueprint);
+        setStep('blueprint');
+        return;
+      }
       const response = await requestJsonWithFallback<ProvisionResponse>({
         urls: buildApiCandidates(`/onboarding/business/${encodeURIComponent(org.id)}/provision`, apiBase),
         fallbackError: 'Unable to provision business blueprint.',
         init: {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ domains: selectedDomains, mission: missionDraft }),
+          body: JSON.stringify({
+            ...payload,
+            ...(requireProvisionDryRun ? { dryRunConfirmed: true } : {}),
+          }),
         },
       });
       setOrg(response.org);
       setBlueprint(response.blueprint);
+      setDryRunPreview(null);
       setStep('blueprint');
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to provision business blueprint.');

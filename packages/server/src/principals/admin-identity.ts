@@ -44,10 +44,16 @@ export function resolveTrustedAdminPrincipalId(
     const settingsPrincipalId = (typeof settings?.apiPrincipalId === 'string' ? settings.apiPrincipalId.trim() : '')
       || process.env.ENTITY_API_PRINCIPAL_ID?.trim()
       || null;
-    if (!settingsPrincipalId) {
-      return null;
+    if (settingsPrincipalId) {
+      return settingsPrincipalId;
     }
-    return settingsPrincipalId;
+    if (principalCount === 1 && headerPrincipalId) {
+      const solePrincipal = repo.listPrincipals({ includeDisabled: true })[0];
+      if (solePrincipal?.id === headerPrincipalId) {
+        return headerPrincipalId;
+      }
+    }
+    return null;
   }
 
   return headerPrincipalId || LOCAL_ADMIN_PRINCIPAL_ID;
