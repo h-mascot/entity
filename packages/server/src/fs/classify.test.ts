@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyFile } from './classify';
+import { classifyFile, extractIndexableFileContent } from './classify';
 
 describe('classifyFile', () => {
   describe('type detection', () => {
@@ -139,6 +139,32 @@ describe('classifyFile', () => {
     it('should handle empty path gracefully', () => {
       const result = classifyFile('');
       expect(result.title).toBeDefined();
+    });
+
+    it('extracts a readable title from generated HTML', () => {
+      const result = classifyFile(
+        'features/index.html',
+        '<!doctype html><html><head><title>Fallback · Entity Wiki</title></head><body><h1>Files and documents</h1></body></html>',
+      );
+      expect(result.title).toBe('Files and documents');
+    });
+  });
+
+  describe('indexable content', () => {
+    it('strips HTML chrome, scripts, and tags from search previews', () => {
+      const result = extractIndexableFileContent(
+        'quickstart.html',
+        '<!doctype html><html><head><style>.hidden{display:none}</style><script>alert(1)</script></head><body><h1>Quickstart</h1><p>Start &amp; verify Entity.</p></body></html>',
+      );
+      expect(result.title).toBe('Quickstart');
+      expect(result.text).toBe('Quickstart Start & verify Entity.');
+      expect(result.text).not.toContain('<!doctype');
+      expect(result.text).not.toContain('alert');
+    });
+
+    it('leaves Markdown content unchanged', () => {
+      const result = extractIndexableFileContent('guide.md', '# Guide\nReadable text');
+      expect(result).toEqual({ title: undefined, text: '# Guide\nReadable text' });
     });
   });
 

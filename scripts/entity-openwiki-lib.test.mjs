@@ -29,7 +29,7 @@ async function fixture({ withConcept = true } = {}) {
   await mkdir(path.join(root, "openwiki"), { recursive: true });
   await writeFile(path.join(root, "package.json"), '{"name":"entity"}\n');
   await writeFile(path.join(root, ".openwikiignore"), [
-    ".env", "*.db", "docs/internal/", "/var/", "/memory/", "/artifacts/", "/.claude/", "/.cursor/run-state/",
+    ".env", "*.db", "docs/internal/", "/var/", "/memory/", "/artifacts/", "/.claude/", "/.cursor/run-state/", "/openwiki-html/", "/.openwiki-html-backup-*/", "/.openwiki-html-tmp-*/",
   ].join("\n"));
   await writeFile(path.join(root, "packages", "server", "src", "feature.ts"), "export const feature = true;\n");
   await writeFile(path.join(root, "openwiki", "INSTRUCTIONS.md"), "# Instructions\n");
@@ -252,8 +252,12 @@ test("pull request CI verifies generated docs against the PR head after merge-tr
   assert.ok(testPosition >= 0 && headPosition > testPosition && verifyPosition > headPosition);
   assert.match(workflow, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+  const prHeadCheckout = workflow.indexOf("Check out PR head for generated-doc freshness");
+  const prHeadInstall = workflow.indexOf("Install PR head dependencies for generated-doc freshness");
+  const docsVerify = workflow.indexOf("npm run docs:wiki:verify");
+  assert.ok(prHeadCheckout < prHeadInstall);
+  assert.ok(prHeadInstall < docsVerify);
 });
-
 test("OpenWiki runner uses and removes an isolated credential-file home", async () => {
   const runner = await readFile(new URL("./entity-openwiki.mjs", import.meta.url), "utf8");
   assert.match(runner, /mkdtemp\(path\.join\(os\.tmpdir\(\), "entity-openwiki-home-"\)\)/);
@@ -357,6 +361,7 @@ test("deploy rejects source subdirectories, dirty bypasses, and branch mismatche
     ENTITY_PROD_HTTP_HOST: "invalid.example",
     ENTITY_PROD_DIR: "/tmp/entity-invalid-target",
     ENTITY_PROD_DB: "/tmp/entity-invalid.db",
+    ENTITY_PROD_CONFIG_PATH: "/tmp/entity-invalid-target/entity.config.yaml",
   };
   const subdirectory = spawnSync("bash", [path.join(root, "deploy.sh")], {
     cwd: root,
@@ -397,6 +402,27 @@ test("deploy rejects source subdirectories, dirty bypasses, and branch mismatche
   assert.doesNotMatch(detachedOutput, /Detached source SHA .* does not match branch|requires ENTITY_RELEASE_BRANCH/);
 });
 
+test("generic deploy remains backward compatible when config migration is not configured", async () => {
+  const root = await fixture();
+  await copyFile(new URL("../deploy.sh", import.meta.url), path.join(root, "deploy.sh"));
+  await chmod(path.join(root, "deploy.sh"), 0o755);
+  const result = spawnSync("bash", [path.join(root, "deploy.sh"), "--print-config"], {
+    cwd: root,
+    env: {
+      ...process.env,
+      ENTITY_DEPLOY_DRY_RUN: "1",
+      ENTITY_PROD_HOST: "example.invalid",
+      ENTITY_PROD_HTTP_HOST: "example.invalid",
+      ENTITY_PROD_DIR: "/tmp/entity-runtime",
+      ENTITY_PROD_DB: "/tmp/entity.db",
+      ENTITY_PROD_CONFIG_PATH: "",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /runtimeConfigPath=<migration-disabled>/);
+});
+
 test("prepare generation runs only when the wiki is stale", () => {
   assert.equal(shouldRunOpenWiki("prepare", true), false);
   assert.equal(shouldRunOpenWiki("prepare", false), true);
@@ -426,6 +452,9 @@ test("OpenWiki ignore policy blocks private runtime and agent state", () => {
     "/artifacts/",
     "/.claude/",
     "/.cursor/run-state/",
+    "/openwiki-html/",
+    "/.openwiki-html-backup-*/",
+    "/.openwiki-html-tmp-*/",
   ].join("\n")));
 });
 
@@ -453,6 +482,14 @@ test("source fingerprint changes for product source but ignores generated wiki",
   const root = await fixture();
   const initial = await computeSourceFingerprint(root);
   await writeFile(path.join(root, "openwiki", "generated.md"), "generated\n");
+  assert.equal(await computeSourceFingerprint(root), initial);
+  await mkdir(path.join(root, "openwiki-html"), { recursive: true });
+  await writeFile(path.join(root, "openwiki-html", "generated.html"), "generated\n");
+  assert.equal(await computeSourceFingerprint(root), initial);
+  await mkdir(path.join(root, ".openwiki-html-tmp-abandoned"), { recursive: true });
+  await writeFile(path.join(root, ".openwiki-html-tmp-abandoned", "partial.html"), "partial\n");
+  await mkdir(path.join(root, ".openwiki-html-backup-abandoned"), { recursive: true });
+  await writeFile(path.join(root, ".openwiki-html-backup-abandoned", "old.html"), "old\n");
   assert.equal(await computeSourceFingerprint(root), initial);
   await writeFile(path.join(root, ".openwikiignore"), "*.db\n");
   const ignoreFingerprint = await computeSourceFingerprint(root);
@@ -553,7 +590,7 @@ test("generated wiki status cleanliness rejects changed or untracked docs", () =
 test("standard setup emits the Entity Wiki file source", async () => {
   const setupSource = await readFile(new URL("./entity-setup.js", import.meta.url), "utf8");
   assert.match(setupSource, /'  - id: entity-wiki'/);
-  assert.match(setupSource, /'    basePath: \.\/openwiki'/);
+  assert.match(setupSource, /'    basePath: \.\/openwiki-html'/);
   assert.match(setupSource, /'    readOnly: true'/);
   const configSource = await readFile(new URL("../entity.config.example.yaml", import.meta.url), "utf8");
   assert.match(configSource, /id: entity-wiki[\s\S]*readOnly: true/);

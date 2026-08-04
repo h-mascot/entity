@@ -7,10 +7,16 @@ import { css } from '@codemirror/lang-css';
 import { html } from '@codemirror/lang-html';
 import { markdown } from '@codemirror/lang-markdown';
 import { tags as t } from '@lezer/highlight';
+import {
+  createStaticHtmlPreviewUrl,
+  htmlPreviewSandboxForSource,
+  isStaticHtmlPreviewSource,
+} from '../lib/htmlPreviewPolicy';
 
 interface CodeMirrorFileViewerProps {
   content: string;
   filePath: string;
+  sourceId?: string | null;
   contentType?: string | null;
   fileSize?: number | null;
   isBinary?: boolean;
@@ -658,6 +664,7 @@ function languageExtensionFor(key: LanguageKey): Extension {
 export default function CodeMirrorFileViewer({
   content,
   filePath,
+  sourceId,
   contentType,
   fileSize,
   isBinary,
@@ -668,6 +675,12 @@ export default function CodeMirrorFileViewer({
   const languageCompartmentRef = useRef(new Compartment());
   const previewKind = useMemo(() => resolvePreviewKind(filePath, contentType, isBinary), [contentType, filePath, isBinary]);
   const [htmlView, setHtmlView] = useState<'preview' | 'source'>('preview');
+  const staticHtmlPreview = isStaticHtmlPreviewSource(sourceId);
+  const [routeHash, setRouteHash] = useState(() => (typeof window === 'undefined' ? '' : window.location.hash));
+  const [staticPreviewUrl, setStaticPreviewUrl] = useState<string | null>(null);
+  const remountedStaticPreviewRef = useRef<string | null>(null);
+  const remountTimerRef = useRef<number | null>(null);
+  const htmlPreviewFrameRef = useRef<HTMLIFrameElement | null>(null);
   const wantsTextEditor = previewKind === 'text' || (previewKind === 'html' && htmlView === 'source');
   const languageKey = useMemo(() => resolveLanguageKey(filePath), [filePath]);
   const languageExtension = useMemo(() => languageExtensionFor(languageKey), [languageKey]);
@@ -693,6 +706,50 @@ export default function CodeMirrorFileViewer({
   useEffect(() => {
     setHtmlView('preview');
   }, [filePath]);
+
+  useEffect(() => {
+    if (!staticHtmlPreview || typeof window === 'undefined') return;
+    const syncRouteHash = () => setRouteHash(window.location.hash);
+    syncRouteHash();
+    window.addEventListener('hashchange', syncRouteHash);
+    window.addEventListener('popstate', syncRouteHash);
+    return () => {
+      window.removeEventListener('hashchange', syncRouteHash);
+      window.removeEventListener('popstate', syncRouteHash);
+    };
+  }, [staticHtmlPreview]);
+
+  useEffect(() => {
+    if (!staticHtmlPreview || previewKind !== 'html') {
+      setStaticPreviewUrl(null);
+      return;
+    }
+    const preview = createStaticHtmlPreviewUrl(content, routeHash);
+    setStaticPreviewUrl(preview.src);
+    return () => URL.revokeObjectURL(preview.objectUrl);
+  }, [content, previewKind, routeHash, staticHtmlPreview]);
+
+  useEffect(
+    () => () => {
+      if (remountTimerRef.current !== null) {
+        window.clearTimeout(remountTimerRef.current);
+        remountTimerRef.current = null;
+      }
+    },
+    [staticPreviewUrl]
+  );
+
+  const handleStaticPreviewLoad = () => {
+    if (!staticHtmlPreview || !staticPreviewUrl || !routeHash || remountedStaticPreviewRef.current === staticPreviewUrl) return;
+    if (remountTimerRef.current !== null) window.clearTimeout(remountTimerRef.current);
+    remountedStaticPreviewRef.current = staticPreviewUrl;
+    remountTimerRef.current = window.setTimeout(() => {
+      remountTimerRef.current = null;
+      const frame = htmlPreviewFrameRef.current;
+      const src = frame?.getAttribute('src');
+      if (frame && src === staticPreviewUrl) frame.setAttribute('src', src);
+    }, 1_000);
+  };
 
   useEffect(() => {
     if (!wantsTextEditor || !containerRef.current) {
@@ -791,7 +848,11 @@ export default function CodeMirrorFileViewer({
             </button>
           </div>
           <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
-            {htmlView === 'preview' ? <span title="Rendered in a sandboxed frame with scripts enabled by default and isolated from the app session.">Sandboxed · scripts on</span> : null}
+            {htmlView === 'preview' ? (
+              staticHtmlPreview
+                ? <span title="Rendered in a scriptless sandbox on an opaque origin.">Sandboxed · scripts off</span>
+                : <span title="Rendered in a sandboxed frame with scripts enabled by default and isolated from the app session.">Sandboxed · scripts on</span>
+            ) : null}
             {formattedSize ? <span>{formattedSize}</span> : null}
             {rawFileUrl ? (
               <a href={rawFileUrl} download={fileName} className="mc-shell-btn px-2 py-0.5 text-[11px]">
@@ -802,15 +863,17 @@ export default function CodeMirrorFileViewer({
         </div>
         {htmlView === 'preview' ? (
           <div className="min-h-0 flex-1 overflow-hidden bg-white">
-            {/* Keep the preview sandboxed, but allow scripts by default so exported
-                agent HTML reports and demos run while remaining on an opaque origin
-                with no same-origin access to the Entity app session. */}
-            <iframe
-              srcDoc={content}
-              sandbox="allow-scripts allow-forms allow-popups allow-top-navigation-by-user-activation"
-              title={`HTML preview for ${fileName}`}
-              className="h-full w-full border-0"
-            />
+            {staticHtmlPreview && !staticPreviewUrl ? null : (
+              <iframe
+                ref={htmlPreviewFrameRef}
+                src={staticHtmlPreview ? staticPreviewUrl ?? undefined : undefined}
+                srcDoc={staticHtmlPreview ? undefined : content}
+                sandbox={htmlPreviewSandboxForSource(sourceId)}
+                onLoad={staticHtmlPreview ? handleStaticPreviewLoad : undefined}
+                title={`HTML preview for ${fileName}`}
+                className="h-full w-full border-0"
+              />
+            )}
           </div>
         ) : (
           <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden" />

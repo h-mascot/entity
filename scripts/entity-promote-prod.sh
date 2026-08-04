@@ -21,6 +21,7 @@ missing=()
 [[ -n "${ENTITY_PROD_HTTP_HOST:-}" ]] || missing+=("ENTITY_PROD_HTTP_HOST")
 [[ -n "${ENTITY_PROD_DIR:-}" ]] || missing+=("ENTITY_PROD_DIR")
 [[ -n "${ENTITY_PROD_DB:-}" ]] || missing+=("ENTITY_PROD_DB")
+
 if ((${#missing[@]} > 0)); then
   echo "[entity-promote] deploy is not configured. Set required environment variables: ${missing[*]}" >&2
   exit 78
