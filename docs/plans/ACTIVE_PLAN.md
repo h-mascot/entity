@@ -38,3 +38,29 @@ Review source: `clawd/output/entity/ra-fu-runnerqa-20260804/reviews/luna-review-
 
 ## Preserved (must stay PASS)
 - THE-931 (chat-history auth), THE-934 (doc-intelligence schema), prior THE-930 reservation/cooldown, broadcasts, rollback scope.
+
+---
+
+## Architectural Correction Pass (2026-08-04, continuation) — COMPLETE
+
+Follow-on to the Luna R2 repair: finish the timed-out Luna partial edits and move
+chat tenant isolation to the repository boundary. Plan:
+`docs/plans/2026-08-04-architectural-correction-plan.md`.
+
+- [x] THE-930: tokenized lease CAS (owner_token), fail-closed policy, truly
+  bounded state; fixed capacity-vs-cooldown ordering bug; dropped extra SELECT.
+  Tests: `agent-noise-guard-cas.test.ts` (7, isolated DB/clock).
+- [x] THE-931: `ChatTenantScope` + `createScopedChatRepository` (reads no-leak,
+  writes inherit owned parent scope, ignore caller teamId); all chat routes
+  routed through it; `ownsChatResource` reuses canonical `resolveInheritedRole`.
+  Tests: `chat-tenant-scope.test.ts` (8) + `chat-tenant-http.test.ts` (9, real
+  principal/grant resolution) + updated `chat-object-refs.test.ts`.
+- [x] THE-932: healer DB restore deferred to first use (no module-load DB I/O).
+  Tests: `healer-production-order.test.ts` (2).
+- [x] THE-933: `grantCoversTaskTarget` (canonical team semantics) — org-wide
+  task rejects team-only grant. Tests: `tasks-handoff-target-auth.test.ts` (9).
+- [x] THE-934: `Object.hasOwn` guard in `validateDocSchemaExtraction`.
+  Tests: `doc-intelligence.test.ts` schema block.
+- [x] Gate: `npm run ctrl:gate` (Node 22) ✅ — app 415 + db 44 + server 1327.
+- [x] Commits: 6 coherent commits; HEAD `daf320e`; worktree clean.
+- [x] Not merged/pushed/deployed; production untouched; blockers=[].
