@@ -1,5 +1,6 @@
 import type { Request, Response, Router } from 'express';
 import { Router as createRouter } from 'express';
+import { createHash } from 'crypto';
 import {
   type AgentRegistryRecord,
   type AgentRegistryRepository,
@@ -12,7 +13,7 @@ import {
   type WorkspaceScopeRepository,
 } from '../../../db/src';
 import { getEntityDatabase } from '../../../db/src/entity-db';
-import { ensureAppSettingsTable } from '../config/settings-store';
+import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../config/settings-store';
 import { ADMIN_SETTINGS_KEYS } from '../config/admin-settings';
 import { getAdminSettings } from '../config/admin-settings-store';
 
@@ -37,6 +38,28 @@ const SETTINGS_DOMAIN_TO_CATALOG_ID: Record<string, BusinessDomainId> = {
 
 function resolveConfiguredDefaultDomain(settings: ReturnType<typeof readBusinessOnboardingSettings>): BusinessDomainId {
   return SETTINGS_DOMAIN_TO_CATALOG_ID[settings.defaultDomain] ?? settings.defaultDomain as BusinessDomainId;
+}
+
+function dryRunReceiptKey(orgId: string): string {
+  return `onboarding.business.dryRun.${orgId}`;
+}
+
+function dryRunReceiptDigest(orgId: string, domains: BusinessDomainId[], mission: string): string {
+  return createHash('sha256').update(JSON.stringify({ orgId, domains, mission })).digest('hex');
+}
+
+function storeDryRunReceipt(orgId: string, domains: BusinessDomainId[], mission: string, generatedAt: string): string {
+  const db = getEntityDatabase(ensureAppSettingsTable);
+  const digest = dryRunReceiptDigest(orgId, domains, mission);
+  setSettingJson(db, dryRunReceiptKey(orgId), { digest, generatedAt }, 'business-onboarding');
+  return digest;
+}
+
+function hasDryRunReceipt(orgId: string, domains: BusinessDomainId[], mission: string): boolean {
+  const db = getEntityDatabase(ensureAppSettingsTable);
+  const stored = getSettingJson(db, dryRunReceiptKey(orgId)) as { digest?: string } | null;
+  if (!stored?.digest) return false;
+  return stored.digest === dryRunReceiptDigest(orgId, domains, mission);
 }
 
 export const BUSINESS_DOMAIN_CATALOG = [
@@ -608,7 +631,12 @@ export function createBusinessOnboardingRouter({
           blueprintDeps.agentRegistryRepo?.listAgents() ?? [],
           blueprintDeps.now(),
         );
+        storeDryRunReceipt(org.id, domains, mission, preview.generatedAt);
         return res.json({ dryRun: true, org, blueprint: preview });
+      }
+
+      if (settings.requireDryRun && body.dryRunConfirmed === true && !hasDryRunReceipt(org.id, domains, mission)) {
+        return res.status(400).json({ error: 'matching dry-run receipt is required before provision' });
       }
 
       const orgForBlueprint = workspaceRepo.updateOrg(org.id, {

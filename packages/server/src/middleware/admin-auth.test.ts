@@ -34,6 +34,7 @@ describe('admin auth middleware', () => {
         return undefined;
       },
       hostname: 'localhost',
+      socket: { remoteAddress: '127.0.0.1' },
       method: 'PATCH',
       params: {},
       body: {},

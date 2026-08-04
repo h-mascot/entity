@@ -11,7 +11,7 @@ import {
 } from '../../../db/src/principals';
 import { parseGrantSensitivityCategories } from '../../../db/src/principals';
 import { createRequireAdminPrincipal } from '../middleware/admin-auth';
-import { resolveTrustedAdminPrincipalId } from '../principals/admin-identity';
+import { hasGlobalAdminGrant, resolveTrustedAdminPrincipalId } from '../principals/admin-identity';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -183,7 +183,16 @@ export function createPrincipalsRouter(deps: { repo?: PrincipalRepository; skipA
   });
 
   router.post('/principals/:id/disable', (req, res) => {
-    const updated = repo.disablePrincipal(req.params.id, readActor(req, repo));
+    const principalId = req.params.id;
+    if (hasGlobalAdminGrant(principalId, repo)) {
+      const activeGlobalAdmins = repo.listPrincipals({ includeDisabled: false })
+        .filter((principal) => hasGlobalAdminGrant(principal.id, repo));
+      if (activeGlobalAdmins.length <= 1 && activeGlobalAdmins[0]?.id === principalId) {
+        res.status(400).json({ error: 'cannot disable the last global admin', code: 'last_global_admin' });
+        return;
+      }
+    }
+    const updated = repo.disablePrincipal(principalId, readActor(req, repo));
     if (!updated) {
       res.status(404).json({ error: 'principal not found' });
       return;

@@ -12,9 +12,16 @@ import { ADMIN_SETTINGS_KEYS } from '../config/admin-settings';
 import { getAdminSettings } from '../config/admin-settings-store';
 import { isApiAuthEnabled } from './api-auth';
 
+function isLocalPeer(req: Request): boolean {
+  const peer = req.socket?.remoteAddress ?? '';
+  return peer === '127.0.0.1'
+    || peer === '::1'
+    || peer === '::ffff:127.0.0.1'
+    || peer.endsWith('127.0.0.1');
+}
+
 function isLocalHost(req: Request): boolean {
-  const host = req.hostname;
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  return isLocalPeer(req);
 }
 
 function readAllowHeaderCompat(): boolean {
@@ -49,10 +56,12 @@ export function createRequireAdminPrincipal(repo: PrincipalRepository = createPr
     }
 
     const targetPrincipalId = typeof req.params.id === 'string' ? req.params.id : '';
+    const grantPrincipalId = typeof req.params.principalId === 'string' ? req.params.principalId : targetPrincipalId;
     const isSelfBootstrapGrant =
       req.method === 'POST'
-      && targetPrincipalId
-      && targetPrincipalId === principalId
+      && req.path.endsWith('/grants')
+      && grantPrincipalId
+      && grantPrincipalId === principalId
       && principalCount === 1
       && typeof req.body?.role === 'string'
       && req.body.role === 'admin';
