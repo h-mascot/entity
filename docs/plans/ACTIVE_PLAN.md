@@ -3,8 +3,8 @@
 ## Task
 Preserve and independently validate the two-commit Curacel checkpoint, close only actionable pilot gaps with governed GLM workers, obtain independent Terra review, promote the exact candidate to sandbox, and run Geordi QA without touching production.
 
-**Created:** 2026-08-04  
-**Agent:** Manager — citadel/azure-openai-responses/gpt-5.6-sol  
+**Created:** 2026-08-04
+**Agent:** Manager — citadel/azure-openai-responses/gpt-5.6-sol
 **Status:** IN PROGRESS
 
 ## Context
