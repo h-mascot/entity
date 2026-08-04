@@ -7,13 +7,13 @@
  * mixed-surface deep link can never route the user out of the Workplane. Fail-closed.
  */
 
-export const WORKPLANE_TASK_ROUTE_RE = /^\/workplane\/(\d+)(?:[/?#]|$)/;
+export const WORKPLANE_TASK_ROUTE_RE = /^\/workplane\/([1-9]\d*)(?:[?#].*)?$/;
 
 /**
  * Returns true only for permitted Workplane task deep-link routes. A permitted route
- * is exactly `/workplane/<positive integer>` optionally followed by a query, hash, or
- * trailing slash. Everything else (including Doc Hub, API, absolute, and script URLs)
- * is rejected.
+ * is exactly `/workplane/<positive integer>` optionally followed by a `?query` or
+ * `#hash` — no trailing slash, no nested path, no id 0. Everything else (including
+ * Doc Hub, API, absolute, script URLs, and nested task paths) is rejected.
  */
 export function isPermittedWorkplaneScopedRoute(route: unknown): route is string {
   if (typeof route !== 'string') return false;

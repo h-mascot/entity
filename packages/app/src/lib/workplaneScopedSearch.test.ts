@@ -6,12 +6,19 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { isPermittedWorkplaneScopedRoute } from './workplaneScopedSearch.ts';
 import WorkplaneShell from '../components/workplane/WorkplaneShell.tsx';
 
-test('isPermittedWorkplaneScopedRoute accepts only Workplane task routes', () => {
+test('isPermittedWorkplaneScopedRoute accepts only exact positive-integer Workplane task routes', () => {
   // Permitted Workplane task routes — the only deep links the Workplane surface may dispatch.
   assert.equal(isPermittedWorkplaneScopedRoute('/workplane/123'), true);
   assert.equal(isPermittedWorkplaneScopedRoute('/workplane/123?panel=proof'), true);
   assert.equal(isPermittedWorkplaneScopedRoute('/workplane/123#evidence'), true);
-  assert.equal(isPermittedWorkplaneScopedRoute('/workplane/42/'), true);
+  assert.equal(isPermittedWorkplaneScopedRoute('/workplane/1'), true);
+
+  // Fail-closed: id 0 / non-positive / nested suffix / trailing slash are NOT valid task routes.
+  assert.equal(isPermittedWorkplaneScopedRoute('/workplane/0'), false);
+  assert.equal(isPermittedWorkplaneScopedRoute('/workplane/01'), false);
+  assert.equal(isPermittedWorkplaneScopedRoute('/workplane/123/'), false);
+  assert.equal(isPermittedWorkplaneScopedRoute('/workplane/123/anything'), false);
+  assert.equal(isPermittedWorkplaneScopedRoute('/workplane/123/proof'), false);
 
   // Fail-closed: document/external API routes must NOT route into Workplane.
   assert.equal(isPermittedWorkplaneScopedRoute('/api/document-objects/native-documents/x'), false);
