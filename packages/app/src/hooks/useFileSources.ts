@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
+import { buildApiCandidates, requestJsonWithFallback, toErrorMessage, withApiToken } from '../lib/http';
 import { cacheApiPayload, readCachedApiPayloadEntry } from '../lib/offline';
 import { shouldUseOfflineFileCache } from '../lib/fileCacheFallback';
 import type {
@@ -54,7 +54,11 @@ async function requestWithFallback(urls: string[], init: RequestInit, fallbackEr
   let lastError: Error | null = null;
   for (const url of urls) {
     try {
-      const response = await fetch(url, init);
+      // Attach the configured API bearer token so file tree/file/write calls
+      // keep working when the server runs with ENTITY_API_TOKEN. Without this,
+      // fetchFile 401s in API-auth mode, which makes the doc viewer mark every
+      // opened document read-only and blocks the Convert UI.
+      const response = await fetch(url, withApiToken(init));
       if (!response.ok) {
         const payload = await response.text();
         throw new Error(payload || `Request failed (${response.status})`);
@@ -210,7 +214,7 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
 
       for (const url of urls) {
         try {
-          const response = await fetch(url, { method: 'GET' });
+          const response = await fetch(url, withApiToken({ method: 'GET' }));
           if (!response.ok) {
             throw new Error(`Request failed (${response.status})`);
           }
@@ -246,7 +250,7 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
 
       for (const url of urls) {
         try {
-          const response = await fetch(url, { method: 'GET' });
+          const response = await fetch(url, withApiToken({ method: 'GET' }));
           if (!response.ok) {
             cacheFallbackAllowed =
               cacheFallbackAllowed && shouldUseOfflineFileCache(response.status);

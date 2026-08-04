@@ -22,7 +22,7 @@ import { buildEffectiveConfig, deepMerge } from './effective';
 import { EntityConfigSchema, OnboardingAgentSessionSchema, OnboardingStateSchema, type OnboardingAgentSession } from './schema';
 import { ensureAppSettingsTable, getSettingJson, setSettingJson } from './settings-store';
 import { ADMIN_SETTINGS_KEYS } from './admin-settings';
-import { getAdminSettings, resetAdminSettings, setAdminSettings } from './admin-settings-store';
+import { getAdminSettings, patchAdminSettings, resetAdminSettings } from './admin-settings-store';
 import { readAdminRuntimeSettings } from './admin-runtime';
 import { createRequireAdminPrincipal } from '../middleware/admin-auth';
 
@@ -813,7 +813,11 @@ export function registerConfigRoutes(app: express.Express): void {
     app.patch(`/api/admin/settings/${section}`, requireAdmin, (req, res) => {
       try {
         const db = getEntityDatabase(ensureAppSettingsTable);
-        const updated = setAdminSettings(db, key as typeof ADMIN_SETTINGS_KEYS.accessControl, req.body ?? {});
+        // Merge the partial patch onto the currently stored settings so admin UI
+        // flows can PATCH a single field (e.g. the RBAC bootstrap writing
+        // `apiPrincipalId`) without resending every required field. The merged
+        // object is still validated by the full Zod schema.
+        const updated = patchAdminSettings(db, key as typeof ADMIN_SETTINGS_KEYS.accessControl, (req.body ?? {}) as Record<string, unknown>);
         res.json({ key, settings: updated });
       } catch (error) {
         res.status(400).json({
