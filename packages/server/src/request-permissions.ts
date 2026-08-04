@@ -12,10 +12,7 @@ import {
   resolveStoredPrincipalContext,
 } from './principals/resolver';
 import type { PrincipalRepository } from '../../db/src/principals';
-import { getEntityDatabase } from '../../db/src/entity-db';
-import { ensureAppSettingsTable } from './config/settings-store';
-import { ADMIN_SETTINGS_KEYS } from './config/admin-settings';
-import { getAdminSettings } from './config/admin-settings-store';
+import { readAccessControlRuntimeSettings, readDefaultOrgId } from './config/admin-runtime';
 
 export interface RequestOrgBinding {
   orgId: string;
@@ -32,13 +29,15 @@ export function readRequestOrg(req: Request): string | null {
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
   const bodyOrg = typeof body.org_id === 'string' ? body.org_id : typeof body.orgId === 'string' ? body.orgId : null;
   const candidate = headerOrg ?? queryOrg ?? bodyOrg;
-  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
+  if (typeof candidate === 'string' && candidate.trim()) {
+    return candidate.trim();
+  }
+  return readDefaultOrgId();
 }
 
 function readEnforceStoredPrincipals(): boolean {
   try {
-    const db = getEntityDatabase(ensureAppSettingsTable);
-    return getAdminSettings(db, ADMIN_SETTINGS_KEYS.accessControl).enforceStoredPrincipals;
+    return readAccessControlRuntimeSettings().enforceStoredPrincipals;
   } catch {
     return true;
   }

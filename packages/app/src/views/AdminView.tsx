@@ -504,6 +504,7 @@ export default function AdminView({
                 { kind: 'text', key: 'defaultOrgId', label: 'Default org ID' },
                 { kind: 'boolean', key: 'enforceStoredPrincipals', label: 'Enforce stored principals' },
                 { kind: 'boolean', key: 'allowHeaderCompat', label: 'Allow local header compatibility path' },
+                { kind: 'text', key: 'apiPrincipalId', label: 'API principal ID', hint: 'Principal bound to API token auth for admin mutations.' },
               ]}
             />
             <div className="grid gap-3 md:grid-cols-2">

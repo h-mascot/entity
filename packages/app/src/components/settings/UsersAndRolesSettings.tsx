@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toErrorMessage, withApiToken } from '../../lib/http';
-import { adminMutationHeaders } from '../../lib/adminRequest';
+import { adminMutationHeaders, persistAdminPrincipalId } from '../../lib/adminRequest';
+import { clearAdminRuntimeSettingsCache } from '../../lib/adminRuntimeSettings';
 
 type PrincipalType = 'human' | 'agent' | 'service_account';
 type GrantRole = 'viewer' | 'contributor' | 'manager' | 'admin';
@@ -132,6 +133,7 @@ export default function UsersAndRolesSettings({ apiBase = '' }: UsersAndRolesSet
       }
       const created = await res.json() as PrincipalRecord;
       if (wasEmpty) {
+        persistAdminPrincipalId(created.id);
         const bootstrapRes = await fetch(apiPath(apiBase, `/api/admin/principals/${created.id}/grants`), withApiToken({
           method: 'POST',
           headers: adminMutationHeaders({ 'Content-Type': 'application/json' }, created.id),
@@ -141,6 +143,12 @@ export default function UsersAndRolesSettings({ apiBase = '' }: UsersAndRolesSet
           const body = await bootstrapRes.json().catch(() => ({})) as { error?: string };
           throw new Error(body.error ?? `Bootstrap admin grant failed (${bootstrapRes.status})`);
         }
+        await fetch(apiPath(apiBase, '/api/admin/settings/accessControl'), withApiToken({
+          method: 'PATCH',
+          headers: adminMutationHeaders({ 'Content-Type': 'application/json' }, created.id),
+          body: JSON.stringify({ apiPrincipalId: created.id }),
+        }));
+        clearAdminRuntimeSettingsCache();
       }
       setCreateOpen(false);
       setForm(EMPTY_FORM);

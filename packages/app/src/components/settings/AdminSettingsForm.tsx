@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toErrorMessage, withApiToken } from '../../lib/http';
 import { adminMutationHeaders } from '../../lib/adminRequest';
+import { clearAdminRuntimeSettingsCache } from '../../lib/adminRuntimeSettings';
 
 type FieldSpec =
   | { kind: 'boolean'; key: string; label: string; hint?: string }
@@ -70,6 +71,7 @@ export default function AdminSettingsForm({
       if (!res.ok) throw new Error(body.detail ?? body.error ?? `Save failed (${res.status})`);
       setSettings(body.settings ?? draft);
       setDraft(body.settings ?? draft);
+      clearAdminRuntimeSettingsCache();
       setSuccess('Settings saved.');
     } catch (err) {
       setError(toErrorMessage(err, 'Failed to save settings.'));
@@ -91,6 +93,7 @@ export default function AdminSettingsForm({
       if (!res.ok) throw new Error(`Reset failed (${res.status})`);
       setSettings(body.settings);
       setDraft(body.settings);
+      clearAdminRuntimeSettingsCache();
       setSuccess('Settings reset to defaults.');
     } catch (err) {
       setError(toErrorMessage(err, 'Failed to reset settings.'));

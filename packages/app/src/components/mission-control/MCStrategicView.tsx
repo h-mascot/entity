@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
 import { runtime } from '../../config/runtime';
+import { loadAdminRuntimeSettings } from '../../lib/adminRuntimeSettings';
 
 interface RoadmapItem {
   id: number;
@@ -69,8 +70,20 @@ export default function MCStrategicView() {
   const [error, setError] = useState<string | null>(null);
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [expandedRoadmap, setExpandedRoadmap] = useState<number | null>(null);
+  const [roadmapSettings, setRoadmapSettings] = useState({
+    showBacklogLane: true,
+    showRecurringLane: true,
+    showDependencyHints: true,
+  });
 
   const apiBase = runtime.apiBase;
+  useEffect(() => {
+    void loadAdminRuntimeSettings(apiBase).then((settings) => {
+      if (settings) {
+        setRoadmapSettings(settings.strategicRoadmap);
+      }
+    });
+  }, [apiBase]);
   useEffect(() => {
     (window as any).filterByUser = (assignee: string) => {
       setAssigneeFilter(assignee);
@@ -223,6 +236,9 @@ export default function MCStrategicView() {
                                   <span className="text-sm text-[var(--text-primary)] truncate">
                                     {item.title}
                                   </span>
+                                  {roadmapSettings.showDependencyHints && item.linked_task_id ? (
+                                    <span className="text-[10px] text-[var(--text-muted)]">→ task #{item.linked_task_id}</span>
+                                  ) : null}
                                 </div>
                                 <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                                   <span
@@ -249,6 +265,7 @@ export default function MCStrategicView() {
         </section>
 
         {/* ── Recurring Tasks ── */}
+        {roadmapSettings.showRecurringLane ? (
         <section>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-[var(--text-primary)]">Recurring Tasks</h2>
@@ -290,9 +307,10 @@ export default function MCStrategicView() {
             </div>
           )}
         </section>
+        ) : null}
 
         {/* ── Backlog / Future ── */}
-        {(backlogTasks.length > 0 || futureTasks.length > 0) && (
+        {roadmapSettings.showBacklogLane && (backlogTasks.length > 0 || futureTasks.length > 0) && (
           <section>
             <h2 className="mb-3 text-lg font-semibold text-[var(--text-primary)]">Backlog & Future</h2>
             <div className="space-y-1.5">

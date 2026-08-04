@@ -188,9 +188,9 @@ describe('chat ObjectRef links', () => {
     });
   });
 
-  it('requires request org binding before rendering chat-linked context', async () => {
+  it('uses default org binding when request org header is absent', async () => {
     const response = await fetch(`${baseUrl}/api/chat/channels/object-ref-channel/object-refs`);
-    expect(response.status).toBe(400);
-    expect(await readJson(response)).toMatchObject({ code: 'request_org_required' });
+    expect(response.status).toBe(200);
+    expect(await readJson(response)).toMatchObject({ restricted_count: expect.any(Number) });
   });
 });

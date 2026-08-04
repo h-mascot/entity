@@ -7,10 +7,7 @@ import {
   resolvePhase2Flags,
   type Phase2FlagSnapshot,
 } from '../phase2-flags';
-import { getEntityDatabase } from '../../../db/src/entity-db';
-import { ensureAppSettingsTable } from '../config/settings-store';
-import { ADMIN_SETTINGS_KEYS } from '../config/admin-settings';
-import { getAdminSettings } from '../config/admin-settings-store';
+import { readScopedSearchRuntimeSettings } from '../config/admin-runtime';
 
 type SearchMode = 'keyword' | 'semantic' | 'hybrid';
 type SearchCollection = 'all' | 'obsidian' | 'superada' | 'sessions' | 'scotty' | 'spock' | 'memory';
@@ -626,10 +623,7 @@ export function createSearchRouter(dependencies: SearchRouterDependencies = {}):
     }
 
     const collectionRaw = req.query.collection;
-    const scopedSearchSettings = getAdminSettings(
-      getEntityDatabase(ensureAppSettingsTable),
-      ADMIN_SETTINGS_KEYS.scopedSearch,
-    );
+    const scopedSearchSettings = readScopedSearchRuntimeSettings();
     const collection = normalizeCollection(collectionRaw) ?? scopedSearchSettings.defaultCollection;
     if (typeof collectionRaw !== 'undefined' && !normalizeCollection(collectionRaw)) {
       return res.status(400).json({ error: 'invalid collection' });
@@ -703,15 +697,29 @@ export function createSearchRouter(dependencies: SearchRouterDependencies = {}):
           entity_visibility_policy_json: typeof entry.entity_visibility_policy_json === 'string' ? entry.entity_visibility_policy_json : null,
         };
         const envelope = permissionSafeRecord(binding, object, result, full ? 'read' : 'search');
-        return { ...envelope.object, permission: envelope.permission };
+        const mapped = { ...envelope.object, permission: envelope.permission } as Record<string, unknown>;
+        if (scopedSearchSettings.labelDegradedResults && envelope.object.permission_state === 'restricted') {
+          mapped.result_label = 'degraded';
+        }
+        return mapped;
       });
+
+      const filteredResults = scopedSearchSettings.includeTaskProof
+        ? results
+        : results.filter((entry) => {
+            const collectionName = typeof entry.collection === 'string' ? entry.collection : '';
+            const pathName = typeof entry.path === 'string' ? entry.path : '';
+            return collectionName !== 'sessions'
+              && !pathName.includes('/proof/')
+              && !pathName.includes('/tasks/');
+          });
 
       return res.json({
         query,
         mode,
         collection,
-        count: results.length,
-        results,
+        count: filteredResults.length,
+        results: filteredResults,
       });
     } catch (err) {
       const classified = classifyExecError(err);

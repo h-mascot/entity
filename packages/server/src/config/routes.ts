@@ -22,6 +22,7 @@ import { EntityConfigSchema, OnboardingAgentSessionSchema, OnboardingStateSchema
 import { ensureAppSettingsTable, getSettingJson, setSettingJson } from './settings-store';
 import { ADMIN_SETTINGS_KEYS } from './admin-settings';
 import { getAdminSettings, resetAdminSettings, setAdminSettings } from './admin-settings-store';
+import { readAdminRuntimeSettings } from './admin-runtime';
 import { createRequireAdminPrincipal } from '../middleware/admin-auth';
 
 const ONBOARDING_STATE_KEY = 'onboarding.state';
@@ -415,6 +416,17 @@ export function registerConfigRoutes(app: express.Express): void {
     } catch (error) {
       res.status(500).json({
         error: 'Failed to build effective config',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get('/api/runtime/admin-settings', (_req, res) => {
+    try {
+      res.json(readAdminRuntimeSettings());
+    } catch (error) {
+      res.status(500).json({
+        error: 'Failed to load admin runtime settings',
         detail: error instanceof Error ? error.message : String(error),
       });
     }

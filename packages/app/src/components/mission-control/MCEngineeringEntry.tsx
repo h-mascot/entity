@@ -10,6 +10,7 @@ import {
 } from '../../lib/engineeringTasks';
 import { toErrorMessage } from '../../lib/http';
 import { createLatestRequestGuard } from '../../lib/taskLoadingGuards';
+import { loadAdminRuntimeSettings } from '../../lib/adminRuntimeSettings';
 
 export const ENGINEERING_TASKS_REFRESH_EVENT = 'entity:engineering-tasks:refresh';
 
@@ -39,6 +40,7 @@ export default function MCEngineeringEntry({
   const [tasks, setTasks] = useState<TaskBoardTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showEmptyStateHints, setShowEmptyStateHints] = useState(true);
   const [activeViewport, setActiveViewport] = useState(false);
   const reloadGuardRef = useRef<ReturnType<typeof createLatestRequestGuard> | null>(null);
   if (reloadGuardRef.current === null) {
@@ -72,6 +74,14 @@ export default function MCEngineeringEntry({
       }
     }
   }, [activeViewport, apiBase, reloadGuard]);
+
+  useEffect(() => {
+    void loadAdminRuntimeSettings(apiBase).then((settings) => {
+      if (settings) {
+        setShowEmptyStateHints(settings.engineering.showEmptyStateHints);
+      }
+    });
+  }, [apiBase]);
 
   useEffect(() => {
     const updateViewport = () => {
@@ -174,6 +184,11 @@ export default function MCEngineeringEntry({
           ) : null}
         </div>
       </header>
+      {!loading && !error && tasks.length === 0 && showEmptyStateHints ? (
+        <div className="border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3 text-xs text-[var(--text-muted)]">
+          No engineering tasks yet. Create one to start tracking import, build, and review work in this domain.
+        </div>
+      ) : null}
       <div className="min-h-0 w-full flex-1">
         <TaskBoard
           viewport={viewport}
