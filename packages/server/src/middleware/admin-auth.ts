@@ -44,20 +44,43 @@ function readGrantPrincipalIdFromPath(req: Request): string {
   return match?.[1] ?? '';
 }
 
+export const ADMIN_BOOTSTRAP_READ_LOCALS = 'entityAdminBootstrapRead';
+
 export function createRequireAdminPrincipal(repo: PrincipalRepository = createPrincipalRepository()) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const principalCount = repo.listPrincipals({ includeDisabled: true }).length;
     if (principalCount === 0) {
       if (isApiAuthEnabled()) {
+        // Normalize trailing slashes so '/principals/' is treated as the
+        // collection while sub-paths ('/principals/:id', '/.../grants') are not.
+        const normalizedPath = (typeof req.path === 'string' ? req.path : '').replace(/\/+$/, '') || '/';
+        const isPrincipalCollection = normalizedPath === '/principals';
         const isCreatePrincipal =
           req.method === 'POST'
-          && (req.path === '/principals' || req.path.endsWith('/principals'));
-        if (!isCreatePrincipal) {
+          && isPrincipalCollection;
+        // During the empty bootstrap state the principal list is empty, so a
+        // read-only GET leaks nothing and is required for the browser UI to
+        // discover bootstrap state and render the create form. All other
+        // (mutating) routes stay blocked until the first principal exists.
+        const isBootstrapPrincipalListRead =
+          req.method === 'GET'
+          && isPrincipalCollection;
+        if (!isCreatePrincipal && !isBootstrapPrincipalListRead) {
           res.status(403).json({
             error: 'create the first principal before other admin mutations',
             code: 'admin_bootstrap_required',
           });
           return;
+        }
+        // Mark the request as bootstrap-authorized so the list handler returns
+        // a deterministic empty list. This removes any time-of-check/time-of-use
+        // window between this count and the handler's read: once a request is
+        // authorized as a bootstrap read it can never surface principal records,
+        // even if a concurrent request creates the first principal mid-flight.
+        if (isBootstrapPrincipalListRead) {
+          const locals: Record<string, unknown> = res.locals ?? {};
+          locals[ADMIN_BOOTSTRAP_READ_LOCALS] = true;
+          res.locals = locals;
         }
       }
       next();
