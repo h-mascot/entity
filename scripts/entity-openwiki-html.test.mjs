@@ -51,6 +51,15 @@ test("buildOpenWikiHtml rewrites wiki links through Entity and isolates external
   assert.match(nested, /href="https:\/\/example\.com\/docs"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
 });
 
+test("buildOpenWikiHtml keeps keyboard focus visibly distinct from hover", async () => {
+  const root = await wikiFixture();
+  const output = await buildOpenWikiHtml(root, { sourceId: "entity-wiki" });
+  const index = output.files.get("index.html");
+
+  assert.match(index, /:focus-visible\{[^}]*outline:2px solid var\(--accent\)[^}]*outline-offset:2px/);
+  assert.doesNotMatch(index, /:focus-visible\{[^}]*outline:none/);
+});
+
 test("renderOpenWikiHtml creates deterministic recursive pages and a content manifest", async () => {
   const root = await wikiFixture();
   const first = await renderOpenWikiHtml(root, { sourceId: "entity-wiki" });

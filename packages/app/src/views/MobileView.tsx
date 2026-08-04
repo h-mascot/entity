@@ -1201,6 +1201,7 @@ export default function MobileView(props: any) {
                           <LazyCodeMirrorFileViewer
                             content={fileContent}
                             filePath={currentFile ?? ''}
+                            sourceId={currentSourceId}
                             contentType={currentFilePreviewMeta.contentType}
                             fileSize={currentFilePreviewMeta.size}
                             isBinary={currentFilePreviewMeta.isBinary}
