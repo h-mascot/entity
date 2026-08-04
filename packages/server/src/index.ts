@@ -117,6 +117,7 @@ import { ensureDevDocumentsToken, shouldProvisionDevDocumentsToken } from "./edi
 import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
+import { createTaskHandoffRouter } from "./routes/task-handoffs";
 import { registerStrategicRoutes, registerTaskRoutes } from "./routes/tasks";
 import {
   buildTaskPreview,
@@ -194,6 +195,7 @@ import { createTaskSyncLayer, normalizeDbMode } from "../../db/src/task-sync";
 import {
   createAgentRegistryRepository,
   createModuleRegistryRepository,
+  createTaskHandoffRepository,
 } from "../../db/src";
 
 const app = express();
@@ -554,6 +556,19 @@ app.use("/api/tasks", createTaskReviewGateRouter({
   activityRepository,
   defaultActor: getDefaultTaskActor(),
 }));
+// Task handoffs (Curacel pilot C-8): org-scoped handoff DAG. Authorization is
+// main's bearer-token middleware; the tenant boundary is enforced by the
+// org-scoped repository (org derived from the task row, never a header).
+const taskHandoffRepo = createTaskHandoffRepository();
+const taskHandoffRouter = createTaskHandoffRouter({
+  handoffRepo: taskHandoffRepo,
+  taskStore: { getTask: (taskId: number) => taskSyncLayer.getTask(taskId) },
+  resolveTargetAgent: ({ agentId }) =>
+    Boolean(agentRegistryRepo.getAgent(agentId) ?? agentRegistryRepo.getAgentBySlug(agentId)),
+  defaultActor: getDefaultTaskActor(),
+});
+app.use("/tasks", taskHandoffRouter);
+app.use("/api/tasks", taskHandoffRouter);
 registerStrategicRoutes(app, "", taskRouteDeps);
 registerStrategicRoutes(app, "/api", taskRouteDeps);
 if (!AGENT_NATIVE_EDITOR_ENABLED) {

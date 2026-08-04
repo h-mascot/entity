@@ -36,9 +36,8 @@ import {
   createPrincipalRepository,
   ensurePrincipalsSchema,
   type PrincipalRepository,
-  type TaskRecord,
 } from '../../../db/src/principals';
-import type { ActivityRepository, UpdateTaskInput } from '../../../db/src';
+import type { ActivityRepository, TaskRecord, UpdateTaskInput } from '../../../db/src';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -136,7 +135,7 @@ describe('Curacel pilot acceptance — auth default-deny (target #1)', () => {
     app.get('/api/tasks', (_req, res) => res.json({ ok: true }));
     server = http.createServer(app);
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as http.AddressInfo).port;
+    const port = (server.address() as { port: number }).port;
     return `http://127.0.0.1:${port}`;
   }
 
@@ -234,7 +233,7 @@ describe('Curacel pilot acceptance — review decisions (target #3)', () => {
         applied.push(u);
         return { ...task, ...u } as TaskRecord;
       },
-      activityRepository: { createActivity: () => ({ id: 1 }) } as Pick<ActivityRepository, 'createActivity'>,
+      activityRepository: { createActivity: () => ({ id: 1 }) } as unknown as Pick<ActivityRepository, 'createActivity'>,
       defaultActor: 'system',
     };
     const app = express();
@@ -242,7 +241,7 @@ describe('Curacel pilot acceptance — review decisions (target #3)', () => {
     app.use('/api/tasks', createTaskReviewGateRouter(deps));
     server = http.createServer(app);
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as http.AddressInfo).port;
+    const port = (server.address() as { port: number }).port;
     baseUrl = `http://127.0.0.1:${port}/api/tasks`;
     return { applied };
   }
@@ -410,7 +409,7 @@ describe('Curacel pilot acceptance — reproducible release (target #6)', () => 
     registerCoreProbeRoutes(app, {});
     server = http.createServer(app);
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as http.AddressInfo).port;
+    const port = (server.address() as { port: number }).port;
     const res = await fetch(`http://127.0.0.1:${port}/api/version`);
     expect(res.status).toBe(200);
     const body = await readJson(res);

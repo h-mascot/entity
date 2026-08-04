@@ -182,7 +182,7 @@ describe('Curacel pilot acceptance — workflow + lease + history (targets #3, #
     expect(history.some((h) => h.field === 'column')).toBe(true);
 
     const activityRepo = db.createActivityRepository();
-    activityRepo.createActivity({ task_id: task.id, type: 'task', action: 'moved', description: 'Moved to review', agent_name: 'reviewer-1' });
+    activityRepo.createActivity({ task_id: task.id, type: 'task_moved', action: 'moved', description: 'Moved to review', agent_name: 'reviewer-1' });
     const activities = activityRepo.listActivitiesByTaskId(task.id);
     expect(activities.length).toBeGreaterThan(0);
     expect(activities.every((a) => a.task_id === task.id)).toBe(true);
