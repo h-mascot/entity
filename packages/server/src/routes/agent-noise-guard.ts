@@ -17,15 +17,17 @@
  * Policy is refreshed from the shared settings store before every reservation when
  * a policy reader is supplied; this makes already-running instances authoritative.
  */
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type Database from 'better-sqlite3';
 
-export type NoiseSuppressionReason = 'duplicate-concurrent' | 'cooldown' | 'muted';
+export type NoiseSuppressionReason = 'duplicate-concurrent' | 'cooldown' | 'muted' | 'capacity' | 'degraded-policy';
 
 export interface NoiseReservation {
   suppressed: boolean;
   reason?: NoiseSuppressionReason;
   agent: string;
+  /** Opaque lease owner; required for a release CAS. */
+  ownerToken?: string;
 }
 
 export interface NoiseScope {
@@ -68,6 +70,7 @@ export interface AgentNoiseGuardSnapshot {
 export interface NoiseReleaseOptions {
   /** When true, the delivery succeeded and the cooldown window is recorded. */
   delivered?: boolean;
+  ownerToken?: string;
 }
 
 export interface AgentNoiseGuard {
@@ -104,17 +107,18 @@ function hashContent(content: string, maxBytes: number): string {
 interface ReserveDecision {
   acquired: boolean;
   reason?: NoiseSuppressionReason;
+  ownerToken?: string;
 }
 
 interface ReservationBackend {
   tryReserve(scopeKey: string, agent: string, now: number, cooldownMs: number): ReserveDecision;
-  release(scopeKey: string, now: number, delivered: boolean): void;
+  release(scopeKey: string, ownerToken: string, now: number, delivered: boolean): void;
   trackedCount(): number;
 }
 
 /** Process-local in-memory backend (default). Held until explicit release. */
 class InMemoryReservationBackend implements ReservationBackend {
-  private readonly inFlight = new Map<string, number>();
+  private readonly inFlight = new Map<string, { reservedAt: number; ownerToken: string }>();
   private readonly lastSend = new Map<string, number>();
   constructor(private readonly maxStateEntries: number) {}
 
@@ -129,13 +133,17 @@ class InMemoryReservationBackend implements ReservationBackend {
     // Acquire the in-flight reservation only. The cooldown window is recorded on
     // release({ delivered: true }) so a failed provider call cannot consume the
     // cooldown and block a legitimate retry.
-    this.inFlight.set(scopeKey, now);
-    return { acquired: true };
+    const ownerToken = randomUUID();
+    this.inFlight.set(scopeKey, { reservedAt: now, ownerToken });
+    return { acquired: true, ownerToken };
   }
 
-  release(scopeKey: string, now: number, delivered: boolean): void {
+  release(scopeKey: string, ownerToken: string, now: number, delivered: boolean): void {
+    if (this.inFlight.get(scopeKey)?.ownerToken !== ownerToken) return;
     this.inFlight.delete(scopeKey);
     if (delivered) {
+      // Record the success-only cooldown. State is bounded by evictIfNeeded
+      // below; the authoritative cross-process bound lives in the DB backend.
       this.lastSend.set(scopeKey, now);
       this.evictIfNeeded();
     }
@@ -161,7 +169,8 @@ CREATE TABLE IF NOT EXISTS agent_noise_reservations (
   agent        TEXT NOT NULL,
   reserved_at  INTEGER NOT NULL,
   lease_until  INTEGER NOT NULL,
-  last_sent_at INTEGER
+  last_sent_at INTEGER,
+  owner_token  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_noise_reservations_last_sent
   ON agent_noise_reservations(last_sent_at);
@@ -173,6 +182,7 @@ interface ReservationRow {
   reserved_at: number;
   lease_until: number;
   last_sent_at: number | null;
+  owner_token: string | null;
 }
 
 /**
@@ -203,21 +213,23 @@ class DbReservationBackend implements ReservationBackend {
     }
     db.exec(NOISE_RESERVATION_SCHEMA);
 
-    this.getStmt = db.prepare('SELECT scope_key, agent, reserved_at, lease_until, last_sent_at FROM agent_noise_reservations WHERE scope_key = ?');
+    try { db.exec('ALTER TABLE agent_noise_reservations ADD COLUMN owner_token TEXT'); } catch { /* already exists */ }
+    this.getStmt = db.prepare('SELECT scope_key, agent, reserved_at, lease_until, last_sent_at, owner_token FROM agent_noise_reservations WHERE scope_key = ?');
     this.upsertStmt = db.prepare(`
-      INSERT INTO agent_noise_reservations (scope_key, agent, reserved_at, lease_until, last_sent_at)
-      VALUES (@scope_key, @agent, @reserved_at, @lease_until, @last_sent_at)
+      INSERT INTO agent_noise_reservations (scope_key, agent, reserved_at, lease_until, last_sent_at, owner_token)
+      VALUES (@scope_key, @agent, @reserved_at, @lease_until, @last_sent_at, @owner_token)
       ON CONFLICT(scope_key) DO UPDATE SET
         agent = excluded.agent,
         reserved_at = excluded.reserved_at,
         lease_until = excluded.lease_until,
-        last_sent_at = excluded.last_sent_at
+        last_sent_at = excluded.last_sent_at,
+        owner_token = excluded.owner_token
     `);
     this.releaseDeliveredStmt = db.prepare(`
-      UPDATE agent_noise_reservations SET lease_until = @lease_until, last_sent_at = @now WHERE scope_key = @scope_key
+      UPDATE agent_noise_reservations SET lease_until = @lease_until, last_sent_at = @now WHERE scope_key = @scope_key AND owner_token = @owner_token
     `);
     this.clearLeaseStmt = db.prepare(`
-      UPDATE agent_noise_reservations SET lease_until = @lease_until WHERE scope_key = @scope_key
+      UPDATE agent_noise_reservations SET lease_until = @lease_until WHERE scope_key = @scope_key AND owner_token = @owner_token
     `);
     // A row is stale once its lease has expired AND (it has no cooldown, or its
     // cooldown window has elapsed). Stale rows are safe to delete (bounded state).
@@ -232,6 +244,7 @@ class DbReservationBackend implements ReservationBackend {
       WHERE scope_key IN (
         SELECT scope_key FROM agent_noise_reservations
         WHERE lease_until <= @now
+          AND (last_sent_at IS NULL OR @cooldownMs = 0 OR last_sent_at + @cooldownMs <= @now)
         ORDER BY COALESCE(last_sent_at, reserved_at) ASC
         LIMIT @excess
       )
@@ -242,15 +255,12 @@ class DbReservationBackend implements ReservationBackend {
   tryReserve(scopeKey: string, agent: string, now: number, cooldownMs: number): ReserveDecision {
     const leaseUntil = now + this.leaseMs;
     const tx = this.db.transaction((): ReserveDecision => {
-      // 1) bounded cleanup of fully-stale rows.
+      // 1) bounded cleanup of fully-stale rows (expired lease AND elapsed
+      // cooldown). Live-cooldown rows are never collected here.
       this.staleCleanupStmt.run({ now, cooldownMs });
-      // 2) hard cap: evict oldest expired-lease rows if still over the limit.
-      // Never evict a currently-held lease (lease_until > now).
-      const total = (this.countStmt.get() as { c: number }).c;
-      if (total > this.maxStateEntries) {
-        this.evictStmt.run({ now, excess: total - this.maxStateEntries });
-      }
-      // 3) compare-and-set against the current row.
+      // 2) compare-and-set against the current row FIRST. A key that is already
+      //    in-flight or in-cooldown must be reported with its real reason
+      //    regardless of capacity, because such a denial inserts no new row.
       const row = this.getStmt.get(scopeKey) as ReservationRow | undefined;
       if (row && row.lease_until > now) {
         return { acquired: false, reason: 'duplicate-concurrent' };
@@ -258,26 +268,44 @@ class DbReservationBackend implements ReservationBackend {
       if (row && row.last_sent_at != null && now - row.last_sent_at < cooldownMs) {
         return { acquired: false, reason: 'cooldown' };
       }
+      // 3) hard cap: only a brand-new key can grow state. Upserting an existing
+      //    (now-stale) row reuses its slot, so the capacity gate applies only on
+      //    the new-key path. Evict the oldest expired-lease row whose cooldown
+      //    has elapsed; never evict a currently-held lease or a live cooldown.
+      //    If nothing is safely evictable, fail closed with 'capacity'.
+      if (!row) {
+        const total = (this.countStmt.get() as { c: number }).c;
+        if (total >= this.maxStateEntries) {
+          this.evictStmt.run({ now, excess: 1, cooldownMs });
+          const afterEviction = (this.countStmt.get() as { c: number }).c;
+          if (afterEviction >= this.maxStateEntries) return { acquired: false, reason: 'capacity' };
+        }
+      }
+      // Generate the owner token once and return it directly: the row we just
+      // wrote is authoritative, so an extra SELECT to read it back is both
+      // needless and racy under the same transaction.
+      const ownerToken = randomUUID();
       this.upsertStmt.run({
         scope_key: scopeKey,
         agent,
         reserved_at: now,
         lease_until: leaseUntil,
         last_sent_at: row?.last_sent_at ?? null,
+        owner_token: ownerToken,
       });
-      return { acquired: true };
+      return { acquired: true, ownerToken };
     });
     return tx();
   }
 
-  release(scopeKey: string, now: number, delivered: boolean): void {
+  release(scopeKey: string, ownerToken: string, now: number, delivered: boolean): void {
     const tx = this.db.transaction(() => {
       if (delivered) {
         // Success-only cooldown: record last_send and clear the in-flight lease.
-        this.releaseDeliveredStmt.run({ scope_key: scopeKey, lease_until: now, now });
+        this.releaseDeliveredStmt.run({ scope_key: scopeKey, owner_token: ownerToken, lease_until: now, now });
       } else {
         // Clear the in-flight lease only; keep any prior cooldown window.
-        this.clearLeaseStmt.run({ scope_key: scopeKey, lease_until: now });
+        this.clearLeaseStmt.run({ scope_key: scopeKey, owner_token: ownerToken, lease_until: now });
       }
     });
     tx();
@@ -299,15 +327,18 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
     ? new DbReservationBackend(options.db, Math.max(1, Number(options.leaseMs ?? DEFAULT_LEASE_MS) || DEFAULT_LEASE_MS), maxStateEntries)
     : new InMemoryReservationBackend(maxStateEntries);
   let currentCooldown = cooldownMs;
-  const refreshPolicy = () => {
-    if (!options.policy) return;
-    const policy = options.policy();
+  const heldTokens = new Map<string, string>();
+  const refreshPolicy = (): boolean => {
+    if (!options.policy) return true;
+    let policy: { cooldownMs: number; mutedAgents: string[] };
+    try { policy = options.policy(); } catch { return false; }
     currentCooldown = Math.max(0, Number(policy.cooldownMs) || 0);
     muted.clear();
     for (const agent of policy.mutedAgents ?? []) {
       const normalized = normalizeAgent(agent);
       if (normalized) muted.add(normalized);
     }
+    return true;
   };
 
   function reserveKey(agent: string, scope: NoiseScope, content: string): string {
@@ -316,7 +347,7 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
 
   return {
     reserve(agent, scopeArg, content) {
-      refreshPolicy();
+      if (!refreshPolicy()) return { suppressed: true, reason: 'degraded-policy', agent: normalizeAgent(agent) };
       const normalized = normalizeAgent(agent);
       if (muted.has(normalized)) {
         return { suppressed: true, reason: 'muted', agent: normalized };
@@ -326,12 +357,16 @@ export function createAgentNoiseGuard(options: AgentNoiseGuardOptions = {}): Age
       if (!decision.acquired) {
         return { suppressed: true, reason: decision.reason, agent: normalized };
       }
-      return { suppressed: false, agent: normalized };
+      if (decision.ownerToken) heldTokens.set(key, decision.ownerToken);
+      return { suppressed: false, agent: normalized, ownerToken: decision.ownerToken };
     },
 
     release(agent, scopeArg, content, options) {
       const key = reserveKey(normalizeAgent(agent), scopeArg, content);
-      backend.release(key, now(), Boolean(options?.delivered));
+      const ownerToken = options?.ownerToken ?? heldTokens.get(key);
+      if (!ownerToken) return;
+      backend.release(key, ownerToken, now(), Boolean(options?.delivered));
+      if (heldTokens.get(key) === ownerToken) heldTokens.delete(key);
     },
 
     isMuted(agent) {
