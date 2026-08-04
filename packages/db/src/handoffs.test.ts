@@ -83,25 +83,47 @@ describe('handoff repository — rollback scope (THE-933)', () => {
   });
 });
 
-describe('handoff repository — legacy schema fail-closed (THE-933)', () => {
-  it('fails closed when a legacy task_handoffs table is missing required columns', () => {
+describe('handoff repository — namespaced table ignores deployed legacy task_handoffs (THE-933 R2)', () => {
+  it('coexists with a deployed legacy task_handoffs table (no throw, no alter, no purge)', () => {
     const db = new Database(':memory:');
-    // Legacy shape predating the mode/cloud_id/accountability columns.
+    // Deployed legacy shape predating the mode/cloud_id/accountability columns.
     db.exec(`
       CREATE TABLE task_handoffs (
         id TEXT PRIMARY KEY,
-        task_id INTEGER NOT NULL,
-        note TEXT
+        org_id TEXT NOT NULL,
+        source_task_id INTEGER NOT NULL,
+        target_task_id INTEGER NOT NULL,
+        status TEXT NOT NULL
       );
+      INSERT INTO task_handoffs (id, org_id, source_task_id, target_task_id, status)
+      VALUES ('legacy-1', 'org-1', 1, 2, 'pending');
     `);
-    expect(() => ensureHandoffSchema(db)).toThrow(/task_handoffs_schema_incompatible/i);
+    // Initializing the new schema must NOT throw over the legacy table.
+    expect(() => ensureHandoffSchema(db)).not.toThrow();
+    // The legacy table is untouched (still the deployed incompatible shape).
+    const legacyCols = db.prepare('PRAGMA table_info(task_handoffs)').all() as Array<{ name: string }>;
+    const legacyNames = new Set(legacyCols.map((c) => c.name));
+    expect(legacyNames.has('mode')).toBe(false);
+    expect((db.prepare('SELECT COUNT(*) AS c FROM task_handoffs').get() as { c: number }).c).toBe(1);
+    // The new feature lives in its own namespaced table.
+    const v2Cols = db.prepare('PRAGMA table_info(entity_task_handoffs_v2)').all() as Array<{ name: string }>;
+    const v2Names = new Set(v2Cols.map((c) => c.name));
+    expect(v2Names.has('mode')).toBe(true);
+    expect(v2Names.has('cloud_id')).toBe(true);
+    db.close();
+  });
+
+  it('fails closed when the namespaced table exists with an incompatible schema (defense in depth)', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE entity_task_handoffs_v2 (id TEXT PRIMARY KEY, task_id INTEGER, note TEXT);');
+    expect(() => ensureHandoffSchema(db)).toThrow(/entity_task_handoffs_v2_schema_incompatible/i);
     db.close();
   });
 
   it('creates the schema cleanly on a fresh database', () => {
     const db = new Database(':memory:');
     expect(() => ensureHandoffSchema(db)).not.toThrow();
-    const cols = db.prepare("PRAGMA table_info(task_handoffs)").all() as Array<{ name: string }>;
+    const cols = db.prepare('PRAGMA table_info(entity_task_handoffs_v2)').all() as Array<{ name: string }>;
     const names = new Set(cols.map((c) => c.name));
     expect(names.has('mode')).toBe(true);
     expect(names.has('cloud_id')).toBe(true);

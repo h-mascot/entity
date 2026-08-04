@@ -53,6 +53,8 @@ export interface HandoffRepository {
   rollback(id: string, scope: HandoffQueryScope): HandoffRecord;
 }
 
+const HANDOFF_TABLE = 'entity_task_handoffs_v2';
+
 const HANDOFF_REQUIRED_COLUMNS = [
   'id',
   'task_id',
@@ -67,9 +69,17 @@ const HANDOFF_REQUIRED_COLUMNS = [
   'created_at',
 ] as const;
 
+/**
+ * THE-933 (R2): the new feature persists to a distinct, namespaced table
+ * (`entity_task_handoffs_v2`). A DEPLOYED legacy `task_handoffs` table with an
+ * incompatible schema and sandbox rows already exists in production; the new
+ * code MUST NOT throw at startup, alter destructively, or purge those rows. By
+ * using its own table the new feature coexists with the deployed one without
+ * touching it.
+ */
 export function ensureHandoffSchema(db: Database.Database): void {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS task_handoffs (
+    CREATE TABLE IF NOT EXISTS ${HANDOFF_TABLE} (
       id TEXT PRIMARY KEY,
       task_id INTEGER NOT NULL,
       mode TEXT NOT NULL,
@@ -83,20 +93,19 @@ export function ensureHandoffSchema(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
-  // THE-933: fail closed if a pre-existing legacy `task_handoffs` table is
-  // missing required columns. CREATE TABLE IF NOT EXISTS is a no-op on a legacy
-  // table, so an incompatible schema must not be silently used. This check runs
-  // before index creation (indexes reference the new columns).
-  const cols = db.prepare('PRAGMA table_info(task_handoffs)').all() as Array<{ name: string }>;
+  // Defense in depth: if a partially-migrated namespaced table is missing
+  // required columns, fail closed before index creation. This check NEVER
+  // inspects the deployed legacy `task_handoffs` table.
+  const cols = db.prepare(`PRAGMA table_info(${HANDOFF_TABLE})`).all() as Array<{ name: string }>;
   const present = new Set(cols.map((c) => c.name));
   for (const col of HANDOFF_REQUIRED_COLUMNS) {
     if (!present.has(col)) {
-      throw new Error('task_handoffs_schema_incompatible');
+      throw new Error('entity_task_handoffs_v2_schema_incompatible');
     }
   }
   db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_task_handoffs_task_mode ON task_handoffs(task_id, mode);
-    CREATE INDEX IF NOT EXISTS idx_task_handoffs_org ON task_handoffs(org_id);
+    CREATE INDEX IF NOT EXISTS idx_entity_task_handoffs_v2_task_mode ON ${HANDOFF_TABLE}(task_id, mode);
+    CREATE INDEX IF NOT EXISTS idx_entity_task_handoffs_v2_org ON ${HANDOFF_TABLE}(org_id);
   `);
 }
 
@@ -137,22 +146,22 @@ export function createHandoffRepository(): HandoffRepository {
   const db = getEntityDatabase(ensureHandoffSchema);
 
   const insertStmt = db.prepare(`
-    INSERT INTO task_handoffs (id, task_id, mode, cloud_id, source_principal_id, target_principal_id, org_id, team_id, note, created_by_principal_id, created_at)
+    INSERT INTO ${HANDOFF_TABLE} (id, task_id, mode, cloud_id, source_principal_id, target_principal_id, org_id, team_id, note, created_by_principal_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
-  const getByIdStmt = db.prepare('SELECT * FROM task_handoffs WHERE id = ?');
+  const getByIdStmt = db.prepare(`SELECT * FROM ${HANDOFF_TABLE} WHERE id = ?`);
   const listByTaskStmt = db.prepare(`
-    SELECT * FROM task_handoffs
+    SELECT * FROM ${HANDOFF_TABLE}
     WHERE task_id = ? AND mode = 'local' AND org_id = ?
     ORDER BY datetime(created_at) ASC, id ASC
   `);
   const listByTaskCloudStmt = db.prepare(`
-    SELECT * FROM task_handoffs
+    SELECT * FROM ${HANDOFF_TABLE}
     WHERE task_id = ? AND mode = 'cloud' AND org_id = ? AND cloud_id = ?
     ORDER BY datetime(created_at) ASC, id ASC
   `);
   const listByTaskCloudAllStmt = db.prepare(`
-    SELECT * FROM task_handoffs
+    SELECT * FROM ${HANDOFF_TABLE}
     WHERE task_id = ? AND mode = 'cloud' AND org_id = ?
     ORDER BY datetime(created_at) ASC, id ASC
   `);
