@@ -32,6 +32,7 @@
     "promote:prod": "bash scripts/entity-promote-prod.sh",
     "release:info": "node scripts/entity-release-info.mjs",
     "release:check": "node scripts/entity-release-info.mjs --check",
+    "test:release-deploy": "node --test scripts/entity-release-info.test.mjs",
     "docs:wiki:init": "node scripts/entity-openwiki.mjs init",
     "docs:wiki:update": "node scripts/entity-openwiki.mjs update",
     "docs:wiki:verify": "node scripts/entity-openwiki.mjs verify",

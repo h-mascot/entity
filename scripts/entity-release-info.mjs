@@ -21,7 +21,7 @@ const manifest = {
   githubRunUrl: process.env.GITHUB_RUN_ID ? `https://github.com/${args.repo || 'h-mascot/entity'}/actions/runs/${process.env.GITHUB_RUN_ID}` : null,
   builtAt,
   nodeVersion: process.version,
-  packageLockHash: existsSync(packageLock) ? `sha256:${sha256File(packageLock)}` : null,
+  packageLockHash: maybePathHash(packageLock),
   artifactHash: `sha256:${treeHash(root, ['.git', 'node_modules', 'output'], 'repo')}`,
   distHashes: {
     'packages/app/dist': maybeTreeHash(join(root, 'packages/app/dist')),
@@ -78,12 +78,35 @@ function readJson(file) {
   try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; }
 }
 
-function sha256File(file) {
-  return createHash('sha256').update(readFileSync(file)).digest('hex');
+function maybePathHash(file) {
+  let st;
+  try {
+    st = lstatSync(file);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+  if (!st.isFile() && !st.isSymbolicLink()) return null;
+  const kind = st.isSymbolicLink() ? 'symlink' : 'file';
+  const payload = kind === 'symlink' ? readlinkSync(file) : readFileSync(file);
+  const hash = createHash('sha256');
+  hash.update(kind);
+  hash.update('\0');
+  hash.update(payload);
+  hash.update('\0');
+  return `sha256:${hash.digest('hex')}`;
 }
 
 function maybeTreeHash(dir, scope = 'immutable') {
-  return existsSync(dir) ? `sha256:${treeHash(dir, [], scope)}` : null;
+  let st;
+  try {
+    st = lstatSync(dir);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+  if (st.isSymbolicLink() || st.isFile()) return maybePathHash(dir);
+  return st.isDirectory() ? `sha256:${treeHash(dir, [], scope)}` : null;
 }
 
 function treeHash(dir, excludeNames, scope = 'immutable') {
@@ -92,7 +115,9 @@ function treeHash(dir, excludeNames, scope = 'immutable') {
   for (const entry of walk(dir, excludes, dir, scope)) {
     hash.update(relative(dir, entry.path));
     hash.update('\0');
-    hash.update(entry.kind === 'symlink' ? `symlink:${readlinkSync(entry.path)}` : readFileSync(entry.path));
+    hash.update(entry.kind);
+    hash.update('\0');
+    hash.update(entry.kind === 'symlink' ? readlinkSync(entry.path) : readFileSync(entry.path));
     hash.update('\0');
   }
   return hash.digest('hex');

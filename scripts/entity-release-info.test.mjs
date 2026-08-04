@@ -32,23 +32,111 @@ test("artifact hashes do not follow file or directory symlink targets", () => {
   const external = mkdtempSync(join(tmpdir(), "entity-release-external-"));
   try {
     const database = join(external, "entity-tasks.db");
+    const externalFile = join(external, "runtime-file.txt");
     const externalDirectory = join(external, "runtime");
     mkdirSync(externalDirectory);
     writeFileSync(database, "private-db-v1\n");
+    writeFileSync(externalFile, "private-file-v1\n");
     writeFileSync(join(externalDirectory, "secret.txt"), "private-secret-v1\n");
     symlinkSync(database, join(root, "packages/server/dist/db/entity-tasks.db"));
+    symlinkSync(externalFile, join(root, "runtime-file-link"));
     symlinkSync(externalDirectory, join(root, "runtime-link"));
 
     const before = runManifest(root);
     writeFileSync(database, "private-db-v2\n");
+    writeFileSync(externalFile, "private-file-v2\n");
     writeFileSync(join(externalDirectory, "secret.txt"), "private-secret-v2\n");
     const after = runManifest(root);
 
     assert.equal(after.artifactHash, before.artifactHash);
     assert.equal(after.distHashes["packages/server/dist"], before.distHashes["packages/server/dist"]);
+
+    const alternateFile = join(external, "runtime-file-alternate.txt");
+    writeFileSync(alternateFile, "private-file-v2\n");
+    rmSync(join(root, "runtime-file-link"));
+    symlinkSync(alternateFile, join(root, "runtime-file-link"));
+    const retargeted = runManifest(root);
+    assert.notEqual(retargeted.artifactHash, after.artifactHash);
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(external, { recursive: true, force: true });
+  }
+});
+
+test("package lock hash does not follow a symlink target", () => {
+  const root = fixture();
+  const external = mkdtempSync(join(tmpdir(), "entity-release-lock-external-"));
+  try {
+    const externalLock = join(external, "package-lock.json");
+    writeFileSync(externalLock, '{"lockfileVersion":3,"value":"first"}\n');
+    symlinkSync(externalLock, join(root, "package-lock.json"));
+
+    const before = runManifest(root);
+    writeFileSync(externalLock, '{"lockfileVersion":3,"value":"second"}\n');
+    const after = runManifest(root);
+
+    assert.equal(after.packageLockHash, before.packageLockHash);
+
+    const alternateLock = join(external, "alternate-package-lock.json");
+    writeFileSync(alternateLock, '{"lockfileVersion":3,"value":"second"}\n');
+    rmSync(join(root, "package-lock.json"));
+    symlinkSync(alternateLock, join(root, "package-lock.json"));
+    const retargeted = runManifest(root);
+    assert.notEqual(retargeted.packageLockHash, after.packageLockHash);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(external, { recursive: true, force: true });
+  }
+});
+
+test("dist hash does not follow a symlinked dist root", () => {
+  const root = fixture();
+  const external = mkdtempSync(join(tmpdir(), "entity-release-dist-external-"));
+  const alternate = mkdtempSync(join(tmpdir(), "entity-release-dist-alternate-"));
+  try {
+    const distRoot = join(root, "packages/server/dist");
+    rmSync(distRoot, { recursive: true, force: true });
+    writeFileSync(join(external, "server.js"), "external-first\n");
+    symlinkSync(external, distRoot);
+
+    const before = runManifest(root);
+    writeFileSync(join(external, "server.js"), "external-second\n");
+    const after = runManifest(root);
+
+    assert.equal(after.distHashes["packages/server/dist"], before.distHashes["packages/server/dist"]);
+
+    writeFileSync(join(alternate, "server.js"), "external-second\n");
+    rmSync(distRoot);
+    symlinkSync(alternate, distRoot);
+    const retargeted = runManifest(root);
+    assert.notEqual(retargeted.distHashes["packages/server/dist"], after.distHashes["packages/server/dist"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(external, { recursive: true, force: true });
+    rmSync(alternate, { recursive: true, force: true });
+  }
+});
+
+test("artifact and dist hashes domain-separate regular files from symlinks", () => {
+  const root = fixture();
+  try {
+    const target = "/external/runtime-target";
+    const rootEntry = join(root, "kind-entry");
+    const distEntry = join(root, "packages/server/dist/kind-entry");
+    symlinkSync(target, rootEntry);
+    symlinkSync(target, distEntry);
+
+    const before = runManifest(root);
+    rmSync(rootEntry);
+    rmSync(distEntry);
+    writeFileSync(rootEntry, `symlink:${target}`);
+    writeFileSync(distEntry, `symlink:${target}`);
+    const after = runManifest(root);
+
+    assert.notEqual(after.artifactHash, before.artifactHash);
+    assert.notEqual(after.distHashes["packages/server/dist"], before.distHashes["packages/server/dist"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -91,6 +179,31 @@ test("artifact hash includes nested shipped files named VERSION", () => {
     writeFileSync(shippedVersion, "1.0.1\n");
     const after = runManifest(root);
     assert.notEqual(after.artifactHash, before.artifactHash);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("each dist hash changes when its immutable contents change", () => {
+  const root = fixture();
+  try {
+    const distFiles = {
+      "packages/app/dist": join(root, "packages/app/dist/app.js"),
+      "packages/server/dist": join(root, "packages/server/dist/server.js"),
+      "packages/db/dist": join(root, "packages/db/dist/db.js"),
+    };
+    for (const file of Object.values(distFiles)) {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, "first\n");
+    }
+    let before = runManifest(root);
+    for (const [distName, file] of Object.entries(distFiles)) {
+      writeFileSync(file, `changed-${distName}\n`);
+      const after = runManifest(root);
+      assert.notEqual(after.artifactHash, before.artifactHash);
+      assert.notEqual(after.distHashes[distName], before.distHashes[distName]);
+      before = after;
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
