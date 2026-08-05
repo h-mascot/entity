@@ -1,7 +1,42 @@
-# Active Plan — Luna CHANGES_REQUESTED Repair Generation 1
+# Active Plan — Luna CHANGES_REQUESTED Repair Generation 2
 
 Run: `entity-customizable-boards-runner-20260805`
-Reviewed clean HEAD (start): `d83bac03673d289f2d9e6431fbd82da858f8f715`
+Reviewed clean HEAD (start, gen-2): `a0bce45115fa80363b51f90884b4e90a0f3c9fb9`
+Worker: Pi citadel/glm5.2 (medium), sole gen-2 targeted repair worker.
+Production: FORBIDDEN. Do not touch canonical `/Users/enterprise/Code/entity` or sandbox.
+
+## Slices (from repair-map-g2.md) — sequential narrow TDD
+
+### D1 — BRD-004 terminal run retention/proof
+- [x] RED: swarmTaskRunClient.test.ts — findNewestTaskSwarmJob retains the newest task-linked job when terminal (active→terminal), order-independent, deterministic ties, ignores unlinked jobs
+- [x] GREEN: findNewestTaskSwarmJob in self-contained swarmRunStatus.ts; TaskDetailPanel initial-load + poll use it (terminal proof/status/details stay reachable)
+
+### D2 — BRD-002/003 Strategic filter honesty
+- [x] RED: boardsState.test.ts — boardViewSupportsFilter flags strategic unsupported; buildBoardCustomizationPatch collapses unsupported (strategic) filter to no-op 'all'
+- [x] GREEN: boardViewSupportsFilter + buildBoardCustomizationPatch gate; BoardSwitcher disables filter controls for unsupported views with a note
+
+### D3 — BRD-004 duplicate-active migration reconciliation
+- [x] RED: swarm-duplicate-active-migration.test.ts — pre-existing duplicate active jobs abort CREATE UNIQUE INDEX without reconciliation
+- [x] GREEN: reconcileDuplicateActiveTaskJobs before index creation (newest winner preserved, others safely terminalized as cancelled); additive/idempotent; winner/tie/idempotency/index-enforced regression coverage
+
+## Final gate (gen-2)
+- [x] server build + vitest; app test; db test  (db 99, server 1389, app 462)
+- [x] tsconfig check (app/server/db)  (all tsc clean; app vite clean)
+- [x] ctrl:gate under Node 22 (`/opt/homebrew/opt/node@22/bin/node`)  (exit 0; ctrl-gate-g2.log)
+- [x] git diff --check; private-default + secrets/diff scope; diff vs a0bce45 = BRD scope only  (0 errors; BRD-only)
+- [x] scoped commit (641ab7a); clean worktree
+- [x] update receipts (red-green-g2, focused-proof-g2, ctrl-gate-g2, runner-state READY_FOR_REVIEW at new HEAD); historical Luna JSON untouched
+- [x] STOP. No review/push/PR/merge/deploy.
+
+## Resume
+Continue from first unchecked `[ ]`. After D1/D2/D3, run final gate. State ends READY_FOR_REVIEW.
+
+---
+
+# Historical — Luna CHANGES_REQUESTED Repair Generation 1
+
+Run: `entity-customizable-boards-runner-20260805`
+Reviewed clean HEAD (start, gen-1): `d83bac03673d289f2d9e6431fbd82da858f8f715`
 Worker: Pi citadel/glm5.2 (medium), sole gen-1 repair worker.
 Production: FORBIDDEN. Do not touch canonical `/Users/enterprise/Code/entity` or sandbox.
 
