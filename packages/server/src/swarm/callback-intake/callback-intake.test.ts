@@ -401,4 +401,73 @@ describe('EEPC-A-03 callback intake mapping', () => {
       await close();
     }
   });
+
+  // D9: the URL :id is authoritative. A body jobId that targets a different job
+  // than the URL :id must be rejected (400 job_id_mismatch) before intake, so no
+  // ActivityEvent of any kind is mapped or appended. Applies to every surface
+  // because all routes go through handle().
+  it('HTTP router rejects a body jobId that mismatches the URL job id (D9 fail-closed, no intake)', async () => {
+    let intakeCalls = 0;
+    const fakeService = {
+      intake: async () => {
+        intakeCalls += 1;
+        return { ok: true, record: { persisted: false, degraded: false }, status: 202 };
+      },
+    } as unknown as ExecutionCallbackIntakeService;
+    const app = express();
+    app.use(express.json());
+    app.use(createExecutionCallbackIntakeRouter(fakeService));
+    const { baseUrl, close } = await listen(app);
+    try {
+      const res = await fetch(`${baseUrl}/jobs/job-url-authoritative/callbacks/progress`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer some-token' },
+        body: JSON.stringify({
+          provider: 'symphony',
+          jobId: 'job-body-cross-tenant',
+          summary: 'attempt to retarget intake',
+        }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        error: string;
+        issues?: Array<{ code: string }>;
+      };
+      expect(body.error).toBe('job_id_mismatch');
+      expect(body.issues?.some((i) => i.code === 'job_id_mismatch')).toBe(true);
+      // Intake is never invoked → no ActivityEvent mapping or append of any kind.
+      expect(intakeCalls).toBe(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it('HTTP router admits a body jobId that matches the URL job id (D9 positive)', async () => {
+    let intakeCalls = 0;
+    const fakeService = {
+      intake: async () => {
+        intakeCalls += 1;
+        return { ok: true, record: { persisted: false, degraded: false }, status: 202 };
+      },
+    } as unknown as ExecutionCallbackIntakeService;
+    const app = express();
+    app.use(express.json());
+    app.use(createExecutionCallbackIntakeRouter(fakeService));
+    const { baseUrl, close } = await listen(app);
+    try {
+      const res = await fetch(`${baseUrl}/jobs/job-url-authoritative/callbacks/progress`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer some-token' },
+        body: JSON.stringify({
+          provider: 'symphony',
+          jobId: 'job-url-authoritative',
+          summary: 'redundant matching jobId is harmless',
+        }),
+      });
+      expect(res.status).toBe(202);
+      expect(intakeCalls).toBe(1);
+    } finally {
+      await close();
+    }
+  });
 });

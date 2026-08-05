@@ -23,7 +23,10 @@ function buildPayload(event: IntakeCallbackEvent, jobId: string, body: Record<st
   return {
     ...body,
     event,
-    jobId: typeof body.jobId === 'string' && body.jobId.trim() ? body.jobId : jobId,
+    // D9: the route parameter is authoritative for the job identity. A body
+    // jobId that disagrees with the URL :id is rejected before intake (see
+    // handle()), so it can never retarget ActivityEvent mapping to another job.
+    jobId,
     provider: body.provider,
   };
 }
@@ -98,6 +101,25 @@ export function createExecutionCallbackIntakeRouter(
     const body = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)
       ? req.body
       : {}) as Record<string, unknown>;
+
+    // D9: the URL :id is authoritative. A non-empty body jobId that targets a
+    // different job than the authorized URL :id is rejected (400) before intake
+    // so no ActivityEvent of any kind is mapped or appended. This runs after the
+    // D8 tenant-visibility gate, so an unknown/out-of-scope URL :id still fails
+    // closed to 404 without inspecting the body. Every surface (canonical
+    // callbacks/:event + plan/progress/blocker aliases) routes through handle().
+    const bodyJobId = typeof body.jobId === 'string' ? body.jobId.trim() : '';
+    if (bodyJobId && bodyJobId !== jobId) {
+      return res.status(400).json(
+        toPublicCallbackErrorBody({
+          code: 'job_id_mismatch',
+          message: 'body jobId must match the URL job id',
+          issues: [
+            { path: 'jobId', code: 'job_id_mismatch', message: 'body jobId must match the URL job id' },
+          ],
+        }),
+      );
+    }
 
     const result = await service.intake(buildPayload(event, jobId, body), readAuthContext(req));
     if (!result.ok) {

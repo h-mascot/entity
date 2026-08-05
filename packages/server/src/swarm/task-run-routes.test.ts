@@ -574,3 +574,175 @@ describe('task-linked callback intake cross-tenant authorization (D5 g5 / D8)', 
     expect((res.payload as { ok: boolean }).ok).toBe(true);
   });
 });
+
+// D9 (remaining D5 callback body-jobId authorization bypass): the D8 gate
+// authorizes the URL :id, but buildPayload() previously let a non-empty body
+// jobId REPLACE the authorized id. A caller could therefore authorize an
+// in-scope URL job and append ActivityEvent intake to a cross-tenant
+// body-target job. The route parameter is now authoritative: a body jobId that
+// differs from the URL :id is rejected (400 job_id_mismatch) before intake, so
+// no ActivityEvent of any kind is mapped or appended. In-scope and unlinked
+// operational callback behavior is preserved.
+describe('callback intake body-jobId mismatch (D9)', () => {
+  const CALLBACK_SECRET = 'd9-callback-secret-0123456789abcdef';
+  const ORIGINAL_CALLBACK_TOKEN = process.env.ENTITY_EEPC_CALLBACK_TOKEN;
+
+  beforeEach(() => {
+    process.env.ENTITY_TRUST_TENANT_HEADERS = '1';
+    process.env.ENTITY_EEPC_CALLBACK_TOKEN = CALLBACK_SECRET;
+  });
+  afterEach(() => {
+    delete process.env.ENTITY_TRUST_TENANT_HEADERS;
+    if (ORIGINAL_CALLBACK_TOKEN === undefined) delete process.env.ENTITY_EEPC_CALLBACK_TOKEN;
+    else process.env.ENTITY_EEPC_CALLBACK_TOKEN = ORIGINAL_CALLBACK_TOKEN;
+  });
+
+  function taskActivityCount(taskId: number): number {
+    const rows = getEntityDatabase()
+      .prepare('SELECT id FROM activities WHERE task_id = ?')
+      .all(taskId);
+    return rows.length;
+  }
+
+  function callbackBodyFor(
+    event: 'plan' | 'progress' | 'proof' | 'status' | 'blocker',
+    bodyJobId: string,
+  ): Record<string, unknown> {
+    const base: Record<string, unknown> = { jobId: bodyJobId, provider: 'symphony' };
+    switch (event) {
+      case 'plan':
+        return { ...base, summary: 'plan ok', steps: ['a', 'b'] };
+      case 'progress':
+        return { ...base, summary: 'progress ok', percent: 50 };
+      case 'proof':
+        return { ...base, summary: 'proof ok', commit_sha: 'abc1234', test_result: 'pass' };
+      case 'status':
+        return { ...base, summary: 'status ok', status: 'running' };
+      case 'blocker':
+        return { ...base, summary: 'blocked ok', reason: 'waiting on review' };
+    }
+  }
+
+  // In-scope task-linked symphony job owned by default-org (authorized URL target).
+  async function createInScopeUrlJob() {
+    const task = createTask('D9 in-scope url callback target');
+    const run = await json(
+      'POST',
+      `/tasks/${task.id}/run`,
+      { provider: 'symphony' },
+      { 'x-entity-org-id': 'default-org' },
+    );
+    expect(run.status).toBe(201);
+    const job = (run.payload as { job: { id: string; provider: string; task_id: number } }).job;
+    expect(job.provider).toBe('symphony');
+    expect(job.task_id).toBe(task.id);
+    return { task, jobId: job.id };
+  }
+
+  // Cross-tenant task-linked symphony job owned by another org (body target).
+  async function createCrossTenantBodyJob() {
+    const task = createTaskRepository().createTask({
+      name: 'D9 cross-tenant body callback target',
+      org_id: 'some-other-org',
+      team_id: 'some-other-team',
+    });
+    const run = await json(
+      'POST',
+      `/tasks/${task.id}/run`,
+      { provider: 'symphony' },
+      { 'x-entity-org-id': 'some-other-org', 'x-entity-team-id': 'some-other-team' },
+    );
+    expect(run.status).toBe(201);
+    const job = (run.payload as { job: { id: string; provider: string; task_id: number } }).job;
+    expect(job.provider).toBe('symphony');
+    expect(job.task_id).toBe(task.id);
+    return { task, jobId: job.id };
+  }
+
+  // Every supported intake surface (canonical callbacks/:event for all five
+  // kinds + the three convenience aliases) must reject an in-scope URL job
+  // paired with a cross-tenant body jobId, and append no body-target activity.
+  const mismatchCases: Array<{
+    name: string;
+    path: (id: string) => string;
+    event: 'plan' | 'progress' | 'proof' | 'status' | 'blocker';
+  }> = [
+    { name: 'canonical plan', path: (id) => `/jobs/${id}/callbacks/plan`, event: 'plan' },
+    { name: 'canonical progress', path: (id) => `/jobs/${id}/callbacks/progress`, event: 'progress' },
+    { name: 'canonical proof', path: (id) => `/jobs/${id}/callbacks/proof`, event: 'proof' },
+    { name: 'canonical status', path: (id) => `/jobs/${id}/callbacks/status`, event: 'status' },
+    { name: 'canonical blocker', path: (id) => `/jobs/${id}/callbacks/blocker`, event: 'blocker' },
+    { name: 'alias plan', path: (id) => `/jobs/${id}/plan`, event: 'plan' },
+    { name: 'alias progress', path: (id) => `/jobs/${id}/progress`, event: 'progress' },
+    { name: 'alias blocker', path: (id) => `/jobs/${id}/blocker`, event: 'blocker' },
+  ];
+
+  for (const c of mismatchCases) {
+    it(`rejects in-scope URL + cross-tenant body jobId on ${c.name} with 400 and appends no activity`, async () => {
+      const url = await createInScopeUrlJob();
+      const body = await createCrossTenantBodyJob();
+      const beforeUrl = taskActivityCount(url.task.id);
+      const beforeBody = taskActivityCount(body.task.id);
+
+      // Caller authorizes the in-scope URL job (default-org) but points the
+      // body jobId at the cross-tenant job.
+      const res = await json(
+        'POST',
+        c.path(url.jobId),
+        callbackBodyFor(c.event, body.jobId),
+        { 'x-entity-org-id': 'default-org', authorization: `Bearer ${CALLBACK_SECRET}` },
+      );
+      expect(res.status).toBe(400);
+      expect((res.payload as { error?: string }).error).toBe('job_id_mismatch');
+
+      // No ActivityEvent of any kind on either the URL job nor the body target.
+      expect(taskActivityCount(url.task.id)).toBe(beforeUrl);
+      expect(taskActivityCount(body.task.id)).toBe(beforeBody);
+    });
+  }
+
+  it('admits an in-scope canonical progress callback whose body jobId matches the URL id', async () => {
+    const { jobId } = await createInScopeUrlJob();
+    const res = await json(
+      'POST',
+      `/jobs/${jobId}/callbacks/progress`,
+      callbackBodyFor('progress', jobId),
+      { 'x-entity-org-id': 'default-org', authorization: `Bearer ${CALLBACK_SECRET}` },
+    );
+    expect(res.status).toBe(202);
+    expect((res.payload as { ok: boolean }).ok).toBe(true);
+  });
+
+  it('admits an in-scope alias plan callback with no body jobId (URL id authoritative)', async () => {
+    const { jobId } = await createInScopeUrlJob();
+    const res = await json(
+      'POST',
+      `/jobs/${jobId}/plan`,
+      { provider: 'symphony', summary: 'plan ok', steps: ['a'] },
+      { 'x-entity-org-id': 'default-org', authorization: `Bearer ${CALLBACK_SECRET}` },
+    );
+    expect(res.status).toBe(202);
+    expect((res.payload as { ok: boolean }).ok).toBe(true);
+  });
+
+  it('preserves unlinked operational callback behavior with a matching body jobId', async () => {
+    const op = await json('POST', '/jobs', {
+      title: 'Operational sweep',
+      spec: 'Unlinked operational callback target',
+      repo: 'https://github.com/acme/ops',
+      provider: 'symphony',
+    });
+    expect(op.status).toBe(201);
+    const jobId = (op.payload as { job: { id: string; task_id: number | null } }).job.id;
+    expect((op.payload as { job: { task_id: number | null } }).job.task_id).toBeNull();
+
+    const res = await json(
+      'POST',
+      `/jobs/${jobId}/callbacks/progress`,
+      callbackBodyFor('progress', jobId),
+      { 'x-entity-org-id': 'some-other-org', authorization: `Bearer ${CALLBACK_SECRET}` },
+    );
+    expect(res.status).toBe(202);
+    expect((res.payload as { ok: boolean }).ok).toBe(true);
+  });
+});
