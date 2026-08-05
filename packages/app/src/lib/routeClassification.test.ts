@@ -94,3 +94,18 @@ test('classifyAppRoute ignores ?tab= for unsupported pathnames', () => {
   // Root with any tab stays the workspace surface.
   assert.equal(classifyAppRoute('/', '?tab=tasks'), 'workspace');
 });
+
+test('classifyAppRoute keeps every workspace ?tab= deep link on the supported surface (QA-ADMIN-NAVIGATION)', () => {
+  // The visible Admin control navigates to /?tab=admin. That root deep link
+  // must classify as the workspace surface so it passes the not-found gate and
+  // reaches the shell that renders the existing AdminView for the admin tab.
+  for (const tab of ['files', 'agents', 'tasks', 'services', 'chat', 'admin']) {
+    assert.equal(classifyAppRoute('/', `?tab=${tab}`), 'workspace');
+  }
+  // The standalone /admin pathname is NOT a workspace tab deep link — it must
+  // stay not-found so the safe Page-not-found surface is preserved.
+  assert.equal(classifyAppRoute('/admin'), 'not-found');
+  assert.equal(classifyAppRoute('/admin', '?tab=admin'), 'not-found');
+  // A workspace tab never rescues an unsupported pathname.
+  assert.equal(classifyAppRoute('/onboarding/random', '?tab=admin'), 'not-found');
+});
