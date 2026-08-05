@@ -79,12 +79,23 @@ import { isWorkplaneRoutePath } from './lib/workplaneShellModel';
 import { mobileCommentsPermissionMessage } from './lib/mobileCommentsState';
 import { emitDocHubTelemetry } from './lib/docHubTelemetry';
 import {
-  BUILTIN_MC_BOARD_TABS,
-  getMCBoardTabLabel,
   isBuiltInMCBoardTab,
   normalizeStoredMCBoardTab,
   type MCBoardTab,
 } from './lib/mcBoardTabs';
+import {
+  boardViewToRenderTab,
+  initBoardsState,
+  preferredBoardKeyFromLegacyTab,
+  type BoardSummary,
+} from './lib/boardsState';
+import {
+  fetchBoards,
+  createBoard as createBoardApi,
+  updateBoard as updateBoardApi,
+  deleteBoard as deleteBoardApi,
+} from './lib/boardsClient';
+import { BoardSwitcher } from './components/BoardSwitcher';
 import {
   buildOpenFileTab,
   buildOpenFileTabKey,
@@ -1780,6 +1791,124 @@ export default function App() {
     if (typeof window === 'undefined' || !window.localStorage) return;
     window.localStorage.setItem('entity.tasks.tab', mcBoardTab);
   }, [mcBoardTab]);
+
+  // --- Customizable boards (General / Analytics defaults + user boards) ---
+  const [boardsState, setBoardsState] = useState(() =>
+    initBoardsState([] as BoardSummary[]),
+  );
+  const [boardsLoading, setBoardsLoading] = useState(false);
+  const [boardsError, setBoardsError] = useState<string | null>(null);
+  const [boardsLoaded, setBoardsLoaded] = useState(false);
+
+  const activeBoard =
+    boardsState.boards.find((board) => board.id === boardsState.activeBoardId) ?? null;
+
+  const reloadBoards = () => {
+    let cancelled = false;
+    setBoardsLoading(true);
+    setBoardsError(null);
+    fetchBoards()
+      .then((list) => {
+        if (cancelled) return;
+        const storedBoardIdRaw =
+          typeof window !== 'undefined' && window.localStorage
+            ? window.localStorage.getItem('entity.tasks.board')
+            : null;
+        const storedBoardId = Number(storedBoardIdRaw);
+        const legacyTab =
+          typeof window !== 'undefined' && window.localStorage
+            ? window.localStorage.getItem('entity.tasks.tab')
+            : null;
+        const preferredKey =
+          Number.isInteger(storedBoardId) && list.some((board) => board.id === storedBoardId)
+            ? null
+            : preferredBoardKeyFromLegacyTab(legacyTab);
+        const base = initBoardsState(list, preferredKey ?? undefined);
+        const next =
+          Number.isInteger(storedBoardId) && list.some((board) => board.id === storedBoardId)
+            ? { ...base, activeBoardId: storedBoardId as number }
+            : base;
+        setBoardsState(next);
+        const chosen = next.boards.find((board) => board.id === next.activeBoardId) ?? null;
+        if (chosen) {
+          setMcBoardTab(boardViewToRenderTab(chosen.view));
+        }
+        setBoardsLoaded(true);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setBoardsError(error instanceof Error ? error.message : 'Unable to load boards.');
+      })
+      .finally(() => {
+        if (!cancelled) setBoardsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  };
+
+  // Load boards once the Tasks surface mounts.
+  useEffect(() => {
+    if (sidebarTab !== 'tasks' || boardsLoaded || boardsLoading) return;
+    reloadBoards();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarTab, boardsLoaded, boardsLoading]);
+
+  // Persist the active board id so a reload restores the same board.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    if (boardsState.activeBoardId === null) return;
+    window.localStorage.setItem('entity.tasks.board', String(boardsState.activeBoardId));
+  }, [boardsState.activeBoardId]);
+
+  const handleSelectBoard = (board: BoardSummary) => {
+    setBoardsState((prev) => ({ ...prev, activeBoardId: board.id }));
+    setMcBoardTab(boardViewToRenderTab(board.view));
+  };
+
+  const handleCreateBoard = (input: { name: string; template: 'blank' | 'strategic' | 'engineering' }) => {
+    createBoardApi(input)
+      .then((created) => {
+        setBoardsState((prev) => ({ boards: [...prev.boards, created], activeBoardId: created.id }));
+        setMcBoardTab(boardViewToRenderTab(created.view));
+      })
+      .catch((error: unknown) => {
+        setBoardsError(error instanceof Error ? error.message : 'Unable to create board.');
+      });
+  };
+
+  const handleRenameBoard = (id: number, name: string) => {
+    updateBoardApi(id, { name })
+      .then((updated) => {
+        setBoardsState((prev) => ({
+          boards: prev.boards.map((board) => (board.id === updated.id ? updated : board)),
+          activeBoardId: prev.activeBoardId,
+        }));
+      })
+      .catch((error: unknown) => {
+        setBoardsError(error instanceof Error ? error.message : 'Unable to rename board.');
+      });
+  };
+
+  const handleDeleteBoard = (id: number) => {
+    deleteBoardApi(id)
+      .then(() => {
+        setBoardsState((prev) => {
+          const remaining = prev.boards.filter((board) => board.id !== id);
+          let activeBoardId = prev.activeBoardId;
+          if (activeBoardId === id) {
+            const general = remaining.find((board) => board.key === 'general' && board.is_default);
+            activeBoardId = general ? general.id : (remaining[0]?.id ?? null);
+          }
+          return { boards: remaining, activeBoardId };
+        });
+        const after = boardsState.boards.find((b) => b.key === 'general' && b.is_default);
+        if (after) setMcBoardTab(boardViewToRenderTab(after.view));
+      })
+      .catch((error: unknown) => {
+        setBoardsError(error instanceof Error ? error.message : 'Unable to delete board.');
+      });
+  };
 
   // Persist docs TTS settings to localStorage
   useEffect(() => {
@@ -4879,19 +5008,17 @@ export default function App() {
       return (
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            {BUILTIN_MC_BOARD_TABS.map((board) => (
-              <button
-                key={board}
-                type="button"
-                onClick={() => setMcBoardTab(board)}
-                aria-pressed={mcBoardTab === board}
-	                className={`mc-shell-btn entity-context-tab px-3 py-1 text-xs font-medium capitalize ${
-                  mcBoardTab === board ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
-                }`}
-              >
-                {getMCBoardTabLabel(board)}
-              </button>
-            ))}
+            <BoardSwitcher
+              boards={boardsState.boards}
+              activeBoardId={boardsState.activeBoardId}
+              loading={boardsLoading}
+              error={boardsError}
+              onSelect={handleSelectBoard}
+              onCreate={handleCreateBoard}
+              onRename={handleRenameBoard}
+              onDelete={handleDeleteBoard}
+              onRetry={reloadBoards}
+            />
             {taskModulePlugins.map((plugin) => (
               <button
                 key={plugin.id}

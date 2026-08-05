@@ -35,21 +35,21 @@ Swarm capability.
 - [x] 1a. Pure domain helpers (views/templates/validation, filter-config normalize,
   legacy-tab→default-board-key migration). `packages/db/src/boards.ts`
   - **Verify:** `cd packages/db && npx vitest run src/boards.test.ts -t "domain"`
-- [ ] 1b. Repository persistence (schema ensure, CRUD, seed General/Analytics idempotent,
+- [x] 1b. Repository persistence (schema ensure, CRUD, seed General/Analytics idempotent,
   reorder, delete-default guard) against temp DB. `packages/db/src/boards.ts`
   - **Verify:** `cd packages/db && npx vitest run src/boards.test.ts`
-- [ ] 1c. REST API `createBoardsRouter()` (list/create/update/reorder/delete + error
+- [x] 1c. REST API `createBoardsRouter()` (list/create/update/reorder/delete + error
   paths), mounted at `/api/boards`. `packages/server/src/routes/boards.ts` + index.ts mount
   - **Verify:** `cd packages/server && npx vitest run src/routes/boards.test.ts`
-- [ ] 1d. Full db+server gate for BRD-001. Commit slice.
-  - **Verify:** `cd packages/db && npx vitest run && cd ../server && npm run build && npx vitest run src/routes/boards.test.ts src/.. `
+- [x] 1d. Full db+server gate for BRD-001. Commit slice.
+  - **Verify:** `cd packages/db && npx vitest run && cd ../server && npm run build && npx vitest run`
 
 ### BRD-002 — Board navigation + customization UI
-- [ ] 2a. Board reducer/adapter (load, select, create-from-template, rename, reorder,
+- [x] 2a. Board reducer/adapter (load, select, create-from-template, rename, reorder,
   delete) as pure logic in `packages/app/src/lib/boards*.ts`. RED-first.
-- [ ] 2b. Board switcher component in App.tsx replacing fixed tabs; General=board,
+- [x] 2b. Board switcher component in App.tsx replacing fixed tabs; General=board,
   Analytics=analytics; + Add board from templates. Responsive/mobile-safe, accessible.
-- [ ] 2c. Wire board selection to existing TaskBoard/analytics surfaces; persist after
+- [x] 2c. Wire board selection to existing TaskBoard/analytics surfaces; persist after
   reload. Rebuild app; browser verify.
 
 ### BRD-003 — Task membership/filter behavior + migration
@@ -71,7 +71,11 @@ Swarm capability.
 - [ ] 5d. Non-production delivery (push/PR/CI/merge when clean). Stop at READY_FOR_REVIEW.
 
 ## Files Touched (running log)
-- (filled as slices land)
+- `packages/db/src/boards.ts`, `packages/db/src/boards.test.ts` (BRD-001)
+- `packages/server/src/routes/boards.ts`, `packages/server/src/routes/boards.test.ts` (BRD-001)
+- `packages/server/src/index.ts` (+import +mount `/api/boards`) (BRD-001)
+- commit `ab5f2b7`
+- `packages/app/src/lib/boardsState.ts` (+test), `packages/app/src/lib/boardsClient.ts`, `packages/app/src/components/BoardSwitcher.tsx`, `packages/app/src/App.tsx` (BRD-002)
 
 ## Resume Instructions
 On compaction/restart: re-read AGENTS.md → CONTEXT.md → external plan.md → source-map.json
