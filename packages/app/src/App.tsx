@@ -79,12 +79,29 @@ import { isWorkplaneRoutePath } from './lib/workplaneShellModel';
 import { mobileCommentsPermissionMessage } from './lib/mobileCommentsState';
 import { emitDocHubTelemetry } from './lib/docHubTelemetry';
 import {
-  BUILTIN_MC_BOARD_TABS,
-  getMCBoardTabLabel,
   isBuiltInMCBoardTab,
   normalizeStoredMCBoardTab,
   type MCBoardTab,
 } from './lib/mcBoardTabs';
+import {
+  boardViewToRenderTab,
+  initBoardsState,
+  resolveInitialActiveBoard,
+  applyBoardDeleted,
+  applyBoardsReordered,
+  renderTabAfterDeletion,
+  type BoardSummary,
+} from './lib/boardsState';
+import { selectTasksForBoard } from './lib/boardTaskFilter';
+import { runBoardReload } from './lib/boardReload';
+import {
+  fetchBoards,
+  createBoard as createBoardApi,
+  updateBoard as updateBoardApi,
+  reorderBoards as reorderBoardsApi,
+  deleteBoard as deleteBoardApi,
+} from './lib/boardsClient';
+import { BoardSwitcher } from './components/BoardSwitcher';
 import {
   buildOpenFileTab,
   buildOpenFileTabKey,
@@ -1780,6 +1797,154 @@ export default function App() {
     if (typeof window === 'undefined' || !window.localStorage) return;
     window.localStorage.setItem('entity.tasks.tab', mcBoardTab);
   }, [mcBoardTab]);
+
+  // --- Customizable boards (General / Analytics defaults + user boards) ---
+  const [boardsState, setBoardsState] = useState(() =>
+    initBoardsState([] as BoardSummary[]),
+  );
+  const [boardsLoading, setBoardsLoading] = useState(false);
+  const [boardsError, setBoardsError] = useState<string | null>(null);
+  const [boardsLoaded, setBoardsLoaded] = useState(false);
+
+  const activeBoard =
+    boardsState.boards.find((board) => board.id === boardsState.activeBoardId) ?? null;
+
+  const reloadBoards = () =>
+    runBoardReload({
+      fetchBoards,
+      onStart: () => {
+        setBoardsLoading(true);
+        setBoardsError(null);
+      },
+      onResult: (list) => {
+        const storedBoardIdRaw =
+          typeof window !== 'undefined' && window.localStorage
+            ? window.localStorage.getItem('entity.tasks.board')
+            : null;
+        const legacyTab =
+          typeof window !== 'undefined' && window.localStorage
+            ? window.localStorage.getItem('entity.tasks.tab')
+            : null;
+        const storedBoardId = Number(storedBoardIdRaw);
+        const activeBoardId = resolveInitialActiveBoard(list, {
+          storedBoardId: Number.isInteger(storedBoardId) ? storedBoardId : null,
+          legacyTab,
+        });
+        setBoardsState({ boards: list, activeBoardId });
+        const chosen = list.find((board) => board.id === activeBoardId) ?? null;
+        if (chosen) {
+          setMcBoardTab(boardViewToRenderTab(chosen.view));
+        }
+        setBoardsLoaded(true);
+      },
+      onError: (message) => setBoardsError(message),
+      onComplete: () => setBoardsLoading(false),
+    });
+
+  // Load boards once the Tasks surface mounts. D7: return the cancellation
+  // cleanup returned by runBoardReload so a late board response after effect
+  // cleanup (unmount / sidebarTab change) cannot update stale state. The loading
+  // flag is intentionally NOT a dependency: it is set inside the reload, so
+  // listing it would make the effect cancel its own in-flight load.
+  useEffect(() => {
+    if (sidebarTab !== 'tasks' || boardsLoaded || boardsLoading) return;
+    return reloadBoards();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarTab, boardsLoaded]);
+
+  // Persist the active board id so a reload restores the same board.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    if (boardsState.activeBoardId === null) return;
+    window.localStorage.setItem('entity.tasks.board', String(boardsState.activeBoardId));
+  }, [boardsState.activeBoardId]);
+
+  const handleSelectBoard = (board: BoardSummary) => {
+    setBoardsState((prev) => ({ ...prev, activeBoardId: board.id }));
+    setMcBoardTab(boardViewToRenderTab(board.view));
+  };
+
+  const handleCreateBoard = (input: { name: string; template: 'blank' | 'strategic' | 'engineering' }) => {
+    createBoardApi(input)
+      .then((created) => {
+        setBoardsState((prev) => ({ boards: [...prev.boards, created], activeBoardId: created.id }));
+        setMcBoardTab(boardViewToRenderTab(created.view));
+      })
+      .catch((error: unknown) => {
+        setBoardsError(error instanceof Error ? error.message : 'Unable to create board.');
+      });
+  };
+
+  const handleRenameBoard = (id: number, name: string) => {
+    updateBoardApi(id, { name })
+      .then((updated) => {
+        setBoardsState((prev) => ({
+          boards: prev.boards.map((board) => (board.id === updated.id ? updated : board)),
+          activeBoardId: prev.activeBoardId,
+        }));
+      })
+      .catch((error: unknown) => {
+        setBoardsError(error instanceof Error ? error.message : 'Unable to rename board.');
+      });
+  };
+
+  // BRD-002: customize a board's view and task inclusion/filter configuration.
+  const handleCustomizeBoard = (
+    id: number,
+    updates: { view?: import('./lib/boardsState').BoardView; filter_config: import('./lib/boardsState').BoardFilterConfig },
+  ) => {
+    updateBoardApi(id, updates)
+      .then((updated) => {
+        setBoardsState((prev) => ({
+          boards: prev.boards.map((board) => (board.id === updated.id ? updated : board)),
+          activeBoardId: prev.activeBoardId,
+        }));
+        if (id === boardsState.activeBoardId) {
+          setMcBoardTab(boardViewToRenderTab(updated.view));
+        }
+      })
+      .catch((error: unknown) => {
+        setBoardsError(error instanceof Error ? error.message : 'Unable to customize board.');
+      });
+  };
+
+  // BRD-002: reorder boards (persisted). Optimistically apply, revert on error.
+  const handleReorderBoards = (orderedIds: readonly number[]) => {
+    const prev = boardsState;
+    setBoardsState((state) => {
+      const ordered = orderedIds
+        .map((oid) => state.boards.find((b) => b.id === oid))
+        .filter((b): b is BoardSummary => Boolean(b))
+        .map((b, idx) => ({ ...b, sort_order: idx }));
+      const tail = state.boards
+        .filter((b) => !orderedIds.includes(b.id))
+        .map((b, idx) => ({ ...b, sort_order: orderedIds.length + idx }));
+      return { boards: [...ordered, ...tail], activeBoardId: state.activeBoardId };
+    });
+    reorderBoardsApi(orderedIds)
+      .then((reordered) => {
+        setBoardsState((state) => applyBoardsReordered(state, reordered));
+      })
+      .catch((error: unknown) => {
+        setBoardsState(prev);
+        setBoardsError(error instanceof Error ? error.message : 'Unable to reorder boards.');
+      });
+  };
+
+  const handleDeleteBoard = (id: number) => {
+    // Compute the post-deletion render tab from the reducer-selected replacement
+    // using current (non-stale) state. Deleting a non-active board must NOT
+    // change the visible surface (BRD-003 regression fix).
+    const nextTab = renderTabAfterDeletion(boardsState, id);
+    deleteBoardApi(id)
+      .then(() => {
+        setBoardsState((prev) => applyBoardDeleted(prev, id));
+        if (nextTab) setMcBoardTab(nextTab);
+      })
+      .catch((error: unknown) => {
+        setBoardsError(error instanceof Error ? error.message : 'Unable to delete board.');
+      });
+  };
 
   // Persist docs TTS settings to localStorage
   useEffect(() => {
@@ -3801,6 +3966,13 @@ export default function App() {
       return true;
     });
   }, [tasks, mcAssigneeFilter, mcPriorityFilter, mcProjectFilter]);
+  // Apply the active board's persisted filter configuration so a board's contents
+  // derive from its config (BRD-003). General (scope 'all') is a no-op, keeping
+  // all existing tasks visible; Engineering/Strategic render dedicated surfaces.
+  const boardTasks = useMemo(() => {
+    if (!activeBoard) return filteredBoardTasks;
+    return selectTasksForBoard(filteredBoardTasks, activeBoard);
+  }, [filteredBoardTasks, activeBoard]);
   const selectedAgentData = selectedAgent ? agents.find((agent) => agent.id === selectedAgent) : null;
   const selectedSource = currentSourceId ? fileSources.find((source) => source.id === currentSourceId) : null;
   const rightPaneSource = rightPaneSourceId ? fileSources.find((source) => source.id === rightPaneSourceId) : null;
@@ -4879,19 +5051,19 @@ export default function App() {
       return (
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            {BUILTIN_MC_BOARD_TABS.map((board) => (
-              <button
-                key={board}
-                type="button"
-                onClick={() => setMcBoardTab(board)}
-                aria-pressed={mcBoardTab === board}
-	                className={`mc-shell-btn entity-context-tab px-3 py-1 text-xs font-medium capitalize ${
-                  mcBoardTab === board ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
-                }`}
-              >
-                {getMCBoardTabLabel(board)}
-              </button>
-            ))}
+            <BoardSwitcher
+              boards={boardsState.boards}
+              activeBoardId={boardsState.activeBoardId}
+              loading={boardsLoading}
+              error={boardsError}
+              onSelect={handleSelectBoard}
+              onCreate={handleCreateBoard}
+              onRename={handleRenameBoard}
+              onCustomize={handleCustomizeBoard}
+              onReorder={handleReorderBoards}
+              onDelete={handleDeleteBoard}
+              onRetry={reloadBoards}
+            />
             {taskModulePlugins.map((plugin) => (
               <button
                 key={plugin.id}
@@ -5393,6 +5565,7 @@ export default function App() {
               showArchiveColumn={showArchiveColumn}
               onArchiveColumnVisibilityChange={setShowArchiveColumn}
               returnBoard="engineering"
+              boardFilter={activeBoard?.view === 'engineering' ? activeBoard.filter_config : undefined}
             />
           ) : mcBoardTab === 'strategic' ? (
             <LazyMCStrategicView />
@@ -5410,7 +5583,7 @@ export default function App() {
               searchQuery={taskSearchQuery}
               showArchiveColumn={showArchiveColumn}
               onArchiveColumnVisibilityChange={setShowArchiveColumn}
-              tasks={filteredBoardTasks}
+              tasks={boardTasks}
               loading={tasksLoading}
               error={tasksError}
               returnBoard={mcBoardTab}

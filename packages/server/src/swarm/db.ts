@@ -77,6 +77,15 @@ function ensureSwarmIndexes(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_swarm_jobs_status ON swarm_jobs(status);
     CREATE INDEX IF NOT EXISTS idx_swarm_jobs_task   ON swarm_jobs(task_id);
     CREATE INDEX IF NOT EXISTS idx_swarm_proofs_job ON swarm_proofs(job_id);
+
+    -- BRD-004: real atomic invariant — at most one in-flight (active) swarm job
+    -- per task. The partial index covers the active statuses; terminal jobs leave
+    -- the index so a new run may start after completion. Unlinked (task_id NULL)
+    -- jobs are exempt. This is the concurrency guard for "Run with agents".
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_swarm_jobs_active_task
+      ON swarm_jobs(task_id)
+      WHERE task_id IS NOT NULL
+        AND status IN ('draft', 'queued', 'dispatched', 'running');
   `);
 }
 
@@ -222,11 +231,55 @@ function migrateLegacySwarmProofs(db: Database.Database): void {
   `);
 }
 
+function reconcileDuplicateActiveTaskJobs(db: Database.Database): void {
+  const placeholders = ACTIVE_TASK_JOB_STATUSES.map(() => '?').join(', ');
+  // Task ids that currently have more than one in-flight (active) job. These would
+  // abort CREATE UNIQUE INDEX on legacy databases that pre-date the guard.
+  const duplicates = db
+    .prepare(
+      `SELECT task_id FROM swarm_jobs
+         WHERE task_id IS NOT NULL AND status IN (${placeholders})
+         GROUP BY task_id
+         HAVING COUNT(*) > 1`,
+    )
+    .all(...ACTIVE_TASK_JOB_STATUSES) as Array<{ task_id: number }>;
+
+  if (duplicates.length === 0) return;
+  const now = new Date().toISOString();
+  for (const { task_id } of duplicates) {
+    // Newest suitable winner first (created_at DESC, id DESC for determinism).
+    const rows = db
+      .prepare(
+        `SELECT id FROM swarm_jobs
+           WHERE task_id = ? AND status IN (${placeholders})
+           ORDER BY created_at DESC, id DESC`,
+      )
+      .all(task_id, ...ACTIVE_TASK_JOB_STATUSES) as Array<{ id: string }>;
+    if (rows.length <= 1) continue;
+    const loserIds = rows.slice(1).map((row) => row.id);
+    const inPlaceholders = loserIds.map(() => '?').join(', ');
+    // Safely terminalize the superseded duplicates as 'cancelled' so they leave
+    // the partial unique index (which only covers active statuses). Preserves any
+    // existing feedback and stamps completion/updated timestamps.
+    db.prepare(
+      `UPDATE swarm_jobs
+         SET status = 'cancelled',
+             feedback = COALESCE(NULLIF(feedback, ''), 'Superseded by newer active run during duplicate reconciliation'),
+             completed_at = ?,
+             updated_at = ?
+       WHERE id IN (${inPlaceholders})`,
+    ).run(now, now, ...loserIds);
+  }
+}
+
 export function ensureSwarmSchema(db: Database.Database): void {
   const migrate = db.transaction(() => {
     createSwarmTables(db);
     migrateLegacySwarmJobs(db);
     migrateLegacySwarmProofs(db);
+    // D3: reconcile pre-existing duplicate active task jobs BEFORE creating the
+    // partial unique index, preserving one winner and safely terminalizing others.
+    reconcileDuplicateActiveTaskJobs(db);
     ensureSwarmIndexes(db);
   });
   migrate();
@@ -326,6 +379,61 @@ export function createSwarmJob(input: CreateSwarmJobInput): SwarmJob {
 
 export function updateSwarmJob(id: string, updates: UpdateSwarmJobInput): SwarmJob | undefined {
   return updateSwarmJobOn(db(), id, updates);
+}
+
+/** better-sqlite3 unique-constraint violation (extended code 2067). */
+function isUniqueConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === 'string' && code === 'SQLITE_CONSTRAINT_UNIQUE') return true;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' && /UNIQUE constraint/i.test(message);
+}
+
+const ACTIVE_TASK_JOB_STATUSES = ['draft', 'queued', 'dispatched', 'running'] as const;
+
+/** Find the single in-flight job linked to a task (the uniqueness winner), if any. */
+function findActiveTaskSwarmJobRow(taskId: number): SwarmJob | undefined {
+  const placeholders = ACTIVE_TASK_JOB_STATUSES.map((_, i) => `@s${i}`).join(', ');
+  const params: Record<string, unknown> = { taskId };
+  ACTIVE_TASK_JOB_STATUSES.forEach((s, i) => {
+    params[`s${i}`] = s;
+  });
+  return db()
+    .prepare(
+      `SELECT * FROM swarm_jobs WHERE task_id = @taskId AND status IN (${placeholders}) ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(params) as SwarmJob | undefined;
+}
+
+/**
+ * BRD-004 — concurrency-safe creation of a task-linked active swarm job.
+ *
+ * Backed by the `idx_swarm_jobs_active_task` partial unique index: the INSERT is
+ * the atomic invariant. If a concurrent request already inserted an active job
+ * for this task, SQLite rejects the duplicate and we return that winner with
+ * `created: false` instead of a second row. Unlinked (task_id null) jobs bypass
+ * the guard. This replaces the prior read-then-write check, which lost races.
+ */
+export function createActiveTaskSwarmJob(
+  input: CreateSwarmJobInput,
+): { job: SwarmJob; created: boolean } {
+  const taskId = input.task_id;
+  if (typeof taskId !== 'number' || !Number.isFinite(taskId)) {
+    return { job: createSwarmJob(input), created: true };
+  }
+  try {
+    const job = createSwarmJob(input);
+    return { job, created: true };
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      const winner = findActiveTaskSwarmJobRow(taskId);
+      if (winner) {
+        return { job: winner, created: false };
+      }
+    }
+    throw error;
+  }
 }
 
 /** Update a swarm job on a specific connection (used by the healer dependency boundary). */

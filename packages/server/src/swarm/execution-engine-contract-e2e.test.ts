@@ -78,7 +78,6 @@ afterAll(async () => {
 
 describe('EEPC-B-04 execution-engine contract E2E + security', () => {
   let jobId = '';
-  const taskId = 899;
 
   it('lists registered engines with public health and no secret leak', async () => {
     const res = await fetch(`${baseUrl}/execution-engines`);
@@ -103,17 +102,18 @@ describe('EEPC-B-04 execution-engine contract E2E + security', () => {
       body: JSON.stringify({
         provider: 'symphony',
         auto_dispatch: false,
-        task_id: taskId,
         summary: 'EEPC-B-04 contract E2E job',
         spec: 'Prove list → dispatch → callback → Workplane job proof/status without secret leak.',
         created_by: 'eepc-b-04-proof',
       }),
     });
-    const body = (await res.json()) as { job?: { id: string; provider: string; task_id?: number; status: string } };
+    const body = (await res.json()) as { job?: { id: string; provider: string; task_id?: number | null; status: string } };
     expect(res.status).toBe(201);
     expect(body.job).toBeDefined();
     expect(body.job!.provider).toBe('symphony');
-    expect(body.job!.task_id).toBe(taskId);
+    // D5 (g4): task linkage is governed by POST /tasks/:taskId/run; the generic
+    // contract dispatch shape creates an unlinked operational job.
+    expect(body.job!.task_id).toBeNull();
     jobId = body.job!.id;
     assertNoSecretLeak(body, 'POST /jobs');
   });

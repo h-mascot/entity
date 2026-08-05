@@ -1,111 +1,71 @@
-# RA-FU 930–934 Luna-Review R2 Repair Plan (2026-08-04)
+# Active Plan — Luna CHANGES_REQUESTED Repair Generation 2
 
-Branch: `runnerqa/ra-fu-930-934-20260804` (production forbidden).
-Gate: `cd packages/server && npm run build && npx vitest run` (Node 22) + `npm --prefix packages/app run build`.
-Review source: `clawd/output/entity/ra-fu-runnerqa-20260804/reviews/luna-review-r2.txt` (4 blockers + matrix gaps).
+Run: `entity-customizable-boards-runner-20260805`
+Reviewed clean HEAD (start, gen-2): `a0bce45115fa80363b51f90884b4e90a0f3c9fb9`
+Worker: Pi citadel/glm5.2 (medium), sole gen-2 targeted repair worker.
+Production: FORBIDDEN. Do not touch canonical `/Users/enterprise/Code/entity` or sandbox.
 
-## Slice 1 — THE-932 healer success-state restore (blocker 3)
-- [x] 1a RED: reload module after persisting success → restored `{result,timestamp,error:null}`.
-- [x] 1b GREEN: `loadPersistedHealOutcome` accepts `error: null`.
-- Files: `packages/server/src/swarm/healer.ts`, `packages/server/src/swarm/healer.test.ts`.
+## Slices (from repair-map-g2.md) — sequential narrow TDD
 
-## Slice 2 — THE-932 healer DB consistency (blocker 4)
-- [x] 2a RED: nonempty stuck-job; injected DB row healed; default/global DB untouched.
-- [x] 2b GREEN: add `updateSwarmJobOn(db,...)`; healer writes via injected db only.
-- Files: `packages/server/src/swarm/db.ts`, `packages/server/src/swarm/healer.ts`, `healer.test.ts`.
+### D1 — BRD-004 terminal run retention/proof
+- [x] RED: swarmTaskRunClient.test.ts — findNewestTaskSwarmJob retains the newest task-linked job when terminal (active→terminal), order-independent, deterministic ties, ignores unlinked jobs
+- [x] GREEN: findNewestTaskSwarmJob in self-contained swarmRunStatus.ts; TaskDetailPanel initial-load + poll use it (terminal proof/status/details stay reachable)
 
-## Slice 3 — THE-933 cloud isolation (blocker 1)
-- [x] 3a RED: spies/counters prove ZERO taskSyncLayer + repo access in cloud mode (list/create/rollback, incl. cloud/local id collision); remove `cloudHandoffAdapter` branches.
-- [x] 3b GREEN: determine mode BEFORE getTask/authorization/repo; cloud permanently 503 before any local access; drop misleading adapter dep.
-- Files: `packages/server/src/routes/tasks.ts`, `tasks-handoffs-route.test.ts`.
+### D2 — BRD-002/003 Strategic filter honesty
+- [x] RED: boardsState.test.ts — boardViewSupportsFilter flags strategic unsupported; buildBoardCustomizationPatch collapses unsupported (strategic) filter to no-op 'all'
+- [x] GREEN: boardViewSupportsFilter + buildBoardCustomizationPatch gate; BoardSwitcher disables filter controls for unsupported views with a note
 
-## Slice 4 — THE-932 SMTP boundary (blocker 2)
-- [x] 4a RED: route tests — configured TLS registers with public-safe health; configured plaintext AUTH never registers/appears; no credential/internal leak; router errors sanitized.
-- [x] 4b GREEN: env config loader for email adapter; register via `createChannelAdapterRegistryForRuntime`; explicit no-send boundary; sanitize router errors.
-- Files: `packages/server/src/channels/router.ts`, `email-config.ts` (new), `email-adapter.test.ts`.
+### D3 — BRD-004 duplicate-active migration reconciliation
+- [x] RED: swarm-duplicate-active-migration.test.ts — pre-existing duplicate active jobs abort CREATE UNIQUE INDEX without reconciliation
+- [x] GREEN: reconcileDuplicateActiveTaskJobs before index creation (newest winner preserved, others safely terminalized as cancelled); additive/idempotent; winner/tie/idempotency/index-enforced regression coverage
 
-## Slice 5 — THE-930 DB-backed atomic reservation + admin auth (matrix gap)
-- [x] 5a RED: two guard instances vs same DB → only one concurrent reservation wins; expiry/retry; mixed-target; admin negative route test.
-- [x] 5b GREEN: DB-backed reservation backend (tx compare-and-set, lease expiry, success-only cooldown, bounded cleanup, injectable clock); `createAgentNoiseGuard({db})`; chat route uses DB-backed guard + admin-only PATCH.
-- Files: `packages/server/src/routes/agent-noise-guard.ts`, `chat.ts`, `agent-noise-guard.test.ts`, `chat-noise-controls.test.ts`.
+## Final gate (gen-2)
+- [x] server build + vitest; app test; db test  (db 99, server 1389, app 462)
+- [x] tsconfig check (app/server/db)  (all tsc clean; app vite clean)
+- [x] ctrl:gate under Node 22 (`/opt/homebrew/opt/node@22/bin/node`)  (exit 0; ctrl-gate-g2.log)
+- [x] git diff --check; private-default + secrets/diff scope; diff vs a0bce45 = BRD scope only  (0 errors; BRD-only)
+- [x] scoped commit (641ab7a); clean worktree
+- [x] update receipts (red-green-g2, focused-proof-g2, ctrl-gate-g2, runner-state READY_FOR_REVIEW at new HEAD); historical Luna JSON untouched
+- [x] STOP. No review/push/PR/merge/deploy.
 
-## Slice 6 — gate & receipt
-- [x] 6a server build + vitest (Node 22).
-- [x] 6b app build.
-- [x] 6c `npm run ctrl:gate`.
-- [x] 6d self-review full diff.
-- [x] 6e commit on branch; replace worker-final receipt.
-
-## Preserved (must stay PASS)
-- THE-931 (chat-history auth), THE-934 (doc-intelligence schema), prior THE-930 reservation/cooldown, broadcasts, rollback scope.
+## Resume
+Continue from first unchecked `[ ]`. After D1/D2/D3, run final gate. State ends READY_FOR_REVIEW.
 
 ---
 
-## Architectural Correction Pass (2026-08-04, continuation) — COMPLETE
+# Historical — Luna CHANGES_REQUESTED Repair Generation 1
 
-Follow-on to the Luna R2 repair: finish the timed-out Luna partial edits and move
-chat tenant isolation to the repository boundary. Plan:
-`docs/plans/2026-08-04-architectural-correction-plan.md`.
+Run: `entity-customizable-boards-runner-20260805`
+Reviewed clean HEAD (start, gen-1): `d83bac03673d289f2d9e6431fbd82da858f8f715`
+Worker: Pi citadel/glm5.2 (medium), sole gen-1 repair worker.
+Production: FORBIDDEN. Do not touch canonical `/Users/enterprise/Code/entity` or sandbox.
 
-- [x] THE-930: tokenized lease CAS (owner_token), fail-closed policy, truly
-  bounded state; fixed capacity-vs-cooldown ordering bug; dropped extra SELECT.
-  Tests: `agent-noise-guard-cas.test.ts` (7, isolated DB/clock).
-- [x] THE-931: `ChatTenantScope` + `createScopedChatRepository` (reads no-leak,
-  writes inherit owned parent scope, ignore caller teamId); all chat routes
-  routed through it; `ownsChatResource` reuses canonical `resolveInheritedRole`.
-  Tests: `chat-tenant-scope.test.ts` (8) + `chat-tenant-http.test.ts` (9, real
-  principal/grant resolution) + updated `chat-object-refs.test.ts`.
-- [x] THE-932: healer DB restore deferred to first use (no module-load DB I/O).
-  Tests: `healer-production-order.test.ts` (2).
-- [x] THE-933: `grantCoversTaskTarget` (canonical team semantics) — org-wide
-  task rejects team-only grant. Tests: `tasks-handoff-target-auth.test.ts` (9).
-- [x] THE-934: `Object.hasOwn` guard in `validateDocSchemaExtraction`.
-  Tests: `doc-intelligence.test.ts` schema block.
-- [x] Gate: `npm run ctrl:gate` (Node 22) ✅ — app 415 + db 44 + server 1327.
-- [x] Commits: 6 coherent commits; HEAD `daf320e`; worktree clean.
-- [x] Not merged/pushed/deployed; production untouched; blockers=[].
+## Slices (from repair-map-g1.md) — sequential narrow TDD
 
----
+### Phase A — Swarm server cluster (share swarm/routes.ts, task-run.ts, db.ts)
+- [x] A1. BRD-004 dispatch target fail-closed (no example placeholder) — task-run.ts
+- [x] A2. BRD-004 eligibility predicate — task-run.ts + routes.ts
+- [x] A3. BRD-004 source/auth: active task source (taskSyncLayer) + request scope — routes.ts
+- [x] A4. BRD-004 atomic duplicate guard: partial unique index + transactional insert — db.ts + routes.ts
 
-## Final Focused Correction — THE-930/931/933 (R2 split reviews) — COMPLETE
+### Phase B — Boards DB + route (share db/src/boards.ts, server/routes/boards.ts)
+- [x] B1. BRD-001 tenant scope: request-derived org/team, scoped repository, isolation — boards.ts + routes/boards.ts
+- [x] B2. BRD-001 defaults guaranteed before first create — boards.ts (+ route POST seeds)
 
-Follow-on to address the three new full re-review summaries
-(`clawd/output/entity/ra-fu-runnerqa-20260804/reviews/split-r2/`). Plan:
-`docs/plans/2026-08-04-final-focused-correction-plan.md`. THE-932/THE-934
-already PASS and were not regressed.
+### Phase C — App UI (pure-logic tested via node:test in app/src/lib)
+- [x] C1. BRD-002 customization controls (view/filter + reorder) — BoardSwitcher + App.tsx + lib helper
+- [x] C2. BRD-003 membership: persisted filter applied to Engineering/Strategic — boardTaskFilter/MCEngineeringEntry/App.tsx
+- [x] C3. BRD-003 deletion reselection drives render tab — boardsState helper + App.tsx
+- [x] C4. BRD-004 proof/status: polling + terminal + proof affordance — swarmTaskRunClient lib + TaskDetailPanel
 
-- [x] THE-930: tokenless stale release is a no-op (fail-closed). `release()`
-  requires the exact `ownerToken` returned by the reservation; the `heldTokens`
-  fallback is removed. `NoiseReleaseOptions.ownerToken` is required (typed);
-  chat callers guard the token. Regression: `agent-noise-guard-tokenless.test.ts`
-  (DB + in-memory: A reserve/expires, B reacquires, A tokenless release → B
-  lease/owner/last_sent unchanged, C duplicate-concurrent, delivered tokenless
-  writes no cooldown). Existing suites → explicit-token semantics.
-- [x] THE-931: creation/category/repository isolation at the DB boundary.
-  `resolveChatCreationScope`/`resolveChatReadScope` derive scope from grants
-  (caller teamId/id ignored; zero/revoked/inactive/ambiguous fail closed).
-  `createTenantChatRepository` (DB layer) emits only owned rows via scoped SQL;
-  all tenant-facing routes go through it. Closed raw bypasses (task lookup,
-  thread messages, category list/create, setup). `chat_categories` gains
-  migration-safe org_id/team_id; legacy unowned fail-closed for agents
-  (local-admin compat only). Server-generated authoritative ids remove the
-  foreign-ID existence oracle. Regression: `chat-creation-isolation.test.ts`
-  (10) + updated object-refs/clickclack/chat tests.
-- [x] THE-933: namespaced table `entity_task_handoffs_v2` — the new feature no
-  longer touches the deployed legacy `task_handoffs` table. Compat test
-  (`handoffs-compat.test.ts`) precreates the legacy schema + rows, initializes
-  the new repo without throwing, proves legacy rows unchanged and new handoff
-  atomicity/rollback work in v2.
-- [x] Gate: `npm run ctrl:gate` (Node 22) ✅ — app 415 + db 48 + server 1340.
-- [x] Commits: 4 coherent commits; HEAD `9d6c1ad`; worktree clean.
-- [x] Not merged/pushed/deployed; production untouched; blockers=[].
+## Final gate
+- [x] server build + vitest; app test; db test  (db 99, server 1386, app 455)
+- [x] tsconfig check (app/server)  (server tsc clean, app tsc+vite clean)
+- [x] ctrl:gate under Node 22 (`/opt/homebrew/opt/node@22/bin/node`)  (exit 0; ctrl-gate-g1.log)
+- [x] git diff --check; private-default + secrets/diff scope; diff vs base = BRD scope only  (0 errors; BRD-only)
+- [x] scoped commits; clean worktree  (1f5b3f2, a0fc4a0, b4495eb; HEAD b4495eb, clean)
+- [x] update receipts (red-green, focused-proof, ctrl-gate, runner-state READY_FOR_REVIEW at new HEAD); do NOT rewrite historical Luna JSON
+- [x] STOP. No review/push/PR/merge/deploy.
 
-
----
-
-## Final THE-931 category/name isolation closure — VERIFIED (2026-08-04)
-- [x] Exact tenant category validation on channel create/patch; foreign/missing no-leak.
-- [x] Tenant-scoped `name COLLATE NOCASE` uniqueness for categories/channels.
-- [x] Atomic actual-schema-derived migration preserves deployed columns, indexes, triggers and FKs; fail-closed duplicate preflight and reserved-index replacement.
-- [x] Supervisor focused 37/37; full serial gate app 415 + DB 54 + server 1344.
-- [x] Independent review PASS (`blockerCount=0`). Production untouched.
+## Resume
+Continue from first unchecked `[ ]`. After Phase A/B/C, run final gate. State ends READY_FOR_REVIEW.

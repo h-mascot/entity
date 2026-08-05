@@ -23,6 +23,9 @@ let server: Awaited<ReturnType<express.Express['listen']>>;
 
 beforeAll(async () => {
   const { createSwarmRouter } = await import('./routes');
+  // D5 (g4): task linkage is governed by POST /api/swarm/tasks/:taskId/run. This
+  // E2E suite proves the unlinked operational Swarm lifecycle (create → claim →
+  // status → proof → complete), which the generic create path still serves.
 
   const app = express();
   app.use(express.json());
@@ -65,7 +68,6 @@ describe('Swarm → Symphony E2E Lifecycle', () => {
         branch: 'fix/login-button',
         provider: 'symphony',
         priority: 'high',
-        task_id: 42,
         created_by: 'geordi-swarm',
       }),
     });

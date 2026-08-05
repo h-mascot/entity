@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import TaskBoard, { type MCViewport } from '../TaskBoard';
 import { useEntityWebSocket } from '../../hooks/useEntityWebSocket';
 import { useTaskBoard, type TaskBoardTask, type TaskColumn } from '../../hooks/useTaskBoard';
 import {
   isEngineeringViewportMatch,
   loadEngineeringTasks,
+  resolveEngineeringBoardFilter,
   resolveEngineeringHighlightTaskId,
   toEngineeringLoadError,
 } from '../../lib/engineeringTasks';
+import { selectTasksForBoard, type BoardFilterConfigLike } from '../../lib/boardTaskFilter';
 import { toErrorMessage } from '../../lib/http';
 import { createLatestRequestGuard } from '../../lib/taskLoadingGuards';
 import { loadAdminRuntimeSettings } from '../../lib/adminRuntimeSettings';
@@ -26,6 +28,12 @@ interface MCEngineeringEntryProps {
   onCreateTask?: () => void;
   /** THE-860 — board/tab key preserved into Workplane return context. */
   returnBoard?: string | null;
+  /**
+   * BRD-003: the active Engineering board's persisted task filter. When supplied,
+   * the loaded engineering tasks are narrowed to this membership so a customized
+   * board filter (e.g. a project subset) determines board contents.
+   */
+  boardFilter?: BoardFilterConfigLike;
 }
 
 export default function MCEngineeringEntry({
@@ -39,6 +47,7 @@ export default function MCEngineeringEntry({
   onArchiveColumnVisibilityChange,
   onCreateTask,
   returnBoard = 'engineering',
+  boardFilter,
 }: MCEngineeringEntryProps) {
   const [tasks, setTasks] = useState<TaskBoardTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -150,7 +159,16 @@ export default function MCEngineeringEntry({
     void reload();
     onCloseTask?.();
   }, [onCloseTask, reload]);
-  const safeHighlightTaskId = resolveEngineeringHighlightTaskId(tasks, highlightTaskId);
+  // BRD-002/003 / D10: membership operates over the canonical task list and the
+  // active board's persisted filter controls contents locally. The default
+  // Engineering template still narrows to the engineering work domain when no
+  // custom filter is supplied.
+  const effectiveFilter = resolveEngineeringBoardFilter(boardFilter);
+  const visibleTasks = useMemo(
+    () => selectTasksForBoard(tasks, { filter_config: effectiveFilter }),
+    [tasks, effectiveFilter],
+  );
+  const safeHighlightTaskId = resolveEngineeringHighlightTaskId(visibleTasks, highlightTaskId);
 
   return (
     <section
@@ -173,7 +191,7 @@ export default function MCEngineeringEntry({
             aria-live="polite"
             data-testid="engineering-board-load-state"
           >
-            {loading ? 'Loading…' : error ? 'Degraded' : `${tasks.length} engineering task${tasks.length === 1 ? '' : 's'}`}
+            {loading ? 'Loading…' : error ? 'Degraded' : `${visibleTasks.length} engineering task${visibleTasks.length === 1 ? '' : 's'}`}
           </div>
           {onCreateTask ? (
             <button
@@ -187,7 +205,7 @@ export default function MCEngineeringEntry({
           ) : null}
         </div>
       </header>
-      {!loading && !error && tasks.length === 0 && showEmptyStateHints ? (
+      {!loading && !error && visibleTasks.length === 0 && showEmptyStateHints ? (
         <div className="border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-4 py-3 text-xs text-[var(--text-muted)]">
           No engineering tasks yet. Create one to start tracking import, build, and review work in this domain.
         </div>
@@ -197,7 +215,7 @@ export default function MCEngineeringEntry({
           viewport={viewport}
           compactShell
           apiBase={apiBase}
-          tasks={tasks}
+          tasks={visibleTasks}
           loading={loading}
           error={error}
           onMoveTask={handleMoveTask}

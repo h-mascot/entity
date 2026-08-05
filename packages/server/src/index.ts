@@ -178,6 +178,7 @@ import { applySecurityHardening } from "./security";
 import { createTerminalBridge, registerTerminalRoutes } from "./terminal";
 import { createSwarmRouter } from "./swarm";
 import { listSwarmJobs } from "./swarm/db";
+import { createBoardsRouter } from "./routes/boards";
 import { normalizeTaskOutputLinks } from "./task-output-links";
 import { registerNodeOperationsRoutes } from "./node-operations";
 import { registerDocHubTelemetryRoute } from "./doc-hub-telemetry";
@@ -412,7 +413,11 @@ registerPluginRuntimeModules({
   workspaceRoot: WORKSPACE,
 });
 // Mount core swarm lifecycle routes (dispatch, accept, reject, cancel, providers)
-app.use("/api/swarm", createSwarmRouter());
+app.use("/api/swarm", createSwarmRouter({ getTask: (id) => taskSyncLayer.getTask(id) }));
+
+// Customizable boards API (General/Analytics defaults; Blank/Strategic/Engineering
+// templates). Swarm is NOT a board — see task-detail "Run with agents" (BRD-004).
+app.use("/api/boards", createBoardsRouter());
 
 // THE-932: expose the channel adapter registry (notification backend health).
 // Email/SMTP adapters fail closed on plaintext SMTP AUTH at construction.

@@ -11,6 +11,7 @@ import {
   listSwarmJobs,
   getSwarmJob,
   createSwarmJob,
+  createActiveTaskSwarmJob,
   updateSwarmJob,
   deleteSwarmJob,
   listSwarmProofs,
@@ -32,13 +33,22 @@ import {
   listRegisteredExecutionEngines,
   toLegacyProviderListEntry,
 } from './execution-engines';
-import { SWARM_JOB_STATUSES, SWARM_PRIORITIES, type CreateSwarmJobInput, type UpdateSwarmJobInput } from './types';
+import { SWARM_JOB_STATUSES, SWARM_PRIORITIES, type CreateSwarmJobInput, type UpdateSwarmJobInput, type SwarmJob } from './types';
 import {
   createExecutionCallbackIntakeRouter,
   createExecutionCallbackIntakeService,
   getValidatedManifestByProvider,
   resolveCallbackAuthSecretFromEnv,
 } from './callback-intake';
+import {
+  buildRunWithAgentsJobInput,
+  resolveRunWithAgentsTarget,
+  isTaskEligibleForAgentRun,
+  isTaskInScope,
+} from './task-run';
+import { createTaskSyncLayer } from '../../../db/src/task-sync';
+import type { TaskRecord } from '../../../db/src';
+import { resolveTrustedTenantScope } from '../tenant-scope';
 
 function readTrimmedString(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -60,6 +70,63 @@ function isSwarmPriority(value: string): value is NonNullable<CreateSwarmJobInpu
 
 function isSwarmStatus(value: string): value is NonNullable<UpdateSwarmJobInput['status']> {
   return SWARM_JOB_STATUSES.includes(value as (typeof SWARM_JOB_STATUSES)[number]);
+}
+
+/** Trusted org/team scope for Run-with-agents authorization (D4: fail closed). */
+function resolveRequestScope(req: Request): { orgId: string; teamId: string } {
+  return resolveTrustedTenantScope(req);
+}
+
+/**
+ * D5: whether a task-linked swarm job is visible to the request scope. Ownership
+ * is resolved through the AUTHORITATIVE linked task (its org/team). Unlinked
+ * jobs (general/operational swarm without a task) are not task-scoped and stay
+ * visible to the operational surface. Swarm APIs are retained.
+ */
+async function isJobVisibleInRequestScope(
+  job: { task_id?: number | null } | undefined,
+  scope: { orgId: string; teamId: string },
+  resolveTask: (id: number) => Promise<TaskRecord | undefined>,
+): Promise<boolean> {
+  if (!job) return false;
+  const taskId = typeof job.task_id === 'number' ? job.task_id : null;
+  if (taskId === null) return true;
+  const task = await resolveTask(taskId);
+  if (!task) return false;
+  return isTaskInScope({ org_id: task.org_id, team_id: task.team_id }, scope);
+}
+
+/**
+ * D5: load a swarm job for a mutating/control/proof path only when it is visible
+ * to the request scope. Task-linked jobs require their authoritative task to be
+ * in scope (fail closed to 404); unlinked operational jobs remain accessible.
+ * Returns undefined for missing or out-of-scope jobs so callers respond 404
+ * without leaking existence cross-tenant.
+ */
+async function getJobIfVisible(
+  req: Request,
+  id: string,
+  resolveTask: (id: number) => Promise<TaskRecord | undefined>,
+): Promise<SwarmJob | undefined> {
+  const job = getSwarmJob(id);
+  if (!job) return undefined;
+  if (!(await isJobVisibleInRequestScope(job, resolveRequestScope(req), resolveTask))) return undefined;
+  return job;
+}
+
+export interface SwarmRouterDeps {
+  /** Active task source (configured taskSyncLayer). Defaults to a local task-sync layer. */
+  getTask?: (id: number) => Promise<TaskRecord | undefined>;
+}
+
+// Lazy default task source so test/runtime env is read at first use, never an
+// ad-hoc local repository that bypasses the configured adapter / tenant scope.
+let _defaultGetTask: ((id: number) => Promise<TaskRecord | undefined>) | null = null;
+function defaultGetTask(id: number): Promise<TaskRecord | undefined> {
+  if (!_defaultGetTask) {
+    _defaultGetTask = createTaskSyncLayer().getTask;
+  }
+  return _defaultGetTask(id);
 }
 
 function buildCreateJobPayload(body: Record<string, unknown>): CreateSwarmJobInput & { shouldQueue: boolean } {
@@ -115,8 +182,9 @@ function buildJobUpdates(body: Record<string, unknown>): UpdateSwarmJobInput {
   return updates;
 }
 
-export function createSwarmRouter(): Router {
+export function createSwarmRouter(deps: SwarmRouterDeps = {}): Router {
   const router = Router();
+  const resolveTask = deps.getTask ?? defaultGetTask;
 
   // EEPC-A-03 — callback intake → ActivityEvents (does not replace legacy mutation routes).
   // EEPC-A-07 — authRequired callbacks resolve secrets from env (never logged / never in errors).
@@ -135,26 +203,68 @@ export function createSwarmRouter(): Router {
     getCallbackAuthSecret: (provider) =>
       resolveCallbackAuthSecretFromEnv(provider, getValidatedManifestByProvider(provider)),
   });
-  router.use(createExecutionCallbackIntakeRouter(callbackIntake));
+  router.use(
+    // D8: authoritative task visibility for task-linked callback intake. Reuses
+    // the same resolveTrustedTenantScope + isJobVisibleInRequestScope contract as
+    // the D5 reads/mutations: unlinked operational jobs remain visible to the
+    // callback surface; a missing or cross-tenant task-linked job fails closed
+    // to 404 (no ActivityEvent intake). Provider callback auth is still enforced
+    // by the intake service afterwards; no identity is invented and fail-closed
+    // behavior is preserved.
+    createExecutionCallbackIntakeRouter(callbackIntake, {
+      authorizeJob: async (req, jobId) => {
+        const job = getSwarmJob(jobId);
+        if (!job) return false;
+        return isJobVisibleInRequestScope(job, resolveRequestScope(req), resolveTask);
+      },
+    }),
+  );
 
   // ── Jobs CRUD ──
 
   // GET /api/swarm/jobs
-  router.get('/jobs', (req: Request, res: Response) => {
+  router.get('/jobs', async (req: Request, res: Response) => {
     try {
       const status = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : undefined;
-      const task_id = typeof req.query.task_id === 'string' ? Number(req.query.task_id) : undefined;
-      const jobs = listSwarmJobs({ status, task_id: Number.isFinite(task_id) ? task_id : undefined });
-      res.json({ jobs });
+      const taskIdQuery = typeof req.query.task_id === 'string' ? Number(req.query.task_id) : undefined;
+      if (typeof taskIdQuery === 'number' && Number.isFinite(taskIdQuery)) {
+        // D5: scope the task-linked list read through the authoritative task.
+        // Fail closed (404) when the task is missing or outside the request scope
+        // so existence/contents are not leaked cross-tenant.
+        const task = await resolveTask(taskIdQuery);
+        if (!task || !isTaskInScope({ org_id: task.org_id, team_id: task.team_id }, resolveRequestScope(req))) {
+          res.status(404).json({ error: 'task not found' });
+          return;
+        }
+        res.json({ jobs: listSwarmJobs({ status, task_id: taskIdQuery }) });
+        return;
+      }
+      // D5: the unfiltered list must not leak cross-tenant task-linked jobs.
+      // Filter through the authoritative linked task; unlinked operational jobs
+      // remain visible to the operational surface.
+      const allJobs = listSwarmJobs({ status });
+      const scope = resolveRequestScope(req);
+      const visible: SwarmJob[] = [];
+      for (const job of allJobs) {
+        if (await isJobVisibleInRequestScope(job, scope, resolveTask)) {
+          visible.push(job);
+        }
+      }
+      res.json({ jobs: visible });
     } catch (error) {
       res.status(500).json({ error: 'Failed to list jobs' });
     }
   });
 
   // GET /api/swarm/jobs/:id
-  router.get('/jobs/:id', (req: Request, res: Response) => {
+  router.get('/jobs/:id', async (req: Request, res: Response) => {
     const job = getSwarmJob(req.params.id);
     if (!job) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
+    // D5: enforce authoritative task ownership on the task-linked detail read.
+    if (!(await isJobVisibleInRequestScope(job, resolveRequestScope(req), resolveTask))) {
       res.status(404).json({ error: 'Job not found' });
       return;
     }
@@ -167,6 +277,18 @@ export function createSwarmRouter(): Router {
   router.post('/jobs', async (req: Request, res: Response) => {
     try {
       const payload = buildCreateJobPayload((req.body ?? {}) as Record<string, unknown>);
+      // D5: task-linked jobs must be created through the governed
+      // POST /api/swarm/tasks/:taskId/run lifecycle (authoritative scope,
+      // eligibility, fail-closed target, atomic active-job guard). The generic
+      // operational create path refuses task_id so arbitrary task linkage cannot
+      // bypass that lifecycle. Unlinked operational creation is preserved.
+      if (typeof payload.task_id === 'number' && Number.isFinite(payload.task_id)) {
+        res.status(400).json({
+          error: 'task-linked jobs must be created via POST /api/swarm/tasks/:taskId/run (Run with agents)',
+          code: 'TASK_LINK_REQUIRES_GOVERNED_PATH',
+        });
+        return;
+      }
       const job = createSwarmJob({
         title: payload.title,
         spec: payload.spec,
@@ -192,11 +314,16 @@ export function createSwarmRouter(): Router {
   });
 
   // PATCH /api/swarm/jobs/:id
-  router.patch('/jobs/:id', (req: Request, res: Response) => {
+  router.patch('/jobs/:id', async (req: Request, res: Response) => {
     try {
       const updates = buildJobUpdates((req.body ?? {}) as Record<string, unknown>);
       if (Object.keys(updates).length === 0) {
         res.status(400).json({ error: 'No supported fields provided' });
+        return;
+      }
+      // D5: enforce authoritative task ownership on the task-linked mutation.
+      if (!(await getJobIfVisible(req, req.params.id, resolveTask))) {
+        res.status(404).json({ error: 'Job not found' });
         return;
       }
       const job = updateSwarmJob(req.params.id, updates);
@@ -211,7 +338,12 @@ export function createSwarmRouter(): Router {
   });
 
   // DELETE /api/swarm/jobs/:id
-  router.delete('/jobs/:id', (req: Request, res: Response) => {
+  router.delete('/jobs/:id', async (req: Request, res: Response) => {
+    // D5: enforce authoritative task ownership on the task-linked deletion.
+    if (!(await getJobIfVisible(req, req.params.id, resolveTask))) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
     const deleted = deleteSwarmJob(req.params.id);
     if (!deleted) {
       res.status(404).json({ error: 'Job not found' });
@@ -220,11 +352,73 @@ export function createSwarmRouter(): Router {
     res.json({ ok: true });
   });
 
+  // ── Run with agents (task-linked) ──
+  // BRD-004: Swarm is invoked from an eligible task, not presented as a board.
+  // Reads the task through the configured task source (taskSyncLayer), enforces
+  // request-derived tenant scope and eligibility, resolves a real dispatch
+  // target (fail closed — never an example placeholder), and creates at most one
+  // active job per task via an atomic DB invariant.
+  router.post('/tasks/:taskId/run', async (req: Request, res: Response) => {
+    try {
+      const taskId = Number(req.params.taskId);
+      if (!Number.isInteger(taskId) || taskId <= 0) {
+        res.status(400).json({ error: 'taskId must be a positive integer' });
+        return;
+      }
+      const task = await resolveTask(taskId);
+      if (!task || !isTaskInScope({ org_id: task.org_id, team_id: task.team_id }, resolveRequestScope(req))) {
+        // Fail closed: do not leak existence of out-of-scope tasks.
+        res.status(404).json({ error: 'task not found' });
+        return;
+      }
+      if (
+        !isTaskEligibleForAgentRun({
+          name: task.name,
+          archived: task.archived,
+          column: task.column,
+        })
+      ) {
+        res.status(409).json({
+          error: 'task is not eligible for an agent run',
+          code: 'TASK_NOT_ELIGIBLE',
+        });
+        return;
+      }
+      const target = resolveRunWithAgentsTarget({
+        body: (req.body ?? {}) as Record<string, unknown>,
+        task: { metadata: task.metadata },
+        env: process.env,
+      });
+      if (!target) {
+        res.status(400).json({
+          error: 'no execution target configured for Run with agents',
+          code: 'NO_EXECUTION_TARGET',
+        });
+        return;
+      }
+      const result = createActiveTaskSwarmJob(buildRunWithAgentsJobInput(task, { target }));
+      if (!result.created) {
+        res.status(200).json({ job: result.job, alreadyActive: true });
+        return;
+      }
+      updateSwarmJob(result.job.id, { status: 'queued' });
+      await kickAutoDispatch();
+      res.status(201).json({ job: getSwarmJob(result.job.id) ?? result.job });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to start run' });
+    }
+  });
+
   // ── Dispatch & Status ──
 
   // POST /api/swarm/jobs/:id/dispatch
   router.post('/jobs/:id/dispatch', async (req: Request, res: Response) => {
     try {
+      // D5: enforce authoritative task ownership on the task-linked dispatch.
+      if (!(await getJobIfVisible(req, req.params.id, resolveTask))) {
+        res.status(404).json({ error: 'Job not found' });
+        return;
+      }
       const result = await dispatchJob(req.params.id);
       if (!result.success) {
         res.status(400).json({ error: result.error });
@@ -240,6 +434,11 @@ export function createSwarmRouter(): Router {
   // POST /api/swarm/jobs/:id/check
   router.post('/jobs/:id/check', async (req: Request, res: Response) => {
     try {
+      // D5: enforce authoritative task ownership on the task-linked status check.
+      if (!(await getJobIfVisible(req, req.params.id, resolveTask))) {
+        res.status(404).json({ error: 'Job not found' });
+        return;
+      }
       const result = await checkJobStatus(req.params.id);
       if (!result.success) {
         res.status(400).json({ error: result.error });
@@ -253,7 +452,12 @@ export function createSwarmRouter(): Router {
   });
 
   // POST /api/swarm/jobs/:id/accept
-  router.post('/jobs/:id/accept', (req: Request, res: Response) => {
+  router.post('/jobs/:id/accept', async (req: Request, res: Response) => {
+    // D5: enforce authoritative task ownership on the task-linked accept.
+    if (!(await getJobIfVisible(req, req.params.id, resolveTask))) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
     const result = acceptJob(req.params.id);
     if (!result.success) {
       res.status(400).json({ error: result.error });
@@ -264,10 +468,15 @@ export function createSwarmRouter(): Router {
   });
 
   // POST /api/swarm/jobs/:id/reject
-  router.post('/jobs/:id/reject', (req: Request, res: Response) => {
+  router.post('/jobs/:id/reject', async (req: Request, res: Response) => {
     const { feedback } = req.body;
     if (!feedback?.trim()) {
       res.status(400).json({ error: 'feedback is required' });
+      return;
+    }
+    // D5: enforce authoritative task ownership on the task-linked reject.
+    if (!(await getJobIfVisible(req, req.params.id, resolveTask))) {
+      res.status(404).json({ error: 'Job not found' });
       return;
     }
     const result = rejectJob(req.params.id, feedback.trim());
@@ -282,6 +491,11 @@ export function createSwarmRouter(): Router {
   // POST /api/swarm/jobs/:id/cancel
   router.post('/jobs/:id/cancel', async (req: Request, res: Response) => {
     try {
+      // D5: enforce authoritative task ownership on the task-linked cancel.
+      if (!(await getJobIfVisible(req, req.params.id, resolveTask))) {
+        res.status(404).json({ error: 'Job not found' });
+        return;
+      }
       const result = await cancelJob(req.params.id);
       if (!result.success) {
         res.status(400).json({ error: result.error });
@@ -297,9 +511,10 @@ export function createSwarmRouter(): Router {
   // ── Tracker API (Symphony EntityTracker contract) ──
 
   // POST /api/swarm/jobs/:id/claim — concurrency-safe claim for execution
-  router.post('/jobs/:id/claim', (req: Request, res: Response) => {
+  router.post('/jobs/:id/claim', async (req: Request, res: Response) => {
     try {
-      const job = getSwarmJob(req.params.id);
+      // D5: enforce authoritative task ownership on the task-linked claim.
+      const job = await getJobIfVisible(req, req.params.id, resolveTask);
       if (!job) {
         res.status(404).json({ error: 'Job not found', code: 'JOB_NOT_FOUND', claimed: false });
         return;
@@ -334,9 +549,10 @@ export function createSwarmRouter(): Router {
   });
 
   // POST /api/swarm/jobs/:id/release — release a claimed job back to queue
-  router.post('/jobs/:id/release', (req: Request, res: Response) => {
+  router.post('/jobs/:id/release', async (req: Request, res: Response) => {
     try {
-      const job = getSwarmJob(req.params.id);
+      // D5: enforce authoritative task ownership on the task-linked release.
+      const job = await getJobIfVisible(req, req.params.id, resolveTask);
       if (!job) {
         res.status(404).json({ error: 'Job not found', code: 'JOB_NOT_FOUND', released: false });
         return;
@@ -363,7 +579,8 @@ export function createSwarmRouter(): Router {
   // POST /api/swarm/jobs/:id/status — update run progress/state
   router.post('/jobs/:id/status', async (req: Request, res: Response) => {
     try {
-      const job = getSwarmJob(req.params.id);
+      // D5: enforce authoritative task ownership on the task-linked status mutation.
+      const job = await getJobIfVisible(req, req.params.id, resolveTask);
       if (!job) {
         res.status(404).json({ error: 'Job not found' });
         return;
@@ -392,9 +609,10 @@ export function createSwarmRouter(): Router {
   });
 
   // POST /api/swarm/jobs/:id/proof — append proof artifacts
-  router.post('/jobs/:id/proof', (req: Request, res: Response) => {
+  router.post('/jobs/:id/proof', async (req: Request, res: Response) => {
     try {
-      const job = getSwarmJob(req.params.id);
+      // D5: enforce authoritative task ownership on the task-linked proof append.
+      const job = await getJobIfVisible(req, req.params.id, resolveTask);
       if (!job) {
         res.status(404).json({ error: 'Job not found' });
         return;
@@ -422,7 +640,12 @@ export function createSwarmRouter(): Router {
   });
 
   // POST /api/swarm/jobs/:id/complete — mark job as done
-  router.post('/jobs/:id/complete', (req: Request, res: Response) => {
+  router.post('/jobs/:id/complete', async (req: Request, res: Response) => {
+    // D5: enforce authoritative task ownership on the task-linked complete.
+    if (!(await getJobIfVisible(req, req.params.id, resolveTask))) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
     const result = acceptJob(req.params.id);
     if (!result.success) {
       // Allow completing from more statuses than just review
@@ -441,9 +664,10 @@ export function createSwarmRouter(): Router {
   });
 
   // POST /api/swarm/jobs/:id/fail — mark job as failed
-  router.post('/jobs/:id/fail', (req: Request, res: Response) => {
+  router.post('/jobs/:id/fail', async (req: Request, res: Response) => {
     try {
-      const job = getSwarmJob(req.params.id);
+      // D5: enforce authoritative task ownership on the task-linked fail.
+      const job = await getJobIfVisible(req, req.params.id, resolveTask);
       if (!job) {
         res.status(404).json({ error: 'Job not found' });
         return;
@@ -463,7 +687,17 @@ export function createSwarmRouter(): Router {
   // ── Proofs ──
 
   // GET /api/swarm/jobs/:id/proofs
-  router.get('/jobs/:id/proofs', (req: Request, res: Response) => {
+  router.get('/jobs/:id/proofs', async (req: Request, res: Response) => {
+    const job = getSwarmJob(req.params.id);
+    if (!job) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
+    // D5: enforce authoritative task ownership on the task-linked proofs read.
+    if (!(await isJobVisibleInRequestScope(job, resolveRequestScope(req), resolveTask))) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
     const proofs = listSwarmProofs(req.params.id);
     res.json({ proofs });
   });
