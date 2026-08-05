@@ -1,0 +1,282 @@
+import { randomUUID } from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  BOARD_VIEWS,
+  BOARD_TEMPLATES,
+  isBoardView,
+  isBoardTemplate,
+  boardViewForTemplate,
+  defaultFilterForTemplate,
+  normalizeBoardFilterConfig,
+  mapLegacyTabToDefaultBoardKey,
+} from './boards';
+
+let activeDbPath: string | null = null;
+let cleanupDbPaths: string[] = [];
+
+function removeSqliteFiles(dbPath: string): void {
+  for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    fs.rmSync(file, { force: true });
+  }
+}
+
+function tempDbPath(): string {
+  return path.join(os.tmpdir(), `entity-boards-test-${process.pid}-${randomUUID()}.sqlite`);
+}
+
+async function loadBoardRepository() {
+  activeDbPath = tempDbPath();
+  cleanupDbPaths.push(activeDbPath);
+  vi.resetModules();
+  vi.stubEnv('ENTITY_TASK_DB_PATH', activeDbPath);
+  vi.stubEnv('MISSION_CONTROL_DB_PATH', path.join(os.tmpdir(), `missing-mc-${randomUUID()}.db`));
+  const mod = await import('./boards');
+  return mod.createBoardRepository();
+}
+
+afterEach(async () => {
+  const dbPathToClose = activeDbPath;
+  if (dbPathToClose) {
+    const closePath = tempDbPath();
+    cleanupDbPaths.push(closePath);
+    vi.stubEnv('ENTITY_TASK_DB_PATH', closePath);
+    try {
+      const { getEntityDatabase } = await import('./entity-db');
+      getEntityDatabase().close();
+    } catch {
+      // best-effort close
+    }
+  }
+  vi.resetModules();
+  vi.unstubAllEnvs();
+  for (const dbPath of cleanupDbPaths) {
+    removeSqliteFiles(dbPath);
+  }
+  activeDbPath = null;
+  cleanupDbPaths = [];
+});
+
+describe('board domain helpers', () => {
+  describe('view and template kinds', () => {
+    it('exposes the four board view kinds', () => {
+      expect(BOARD_VIEWS).toEqual(['board', 'analytics', 'strategic', 'engineering']);
+    });
+
+    it('exposes the three creation templates', () => {
+      expect(BOARD_TEMPLATES).toEqual(['blank', 'strategic', 'engineering']);
+    });
+
+    it.each([
+      ['board'],
+      ['analytics'],
+      ['strategic'],
+      ['engineering'],
+    ])('recognizes %s as a board view', (value) => {
+      expect(isBoardView(value)).toBe(true);
+    });
+
+    it.each([
+      ['kanban'],
+      ['swarm'],
+      [''],
+      [null],
+      [undefined],
+    ])('rejects %p as a board view', (value) => {
+      expect(isBoardView(value)).toBe(false);
+    });
+
+    it.each([
+      ['blank'],
+      ['strategic'],
+      ['engineering'],
+    ])('recognizes %s as a board template', (value) => {
+      expect(isBoardTemplate(value)).toBe(true);
+    });
+
+    it.each([
+      ['board'],
+      ['analytics'],
+      ['general'],
+      [null],
+    ])('rejects %p as a board template', (value) => {
+      expect(isBoardTemplate(value)).toBe(false);
+    });
+
+    it('maps each template to its rendering view', () => {
+      expect(boardViewForTemplate('blank')).toBe('board');
+      expect(boardViewForTemplate('strategic')).toBe('strategic');
+      expect(boardViewForTemplate('engineering')).toBe('engineering');
+    });
+  });
+
+  describe('filter configuration normalization', () => {
+    it('returns an all-tasks default for missing or non-object input', () => {
+      expect(normalizeBoardFilterConfig(undefined)).toEqual({ scope: 'all' });
+      expect(normalizeBoardFilterConfig(null)).toEqual({ scope: 'all' });
+      expect(normalizeBoardFilterConfig('not-an-object')).toEqual({ scope: 'all' });
+      expect(normalizeBoardFilterConfig({})).toEqual({ scope: 'all' });
+    });
+
+    it('keeps an explicit none scope for empty boards', () => {
+      expect(normalizeBoardFilterConfig({ scope: 'none' })).toEqual({ scope: 'none' });
+    });
+
+    it('falls an unknown scope back to all', () => {
+      expect(normalizeBoardFilterConfig({ scope: 'bogus' })).toEqual({ scope: 'all' });
+    });
+
+    it('coerces and filters project ids down to positive integers', () => {
+      expect(
+        normalizeBoardFilterConfig({
+          scope: 'projects',
+          projectIds: [3, '2', 0, -1, 2.5, 'nope', null, 5],
+        }),
+      ).toEqual({ scope: 'projects', projectIds: [3, 2, 5] });
+    });
+
+    it('keeps a kebab-case work domain and drops malformed ones', () => {
+      expect(
+        normalizeBoardFilterConfig({ scope: 'workDomain', workDomain: 'Engineering' }),
+      ).toEqual({ scope: 'workDomain', workDomain: 'engineering' });
+      expect(
+        normalizeBoardFilterConfig({ scope: 'workDomain', workDomain: 'data science!' }),
+      ).toEqual({ scope: 'workDomain', workDomain: null });
+    });
+  });
+
+  describe('template default filters', () => {
+    it('seeds blank and strategic boards with an all-tasks scope', () => {
+      expect(defaultFilterForTemplate('blank')).toEqual({ scope: 'all' });
+      expect(defaultFilterForTemplate('strategic')).toEqual({ scope: 'all' });
+    });
+
+    it('seeds engineering boards with an engineering work-domain default', () => {
+      expect(defaultFilterForTemplate('engineering')).toEqual({
+        scope: 'workDomain',
+        workDomain: 'engineering',
+      });
+    });
+  });
+
+  describe('legacy tab migration', () => {
+    it.each([
+      ['kanban', 'general'],
+      ['ops', 'general'],
+      ['strategic', 'general'],
+      ['engineering', 'general'],
+      ['swarm', 'general'],
+      ['plugin:geordi', 'general'],
+      ['unknown', 'general'],
+      ['', 'general'],
+    ])('maps legacy tab %p to default board %s', (tab, expected) => {
+      expect(mapLegacyTabToDefaultBoardKey(tab)).toBe(expected);
+    });
+
+    it('maps the insights tab to the analytics default', () => {
+      expect(mapLegacyTabToDefaultBoardKey('insights')).toBe('analytics');
+    });
+
+    it.each([null, undefined])('falls back to general for %p', (value) => {
+      expect(mapLegacyTabToDefaultBoardKey(value)).toBe('general');
+    });
+  });
+});
+
+describe('board repository persistence', () => {
+  it('seeds the General and Analytics defaults idempotently and ordered', async () => {
+    const boards = await loadBoardRepository();
+    boards.seedDefaults();
+    boards.seedDefaults();
+
+    const list = boards.listBoards();
+    expect(list).toHaveLength(2);
+    expect(list.map((b) => b.key)).toEqual(['general', 'analytics']);
+    expect(list.map((b) => b.name)).toEqual(['General', 'Analytics']);
+    expect(list.map((b) => b.view)).toEqual(['board', 'analytics']);
+    expect(list.every((b) => b.is_default)).toBe(true);
+    expect(list.map((b) => b.sort_order)).toEqual([0, 1]);
+  });
+
+  it('creates user boards with validated names, derived view, and next sort order', async () => {
+    const boards = await loadBoardRepository();
+    boards.seedDefaults();
+
+    const created = boards.createBoard({ name: '  Mobile Crash  ', template: 'engineering' });
+    expect(created).toMatchObject({
+      name: 'Mobile Crash',
+      view: 'engineering',
+      is_default: false,
+      sort_order: 2,
+      filter_config: { scope: 'workDomain', workDomain: 'engineering' },
+    });
+
+    expect(boards.createBoard({ name: 'Blank one', template: 'blank' })).toMatchObject({
+      view: 'board',
+      filter_config: { scope: 'all' },
+    });
+
+    expect(() => boards.createBoard({ name: '   ' })).toThrow('board name is required');
+    expect(() => boards.createBoard({ name: 'x'.repeat(81) })).toThrow('80 characters');
+  });
+
+  it('round-trips an explicit project filter config through normalization', async () => {
+    const boards = await loadBoardRepository();
+    boards.seedDefaults();
+
+    const created = boards.createBoard({
+      name: 'Curacel work',
+      view: 'board',
+      filter_config: { scope: 'projects', projectIds: [9, '3', 0, 9] },
+    });
+    expect(created.filter_config).toEqual({ scope: 'projects', projectIds: [9, 3] });
+
+    const updated = boards.updateBoard(created.id, {
+      filter_config: { scope: 'none' },
+    });
+    expect(updated?.filter_config).toEqual({ scope: 'none' });
+  });
+
+  it('updates name and view and returns undefined for missing boards', async () => {
+    const boards = await loadBoardRepository();
+    boards.seedDefaults();
+
+    const created = boards.createBoard({ name: 'Sprint', template: 'strategic' });
+    const updated = boards.updateBoard(created.id, { name: 'Sprint Plan', view: 'board' });
+    expect(updated).toMatchObject({ id: created.id, name: 'Sprint Plan', view: 'board' });
+
+    expect(boards.updateBoard(999_999, { name: 'x' })).toBeUndefined();
+    expect(() => boards.updateBoard(created.id, { name: '   ' })).toThrow('board name is required');
+  });
+
+  it('reorders known boards and appends unmentioned boards after the explicit prefix', async () => {
+    const boards = await loadBoardRepository();
+    boards.seedDefaults();
+    const a = boards.createBoard({ name: 'A' });
+    const b = boards.createBoard({ name: 'B' });
+
+    const reordered = boards.reorderBoards([b.id, a.id]);
+    expect(reordered.map((board) => board.name)).toEqual(['B', 'A', 'General', 'Analytics']);
+
+    // Unknown ids are ignored, not stored, and do not corrupt ordering.
+    const reorderedAgain = boards.reorderBoards([a.id, 999_999, b.id]);
+    expect(reorderedAgain.map((board) => board.name)).toEqual(['A', 'B', 'General', 'Analytics']);
+  });
+
+  it('deletes user boards but refuses to delete required defaults and missing ids', async () => {
+    const boards = await loadBoardRepository();
+    boards.seedDefaults();
+    const user = boards.createBoard({ name: 'Temp board' });
+
+    expect(boards.deleteBoard(user.id)).toBe(true);
+    expect(boards.getBoard(user.id)).toBeUndefined();
+    expect(boards.deleteBoard(user.id)).toBe(false);
+    expect(boards.deleteBoard(999_999)).toBe(false);
+
+    const general = boards.listBoards().find((b) => b.key === 'general')!;
+    expect(() => boards.deleteBoard(general.id)).toThrow('required default');
+    expect(boards.listBoards()).toHaveLength(2);
+  });
+});
