@@ -86,6 +86,16 @@ export interface BoardsState {
  */
 export type BoardRenderTab = 'kanban' | 'insights' | 'strategic' | 'engineering';
 
+/**
+ * Whether a board view consumes the persisted task-inclusion filter (D2). The
+ * board (kanban), analytics, and engineering views render the task surface that
+ * honors filter_config; strategic renders roadmaps and ignores it, so its filter
+ * customization must be rejected/disabled rather than silently dropped.
+ */
+export function boardViewSupportsFilter(view: BoardView): boolean {
+  return view === 'board' || view === 'analytics' || view === 'engineering';
+}
+
 export function boardViewToRenderTab(view: BoardView): BoardRenderTab {
   switch (view) {
     case 'analytics':
@@ -264,7 +274,14 @@ export function buildBoardCustomizationPatch(form: {
     workDomain: form.workDomain,
     projectIds: rawProjectIds,
   });
-  const result: { view?: BoardView; filter_config: BoardFilterConfig } = { filter_config };
+  // Honest contract (D2): only views that consume the persisted task-inclusion
+  // filter support filter customization. Strategic renders roadmaps and ignores
+  // the filter, so any requested scope collapses to the no-op 'all' instead of
+  // being silently dropped.
+  const supportedView = form.view ? boardViewSupportsFilter(form.view) : true;
+  const result: { view?: BoardView; filter_config: BoardFilterConfig } = {
+    filter_config: supportedView ? filter_config : { scope: 'all' },
+  };
   if (form.view) result.view = form.view;
   return result;
 }

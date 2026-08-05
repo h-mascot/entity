@@ -3,6 +3,7 @@ import {
   BOARD_TEMPLATES,
   BOARD_VIEWS,
   boardViewToRenderTab,
+  boardViewSupportsFilter,
   buildBoardCustomizationPatch,
   type BoardSummary,
   type BoardTemplate,
@@ -101,7 +102,7 @@ export function BoardSwitcher({
   function openCustomize(board: BoardSummary) {
     setCustomizingId(board.id);
     setCustomizeView(board.view);
-    setCustomizeScope(board.filter_config.scope);
+    setCustomizeScope(boardViewSupportsFilter(board.view) ? board.filter_config.scope : 'all');
     setCustomizeWorkDomain(board.filter_config.workDomain ?? '');
     setCustomizeProjectIds(
       Array.isArray(board.filter_config.projectIds) ? board.filter_config.projectIds.join(',') : '',
@@ -189,6 +190,11 @@ export function BoardSwitcher({
 
         if (customizingId === board.id) {
           // BRD-002: customize view + task inclusion/filter configuration.
+          // D2: only views that consume the persisted task-inclusion filter
+          // (board/analytics/engineering) support filter customization. The
+          // Strategic view renders roadmaps and ignores the filter, so its filter
+          // controls are disabled (the persistence layer also collapses to 'all').
+          const filterSupported = boardViewSupportsFilter(customizeView);
           return (
             <span key={board.id} className="flex flex-col gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-2 shadow-lg" role="dialog" aria-label={`Customize ${label} board`}>
               <span className="flex items-center gap-1">
@@ -203,19 +209,24 @@ export function BoardSwitcher({
                     <option key={view} value={view}>{VIEW_LABELS[view]}</option>
                   ))}
                 </select>
-                <label className="text-[10px] text-[var(--text-muted)]" htmlFor={`customize-scope-${board.id}`}>Tasks</label>
+                <label
+                  className={`text-[10px] ${filterSupported ? 'text-[var(--text-muted)]' : 'text-[var(--text-muted)]/60'}`}
+                  htmlFor={`customize-scope-${board.id}`}
+                >Tasks</label>
                 <select
                   id={`customize-scope-${board.id}`}
-                  value={customizeScope}
+                  value={filterSupported ? customizeScope : 'all'}
                   onChange={(e) => setCustomizeScope(e.target.value as BoardFilterScope)}
-                  className="mc-shell-input px-1 py-1 text-xs"
+                  disabled={!filterSupported}
+                  aria-disabled={!filterSupported}
+                  className="mc-shell-input px-1 py-1 text-xs disabled:opacity-60"
                 >
                   {FILTER_SCOPES.map((scope) => (
                     <option key={scope} value={scope}>{scope}</option>
                   ))}
                 </select>
               </span>
-              {customizeScope === 'workDomain' ? (
+              {filterSupported && customizeScope === 'workDomain' ? (
                 <input
                   type="text"
                   value={customizeWorkDomain}
@@ -226,7 +237,7 @@ export function BoardSwitcher({
                   className="mc-shell-input px-2 py-1 text-xs"
                 />
               ) : null}
-              {customizeScope === 'projects' ? (
+              {filterSupported && customizeScope === 'projects' ? (
                 <input
                   type="text"
                   value={customizeProjectIds}
@@ -235,6 +246,11 @@ export function BoardSwitcher({
                   aria-label="Project ids filter"
                   className="mc-shell-input px-2 py-1 text-xs"
                 />
+              ) : null}
+              {!filterSupported ? (
+                <span className="text-[10px] text-[var(--text-muted)]">
+                  Strategic view shows roadmaps; task filter isn’t applied.
+                </span>
               ) : null}
               <span className="flex items-center gap-1">
                 <button type="button" onClick={() => submitCustomize(board.id)} className="mc-shell-btn px-2 py-1 text-xs">Save</button>

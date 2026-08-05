@@ -15,6 +15,7 @@ import {
   selectActiveBoardAfterDeletion,
   renderTabAfterDeletion,
   buildBoardCustomizationPatch,
+  boardViewSupportsFilter,
   resolveInitialActiveBoard,
   parseBoardSummary,
   parseBoardsListResponse,
@@ -297,5 +298,47 @@ test('buildBoardCustomizationPatch normalizes a customize-form into a PATCH payl
   assert.deepEqual(
     buildBoardCustomizationPatch({ scope: 'projects', projectIdsCsv: '' }).filter_config,
     { scope: 'all' },
+  );
+});
+
+test('boardViewSupportsFilter is honest about which views consume the persisted task filter (D2)', () => {
+  // board/analytics/engineering render the task surface that honors filter_config;
+  // strategic renders roadmaps and ignores the task-inclusion filter entirely.
+  assert.equal(boardViewSupportsFilter('board'), true);
+  assert.equal(boardViewSupportsFilter('analytics'), true);
+  assert.equal(boardViewSupportsFilter('engineering'), true);
+  assert.equal(boardViewSupportsFilter('strategic'), false);
+});
+
+test('buildBoardCustomizationPatch rejects unsupported Strategic filter customization (D2)', () => {
+  // Strategic does not consume the persisted task-inclusion filter, so any
+  // requested projects/workDomain/none scope must be collapsed to the honest
+  // no-op 'all' at the persistence boundary instead of being silently dropped.
+  const strategicProjects = buildBoardCustomizationPatch({
+    view: 'strategic',
+    scope: 'projects',
+    projectIdsCsv: '5, 9',
+  });
+  assert.equal(strategicProjects.view, 'strategic');
+  assert.deepEqual(strategicProjects.filter_config, { scope: 'all' });
+
+  const strategicWorkDomain = buildBoardCustomizationPatch({
+    view: 'strategic',
+    scope: 'workDomain',
+    workDomain: 'engineering',
+  });
+  assert.deepEqual(strategicWorkDomain.filter_config, { scope: 'all' });
+
+  const strategicNone = buildBoardCustomizationPatch({ view: 'strategic', scope: 'none' });
+  assert.deepEqual(strategicNone.filter_config, { scope: 'all' });
+
+  // Supported views keep honoring the filter.
+  assert.deepEqual(
+    buildBoardCustomizationPatch({ view: 'engineering', scope: 'workDomain', workDomain: 'engineering' }).filter_config,
+    { scope: 'workDomain', workDomain: 'engineering' },
+  );
+  assert.deepEqual(
+    buildBoardCustomizationPatch({ view: 'board', scope: 'none' }).filter_config,
+    { scope: 'none' },
   );
 });

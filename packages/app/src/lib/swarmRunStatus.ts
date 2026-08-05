@@ -38,6 +38,39 @@ export function shouldPollAgentRun(job: SwarmRunJobLite | null | undefined): boo
 
 export type AgentRunOutcome = 'success' | 'failure' | 'unknown';
 
+/** Minimal task-linked job shape used to retain the newest run (BRD-004). */
+export interface SwarmTaskJobSummary {
+  id: string;
+  task_id: number | null;
+  created_at?: string;
+}
+
+/**
+ * Newest task-linked job, or null. Retains the run through active→terminal so the
+ * task detail can surface a finished run's status, proof, and execution details
+ * (BRD-004). Jobs not linked to a task are ignored. Selection is by created_at
+ * descending with a stable id-descending tiebreak, so it is independent of the
+ * API's return order and deterministic on ties.
+ */
+export function findNewestTaskSwarmJob<T extends SwarmTaskJobSummary>(
+  jobs: ReadonlyArray<T>,
+): T | null {
+  let newest: T | null = null;
+  for (const job of jobs) {
+    if (typeof job.task_id !== 'number') continue;
+    if (!newest) {
+      newest = job;
+      continue;
+    }
+    const jobTime = job.created_at ?? '';
+    const newestTime = newest.created_at ?? '';
+    if (jobTime > newestTime || (jobTime === newestTime && job.id > newest.id)) {
+      newest = job;
+    }
+  }
+  return newest;
+}
+
 export interface AgentRunViewState {
   phase: 'idle' | 'running' | 'terminal';
   /** True once the run reaches a terminal status (done/failed/cancelled). */

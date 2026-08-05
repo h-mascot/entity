@@ -15,12 +15,6 @@ export interface SwarmJobSummary {
   updated_at?: string;
 }
 
-const ACTIVE_SWARM_JOB_STATUSES = ['draft', 'queued', 'dispatched', 'running'];
-
-export function isSwarmJobActive(job: { status: string } | null | undefined): boolean {
-  return !!job && ACTIVE_SWARM_JOB_STATUSES.includes(job.status);
-}
-
 export interface RunTaskWithAgentsResult {
   job: SwarmJobSummary;
   alreadyActive?: boolean;
@@ -70,11 +64,4 @@ export async function fetchSwarmJobProofs(
     fallbackError: 'Unable to load agent run proof.',
   });
   return Array.isArray(payload.proofs) ? payload.proofs : [];
-}
-
-/** Newest active job for a task, or null. */
-export function findActiveTaskSwarmJob(
-  jobs: ReadonlyArray<SwarmJobSummary>,
-): SwarmJobSummary | null {
-  return jobs.find((job) => isSwarmJobActive(job)) ?? null;
 }

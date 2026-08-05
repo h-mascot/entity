@@ -3,12 +3,11 @@ import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorM
 import {
   fetchTaskSwarmJobs,
   fetchSwarmJobProofs,
-  findActiveTaskSwarmJob,
   runTaskWithAgents,
   type SwarmJobSummary,
   type SwarmProofSummary,
 } from '../../lib/swarmTaskRunClient';
-import { shouldPollAgentRun, deriveAgentRunViewState } from '../../lib/swarmRunStatus';
+import { shouldPollAgentRun, deriveAgentRunViewState, findNewestTaskSwarmJob } from '../../lib/swarmRunStatus';
 import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
 import MarkdownPreview from '../MarkdownPreview';
@@ -1918,7 +1917,7 @@ export default function TaskDetailPanel({
     fetchTaskSwarmJobs(taskId, apiBase)
       .then((jobs) => {
         if (cancelled) return;
-        setAgentRun(findActiveTaskSwarmJob(jobs));
+        setAgentRun(findNewestTaskSwarmJob(jobs));
       })
       .catch(() => {
         if (cancelled) return;
@@ -1954,7 +1953,7 @@ export default function TaskDetailPanel({
       fetchTaskSwarmJobs(taskId, apiBase)
         .then((jobs) => {
           if (cancelled) return;
-          setAgentRun(findActiveTaskSwarmJob(jobs));
+          setAgentRun(findNewestTaskSwarmJob(jobs));
         })
         .catch(() => {
           /* keep last known state on transient poll failure */

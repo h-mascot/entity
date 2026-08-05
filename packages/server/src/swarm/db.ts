@@ -231,11 +231,55 @@ function migrateLegacySwarmProofs(db: Database.Database): void {
   `);
 }
 
+function reconcileDuplicateActiveTaskJobs(db: Database.Database): void {
+  const placeholders = ACTIVE_TASK_JOB_STATUSES.map(() => '?').join(', ');
+  // Task ids that currently have more than one in-flight (active) job. These would
+  // abort CREATE UNIQUE INDEX on legacy databases that pre-date the guard.
+  const duplicates = db
+    .prepare(
+      `SELECT task_id FROM swarm_jobs
+         WHERE task_id IS NOT NULL AND status IN (${placeholders})
+         GROUP BY task_id
+         HAVING COUNT(*) > 1`,
+    )
+    .all(...ACTIVE_TASK_JOB_STATUSES) as Array<{ task_id: number }>;
+
+  if (duplicates.length === 0) return;
+  const now = new Date().toISOString();
+  for (const { task_id } of duplicates) {
+    // Newest suitable winner first (created_at DESC, id DESC for determinism).
+    const rows = db
+      .prepare(
+        `SELECT id FROM swarm_jobs
+           WHERE task_id = ? AND status IN (${placeholders})
+           ORDER BY created_at DESC, id DESC`,
+      )
+      .all(task_id, ...ACTIVE_TASK_JOB_STATUSES) as Array<{ id: string }>;
+    if (rows.length <= 1) continue;
+    const loserIds = rows.slice(1).map((row) => row.id);
+    const inPlaceholders = loserIds.map(() => '?').join(', ');
+    // Safely terminalize the superseded duplicates as 'cancelled' so they leave
+    // the partial unique index (which only covers active statuses). Preserves any
+    // existing feedback and stamps completion/updated timestamps.
+    db.prepare(
+      `UPDATE swarm_jobs
+         SET status = 'cancelled',
+             feedback = COALESCE(NULLIF(feedback, ''), 'Superseded by newer active run during duplicate reconciliation'),
+             completed_at = ?,
+             updated_at = ?
+       WHERE id IN (${inPlaceholders})`,
+    ).run(now, now, ...loserIds);
+  }
+}
+
 export function ensureSwarmSchema(db: Database.Database): void {
   const migrate = db.transaction(() => {
     createSwarmTables(db);
     migrateLegacySwarmJobs(db);
     migrateLegacySwarmProofs(db);
+    // D3: reconcile pre-existing duplicate active task jobs BEFORE creating the
+    // partial unique index, preserving one winner and safely terminalizing others.
+    reconcileDuplicateActiveTaskJobs(db);
     ensureSwarmIndexes(db);
   });
   migrate();
