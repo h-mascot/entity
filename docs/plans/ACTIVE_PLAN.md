@@ -65,10 +65,10 @@ Swarm capability.
   route/state tests for linkage, duplicate-active handling, error paths.
 
 ### BRD-005 — Proof, review, delivery, sandbox QA
-- [ ] 5a. `npm run ctrl:gate` (build + unit) from this worktree; save `ctrl-gate.log`.
-- [ ] 5b. Private-default/secrets/diff inspection; save receipts.
-- [ ] 5c. Fresh read-only Luna-high review at HEAD; bounded repair if actionable.
-- [ ] 5d. Non-production delivery (push/PR/CI/merge when clean). Stop at READY_FOR_REVIEW.
+- [x] 5a. `npm run ctrl:gate` (build + unit) from this worktree; save `ctrl-gate.log`.
+- [x] 5b. Private-default/secrets/diff inspection; save receipts.
+- [ ] 5c. Fresh read-only Luna-high review at HEAD (MANAGER-OWNED); bounded repair if actionable.
+- [ ] 5d. Non-production delivery + sandbox browser QA (MANAGER-OWNED). Stop at READY_FOR_REVIEW.
 
 ## Files Touched (running log)
 - `packages/db/src/boards.ts`, `packages/db/src/boards.test.ts` (BRD-001)
