@@ -198,6 +198,17 @@ export function createTaskHandoffRouter(deps: TaskHandoffRouterDependencies): Ro
       if (!handoff || (handoff.source_task_id !== taskId && handoff.target_task_id !== taskId)) {
         return res.status(404).json({ error: 'handoff not found' });
       }
+      // Tenant-authorize BOTH endpoints before mutating a cross-task edge
+      // (B3). A caller scoped only to the path task must not transition a
+      // handoff whose other endpoint lies outside its durable scope; reuse the
+      // already-loaded path task when it matches an endpoint.
+      const source =
+        handoff.source_task_id === taskId ? pathTask : await loadTask(handoff.source_task_id);
+      const target =
+        handoff.target_task_id === taskId ? pathTask : await loadTask(handoff.target_task_id);
+      if (!source || !target) return res.status(404).json({ error: 'task not found' });
+      if (!authorizeTaskOperation(req, res, source, 'handoff')) return;
+      if (!authorizeTaskOperation(req, res, target, 'handoff')) return;
       try {
         const updated = deps.handoffRepo.transition({
           orgId: handoff.org_id,
@@ -207,11 +218,7 @@ export function createTaskHandoffRouter(deps: TaskHandoffRouterDependencies): Ro
           expectedVersion,
           reason: req.body?.reason,
         });
-        const [source, target] = await Promise.all([
-          loadTask(handoff.source_task_id),
-          loadTask(handoff.target_task_id),
-        ]);
-        if (source && target) emitRefresh(source, target, updated.id);
+        emitRefresh(source, target, updated.id);
         return res.json({ handoff: updated });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to update handoff';
