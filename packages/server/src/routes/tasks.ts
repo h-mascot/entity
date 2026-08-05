@@ -1600,15 +1600,15 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       // Tenant-authorize before mutating (Terra R3).
       if (!authorizeTaskOrg(req, res, task, "write")) return;
 
+      // Server-resolved durable actor attribution (Terra R5): the customer
+      // principal id is the authoritative `agent_name`; the caller-supplied
+      // `user` body field is kept only as metadata and never as attribution.
       logActivity({
         source: "task",
         type: "task_updated",
         action: action.trim(),
         description: details.trim(),
-        agentName:
-          typeof user === "string" && user.trim()
-            ? user
-            : task.assignee || undefined,
+        agentName: getTaskActorFromRequest(req),
         taskId: id,
         metadata: { user, session_id, activityType: type },
       });
@@ -1777,10 +1777,15 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       // Tenant-authorize before creating a comment (Terra R3).
       if (!authorizeTaskOrg(req, res, task, "write")) return;
 
+      // Server-resolved durable actor attribution (Terra R5): a customer
+      // principal's comment is attributed to the server-resolved principal id.
+      // Caller-supplied `author` body field is ignored for attribution (kept
+      // only in metadata) so a customer cannot spoof the durable audit identity.
+      const commentActor = getTaskActorFromRequest(req);
       const comment = taskCommentRepository.createComment({
         task_id: id,
         body: body.trim(),
-        author: typeof author === "string" ? author : undefined,
+        author: commentActor,
         parent_id: parentId,
       });
 
@@ -1789,10 +1794,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         type: "task_comment",
         action: "Added comment",
         description: body.trim().slice(0, 200),
-        agentName:
-          typeof author === "string" && author.trim()
-            ? author
-            : task?.assignee || undefined,
+        agentName: commentActor,
         taskId: id,
         metadata: { author, taskName: task?.name },
       });
