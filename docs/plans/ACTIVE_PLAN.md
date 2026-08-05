@@ -14,8 +14,8 @@ Production: FORBIDDEN. Do not touch canonical `/Users/enterprise/Code/entity` or
 - [x] A4. BRD-004 atomic duplicate guard: partial unique index + transactional insert — db.ts + routes.ts
 
 ### Phase B — Boards DB + route (share db/src/boards.ts, server/routes/boards.ts)
-- [ ] B1. BRD-001 tenant scope: request-derived org/team, scoped repository, isolation — boards.ts + routes/boards.ts
-- [ ] B2. BRD-001 defaults guaranteed before first create — boards.ts (+ route POST seeds)
+- [x] B1. BRD-001 tenant scope: request-derived org/team, scoped repository, isolation — boards.ts + routes/boards.ts
+- [x] B2. BRD-001 defaults guaranteed before first create — boards.ts (+ route POST seeds)
 
 ### Phase C — App UI (pure-logic tested via node:test in app/src/lib)
 - [ ] C1. BRD-002 customization controls (view/filter + reorder) — BoardSwitcher + App.tsx + lib helper

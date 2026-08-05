@@ -285,8 +285,21 @@ function resolveView(input: CreateBoardInput): BoardView {
   return 'board';
 }
 
-export function createBoardRepository(): BoardRepository {
+export interface BoardScope {
+  orgId: string;
+  teamId: string;
+}
+
+export const DEFAULT_BOARD_SCOPE: BoardScope = {
+  orgId: DEFAULT_WORKSPACE_ORG_ID,
+  teamId: DEFAULT_WORKSPACE_TEAM_ID,
+};
+
+export function createBoardRepository(scope: BoardScope = DEFAULT_BOARD_SCOPE): BoardRepository {
   const db = openEntityDatabase();
+
+  const orgId = scope.orgId;
+  const teamId = scope.teamId;
 
   const listStmt = db.prepare(
     `SELECT * FROM boards WHERE org_id = ? AND team_id = ? ORDER BY sort_order ASC, id ASC`,
@@ -322,9 +335,6 @@ export function createBoardRepository(): BoardRepository {
     `SELECT * FROM boards WHERE org_id = ? AND team_id = ? AND key = ?`,
   );
 
-  const orgId = DEFAULT_WORKSPACE_ORG_ID;
-  const teamId = DEFAULT_WORKSPACE_TEAM_ID;
-
   const reorderTx = db.transaction((orderedIds: readonly number[]) => {
     const known = new Map(
       listStmt.all(orgId, teamId).map((row) => [(row as BoardRow).id, row as BoardRow]),
@@ -346,6 +356,27 @@ export function createBoardRepository(): BoardRepository {
     }
   });
 
+  // Idempotent default seeding shared by the explicit seedDefaults() method and
+  // by createBoard() (so defaults are guaranteed regardless of call order).
+  const seedDefaultsImpl = (): void => {
+    for (const def of DEFAULT_BOARD_DEFINITIONS) {
+      const existing = findByKeyStmt.get(orgId, teamId, def.key) as BoardRow | undefined;
+      if (existing) {
+        continue;
+      }
+      insertStmt.run(
+        orgId,
+        teamId,
+        def.key,
+        def.name,
+        def.view,
+        1,
+        def.sort_order,
+        serializeFilterConfig({ scope: 'all' }),
+      );
+    }
+  };
+
   return {
     listBoards() {
       return listStmt.all(orgId, teamId).map((row) => mapBoardRow(row as BoardRow));
@@ -355,6 +386,10 @@ export function createBoardRepository(): BoardRepository {
       return row ? mapBoardRow(row) : undefined;
     },
     createBoard(input: CreateBoardInput) {
+      // BRD-001: required defaults must always exist before any user board so a
+      // first create through the API cannot land a user board ahead of General/
+      // Analytics. Idempotent — a no-op when defaults already exist.
+      seedDefaultsImpl();
       const name = normalizeBoardName(input.name);
       const view = resolveView(input);
       const filterConfig =
@@ -419,22 +454,7 @@ export function createBoardRepository(): BoardRepository {
       return result.changes > 0;
     },
     seedDefaults() {
-      for (const def of DEFAULT_BOARD_DEFINITIONS) {
-        const existing = findByKeyStmt.get(orgId, teamId, def.key) as BoardRow | undefined;
-        if (existing) {
-          continue;
-        }
-        insertStmt.run(
-          orgId,
-          teamId,
-          def.key,
-          def.name,
-          def.view,
-          1,
-          def.sort_order,
-          serializeFilterConfig({ scope: 'all' }),
-        );
-      }
+      seedDefaultsImpl();
     },
   };
 }

@@ -27,14 +27,14 @@ function tempDbPath(): string {
   return path.join(os.tmpdir(), `entity-boards-test-${process.pid}-${randomUUID()}.sqlite`);
 }
 
-async function loadBoardRepository() {
+async function loadBoardRepository(scope?: { orgId: string; teamId: string }) {
   activeDbPath = tempDbPath();
   cleanupDbPaths.push(activeDbPath);
   vi.resetModules();
   vi.stubEnv('ENTITY_TASK_DB_PATH', activeDbPath);
   vi.stubEnv('MISSION_CONTROL_DB_PATH', path.join(os.tmpdir(), `missing-mc-${randomUUID()}.db`));
   const mod = await import('./boards');
-  return mod.createBoardRepository();
+  return mod.createBoardRepository(scope);
 }
 
 afterEach(async () => {
@@ -278,5 +278,44 @@ describe('board repository persistence', () => {
     const general = boards.listBoards().find((b) => b.key === 'general')!;
     expect(() => boards.deleteBoard(general.id)).toThrow('required default');
     expect(boards.listBoards()).toHaveLength(2);
+  });
+
+  it('guarantees General/Analytics defaults before the first user create (no prior seed/list)', async () => {
+    const boards = await loadBoardRepository();
+    // First mutation is a user create with no prior GET/seedDefaults — defaults
+    // must still exist and sort ahead of the user board.
+    const user = boards.createBoard({ name: 'First user board' });
+    const list = boards.listBoards();
+    expect(list.map((b) => b.key)).toEqual(['general', 'analytics', null]);
+    expect(user.sort_order).toBe(2);
+    expect(list.filter((b) => b.is_default).map((b) => b.key)).toEqual(['general', 'analytics']);
+  });
+
+  it('isolates boards by request-derived org/team scope (cross-tenant fail closed)', async () => {
+    // Both scoped repositories must share ONE database file; isolation is by
+    // org/team scope, not by file. Load a single module instance so the shared
+    // entity DB connection is reused.
+    const sharedDbPath = tempDbPath();
+    cleanupDbPaths.push(sharedDbPath);
+    vi.stubEnv('ENTITY_TASK_DB_PATH', sharedDbPath);
+    vi.resetModules();
+    const mod = await import('./boards');
+    const orgA = mod.createBoardRepository({ orgId: 'org-a', teamId: 'team-1' });
+    const orgB = mod.createBoardRepository({ orgId: 'org-b', teamId: 'team-1' });
+    orgA.seedDefaults();
+    orgB.seedDefaults();
+
+    const aBoard = orgA.createBoard({ name: 'Only in A' });
+
+    // Tenant B cannot see, get, update, or delete tenant A's board.
+    expect(orgB.listBoards().some((b) => b.id === aBoard.id)).toBe(false);
+    expect(orgB.getBoard(aBoard.id)).toBeUndefined();
+    expect(orgB.updateBoard(aBoard.id, { name: 'hacked' })).toBeUndefined();
+    expect(orgB.deleteBoard(aBoard.id)).toBe(false);
+
+    // Tenant A still owns it unchanged.
+    expect(orgA.getBoard(aBoard.id)?.name).toBe('Only in A');
+    expect(orgA.listBoards().map((b) => b.name)).toContain('Only in A');
+    expect(orgB.listBoards().map((b) => b.name)).not.toContain('Only in A');
   });
 });

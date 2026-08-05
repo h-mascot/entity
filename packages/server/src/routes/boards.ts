@@ -8,7 +8,9 @@ import {
   type BoardView,
   type BoardFilterConfig,
   type CreateBoardInput,
+  type BoardScope,
 } from '../../../db/src/boards';
+import { DEFAULT_WORKSPACE_ORG_ID, DEFAULT_WORKSPACE_TEAM_ID } from '../../../db/src';
 
 /**
  * Boards API — `/api/boards`.
@@ -19,14 +21,32 @@ import {
  */
 export function createBoardsRouter(repository?: BoardRepository): Router {
   const router = Router();
-  const boards = repository ?? createBoardRepository();
 
-  router.get('/', (_req: Request, res: Response) => {
+  // Ensure the boards schema exists on the shared entity DB up front (idempotent).
+  // Scope is still resolved per request below; this only guarantees the table.
+  if (!repository) {
+    createBoardRepository();
+  }
+
+  // When no repository is injected, resolve a request-derived org/team scope
+  // (x-entity-org-id / x-entity-team-id, defaulting to the configured workspace)
+  // per request so boards are tenant-scoped and cross-tenant access fails closed.
+  function repoFor(req: Request): BoardRepository {
+    if (repository) return repository;
+    const orgId = readScopeHeader(req.header('x-entity-org-id')) ?? DEFAULT_WORKSPACE_ORG_ID;
+    const teamId = readScopeHeader(req.header('x-entity-team-id')) ?? DEFAULT_WORKSPACE_TEAM_ID;
+    const scope: BoardScope = { orgId, teamId };
+    return createBoardRepository(scope);
+  }
+
+  router.get('/', (req: Request, res: Response) => {
+    const boards = repoFor(req);
     boards.seedDefaults();
     res.json({ boards: boards.listBoards() });
   });
 
   router.post('/', (req: Request, res: Response) => {
+    const boards = repoFor(req);
     const body = (req.body ?? {}) as {
       name?: unknown;
       template?: unknown;
@@ -52,6 +72,7 @@ export function createBoardsRouter(repository?: BoardRepository): Router {
   });
 
   router.patch('/:id', (req: Request, res: Response) => {
+    const boards = repoFor(req);
     const id = parseId(req.params.id);
     if (id === null) {
       res.status(400).json({ error: 'board id must be a positive integer' });
@@ -85,6 +106,7 @@ export function createBoardsRouter(repository?: BoardRepository): Router {
   });
 
   router.post('/reorder', (req: Request, res: Response) => {
+    const boards = repoFor(req);
     const body = (req.body ?? {}) as { ids?: unknown };
     if (!Array.isArray(body.ids) || !body.ids.every((id) => Number.isInteger(Number(id)) && Number(id) > 0)) {
       res.status(400).json({ error: 'ids must be an array of positive integers' });
@@ -95,6 +117,7 @@ export function createBoardsRouter(repository?: BoardRepository): Router {
   });
 
   router.delete('/:id', (req: Request, res: Response) => {
+    const boards = repoFor(req);
     const id = parseId(req.params.id);
     if (id === null) {
       res.status(400).json({ error: 'board id must be a positive integer' });
@@ -109,6 +132,12 @@ export function createBoardsRouter(repository?: BoardRepository): Router {
   });
 
   return router;
+}
+
+function readScopeHeader(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function parseId(raw: string | undefined): number | null {

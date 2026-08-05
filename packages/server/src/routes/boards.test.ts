@@ -67,10 +67,10 @@ beforeEach(() => {
   db.exec('DELETE FROM boards');
 });
 
-async function json(method: string, url: string, body?: unknown) {
+async function json(method: string, url: string, body?: unknown, headers: Record<string, string> = {}) {
   const res = await fetch(`${baseUrl}${url}`, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -152,5 +152,42 @@ describe('boards API', () => {
     const refused = await json('DELETE', `/${general.id}`);
     expect(refused.status).toBe(409);
     expect((refused.payload as { error: string }).error).toMatch(/default/i);
+  });
+
+  it('seeds required defaults even when the first call is a create (no prior GET)', async () => {
+    const created = await json('POST', '', { name: 'First board' });
+    expect(created.status).toBe(201);
+    const list = await json('GET', '');
+    const keys = ((list.payload as { boards: Array<{ key: string | null }> }).boards).map((b) => b.key);
+    expect(keys).toEqual(['general', 'analytics', null]);
+    expect((created.payload as { sort_order: number }).sort_order).toBe(2);
+  });
+
+  it('isolates boards by request org scope (cross-tenant fail closed)', async () => {
+    // Tenant org-a creates a board.
+    await json('GET', '', undefined, { 'x-entity-org-id': 'org-a' });
+    const aBoard = await json('POST', '', { name: 'Only in A' }, { 'x-entity-org-id': 'org-a' });
+    expect(aBoard.status).toBe(201);
+    const aId = (aBoard.payload as { id: number }).id;
+
+    // Tenant org-b cannot see, patch, or delete org-a's board.
+    const bList = await json('GET', '', undefined, { 'x-entity-org-id': 'org-b' });
+    expect(
+      ((bList.payload as { boards: Array<{ id: number }> }).boards).some((b) => b.id === aId),
+    ).toBe(false);
+    expect(
+      (await json('PATCH', `/${aId}`, { name: 'hacked' }, { 'x-entity-org-id': 'org-b' })).status,
+    ).toBe(404);
+    expect(
+      (await json('DELETE', `/${aId}`, undefined, { 'x-entity-org-id': 'org-b' })).status,
+    ).toBe(404);
+
+    // org-a still owns it (visible in its own list).
+    const aList = await json('GET', '', undefined, { 'x-entity-org-id': 'org-a' });
+    expect(
+      ((aList.payload as { boards: Array<{ id: number; name: string }> }).boards).some(
+        (b) => b.id === aId && b.name === 'Only in A',
+      ),
+    ).toBe(true);
   });
 });
