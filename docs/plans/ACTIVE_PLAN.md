@@ -76,19 +76,19 @@ Deferred (exact rationale in main plan): #1 customer membership/session auth por
 - Governance artifacts outside repo — state and phase receipts
 
 ## Governed repair sequence (continuation correction)
-- [ ] D-R1: mandatory per-principal credentials across customer data-plane; preserve narrowly authenticated service/admin boundary.
-- [ ] D-R2: operation RBAC plus team/project grants.
+- [x] D-R1: mandatory per-principal credentials across customer data-plane; preserve narrowly authenticated service/admin boundary (`b6369c8`).
+- [x] D-R2: operation RBAC plus team/project grants (`c1f4176`).
 - [x] R3: task-derived comments/activity/note/subtask/aggregate authorization (`3fc5f08`).
 - [x] R4: shared principal-derived workspace/search/activity/chat scoping (`a616916`).
-- [ ] R5: production-composed workflow and durable actor/audit proof after R1/R2.
-- [ ] R6: provider health, chat controls, onboarding, operations criterion 5.
-- [ ] R7: distinct clean-target restore with immutable backup proof.
+- [x] R5: production-composed workflow and durable actor/audit proof after R1/R2 (`710ba91`).
+- [x] R6: provider health, chat controls, onboarding, operations criterion 5 (`52fea3d`).
+- [x] R7: distinct clean-target restore with immutable backup proof (`449a994`).
 - [ ] Node 22 full `npm run ctrl:gate`, fresh Terra review, immutable sandbox promotion, then Geordi QA-only.
 
 ## Resume Instructions
 1. Read this file and governance `state.json`.
 2. Run `git status --short --branch` and `git rev-parse HEAD`.
-3. Continue from the first unchecked governed repair slice; current exact next action is D-R1.
+3. Run the full Node 22 `npm run ctrl:gate` at exact HEAD, record counts, then launch one fresh read-only Terra review if green.
 4. Never overlap workers or review unchanged HEAD twice.
 5. Preserve old receipts; never touch production.
 
