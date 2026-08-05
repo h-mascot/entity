@@ -85,6 +85,22 @@ describe('chat ObjectRef links', () => {
       body: JSON.stringify({ id: 'object-ref-channel', name: 'ObjectRef Channel', categoryId: 'entity-links' }),
     });
     expect(channelResponse.status).toBe(201);
+    // R4/D-R4-PARENT-CHANNEL: a thread's parentMessageId must resolve to a real
+    // message that belongs to the same channel and org. POST the parent message
+    // into the channel via the chat send route before creating the thread, using
+    // the same default-org scope as the channel/category above so org ownership
+    // stays consistent. (The agent reply runtime is disabled in this suite, so
+    // /api/chat/send creates the user message and returns a fallback reply.)
+    const parentMessageResponse = await fetch(`${baseUrl}/api/chat/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channelId: 'object-ref-channel',
+        messageId: 'parent-message',
+        content: 'Parent message for the ObjectRef thread',
+      }),
+    });
+    expect(parentMessageResponse.status).toBe(201);
     const threadResponse = await fetch(`${baseUrl}/api/chat/threads`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
