@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "openwikiVersion": "0.2.5",
-  "sourceFingerprint": "50a50a8a5ac76d4713b01b0be9f7fd1e3139ae626af260b69ba12c25909b924d",
+  "sourceFingerprint": "e77add85969168d81ddafe8d0195dedfee568b4788126ff2ae5d6cf02fbee1ea",
   "provider": "copilot",
   "model": "gpt-4.1",
-  "generatedAt": "2026-08-05T10:33:54.494Z"
+  "generatedAt": "2026-08-05T12:29:06.400Z"
 }
