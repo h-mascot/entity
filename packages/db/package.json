@@ -6,7 +6,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "vitest run src"
+    "test": "vitest run src",
+    "restore:target": "ts-node --transpile-only --project tsconfig.json src/curacel-restore-cli.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0"

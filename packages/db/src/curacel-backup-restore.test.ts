@@ -1,22 +1,38 @@
 /**
- * Curacel pilot — operational restore proof (Terra B7).
+ * Curacel pilot — operational restore proof into a CLEAN target (R7).
  *
- * Upgrades the backup durability contract from "open the backup read-only and
- * query rows" to a real operational recovery: populate a service database,
- * take a canonical online backup, RESTORE it into a CLEAN target database by
- * pointing the service at the restored file, initialize the CURRENT
- * application repositories against the restored target (additive IF NOT EXISTS
- * schema ensure — preserved, not wiped), verify every pilot object through the
- * application repositories, then perform a SAFE post-restore mutation and read
- * it back through the application layer. Throwaway temp DBs only; no production
- * access.
+ * This closes the R7 "distinct clean-target restore with immutable backup
+ * proof" residual. The prior B7 proof only re-pointed the service at the backup
+ * file (a backup-only "restore"). This suite proves a REAL operational recovery:
+ *
+ *   SOURCE service DB (populated, WAL)
+ *     -> better-sqlite3 online backup() -> BACKUP snapshot file
+ *       -> restoreCleanTarget(BACKUP -> TARGET)   [distinct, absent target]
+ *         -> initialize CURRENT app repositories against TARGET (additive schema)
+ *           -> verify every pilot object through the app layer
+ *             -> SAFE post-restore mutation on TARGET
+ *               -> BACKUP file is proven byte-for-byte IMMUTABLE (stat + SHA-256)
+ *
+ * SOURCE != BACKUP != TARGET (three distinct files). The BACKUP is only ever
+ * read; the service is never pointed at it, so it cannot be mutated. Throwaway
+ * temp DBs only; no production access.
  */
 
-import { randomUUID } from 'crypto';
-import fs from 'fs';
+import { createHash, randomUUID } from 'crypto';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeSync,
+} from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { restoreCleanTarget, type RestoreSourceStat } from './curacel-restore';
 
 const cleanupPaths: string[] = [];
 
@@ -25,9 +41,20 @@ function tempPath(prefix: string): string {
 }
 
 function removeSqliteFiles(dbPath: string): void {
+  // recursive: true so a directory scratch path (used by the refusal tests) is
+  // also removed; harmless for regular files and -wal/-shm sidecars.
   for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-    fs.rmSync(file, { force: true });
+    rmSync(file, { force: true, recursive: true });
   }
+}
+
+function sha256(filePath: string): string {
+  return createHash('sha256').update(readFileSync(filePath)).digest('hex');
+}
+
+function snapshotStat(filePath: string): RestoreSourceStat {
+  const s = statSync(filePath);
+  return { size: s.size, mtimeMs: s.mtimeMs, ino: s.ino, dev: s.dev };
 }
 
 beforeEach(() => {
@@ -48,9 +75,9 @@ async function loadDbModule(dbPath: string): Promise<typeof import('./index')> {
   return import('./index');
 }
 
-describe('Curacel pilot — operational restore into a clean target (B7)', () => {
-  it('restores the backup into a fresh service DB, initializes repos, and supports a post-restore mutation', async () => {
-    // ---- Phase 1: populate the live service database. ----
+describe('Curacel pilot — operational restore into a CLEAN target (R7)', () => {
+  it('restores the backup into a DISTINCT target, initializes repos, mutates the target, and leaves the backup immutable', async () => {
+    // ---- Phase 1: populate the live SOURCE service database. ----
     const sourcePath = tempPath('curacel-restore-source');
     cleanupPaths.push(sourcePath);
     const db = await loadDbModule(sourcePath);
@@ -105,25 +132,53 @@ describe('Curacel pilot — operational restore into a clean target (B7)', () =>
       link_role: 'proof',
     });
 
-    // ---- Phase 2: canonical online backup of the live (WAL) database. ----
-    const source = getEntityDatabase();
+    // ---- Phase 2: canonical online backup of the live (WAL) SOURCE db. ----
     const backupPath = tempPath('curacel-restore-backup');
     cleanupPaths.push(backupPath);
-    await source.backup(backupPath);
-    expect(fs.existsSync(backupPath)).toBe(true);
+    await getEntityDatabase().backup(backupPath);
+    expect(statSync(backupPath, { throwIfNoEntry: false })?.isFile()).toBe(true);
 
-    // ---- Phase 3: RESTORE into a CLEAN target by pointing the service at the
-    //      backup file. Reset modules so getEntityDatabase re-opens the new path. ----
-    const restored = await loadDbModule(backupPath);
+    // Immutable-backup baseline: snapshot SHA-256 + stat immediately after backup.
+    const backupHashBefore = sha256(backupPath);
+    const backupStatBefore = snapshotStat(backupPath);
+
+    // ---- Phase 3: RESTORE the backup into a DISTINCT, ABSENT TARGET file. ----
+    const targetPath = tempPath('curacel-restore-target');
+    cleanupPaths.push(targetPath);
+    // Three distinct resolved paths: SOURCE != BACKUP != TARGET.
+    expect(path.resolve(sourcePath)).not.toBe(path.resolve(backupPath));
+    expect(path.resolve(backupPath)).not.toBe(path.resolve(targetPath));
+    expect(path.resolve(sourcePath)).not.toBe(path.resolve(targetPath));
+    expect(statSync(targetPath, { throwIfNoEntry: false })).toBeUndefined();
+
+    const restoreResult = restoreCleanTarget(backupPath, targetPath);
+
+    // The restore is a byte-identical materialization of the backup.
+    expect(restoreResult.sourcePath).toBe(path.resolve(backupPath));
+    expect(restoreResult.targetPath).toBe(path.resolve(targetPath));
+    expect(restoreResult.sourceSha256).toBe(backupHashBefore);
+    expect(restoreResult.targetSha256).toBe(restoreResult.sourceSha256);
+    expect(restoreResult.sourceBytes).toBe(backupStatBefore.size);
+    expect(restoreResult.targetBytes).toBe(backupStatBefore.size);
+    // The backup's stat is unchanged by the read-only restore.
+    expect(restoreResult.sourceStat.size).toBe(backupStatBefore.size);
+    expect(restoreResult.sourceStat.ino).toBe(backupStatBefore.ino);
+    expect(restoreResult.sourceStat.mtimeMs).toBe(backupStatBefore.mtimeMs);
+
+    // ---- Phase 4: point the service at the TARGET and initialize the CURRENT
+    //      application repositories against it (additive CREATE ... IF NOT
+    //      EXISTS schema ensure — preserved, not wiped). ----
+    const restored = await loadDbModule(targetPath);
     const restoredGetDb = (await import('./entity-db')).getEntityDatabase;
-    // Initializing the repositories runs the additive `CREATE ... IF NOT EXISTS`
-    // schema ensure against the restored target. Data must survive (not be wiped).
     const restoredWorkspace = restored.createWorkspaceScopeRepository();
-    const restoredTasks = restored.createOrgScopedTaskRepository({ orgId: 'org-acme', teamId: 'team-claims' });
+    const restoredTasks = restored.createOrgScopedTaskRepository({
+      orgId: 'org-acme',
+      teamId: 'team-claims',
+    });
     const restoredHandoffs = restored.createTaskHandoffRepository();
     const restoredEvidence = restored.createEvidenceArtifactRepository();
 
-    // ---- Phase 4: verify every pilot object through the application layer. ----
+    // ---- Phase 5: verify every pilot object through the application layer. ----
     expect(restoredWorkspace.getOrg('org-acme')).toMatchObject({ id: 'org-acme' });
     const restoredSettled = await restoredTasks.getTask(settledTask.id);
     expect(restoredSettled).toBeTruthy();
@@ -140,7 +195,7 @@ describe('Curacel pilot — operational restore into a clean target (B7)', () =>
     expect(restoredArtifact).toBeTruthy();
     expect(restoredArtifact!.content_hash).toBe('sha256:h');
 
-    // ---- Phase 5: SAFE post-restore mutation through the application layer. ----
+    // ---- Phase 6: SAFE post-restore mutation through the application layer. ----
     const postRestoreTask = restoredTasks.createTask({
       name: 'Post-restore followup',
       project_id: project.id,
@@ -152,7 +207,54 @@ describe('Curacel pilot — operational restore into a clean target (B7)', () =>
     // Original restored rows are untouched by the new mutation.
     expect((await restoredTasks.getTask(settledTask.id))!.name).toBe('Settle CL-0001');
 
-    // The restored target is a normal WAL service database (not read-only).
+    // The restored TARGET is a normal WAL service database (not read-only).
     expect(restoredGetDb().pragma('journal_mode', { simple: true })).toBe('wal');
+
+    // ---- Phase 7: IMMUTABLE BACKUP PROOF. Re-snapshot the backup AFTER the
+    //      restore AND after the TARGET mutation; content/stat must be unchanged. ----
+    const backupHashAfter = sha256(backupPath);
+    const backupStatAfter = snapshotStat(backupPath);
+    expect(backupHashAfter).toBe(backupHashBefore);
+    expect(backupStatAfter.size).toBe(backupStatBefore.size);
+    expect(backupStatAfter.ino).toBe(backupStatBefore.ino);
+    expect(backupStatAfter.mtimeMs).toBe(backupStatBefore.mtimeMs);
+  });
+
+  it('refuses to restore over an existing target (never overwrites a real database)', () => {
+    const dir = path.join(os.tmpdir(), `curacel-restore-refuse-${process.pid}-${randomUUID()}`);
+    cleanupPaths.push(dir);
+
+    // A "backup" file and a pre-existing TARGET that must NOT be clobbered.
+    const backupPath = path.join(dir, 'backup.sqlite');
+    const targetPath = path.join(dir, 'target.sqlite');
+    writeSeedFile(backupPath, Buffer.from('backup-snapshot'));
+    writeSeedFile(targetPath, Buffer.from('pre-existing-real-db'));
+
+    const targetStatBefore = snapshotStat(targetPath);
+
+    expect(() => restoreCleanTarget(backupPath, targetPath)).toThrow(/TARGET_EXISTS/);
+
+    // The real target is byte-identical and untouched; no partial litter.
+    expect(readFileSync(targetPath, 'utf8')).toBe('pre-existing-real-db');
+    expect(snapshotStat(targetPath)).toEqual(targetStatBefore);
+    expect(statSync(`${targetPath}-wal`, { throwIfNoEntry: false })).toBeUndefined();
+  });
+
+  it('refuses to restore when the target equals the source (SAME_PATH)', () => {
+    const dir = path.join(os.tmpdir(), `curacel-restore-same-${process.pid}-${randomUUID()}`);
+    cleanupPaths.push(dir);
+    const backupPath = path.join(dir, 'backup.sqlite');
+    writeSeedFile(backupPath, Buffer.from('backup-snapshot'));
+    expect(() => restoreCleanTarget(backupPath, backupPath)).toThrow(/SAME_PATH/);
   });
 });
+
+function writeSeedFile(filePath: string, contents: Buffer): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  const fd = openSync(filePath, 'wx', 0o600);
+  try {
+    writeSync(fd, contents, 0, contents.length);
+  } finally {
+    closeSync(fd);
+  }
+}
