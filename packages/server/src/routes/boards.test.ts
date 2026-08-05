@@ -11,6 +11,16 @@ const tmpDbPath = path.join(
 );
 const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
 const originalMcPath = process.env.MISSION_CONTROL_DB_PATH;
+const originalTrustedHeaders = process.env.ENTITY_TRUST_TENANT_HEADERS;
+
+/** D4: enable/disable the trusted-proxy tenant-header path for a test. */
+function setTrustedTenantHeaders(enabled: boolean): void {
+  if (enabled) {
+    process.env.ENTITY_TRUST_TENANT_HEADERS = '1';
+  } else {
+    delete process.env.ENTITY_TRUST_TENANT_HEADERS;
+  }
+}
 
 let baseUrl = '';
 let server: Awaited<ReturnType<express.Express['listen']>>;
@@ -53,9 +63,14 @@ afterAll(async () => {
     process.env.ENTITY_TASK_DB_PATH = originalDbPath;
   }
   if (originalMcPath === undefined) {
-    delete process.env.MISSION_CONTROL_DB_PATH;
+    process.env.MISSION_CONTROL_DB_PATH = originalMcPath;
   } else {
     process.env.MISSION_CONTROL_DB_PATH = originalMcPath;
+  }
+  if (originalTrustedHeaders === undefined) {
+    delete process.env.ENTITY_TRUST_TENANT_HEADERS;
+  } else {
+    process.env.ENTITY_TRUST_TENANT_HEADERS = originalTrustedHeaders;
   }
   for (const file of [tmpDbPath, `${tmpDbPath}-wal`, `${tmpDbPath}-shm`]) {
     fs.rmSync(file, { force: true });
@@ -164,6 +179,9 @@ describe('boards API', () => {
   });
 
   it('isolates boards by request org scope (cross-tenant fail closed)', async () => {
+    // D4: header-based multi-tenancy is the trusted-proxy path. Enable it so the
+    // route honors caller tenant headers, then verify cross-tenant isolation.
+    setTrustedTenantHeaders(true);
     // Tenant org-a creates a board.
     await json('GET', '', undefined, { 'x-entity-org-id': 'org-a' });
     const aBoard = await json('POST', '', { name: 'Only in A' }, { 'x-entity-org-id': 'org-a' });
@@ -188,6 +206,60 @@ describe('boards API', () => {
       ((aList.payload as { boards: Array<{ id: number; name: string }> }).boards).some(
         (b) => b.id === aId && b.name === 'Only in A',
       ),
+    ).toBe(true);
+    setTrustedTenantHeaders(false);
+  });
+
+  it('enforces the Strategic filter contract on direct API create (D6)', async () => {
+    const created = await json('POST', '', {
+      name: 'Roadmap',
+      template: 'strategic',
+      filter_config: { scope: 'projects', projectIds: [1, 2] },
+    });
+    expect(created.status).toBe(201);
+    expect((created.payload as { view: string; filter_config: { scope: string } }).view).toBe('strategic');
+    expect((created.payload as { filter_config: { scope: string } }).filter_config).toEqual({ scope: 'all' });
+  });
+
+  it('enforces the Strategic filter contract on direct API PATCH (D6)', async () => {
+    // A direct API caller cannot persist a non-all filter on a Strategic board.
+    const base = await json('POST', '', { name: 'Plan', view: 'board', filter_config: { scope: 'projects', projectIds: [3] } });
+    const id = (base.payload as { id: number }).id;
+
+    // PATCH the view to strategic together with a project filter.
+    const toStrategic = await json('PATCH', `/${id}`, {
+      view: 'strategic',
+      filter_config: { scope: 'projects', projectIds: [9] },
+    });
+    expect(toStrategic.status).toBe(200);
+    expect((toStrategic.payload as { filter_config: { scope: string } }).filter_config).toEqual({ scope: 'all' });
+
+    // PATCH only the filter on an already-strategic board: stays all.
+    const filterOnly = await json('PATCH', `/${id}`, { filter_config: { scope: 'workDomain', workDomain: 'data' } });
+    expect(filterOnly.status).toBe(200);
+    expect((filterOnly.payload as { filter_config: { scope: string } }).filter_config).toEqual({ scope: 'all' });
+  });
+
+  it('fails closed: ignores caller tenant headers when trusted-proxy is disabled (D4)', async () => {
+    // No trusted-proxy opt-in: caller-supplied tenant headers MUST be ignored so
+    // an authenticated caller cannot select another tenant. All boards resolve to
+    // the configured workspace regardless of the headers sent.
+    setTrustedTenantHeaders(false);
+    await json('GET', '', undefined, { 'x-entity-org-id': 'org-a' });
+    const attacker = await json(
+      'POST',
+      '',
+      { name: 'Sneaky' },
+      { 'x-entity-org-id': 'attacker-org', 'x-entity-team-id': 'attacker-team' },
+    );
+    expect(attacker.status).toBe(201);
+    const attackerId = (attacker.payload as { id: number }).id;
+
+    // A different caller (no headers, or spoofed headers) sees the same board —
+    // both resolved to the configured workspace, never to attacker-org.
+    const otherList = await json('GET', '', undefined, { 'x-entity-org-id': 'someone-else' });
+    expect(
+      ((otherList.payload as { boards: Array<{ id: number }> }).boards).some((b) => b.id === attackerId),
     ).toBe(true);
   });
 });

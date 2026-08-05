@@ -8,9 +8,8 @@ import {
   type BoardView,
   type BoardFilterConfig,
   type CreateBoardInput,
-  type BoardScope,
 } from '../../../db/src/boards';
-import { DEFAULT_WORKSPACE_ORG_ID, DEFAULT_WORKSPACE_TEAM_ID } from '../../../db/src';
+import { resolveTrustedTenantScope } from '../tenant-scope';
 
 /**
  * Boards API — `/api/boards`.
@@ -28,15 +27,13 @@ export function createBoardsRouter(repository?: BoardRepository): Router {
     createBoardRepository();
   }
 
-  // When no repository is injected, resolve a request-derived org/team scope
-  // (x-entity-org-id / x-entity-team-id, defaulting to the configured workspace)
-  // per request so boards are tenant-scoped and cross-tenant access fails closed.
+  // D4: resolve a TRUSTED org/team scope per request. Caller tenant headers are
+  // honored only behind an explicit trusted-proxy opt-in; otherwise the scope
+  // resolves to the configured workspace (fail closed), so no authenticated
+  // caller can select another tenant by setting a header.
   function repoFor(req: Request): BoardRepository {
     if (repository) return repository;
-    const orgId = readScopeHeader(req.header('x-entity-org-id')) ?? DEFAULT_WORKSPACE_ORG_ID;
-    const teamId = readScopeHeader(req.header('x-entity-team-id')) ?? DEFAULT_WORKSPACE_TEAM_ID;
-    const scope: BoardScope = { orgId, teamId };
-    return createBoardRepository(scope);
+    return createBoardRepository(resolveTrustedTenantScope(req));
   }
 
   router.get('/', (req: Request, res: Response) => {
@@ -132,12 +129,6 @@ export function createBoardsRouter(repository?: BoardRepository): Router {
   });
 
   return router;
-}
-
-function readScopeHeader(value: string | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
 }
 
 function parseId(raw: string | undefined): number | null {

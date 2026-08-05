@@ -125,6 +125,22 @@ export function defaultFilterForTemplate(template: BoardTemplate): BoardFilterCo
 }
 
 /**
+ * Strategic filter domain contract (D6). The Strategic view renders roadmaps and
+ * ignores the persisted task-inclusion filter, so any non-`all` filter on a
+ * Strategic board is a dishonest durable record (it would resurface if the view
+ * later changed). This forces Strategic boards to a no-op `{ scope: 'all' }`
+ * filter at the repository boundary — the single source of truth — so direct
+ * API/repository callers cannot persist a contradictory filter. Non-strategic
+ * views pass the filter through unchanged.
+ */
+export function enforceStrategicFilterContract(
+  view: BoardView,
+  filter: BoardFilterConfig,
+): BoardFilterConfig {
+  return view === 'strategic' ? { scope: 'all' } : filter;
+}
+
+/**
  * Map a legacy stored `entity.tasks.tab` value to a required default board key.
  * Anything that is not the insights/analytics view falls back to General so a
  * reload never lands on a blank screen (BRD-003 migration boundary).
@@ -392,12 +408,15 @@ export function createBoardRepository(scope: BoardScope = DEFAULT_BOARD_SCOPE): 
       seedDefaultsImpl();
       const name = normalizeBoardName(input.name);
       const view = resolveView(input);
-      const filterConfig =
+      const resolvedFilter =
         input.filter_config !== undefined
           ? normalizeBoardFilterConfig(input.filter_config)
           : input.template && isBoardTemplate(input.template)
             ? defaultFilterForTemplate(input.template)
             : { scope: 'all' as const };
+      // D6: enforce the Strategic filter domain contract at the repository
+      // boundary (single source of truth), regardless of the caller.
+      const filterConfig = enforceStrategicFilterContract(view, resolvedFilter);
       const isDefault = input.is_default === true ? 1 : 0;
       const key =
         typeof input.key === 'string' && input.key.trim()
@@ -430,10 +449,19 @@ export function createBoardRepository(scope: BoardScope = DEFAULT_BOARD_SCOPE): 
         updates.name !== undefined ? normalizeBoardName(updates.name) : null;
       const view =
         updates.view !== undefined && isBoardView(updates.view) ? updates.view : null;
+      // D6: enforce the Strategic filter domain contract using the EFFECTIVE
+      // view (new view if changing, otherwise the existing view). A Strategic
+      // board always persists `{ scope: 'all' }`, overriding any requested or
+      // pre-existing filter; non-strategic boards keep the requested filter or
+      // leave the stored value untouched.
+      const existingView = isBoardView(existing.view) ? existing.view : 'board';
+      const effectiveView = view ?? existingView;
       const filterConfig =
-        updates.filter_config !== undefined
-          ? serializeFilterConfig(normalizeBoardFilterConfig(updates.filter_config))
-          : null;
+        effectiveView === 'strategic'
+          ? serializeFilterConfig({ scope: 'all' })
+          : updates.filter_config !== undefined
+            ? serializeFilterConfig(normalizeBoardFilterConfig(updates.filter_config))
+            : null;
       updateStmt.run(name, view, filterConfig, id, orgId, teamId);
       const row = getStmt.get(id, orgId, teamId) as BoardRow;
       return mapBoardRow(row);

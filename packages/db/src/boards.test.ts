@@ -11,6 +11,7 @@ import {
   boardViewForTemplate,
   defaultFilterForTemplate,
   normalizeBoardFilterConfig,
+  enforceStrategicFilterContract,
   mapLegacyTabToDefaultBoardKey,
 } from './boards';
 
@@ -161,6 +162,23 @@ describe('board domain helpers', () => {
     });
   });
 
+  describe('strategic filter domain contract (D6)', () => {
+    it('forces an all-tasks scope for the strategic view', () => {
+      expect(enforceStrategicFilterContract('strategic', { scope: 'projects', projectIds: [1, 2] })).toEqual({ scope: 'all' });
+      expect(enforceStrategicFilterContract('strategic', { scope: 'workDomain', workDomain: 'engineering' })).toEqual({ scope: 'all' });
+      expect(enforceStrategicFilterContract('strategic', { scope: 'none' })).toEqual({ scope: 'all' });
+    });
+
+    it.each([
+      ['board'],
+      ['analytics'],
+      ['engineering'],
+    ] as const)('passes the filter through unchanged for the %s view', (view) => {
+      const filter = { scope: 'projects' as const, projectIds: [7] };
+      expect(enforceStrategicFilterContract(view, filter)).toEqual(filter);
+    });
+  });
+
   describe('legacy tab migration', () => {
     it.each([
       ['kanban', 'general'],
@@ -289,6 +307,46 @@ describe('board repository persistence', () => {
     expect(list.map((b) => b.key)).toEqual(['general', 'analytics', null]);
     expect(user.sort_order).toBe(2);
     expect(list.filter((b) => b.is_default).map((b) => b.key)).toEqual(['general', 'analytics']);
+  });
+
+  it('normalizes a non-all Strategic filter to all at create and update (D6)', async () => {
+    const boards = await loadBoardRepository();
+    boards.seedDefaults();
+
+    // Create from the strategic template with a non-all filter: the resulting
+    // view is strategic, so the persisted filter MUST collapse to all.
+    const created = boards.createBoard({
+      name: 'Roadmap',
+      template: 'strategic',
+      filter_config: { scope: 'projects', projectIds: [1, 2] },
+    });
+    expect(created.view).toBe('strategic');
+    expect(created.filter_config).toEqual({ scope: 'all' });
+
+    // Explicit view=strategic with a work-domain filter also collapses.
+    const explicit = boards.createBoard({
+      name: 'Roadmap 2',
+      view: 'strategic',
+      filter_config: { scope: 'workDomain', workDomain: 'engineering' },
+    });
+    expect(explicit.filter_config).toEqual({ scope: 'all' });
+
+    // PATCH a board's view to strategic with a project filter: effective view is
+    // strategic, so the filter collapses to all regardless of the request.
+    const board = boards.createBoard({ name: 'Becomes strategic', view: 'board', filter_config: { scope: 'projects', projectIds: [3] } });
+    expect(board.filter_config).toEqual({ scope: 'projects', projectIds: [3] });
+    const toStrategic = boards.updateBoard(board.id, { view: 'strategic', filter_config: { scope: 'projects', projectIds: [9] } });
+    expect(toStrategic?.view).toBe('strategic');
+    expect(toStrategic?.filter_config).toEqual({ scope: 'all' });
+
+    // PATCH only the filter on an already-strategic board: stays all.
+    const strategicOnly = boards.updateBoard(created.id, { filter_config: { scope: 'workDomain', workDomain: 'data' } });
+    expect(strategicOnly?.filter_config).toEqual({ scope: 'all' });
+
+    // Non-strategic boards keep their filter (regression).
+    const plain = boards.createBoard({ name: 'Plain', view: 'board', filter_config: { scope: 'projects', projectIds: [5] } });
+    const patched = boards.updateBoard(plain.id, { filter_config: { scope: 'none' } });
+    expect(patched?.filter_config).toEqual({ scope: 'none' });
   });
 
   it('isolates boards by request-derived org/team scope (cross-tenant fail closed)', async () => {

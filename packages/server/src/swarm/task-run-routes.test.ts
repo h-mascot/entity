@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import fs from 'fs';
 import os from 'os';
@@ -13,6 +13,7 @@ const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
 const originalMcPath = process.env.MISSION_CONTROL_DB_PATH;
 const originalAcpBaseUrl = process.env.ACP_BASE_URL;
 const originalRunRepo = process.env.ENTITY_SWARM_RUN_REPO;
+const originalTrustedHeaders = process.env.ENTITY_TRUST_TENANT_HEADERS;
 
 // Governed execution target for happy-path Run-with-agents tests (BRD-004: the
 // dispatch target must come from governed config / request / task metadata, and
@@ -64,6 +65,8 @@ afterAll(async () => {
   else process.env.ACP_BASE_URL = originalAcpBaseUrl;
   if (originalRunRepo === undefined) delete process.env.ENTITY_SWARM_RUN_REPO;
   else process.env.ENTITY_SWARM_RUN_REPO = originalRunRepo;
+  if (originalTrustedHeaders === undefined) delete process.env.ENTITY_TRUST_TENANT_HEADERS;
+  else process.env.ENTITY_TRUST_TENANT_HEADERS = originalTrustedHeaders;
   for (const file of [tmpDbPath, `${tmpDbPath}-wal`, `${tmpDbPath}-shm`]) {
     fs.rmSync(file, { force: true });
   }
@@ -72,6 +75,7 @@ afterAll(async () => {
 beforeEach(() => {
   listSwarmJobs({});
   const db = getEntityDatabase();
+  db.exec('DELETE FROM swarm_proofs');
   db.exec('DELETE FROM swarm_jobs');
 });
 
@@ -178,12 +182,16 @@ describe('POST /api/swarm/tasks/:taskId/run (Run with agents)', () => {
   });
 
   it('fails closed (404) for a task outside the request org scope', async () => {
+    // D4: header-based scope is the trusted-proxy path. Enable it so the request
+    // org differs from the task's org, then verify Run-with-agents fails closed.
+    process.env.ENTITY_TRUST_TENANT_HEADERS = '1';
     const task = createTask('Scoped task');
     const { status } = await json('POST', `/tasks/${task.id}/run`, undefined, {
       'x-entity-org-id': 'some-other-org',
     });
     expect(status).toBe(404);
     expect(listSwarmJobs({ task_id: task.id })).toHaveLength(0);
+    delete process.env.ENTITY_TRUST_TENANT_HEADERS;
   });
 
   it('honours an explicit request-body repo override over governed config', async () => {
@@ -196,5 +204,80 @@ describe('POST /api/swarm/tasks/:taskId/run (Run with agents)', () => {
     expect((payload as { job: { repo: string; branch: string } }).job.repo).toBe(
       'https://github.com/acme/override',
     );
+  });
+});
+
+describe('task-linked Swarm read scoping (D5)', () => {
+  // Header-based scope is the trusted-proxy path (D4). Enable it for these
+  // cross-tenant read tests and reset afterwards.
+  beforeEach(() => {
+    process.env.ENTITY_TRUST_TENANT_HEADERS = '1';
+  });
+  afterEach(() => {
+    delete process.env.ENTITY_TRUST_TENANT_HEADERS;
+  });
+
+  async function createTaskLinkedJobWithProof() {
+    const task = createTask('Tenant-scoped run', 'Scoped execution');
+    // Run in the task's own (default) workspace scope.
+    const run = await json('POST', `/tasks/${task.id}/run`, undefined, {
+      'x-entity-org-id': 'default-org',
+    });
+    expect(run.status).toBe(201);
+    const jobId = (run.payload as { job: { id: string } }).job.id;
+    // Attach a proof so the proofs read has something to protect.
+    const proof = await json(
+      'POST',
+      `/jobs/${jobId}/proof`,
+      { commit_sha: 'abc123', build_log: 'green' },
+      { 'x-entity-org-id': 'default-org' },
+    );
+    expect(proof.status).toBe(201);
+    return { task, jobId };
+  }
+
+  it('blocks cross-tenant GET /jobs/:id detail reads with 404', async () => {
+    const { jobId } = await createTaskLinkedJobWithProof();
+    const inScope = await json('GET', `/jobs/${jobId}`, undefined, {
+      'x-entity-org-id': 'default-org',
+    });
+    expect(inScope.status).toBe(200);
+    const crossTenant = await json('GET', `/jobs/${jobId}`, undefined, {
+      'x-entity-org-id': 'some-other-org',
+    });
+    expect(crossTenant.status).toBe(404);
+  });
+
+  it('blocks cross-tenant GET /jobs/:id/proofs reads with 404', async () => {
+    const { jobId } = await createTaskLinkedJobWithProof();
+    const inScope = await json('GET', `/jobs/${jobId}/proofs`, undefined, {
+      'x-entity-org-id': 'default-org',
+    });
+    expect(inScope.status).toBe(200);
+    expect((inScope.payload as { proofs: unknown[] }).proofs).toHaveLength(1);
+    const crossTenant = await json('GET', `/jobs/${jobId}/proofs`, undefined, {
+      'x-entity-org-id': 'some-other-org',
+    });
+    expect(crossTenant.status).toBe(404);
+  });
+
+  it('blocks cross-tenant GET /jobs?task_id= reads (fail closed, no leak)', async () => {
+    const { task } = await createTaskLinkedJobWithProof();
+    const inScope = await json('GET', `/jobs?task_id=${task.id}`, undefined, {
+      'x-entity-org-id': 'default-org',
+    });
+    expect(inScope.status).toBe(200);
+    expect((inScope.payload as { jobs: unknown[] }).jobs).toHaveLength(1);
+    const crossTenant = await json('GET', `/jobs?task_id=${task.id}`, undefined, {
+      'x-entity-org-id': 'some-other-org',
+    });
+    expect(crossTenant.status).toBe(404);
+  });
+
+  it('returns 404 when the linked task does not exist (no list leak)', async () => {
+    const crossTenant = await json('GET', '/jobs?task_id=999999', undefined, {
+      'x-entity-org-id': 'default-org',
+    });
+    expect(crossTenant.status).toBe(404);
   });
 });

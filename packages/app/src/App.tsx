@@ -93,6 +93,7 @@ import {
   type BoardSummary,
 } from './lib/boardsState';
 import { selectTasksForBoard } from './lib/boardTaskFilter';
+import { runBoardReload } from './lib/boardReload';
 import {
   fetchBoards,
   createBoard as createBoardApi,
@@ -1808,13 +1809,14 @@ export default function App() {
   const activeBoard =
     boardsState.boards.find((board) => board.id === boardsState.activeBoardId) ?? null;
 
-  const reloadBoards = () => {
-    let cancelled = false;
-    setBoardsLoading(true);
-    setBoardsError(null);
-    fetchBoards()
-      .then((list) => {
-        if (cancelled) return;
+  const reloadBoards = () =>
+    runBoardReload({
+      fetchBoards,
+      onStart: () => {
+        setBoardsLoading(true);
+        setBoardsError(null);
+      },
+      onResult: (list) => {
         const storedBoardIdRaw =
           typeof window !== 'undefined' && window.localStorage
             ? window.localStorage.getItem('entity.tasks.board')
@@ -1834,25 +1836,21 @@ export default function App() {
           setMcBoardTab(boardViewToRenderTab(chosen.view));
         }
         setBoardsLoaded(true);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setBoardsError(error instanceof Error ? error.message : 'Unable to load boards.');
-      })
-      .finally(() => {
-        if (!cancelled) setBoardsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  };
+      },
+      onError: (message) => setBoardsError(message),
+      onComplete: () => setBoardsLoading(false),
+    });
 
-  // Load boards once the Tasks surface mounts.
+  // Load boards once the Tasks surface mounts. D7: return the cancellation
+  // cleanup returned by runBoardReload so a late board response after effect
+  // cleanup (unmount / sidebarTab change) cannot update stale state. The loading
+  // flag is intentionally NOT a dependency: it is set inside the reload, so
+  // listing it would make the effect cancel its own in-flight load.
   useEffect(() => {
     if (sidebarTab !== 'tasks' || boardsLoaded || boardsLoading) return;
-    reloadBoards();
+    return reloadBoards();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sidebarTab, boardsLoaded, boardsLoading]);
+  }, [sidebarTab, boardsLoaded]);
 
   // Persist the active board id so a reload restores the same board.
   useEffect(() => {

@@ -20,9 +20,14 @@ process.env.MISSION_CONTROL_DB_PATH = '/tmp/nonexistent-mc.db';
 
 let baseUrl = '';
 let server: Awaited<ReturnType<express.Express['listen']>>;
+let taskId: number;
 
 beforeAll(async () => {
   const { createSwarmRouter } = await import('./routes');
+  const { createTaskRepository } = await import('../../../db/src');
+  // D5: task-linked swarm reads resolve ownership through the linked task, so the
+  // E2E job must reference a real task in the shared DB (not a synthetic id).
+  taskId = createTaskRepository().createTask({ name: 'E2E login button fix' }).id;
 
   const app = express();
   app.use(express.json());
@@ -65,7 +70,7 @@ describe('Swarm → Symphony E2E Lifecycle', () => {
         branch: 'fix/login-button',
         provider: 'symphony',
         priority: 'high',
-        task_id: 42,
+        task_id: taskId,
         created_by: 'geordi-swarm',
       }),
     });
