@@ -2,10 +2,13 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent a
 import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
 import {
   fetchTaskSwarmJobs,
+  fetchSwarmJobProofs,
   findActiveTaskSwarmJob,
   runTaskWithAgents,
   type SwarmJobSummary,
+  type SwarmProofSummary,
 } from '../../lib/swarmTaskRunClient';
+import { shouldPollAgentRun, deriveAgentRunViewState } from '../../lib/swarmRunStatus';
 import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
 import MarkdownPreview from '../MarkdownPreview';
@@ -1750,6 +1753,7 @@ export default function TaskDetailPanel({
   const [agentRun, setAgentRun] = useState<SwarmJobSummary | null>(null);
   const [agentRunError, setAgentRunError] = useState<string | null>(null);
   const [agentRunBusy, setAgentRunBusy] = useState(false);
+  const [agentRunProofs, setAgentRunProofs] = useState<SwarmProofSummary[]>([]);
   const [commentsAvailable, setCommentsAvailable] = useState(true);
   const [detailTab, setDetailTab] = useState<DetailTab>('activity');
   const [advancedFieldsOpen, setAdvancedFieldsOpen] = useState(false);
@@ -1907,6 +1911,7 @@ export default function TaskDetailPanel({
     if (!taskId) {
       setAgentRun(null);
       setAgentRunError(null);
+      setAgentRunProofs([]);
       return;
     }
     let cancelled = false;
@@ -1924,6 +1929,44 @@ export default function TaskDetailPanel({
     };
   }, [apiBase, taskId]);
 
+  // BRD-004: poll an in-flight run to completion, then fetch its proofs so the
+  // task detail surfaces current progress/error and an execution-detail affordance.
+  useEffect(() => {
+    if (!taskId || !agentRun) {
+      return;
+    }
+    if (!shouldPollAgentRun(agentRun)) {
+      // Terminal: load proof artifacts once for the execution-detail affordance.
+      let cancelled = false;
+      fetchSwarmJobProofs(agentRun.id, apiBase)
+        .then((proofs) => {
+          if (!cancelled) setAgentRunProofs(proofs);
+        })
+        .catch(() => {
+          if (!cancelled) setAgentRunProofs([]);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    let cancelled = false;
+    const poll = () => {
+      fetchTaskSwarmJobs(taskId, apiBase)
+        .then((jobs) => {
+          if (cancelled) return;
+          setAgentRun(findActiveTaskSwarmJob(jobs));
+        })
+        .catch(() => {
+          /* keep last known state on transient poll failure */
+        });
+    };
+    const intervalId = window.setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [apiBase, taskId, agentRun?.id, agentRun?.status]);
+
   const handleRunWithAgents = async () => {
     if (!task || agentRunBusy) return;
     setAgentRunBusy(true);
@@ -1935,8 +1978,10 @@ export default function TaskDetailPanel({
       const status = error instanceof HttpRequestError ? error.status : undefined;
       if (status === 404) {
         setAgentRunError('Task not found.');
-      } else if (status === 400) {
+      } else if (status === 409) {
         setAgentRunError('This task is not eligible for an agent run.');
+      } else if (status === 400) {
+        setAgentRunError('No execution target is configured for this task.');
       } else {
         setAgentRunError(toErrorMessage(error, 'Unable to start agent run.'));
       }
@@ -3061,15 +3106,39 @@ export default function TaskDetailPanel({
               >
                 {agentRunBusy ? 'Starting…' : 'Run with agents'}
               </button>
-              {agentRun ? (
-                <span
-                  className="mc-shell-pill px-2 py-1 text-[10px] text-[var(--text-muted)]"
-                  aria-live="polite"
-                  title={`Agent run ${agentRun.id} — ${agentRun.status}`}
-                >
-                  agents: {agentRun.status}
-                </span>
-              ) : null}
+              {agentRun
+                ? (() => {
+                    const view = deriveAgentRunViewState(agentRun, agentRunProofs);
+                    const outcomeTone =
+                      view.outcome === 'success'
+                        ? 'text-emerald-300'
+                        : view.outcome === 'failure'
+                          ? 'text-rose-300'
+                          : 'text-[var(--text-muted)]';
+                    return (
+                      <span
+                        className="mc-shell-pill px-2 py-1 text-[10px] text-[var(--text-muted)]"
+                        aria-live="polite"
+                        title={`Agent run ${agentRun.id} — ${agentRun.status}`}
+                      >
+                        <span className={outcomeTone}>
+                          {view.summary}
+                        </span>
+                        {view.hasProof && agentRun ? (
+                          <a
+                            href={`${apiBase || ''}/swarm/jobs/${encodeURIComponent(agentRun.id)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="ml-1 underline"
+                            aria-label={`View execution details and proof for agent run ${agentRun.id}`}
+                          >
+                            details
+                          </a>
+                        ) : null}
+                      </span>
+                    );
+                  })()
+                : null}
               {agentRunError ? (
                 <span className="text-[10px] text-[var(--text-muted)]" role="alert">{agentRunError}</span>
               ) : null}

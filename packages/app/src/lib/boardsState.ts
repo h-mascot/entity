@@ -216,6 +216,59 @@ export function applyBoardDeleted(state: BoardsState, id: number): BoardsState {
   return { boards: remaining, activeBoardId };
 }
 
+/**
+ * The board that becomes active after deleting `id`, per the reducer rule
+ * (General default first, otherwise the first ordered board). Null when no board
+ * remains. Used so the visible render tab follows the reducer-selected
+ * replacement instead of a stale read (BRD-003 deletion regression).
+ */
+export function selectActiveBoardAfterDeletion(
+  state: BoardsState,
+  id: number,
+): BoardSummary | null {
+  return getActiveBoard(applyBoardDeleted(state, id));
+}
+
+/**
+ * The render tab to show after deleting `id`. Returns null when the deletion
+ * does not change the active board (deleting a non-active board must NOT switch
+ * the visible surface) or when no board remains. Callers only update the tab
+ * when this returns a non-null value.
+ */
+export function renderTabAfterDeletion(state: BoardsState, id: number): BoardRenderTab | null {
+  if (state.activeBoardId !== id) return null;
+  const next = selectActiveBoardAfterDeletion(state, id);
+  return next ? boardViewToRenderTab(next.view) : null;
+}
+
+/**
+ * Build a board customization PATCH payload from a simple editing form (BRD-002).
+ * Normalizes the filter config (scope + workDomain + comma-separated project ids)
+ * into the strict BoardFilterConfig the API expects. Used by the BoardSwitcher
+ * customize control so view/filter configuration is editable, not just name.
+ */
+export function buildBoardCustomizationPatch(form: {
+  view?: BoardView;
+  scope?: BoardFilterScope;
+  workDomain?: string;
+  projectIdsCsv?: string;
+}): { view?: BoardView; filter_config: BoardFilterConfig } {
+  const rawProjectIds = (form.projectIdsCsv ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => Number(entry))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const filter_config = normalizeBoardFilterConfig({
+    scope: form.scope ?? 'all',
+    workDomain: form.workDomain,
+    projectIds: rawProjectIds,
+  });
+  const result: { view?: BoardView; filter_config: BoardFilterConfig } = { filter_config };
+  if (form.view) result.view = form.view;
+  return result;
+}
+
 export function getOrderedBoards(state: BoardsState): BoardSummary[] {
   return [...state.boards].sort(compareBoardOrder);
 }

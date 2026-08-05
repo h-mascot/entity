@@ -53,6 +53,25 @@ export async function fetchTaskSwarmJobs(
   return Array.isArray(payload.jobs) ? payload.jobs : [];
 }
 
+export interface SwarmProofSummary {
+  id: string;
+  commit_sha?: string | null;
+  test_result?: string | null;
+}
+
+/** Fetch proof artifacts for a swarm job (BRD-004 execution-detail affordance). */
+export async function fetchSwarmJobProofs(
+  jobId: string,
+  apiBase = '',
+): Promise<SwarmProofSummary[]> {
+  const payload = await requestJsonWithFallback<{ proofs?: SwarmProofSummary[] }>({
+    urls: buildApiCandidates(`/swarm/jobs/${encodeURIComponent(jobId)}/proofs`, apiBase),
+    continueOnStatuses: [],
+    fallbackError: 'Unable to load agent run proof.',
+  });
+  return Array.isArray(payload.proofs) ? payload.proofs : [];
+}
+
 /** Newest active job for a task, or null. */
 export function findActiveTaskSwarmJob(
   jobs: ReadonlyArray<SwarmJobSummary>,

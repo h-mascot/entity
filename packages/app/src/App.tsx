@@ -87,6 +87,9 @@ import {
   boardViewToRenderTab,
   initBoardsState,
   resolveInitialActiveBoard,
+  applyBoardDeleted,
+  applyBoardsReordered,
+  renderTabAfterDeletion,
   type BoardSummary,
 } from './lib/boardsState';
 import { selectTasksForBoard } from './lib/boardTaskFilter';
@@ -94,6 +97,7 @@ import {
   fetchBoards,
   createBoard as createBoardApi,
   updateBoard as updateBoardApi,
+  reorderBoards as reorderBoardsApi,
   deleteBoard as deleteBoardApi,
 } from './lib/boardsClient';
 import { BoardSwitcher } from './components/BoardSwitcher';
@@ -1886,20 +1890,58 @@ export default function App() {
       });
   };
 
+  // BRD-002: customize a board's view and task inclusion/filter configuration.
+  const handleCustomizeBoard = (
+    id: number,
+    updates: { view?: import('./lib/boardsState').BoardView; filter_config: import('./lib/boardsState').BoardFilterConfig },
+  ) => {
+    updateBoardApi(id, updates)
+      .then((updated) => {
+        setBoardsState((prev) => ({
+          boards: prev.boards.map((board) => (board.id === updated.id ? updated : board)),
+          activeBoardId: prev.activeBoardId,
+        }));
+        if (id === boardsState.activeBoardId) {
+          setMcBoardTab(boardViewToRenderTab(updated.view));
+        }
+      })
+      .catch((error: unknown) => {
+        setBoardsError(error instanceof Error ? error.message : 'Unable to customize board.');
+      });
+  };
+
+  // BRD-002: reorder boards (persisted). Optimistically apply, revert on error.
+  const handleReorderBoards = (orderedIds: readonly number[]) => {
+    const prev = boardsState;
+    setBoardsState((state) => {
+      const ordered = orderedIds
+        .map((oid) => state.boards.find((b) => b.id === oid))
+        .filter((b): b is BoardSummary => Boolean(b))
+        .map((b, idx) => ({ ...b, sort_order: idx }));
+      const tail = state.boards
+        .filter((b) => !orderedIds.includes(b.id))
+        .map((b, idx) => ({ ...b, sort_order: orderedIds.length + idx }));
+      return { boards: [...ordered, ...tail], activeBoardId: state.activeBoardId };
+    });
+    reorderBoardsApi(orderedIds)
+      .then((reordered) => {
+        setBoardsState((state) => applyBoardsReordered(state, reordered));
+      })
+      .catch((error: unknown) => {
+        setBoardsState(prev);
+        setBoardsError(error instanceof Error ? error.message : 'Unable to reorder boards.');
+      });
+  };
+
   const handleDeleteBoard = (id: number) => {
+    // Compute the post-deletion render tab from the reducer-selected replacement
+    // using current (non-stale) state. Deleting a non-active board must NOT
+    // change the visible surface (BRD-003 regression fix).
+    const nextTab = renderTabAfterDeletion(boardsState, id);
     deleteBoardApi(id)
       .then(() => {
-        setBoardsState((prev) => {
-          const remaining = prev.boards.filter((board) => board.id !== id);
-          let activeBoardId = prev.activeBoardId;
-          if (activeBoardId === id) {
-            const general = remaining.find((board) => board.key === 'general' && board.is_default);
-            activeBoardId = general ? general.id : (remaining[0]?.id ?? null);
-          }
-          return { boards: remaining, activeBoardId };
-        });
-        const after = boardsState.boards.find((b) => b.key === 'general' && b.is_default);
-        if (after) setMcBoardTab(boardViewToRenderTab(after.view));
+        setBoardsState((prev) => applyBoardDeleted(prev, id));
+        if (nextTab) setMcBoardTab(nextTab);
       })
       .catch((error: unknown) => {
         setBoardsError(error instanceof Error ? error.message : 'Unable to delete board.');
@@ -5019,6 +5061,8 @@ export default function App() {
               onSelect={handleSelectBoard}
               onCreate={handleCreateBoard}
               onRename={handleRenameBoard}
+              onCustomize={handleCustomizeBoard}
+              onReorder={handleReorderBoards}
               onDelete={handleDeleteBoard}
               onRetry={reloadBoards}
             />
@@ -5523,6 +5567,7 @@ export default function App() {
               showArchiveColumn={showArchiveColumn}
               onArchiveColumnVisibilityChange={setShowArchiveColumn}
               returnBoard="engineering"
+              boardFilter={activeBoard?.view === 'engineering' ? activeBoard.filter_config : undefined}
             />
           ) : mcBoardTab === 'strategic' ? (
             <LazyMCStrategicView />

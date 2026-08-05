@@ -18,10 +18,10 @@ Production: FORBIDDEN. Do not touch canonical `/Users/enterprise/Code/entity` or
 - [x] B2. BRD-001 defaults guaranteed before first create — boards.ts (+ route POST seeds)
 
 ### Phase C — App UI (pure-logic tested via node:test in app/src/lib)
-- [ ] C1. BRD-002 customization controls (view/filter + reorder) — BoardSwitcher + App.tsx + lib helper
-- [ ] C2. BRD-003 membership: persisted filter applied to Engineering/Strategic — boardTaskFilter/MCEngineeringEntry/App.tsx
-- [ ] C3. BRD-003 deletion reselection drives render tab — boardsState helper + App.tsx
-- [ ] C4. BRD-004 proof/status: polling + terminal + proof affordance — swarmTaskRunClient lib + TaskDetailPanel
+- [x] C1. BRD-002 customization controls (view/filter + reorder) — BoardSwitcher + App.tsx + lib helper
+- [x] C2. BRD-003 membership: persisted filter applied to Engineering/Strategic — boardTaskFilter/MCEngineeringEntry/App.tsx
+- [x] C3. BRD-003 deletion reselection drives render tab — boardsState helper + App.tsx
+- [x] C4. BRD-004 proof/status: polling + terminal + proof affordance — swarmTaskRunClient lib + TaskDetailPanel
 
 ## Final gate
 - [ ] server build + vitest; app test; db test

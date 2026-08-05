@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   BOARD_TEMPLATES,
+  BOARD_VIEWS,
   boardViewToRenderTab,
+  buildBoardCustomizationPatch,
   type BoardSummary,
   type BoardTemplate,
+  type BoardView,
+  type BoardFilterScope,
 } from '../lib/boardsState';
 
 const TEMPLATE_LABELS: Record<BoardTemplate, string> = {
@@ -11,6 +15,15 @@ const TEMPLATE_LABELS: Record<BoardTemplate, string> = {
   strategic: 'Strategic',
   engineering: 'Engineering',
 };
+
+const VIEW_LABELS: Record<BoardView, string> = {
+  board: 'Board',
+  analytics: 'Analytics',
+  strategic: 'Strategic',
+  engineering: 'Engineering',
+};
+
+const FILTER_SCOPES: BoardFilterScope[] = ['all', 'projects', 'workDomain', 'none'];
 
 interface BoardSwitcherProps {
   boards: BoardSummary[];
@@ -20,6 +33,11 @@ interface BoardSwitcherProps {
   onSelect: (board: BoardSummary) => void;
   onCreate: (input: { name: string; template: BoardTemplate }) => void;
   onRename: (id: number, name: string) => void;
+  onCustomize: (
+    id: number,
+    updates: { view?: BoardView; filter_config: BoardSummary['filter_config'] },
+  ) => void;
+  onReorder: (orderedIds: readonly number[]) => void;
   onDelete: (id: number) => void;
   onRetry?: () => void;
 }
@@ -38,6 +56,8 @@ export function BoardSwitcher({
   onSelect,
   onCreate,
   onRename,
+  onCustomize,
+  onReorder,
   onDelete,
   onRetry,
 }: BoardSwitcherProps) {
@@ -47,6 +67,11 @@ export function BoardSwitcher({
   const [menuForId, setMenuForId] = useState<number | null>(null);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [customizingId, setCustomizingId] = useState<number | null>(null);
+  const [customizeView, setCustomizeView] = useState<BoardView>('board');
+  const [customizeScope, setCustomizeScope] = useState<BoardFilterScope>('all');
+  const [customizeWorkDomain, setCustomizeWorkDomain] = useState('');
+  const [customizeProjectIds, setCustomizeProjectIds] = useState('');
   const addInputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -71,6 +96,39 @@ export function BoardSwitcher({
     if (name) onRename(id, name);
     setRenamingId(null);
     setRenameValue('');
+  }
+
+  function openCustomize(board: BoardSummary) {
+    setCustomizingId(board.id);
+    setCustomizeView(board.view);
+    setCustomizeScope(board.filter_config.scope);
+    setCustomizeWorkDomain(board.filter_config.workDomain ?? '');
+    setCustomizeProjectIds(
+      Array.isArray(board.filter_config.projectIds) ? board.filter_config.projectIds.join(',') : '',
+    );
+    setMenuForId(null);
+  }
+
+  function submitCustomize(id: number) {
+    const patch = buildBoardCustomizationPatch({
+      view: customizeView,
+      scope: customizeScope,
+      workDomain: customizeWorkDomain,
+      projectIdsCsv: customizeProjectIds,
+    });
+    onCustomize(id, patch);
+    setCustomizingId(null);
+  }
+
+  function moveBoard(board: BoardSummary, delta: -1 | 1) {
+    const orderedIds = boards.map((b) => b.id);
+    const idx = orderedIds.indexOf(board.id);
+    const target = idx + delta;
+    if (idx < 0 || target < 0 || target >= orderedIds.length) return;
+    const next = orderedIds.slice();
+    [next[idx], next[target]] = [next[target], next[idx]];
+    onReorder(next);
+    setMenuForId(null);
   }
 
   if (loading && boards.length === 0) {
@@ -119,20 +177,69 @@ export function BoardSwitcher({
                 aria-label={`Rename ${label} board`}
                 className="mc-shell-input px-2 py-1 text-xs"
               />
-              <button
-                type="button"
-                onClick={() => submitRename(board.id)}
-                className="mc-shell-btn px-2 py-1 text-xs"
-              >
+              <button type="button" onClick={() => submitRename(board.id)} className="mc-shell-btn px-2 py-1 text-xs">
                 Save
               </button>
-              <button
-                type="button"
-                onClick={() => setRenamingId(null)}
-                className="mc-shell-btn px-2 py-1 text-xs"
-              >
+              <button type="button" onClick={() => setRenamingId(null)} className="mc-shell-btn px-2 py-1 text-xs">
                 Cancel
               </button>
+            </span>
+          );
+        }
+
+        if (customizingId === board.id) {
+          // BRD-002: customize view + task inclusion/filter configuration.
+          return (
+            <span key={board.id} className="flex flex-col gap-1 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-2 shadow-lg" role="dialog" aria-label={`Customize ${label} board`}>
+              <span className="flex items-center gap-1">
+                <label className="text-[10px] text-[var(--text-muted)]" htmlFor={`customize-view-${board.id}`}>View</label>
+                <select
+                  id={`customize-view-${board.id}`}
+                  value={customizeView}
+                  onChange={(e) => setCustomizeView(e.target.value as BoardView)}
+                  className="mc-shell-input px-1 py-1 text-xs"
+                >
+                  {BOARD_VIEWS.map((view) => (
+                    <option key={view} value={view}>{VIEW_LABELS[view]}</option>
+                  ))}
+                </select>
+                <label className="text-[10px] text-[var(--text-muted)]" htmlFor={`customize-scope-${board.id}`}>Tasks</label>
+                <select
+                  id={`customize-scope-${board.id}`}
+                  value={customizeScope}
+                  onChange={(e) => setCustomizeScope(e.target.value as BoardFilterScope)}
+                  className="mc-shell-input px-1 py-1 text-xs"
+                >
+                  {FILTER_SCOPES.map((scope) => (
+                    <option key={scope} value={scope}>{scope}</option>
+                  ))}
+                </select>
+              </span>
+              {customizeScope === 'workDomain' ? (
+                <input
+                  type="text"
+                  value={customizeWorkDomain}
+                  onChange={(e) => setCustomizeWorkDomain(e.target.value)}
+                  placeholder="work-domain (e.g. engineering)"
+                  maxLength={64}
+                  aria-label="Work domain filter"
+                  className="mc-shell-input px-2 py-1 text-xs"
+                />
+              ) : null}
+              {customizeScope === 'projects' ? (
+                <input
+                  type="text"
+                  value={customizeProjectIds}
+                  onChange={(e) => setCustomizeProjectIds(e.target.value)}
+                  placeholder="project ids, comma-separated"
+                  aria-label="Project ids filter"
+                  className="mc-shell-input px-2 py-1 text-xs"
+                />
+              ) : null}
+              <span className="flex items-center gap-1">
+                <button type="button" onClick={() => submitCustomize(board.id)} className="mc-shell-btn px-2 py-1 text-xs">Save</button>
+                <button type="button" onClick={() => setCustomizingId(null)} className="mc-shell-btn px-2 py-1 text-xs">Cancel</button>
+              </span>
             </span>
           );
         }
@@ -180,6 +287,30 @@ export function BoardSwitcher({
                       className="mc-shell-btn px-2 py-1 text-left text-xs"
                     >
                       Rename
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => openCustomize(board)}
+                      className="mc-shell-btn px-2 py-1 text-left text-xs"
+                    >
+                      Customize view &amp; tasks
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => moveBoard(board, -1)}
+                      className="mc-shell-btn px-2 py-1 text-left text-xs"
+                    >
+                      Move left
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => moveBoard(board, 1)}
+                      className="mc-shell-btn px-2 py-1 text-left text-xs"
+                    >
+                      Move right
                     </button>
                     <button
                       type="button"

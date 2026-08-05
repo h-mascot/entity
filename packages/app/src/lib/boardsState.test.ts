@@ -12,6 +12,9 @@ import {
   getOrderedBoards,
   getActiveBoard,
   getActiveBoardView,
+  selectActiveBoardAfterDeletion,
+  renderTabAfterDeletion,
+  buildBoardCustomizationPatch,
   resolveInitialActiveBoard,
   parseBoardSummary,
   parseBoardsListResponse,
@@ -228,4 +231,71 @@ test('resolveInitialActiveBoard falls back to General for kanban/unknown/plugin 
 test('resolveInitialActiveBoard never returns a blank screen: falls to first board / null only when empty', () => {
   assert.equal(resolveInitialActiveBoard([platform], {}), platform.id);
   assert.equal(resolveInitialActiveBoard([], { legacyTab: 'kanban' }), null);
+});
+
+test('renderTabAfterDeletion switches the visible tab to the reducer-selected replacement only when the active board is deleted', () => {
+  // Active = Platform (engineering). Deleting it falls back to General (kanban).
+  const onPlatform = selectBoard(initBoardsState([general, analytics, platform]), platform.id);
+  assert.equal(renderTabAfterDeletion(onPlatform, platform.id), 'kanban');
+
+  // Active = Analytics. Deleting it falls back to General (kanban).
+  const onAnalytics = selectBoard(initBoardsState([general, analytics, platform]), analytics.id);
+  assert.equal(renderTabAfterDeletion(onAnalytics, analytics.id), 'kanban');
+
+  // Deleting a NON-active board must not change the visible tab (null = no switch).
+  // This is the BRD-003 regression: previously it always switched to General.
+  const onGeneral = initBoardsState([general, analytics, platform]);
+  assert.equal(renderTabAfterDeletion(onGeneral, platform.id), null);
+  assert.equal(renderTabAfterDeletion(onGeneral, analytics.id), null);
+});
+
+test('selectActiveBoardAfterDeletion reports the replacement board chosen by the reducer', () => {
+  const onPlatform = selectBoard(initBoardsState([general, analytics, platform]), platform.id);
+  assert.equal(selectActiveBoardAfterDeletion(onPlatform, platform.id)?.key, 'general');
+
+  // When no General default remains but other boards do, the first ordered one wins.
+  const custom = [{ ...platform, sort_order: 0 }];
+  const another = { ...platform, id: 9, sort_order: 1, name: 'Other' };
+  const onCustom = selectBoard(initBoardsState([custom[0], another]), another.id);
+  assert.equal(selectActiveBoardAfterDeletion(onCustom, another.id)?.id, platform.id);
+
+  // When the last board is deleted there is no replacement.
+  const onlyOne = selectBoard(initBoardsState([platform]), platform.id);
+  assert.equal(selectActiveBoardAfterDeletion(onlyOne, platform.id), null);
+});
+
+test('buildBoardCustomizationPatch normalizes a customize-form into a PATCH payload (BRD-002)', () => {
+  // workDomain scope with a view override.
+  const eng = buildBoardCustomizationPatch({
+    view: 'engineering',
+    scope: 'workDomain',
+    workDomain: 'Platform',
+  });
+  assert.deepEqual(eng, {
+    view: 'engineering',
+    filter_config: { scope: 'workDomain', workDomain: 'platform' },
+  });
+
+  // projects scope parses a comma-separated id list and drops junk.
+  const proj = buildBoardCustomizationPatch({
+    scope: 'projects',
+    projectIdsCsv: ' 3, 9, nope, 0, 9 ',
+  });
+  assert.deepEqual(proj.filter_config, { scope: 'projects', projectIds: [3, 9] });
+
+  // none scope and default fall back safely.
+  assert.deepEqual(
+    buildBoardCustomizationPatch({ scope: 'none' }).filter_config,
+    { scope: 'none' },
+  );
+  assert.deepEqual(
+    buildBoardCustomizationPatch({}).filter_config,
+    { scope: 'all' },
+  );
+
+  // Empty projects list collapses to all (matches normalize semantics).
+  assert.deepEqual(
+    buildBoardCustomizationPatch({ scope: 'projects', projectIdsCsv: '' }).filter_config,
+    { scope: 'all' },
+  );
 });
