@@ -10,7 +10,7 @@ import {
 } from '../../../db/src';
 import { asyncHandler } from '../middleware/async-handler';
 import {
-  authorizeTaskOrg,
+  authorizeTaskOperation,
   resolveRequestActorId,
   resolveRequestActorType,
 } from '../principals/request-context';
@@ -86,7 +86,11 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
   const router = Router();
   const defaultActor = dependencies.defaultActor ?? 'Human';
 
-  async function getTaskOrRespond(req: Request, res: Response) {
+  async function getTaskOrRespond(
+    req: Request,
+    res: Response,
+    operation: 'read' | 'review' | 'human_gate' = 'read',
+  ) {
     const taskId = parsePositiveTaskId(req.params.id);
     if (!taskId) {
       res.status(400).json({ error: 'invalid task id' });
@@ -98,7 +102,7 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
       return null;
     }
     // Tenant-authorize the loaded task before any exposure or mutation (B3).
-    if (!authorizeTaskOrg(req, res, task, 'read')) return null;
+    if (!authorizeTaskOperation(req, res, task, operation)) return null;
     return task;
   }
 
@@ -121,7 +125,7 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
   }));
 
   async function applyReviewDecision(req: Request, res: Response, decision: 'accepted' | 'request_fix') {
-    const task = await getTaskOrRespond(req, res);
+    const task = await getTaskOrRespond(req, res, 'review');
     if (!task) return;
     const actor = readActor(req, defaultActor);
     const result = buildTaskReviewDecisionUpdates({
@@ -158,7 +162,7 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
   router.post('/:id/review/request-fix', asyncHandler(async (req, res) => applyReviewDecision(req, res, 'request_fix')));
 
   router.post('/:id/human-gate/request', asyncHandler(async (req, res) => {
-    const task = await getTaskOrRespond(req, res);
+    const task = await getTaskOrRespond(req, res, 'human_gate');
     if (!task) return;
     const actor = readActor(req, defaultActor);
     const result = buildTaskHumanGateRequestUpdates({
@@ -191,7 +195,7 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
   }));
 
   async function applyHumanGateDecision(req: Request, res: Response, decision: 'approved' | 'rejected') {
-    const task = await getTaskOrRespond(req, res);
+    const task = await getTaskOrRespond(req, res, 'human_gate');
     if (!task) return;
     const actor = readActor(req, defaultActor);
     const actorType = readActorType(req);

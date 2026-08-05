@@ -7,6 +7,8 @@ import type {
 import { asyncHandler } from "../middleware/async-handler";
 import { orderTaskProjectIdsWithPrimary } from "../task-projects";
 import {
+  authorizeTaskCreateScope,
+  authorizeTaskOperation,
   authorizeTaskOrg,
   filterTasksForRequest,
   resolveAuthorizedOrg,
@@ -424,7 +426,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         return res.status(404).json({ error: "task not found" });
       }
       // Tenant-authorize the loaded task before exposure (Terra B3).
-      if (!authorizeTaskOrg(req, res, task, "read")) return;
+      if (!authorizeTaskOperation(req, res, task, "read")) return;
       const activity = activityRepository.listActivitiesByTaskId(id, 20);
       const subtasks = await taskSyncLayer.listSubtasks(id);
       const enrichedTask = enrichTasksWithSubtaskSummary([
@@ -574,6 +576,11 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         }
         requestedProjectIds = parsedProjectIds;
       }
+      const proposedCreateScope = {
+        ...taskScope,
+        projects: requestedProjectIds?.map((id) => ({ id })),
+      };
+      if (!authorizeTaskCreateScope(req, res, proposedCreateScope)) return;
 
       const normalizedDueDate =
         typeof due_date === "string"
@@ -795,7 +802,21 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         }
         requestedProjectIds = parsedProjectIds;
       }
-
+      // Authorize the PROPOSED durable scope before any dedupe/mutation (D-R2):
+      // the existing-scope check above only proves the caller may edit the task
+      // as-is. If projectIds is supplied it can relink/expand the task into a
+      // project the caller has no grant for (project-A -> project-B), so we must
+      // authorize the full proposed scope. When projectIds is omitted the
+      // durable scope is unchanged and existingTask already covers it.
+      const proposedTask =
+        typeof projectIds !== "undefined"
+          ? {
+              ...existingTask,
+              project_id: requestedProjectIds![0] ?? null,
+              projects: requestedProjectIds!.map((id: number) => ({ id })),
+            }
+          : existingTask;
+      if (!authorizeTaskOperation(req, res, proposedTask, "update")) return;
       const normalizedDueDate =
         typeof due_date === "string"
           ? due_date
@@ -2190,7 +2211,7 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
         return res.status(404).json({ error: "task not found" });
       }
       // Tenant-authorize before reading task projects (Terra R3).
-      if (!authorizeTaskOrg(req, res, task, "read")) return;
+      if (!authorizeTaskOperation(req, res, task, "read")) return;
 
       return res.json(task.projects ?? []);
     } catch (err) {
@@ -2218,7 +2239,7 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       return res.status(404).json({ error: "task not found" });
     }
     // Tenant-authorize before linking projects (Terra R3).
-    if (!authorizeTaskOrg(req, res, task, "write")) return;
+    if (!authorizeTaskOperation(req, res, task, "project_link")) return;
 
     if (typeof projectIds !== "undefined") {
       const parsedProjectIds = parsePositiveIdList(projectIds);
@@ -2228,6 +2249,12 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
           .json({ error: "projectIds must be an array of positive integers" });
       }
 
+      const proposedTask = {
+        ...task,
+        project_id: parsedProjectIds[0] ?? null,
+        projects: parsedProjectIds.map((id: number) => ({ id })),
+      };
+      if (!authorizeTaskOperation(req, res, proposedTask, "project_link")) return;
       try {
         const updatedTask = await taskBackend.updateTask(taskId, {
           projectIds: parsedProjectIds,
@@ -2256,6 +2283,12 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       const nextProjectIds = currentIds.includes(projectId)
         ? currentIds
         : [...currentIds, projectId];
+      const proposedTask = {
+        ...task,
+        project_id: nextProjectIds[0] ?? null,
+        projects: nextProjectIds.map((id) => ({ id })),
+      };
+      if (!authorizeTaskOperation(req, res, proposedTask, "project_link")) return;
       const updatedTask = await taskBackend.updateTask(taskId, {
         projectIds: nextProjectIds,
       });
@@ -2291,16 +2324,23 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
         return res.status(404).json({ error: "task not found" });
       }
       // Tenant-authorize before unlinking projects (Terra R3).
-      if (!authorizeTaskOrg(req, res, task, "write")) return;
+      if (!authorizeTaskOperation(req, res, task, "project_link")) return;
 
       const currentProjectIds = orderTaskProjectIdsWithPrimary(task);
       if (!currentProjectIds.includes(projectId)) {
         return res.status(404).json({ error: "task project link not found" });
       }
+      const nextProjectIds = currentProjectIds.filter(
+        (currentId: number) => currentId !== projectId,
+      );
+      const proposedTask = {
+        ...task,
+        project_id: nextProjectIds[0] ?? null,
+        projects: nextProjectIds.map((id) => ({ id })),
+      };
+      if (!authorizeTaskOperation(req, res, proposedTask, "project_link")) return;
       const updatedTask = await taskBackend.updateTask(taskId, {
-        projectIds: currentProjectIds.filter(
-          (currentId: number) => currentId !== projectId,
-        ),
+        projectIds: nextProjectIds,
       });
       if (!updatedTask) {
         return res.status(404).json({ error: "task not found" });

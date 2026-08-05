@@ -2,6 +2,8 @@ import type { Request } from 'express';
 import { describe, expect, it } from 'vitest';
 import {
   buildCustomerPrincipalContext,
+  authorizeTaskCreateScope,
+  authorizeTaskOperation,
   authorizeTaskOrg,
   authorizedOrgIds,
   filterTasksForRequest,
@@ -22,7 +24,7 @@ function ctx(overrides: Partial<CustomerPrincipalContext> = {}): CustomerPrincip
   return {
     principalId: 'p-1',
     principalType: 'human',
-    permission: { principal_id: 'p-1', grants: [] },
+    permission: { principal_id: 'p-1', grants: [{ role: 'contributor', org_id: 'org-acme' }] },
     orgIds: ['org-acme'],
     isGlobalAdmin: false,
     ...overrides,
@@ -114,6 +116,51 @@ describe('request-context authorization helpers (B1–B4)', () => {
     const tasks = [{ org_id: 'org-acme' }, { org_id: 'org-beta' }, { org_id: 'org-acme' }];
     expect(filterTasksForRequest(reqWith(undefined), tasks)).toHaveLength(3);
     expect(filterTasksForRequest(reqWith(ctx()), tasks)).toHaveLength(2);
+  });
+
+  it('enforces operation roles and scoped grants', () => {
+    const task = { org_id: 'org-acme' };
+    const viewer = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'viewer', org_id: 'org-acme' }] } }));
+    expect(authorizeTaskOperation(viewer, mockRes().res, task, 'read')).toBe(true);
+    const viewerWrite = mockRes();
+    expect(authorizeTaskOperation(viewer, viewerWrite.res, task, 'update')).toBe(false);
+    expect(viewerWrite.state.status).toBe(403);
+    const contributorReview = mockRes();
+    expect(authorizeTaskOperation(reqWith(ctx()), contributorReview.res, task, 'review')).toBe(false);
+    expect(contributorReview.state.status).toBe(403);
+    const manager = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'manager', org_id: 'org-acme' }] } }));
+    expect(authorizeTaskOperation(manager, mockRes().res, task, 'review')).toBe(true);
+  });
+
+  it('enforces team, project, and multi-project intersections', () => {
+    const team = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'contributor', org_id: 'org-acme', team_id: 'team-a' }] } }));
+    expect(authorizeTaskOperation(team, mockRes().res, { org_id: 'org-acme', team_id: 'team-a' }, 'update')).toBe(true);
+    const wrongTeam = mockRes();
+    expect(authorizeTaskOperation(team, wrongTeam.res, { org_id: 'org-acme', team_id: 'team-b' }, 'read')).toBe(false);
+    expect(wrongTeam.state.status).toBe(404);
+    const project = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'contributor', org_id: 'org-acme', project_id: 1 }] } }));
+    expect(authorizeTaskOperation(project, mockRes().res, { org_id: 'org-acme', project_id: 1 }, 'update')).toBe(true);
+    expect(authorizeTaskOperation(project, mockRes().res, { org_id: 'org-acme', project_id: 2 }, 'read')).toBe(false);
+    expect(authorizeTaskOperation(project, mockRes().res, { org_id: 'org-acme', projects: [{ id: 1 }, { id: 2 }] }, 'read')).toBe(false);
+    const both = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [
+      { role: 'contributor', org_id: 'org-acme', project_id: 1 },
+      { role: 'viewer', org_id: 'org-acme', project_id: 2 },
+    ] } }));
+    expect(authorizeTaskOperation(both, mockRes().res, { org_id: 'org-acme', projects: [{ id: 1 }, { id: 2 }] }, 'read')).toBe(true);
+    expect(authorizeTaskOperation(both, mockRes().res, { org_id: 'org-acme', projects: [{ id: 1 }, { id: 2 }] }, 'update')).toBe(false);
+  });
+
+  it('authorizes create scope and keeps list filtering in parity', () => {
+    expect(authorizeTaskCreateScope(reqWith(ctx()), mockRes().res, { org_id: 'org-acme' })).toBe(true);
+    const viewer = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'viewer', org_id: 'org-acme' }] } }));
+    const denied = mockRes();
+    expect(authorizeTaskCreateScope(viewer, denied.res, { org_id: 'org-acme' })).toBe(false);
+    expect(denied.state.status).toBe(403);
+    const scoped = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'viewer', org_id: 'org-acme', project_id: 1 }] } }));
+    const tasks = [{ org_id: 'org-acme', project_id: 1 }, { org_id: 'org-acme', project_id: 2 }];
+    expect(filterTasksForRequest(scoped, tasks)).toEqual([tasks[0]]);
+    expect(authorizeTaskOperation(scoped, mockRes().res, tasks[0], 'read')).toBe(true);
+    expect(authorizeTaskOperation(scoped, mockRes().res, tasks[1], 'read')).toBe(false);
   });
 
   it('resolveRequestActorId: server principal id for customer; header convention for trusted', () => {

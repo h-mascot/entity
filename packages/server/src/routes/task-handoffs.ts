@@ -23,7 +23,7 @@ import type {
 } from '../../../db/src';
 import { asyncHandler } from '../middleware/async-handler';
 import {
-  authorizeTaskOrg,
+  authorizeTaskOperation,
   resolveRequestActorId,
 } from '../principals/request-context';
 
@@ -105,7 +105,7 @@ export function createTaskHandoffRouter(deps: TaskHandoffRouterDependencies): Ro
       if (!taskId) return res.status(400).json({ error: 'invalid task id' });
       const task = await loadTask(taskId);
       if (!task) return res.status(404).json({ error: 'task not found' });
-      if (!authorizeTaskOrg(req, res, task, 'read')) return;
+      if (!authorizeTaskOperation(req, res, task, 'read')) return;
       try {
         const chain = deps.handoffRepo.getChain({
           orgId: task.org_id!,
@@ -128,7 +128,7 @@ export function createTaskHandoffRouter(deps: TaskHandoffRouterDependencies): Ro
       if (!taskId) return res.status(400).json({ error: 'invalid task id' });
       const task = await loadTask(taskId);
       if (!task) return res.status(404).json({ error: 'task not found' });
-      if (!authorizeTaskOrg(req, res, task, 'read')) return;
+      if (!authorizeTaskOperation(req, res, task, 'read')) return;
       const handoffs = deps.handoffRepo.listForTask(task.org_id!, taskId);
       return res.json({ incoming: handoffs.incoming, outgoing: handoffs.outgoing });
     }),
@@ -150,8 +150,8 @@ export function createTaskHandoffRouter(deps: TaskHandoffRouterDependencies): Ro
       if (!source) return res.status(404).json({ error: 'source task not found' });
       if (!target) return res.status(404).json({ error: 'target task not found' });
       // Tenant-authorize both endpoints before creating a cross-task edge (B3).
-      if (!authorizeTaskOrg(req, res, source, 'write')) return;
-      if (!authorizeTaskOrg(req, res, target, 'write')) return;
+      if (!authorizeTaskOperation(req, res, source, 'handoff')) return;
+      if (!authorizeTaskOperation(req, res, target, 'handoff')) return;
       if (source.org_id !== target.org_id) {
         return res.status(400).json({ error: 'handoff tasks must share an organization' });
       }
@@ -193,7 +193,7 @@ export function createTaskHandoffRouter(deps: TaskHandoffRouterDependencies): Ro
       }
       const pathTask = await loadTask(taskId);
       if (!pathTask) return res.status(404).json({ error: 'task not found' });
-      if (!authorizeTaskOrg(req, res, pathTask, 'write')) return;
+      if (!authorizeTaskOperation(req, res, pathTask, 'handoff')) return;
       const handoff = deps.handoffRepo.get(pathTask.org_id!, req.params.handoffId);
       if (!handoff || (handoff.source_task_id !== taskId && handoff.target_task_id !== taskId)) {
         return res.status(404).json({ error: 'handoff not found' });

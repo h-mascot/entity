@@ -26,7 +26,13 @@ import {
   type AccessTokenRepository,
 } from '../../../db/src/access-tokens';
 import { resolveStoredPrincipalContext } from './resolver';
-import type { PrincipalGrant, PrincipalPermissionContext } from '../permissions';
+import {
+  resolveInheritedRole,
+  roleMeets,
+  type PermissionRole,
+  type PrincipalGrant,
+  type PrincipalPermissionContext,
+} from '../permissions';
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -231,39 +237,97 @@ export function resolveAuthorizedOrg(
   return { orgId };
 }
 
-/**
- * Authorize a loaded task against the customer principal's org membership.
- * Trusted path always passes (PR #71/#72 behavior preserved). Returns true on
- * allow; on deny writes 403 and returns false. `action` is included for audits.
- */
-export function authorizeTaskOrg(
+export type TaskOperation =
+  | 'read' | 'create' | 'update' | 'move' | 'comment' | 'note' | 'activity'
+  | 'subtask' | 'project_link' | 'handoff' | 'merge' | 'delete' | 'review' | 'human_gate';
+
+export interface TaskDurableScope {
+  org_id?: string | null;
+  team_id?: string | null;
+  project_id?: number | string | null;
+  projects?: Array<{ id?: number | string | null }>;
+}
+
+const TASK_ROLE_RANK: Record<PermissionRole, number> = {
+  none: 0, viewer: 1, contributor: 2, manager: 3, admin: 4,
+};
+
+function requiredTaskRole(operation: TaskOperation): PermissionRole {
+  if (operation === 'read') return 'viewer';
+  if (operation === 'review' || operation === 'human_gate') return 'manager';
+  return 'contributor';
+}
+
+/** Resolve the least privilege shared by every durable project linked to a task. */
+export function effectiveTaskRole(
+  ctx: CustomerPrincipalContext,
+  task: TaskDurableScope,
+): PermissionRole {
+  if (ctx.isGlobalAdmin) return 'admin';
+  const orgId = typeof task.org_id === 'string' ? task.org_id.trim() : '';
+  if (!orgId) return 'none';
+  const projectIds = new Set<string>();
+  const addProject = (value: unknown) => {
+    if ((typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && value.trim())) {
+      projectIds.add(String(value).trim());
+    }
+  };
+  addProject(task.project_id);
+  for (const project of task.projects ?? []) addProject(project.id);
+  const base = { org_id: orgId, team_id: task.team_id };
+  if (projectIds.size === 0) return resolveInheritedRole(ctx.permission, base);
+  let minimum: PermissionRole = 'admin';
+  for (const projectId of projectIds) {
+    const role = resolveInheritedRole(ctx.permission, { ...base, project_id: projectId });
+    if (TASK_ROLE_RANK[role] < TASK_ROLE_RANK[minimum]) minimum = role;
+  }
+  return minimum;
+
+}
+
+export function authorizeTaskOperation(
   req: Request,
   res: Response,
-  task: { org_id?: string | null } | null | undefined,
-  action: 'read' | 'write',
+  task: TaskDurableScope | null | undefined,
+  operation: TaskOperation,
 ): boolean {
   if (isTrustedServiceContext(req)) return true;
   if (!task) {
     res.status(404).json({ error: 'task not found' });
     return false;
   }
-  if (!isOrgAuthorized(req, task.org_id)) {
-    // 404 to avoid leaking cross-tenant existence, matching the list filter.
+  const role = effectiveTaskRole(getCustomerPrincipal(req)!, task);
+  if (role === 'none') {
     res.status(404).json({ error: 'task not found' });
+    return false;
+  }
+  const required = requiredTaskRole(operation);
+  if (!roleMeets(role, required)) {
+    sendPermissionDenied(res, `${operation} requires ${required} role`);
     return false;
   }
   return true;
 }
 
-/** Filter an in-memory task list to the customer principal's authorized orgs. */
-export function filterTasksForRequest<T extends { org_id?: string | null }>(
+export function authorizeTaskCreateScope(req: Request, res: Response, scope: TaskDurableScope): boolean {
+  return authorizeTaskOperation(req, res, scope, 'create');
+}
+
+/** Compatibility wrapper for existing routes; operation-specific callers use authorizeTaskOperation. */
+export function authorizeTaskOrg(
   req: Request,
-  tasks: T[],
-): T[] {
-  const allowed = authorizedOrgIds(req);
-  if (allowed === null) return tasks;
-  const set = new Set(allowed);
-  return tasks.filter((task) => typeof task.org_id === 'string' && set.has(task.org_id));
+  res: Response,
+  task: TaskDurableScope | null | undefined,
+  action: 'read' | 'write',
+): boolean {
+  return authorizeTaskOperation(req, res, task, action === 'read' ? 'read' : 'update');
+}
+
+/** Filter with the same durable-scope evaluator used by direct authorization. */
+export function filterTasksForRequest<T extends TaskDurableScope>(req: Request, tasks: T[]): T[] {
+  const ctx = getCustomerPrincipal(req);
+  if (!ctx) return tasks;
+  return tasks.filter((task) => effectiveTaskRole(ctx, task) !== 'none');
 }
 
 /**
