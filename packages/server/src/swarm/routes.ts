@@ -203,7 +203,22 @@ export function createSwarmRouter(deps: SwarmRouterDeps = {}): Router {
     getCallbackAuthSecret: (provider) =>
       resolveCallbackAuthSecretFromEnv(provider, getValidatedManifestByProvider(provider)),
   });
-  router.use(createExecutionCallbackIntakeRouter(callbackIntake));
+  router.use(
+    // D8: authoritative task visibility for task-linked callback intake. Reuses
+    // the same resolveTrustedTenantScope + isJobVisibleInRequestScope contract as
+    // the D5 reads/mutations: unlinked operational jobs remain visible to the
+    // callback surface; a missing or cross-tenant task-linked job fails closed
+    // to 404 (no ActivityEvent intake). Provider callback auth is still enforced
+    // by the intake service afterwards; no identity is invented and fail-closed
+    // behavior is preserved.
+    createExecutionCallbackIntakeRouter(callbackIntake, {
+      authorizeJob: async (req, jobId) => {
+        const job = getSwarmJob(jobId);
+        if (!job) return false;
+        return isJobVisibleInRequestScope(job, resolveRequestScope(req), resolveTask);
+      },
+    }),
+  );
 
   // ── Jobs CRUD ──
 

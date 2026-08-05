@@ -434,3 +434,143 @@ describe('generic POST /jobs task-linked creation boundary (D5 g4)', () => {
     expect(job.task_id).toBeNull();
   });
 });
+
+// D8 (remaining D5 callback authorization boundary): a provider callback that
+// carries a VALID callback token must still be rejected (404) when its target is
+// a task-linked job outside the request tenant scope, and must append no
+// ActivityEvent of any kind. Unlinked operational callbacks are preserved.
+describe('task-linked callback intake cross-tenant authorization (D5 g5 / D8)', () => {
+  const CALLBACK_SECRET = 'd8-callback-secret-0123456789abcdef';
+  const ORIGINAL_CALLBACK_TOKEN = process.env.ENTITY_EEPC_CALLBACK_TOKEN;
+
+  beforeEach(() => {
+    process.env.ENTITY_TRUST_TENANT_HEADERS = '1';
+    process.env.ENTITY_EEPC_CALLBACK_TOKEN = CALLBACK_SECRET;
+  });
+  afterEach(() => {
+    delete process.env.ENTITY_TRUST_TENANT_HEADERS;
+    if (ORIGINAL_CALLBACK_TOKEN === undefined) delete process.env.ENTITY_EEPC_CALLBACK_TOKEN;
+    else process.env.ENTITY_EEPC_CALLBACK_TOKEN = ORIGINAL_CALLBACK_TOKEN;
+  });
+
+  function taskActivityCount(taskId: number): number {
+    const rows = getEntityDatabase()
+      .prepare('SELECT id FROM activities WHERE task_id = ?')
+      .all(taskId);
+    return rows.length;
+  }
+
+  function callbackBodyFor(
+    event: 'plan' | 'progress' | 'proof' | 'status' | 'blocker',
+  ): Record<string, unknown> {
+    switch (event) {
+      case 'plan':
+        return { provider: 'symphony', summary: 'plan ok', steps: ['a', 'b'] };
+      case 'progress':
+        return { provider: 'symphony', summary: 'progress ok', percent: 50 };
+      case 'proof':
+        return {
+          provider: 'symphony',
+          summary: 'proof ok',
+          commit_sha: 'abc1234',
+          test_result: 'pass',
+        };
+      case 'status':
+        return { provider: 'symphony', summary: 'status ok', status: 'running' };
+      case 'blocker':
+        return { provider: 'symphony', summary: 'blocked ok', reason: 'waiting on review' };
+    }
+  }
+
+  // Create a task-linked symphony job owned by default-org through the governed
+  // Run-with-agents path (the only sanctioned task-linkage lifecycle).
+  async function createTaskLinkedSymphonyJob() {
+    const task = createTask('Scoped callback run', 'Symphony execution');
+    const run = await json(
+      'POST',
+      `/tasks/${task.id}/run`,
+      { provider: 'symphony' },
+      { 'x-entity-org-id': 'default-org' },
+    );
+    expect(run.status).toBe(201);
+    const job = (run.payload as { job: { id: string; provider: string; task_id: number } }).job;
+    expect(job.provider).toBe('symphony');
+    expect(job.task_id).toBe(task.id);
+    return { task, jobId: job.id };
+  }
+
+  // Both the canonical callback route and every convenience alias must fail
+  // closed (404) for a cross-tenant caller carrying a valid provider callback
+  // token, and must append no ActivityEvent of any kind.
+  const crossTenantCases: Array<{
+    name: string;
+    path: (id: string) => string;
+    event: 'plan' | 'progress' | 'proof' | 'status' | 'blocker';
+  }> = [
+    { name: 'canonical plan', path: (id) => `/jobs/${id}/callbacks/plan`, event: 'plan' },
+    { name: 'canonical progress', path: (id) => `/jobs/${id}/callbacks/progress`, event: 'progress' },
+    { name: 'canonical proof', path: (id) => `/jobs/${id}/callbacks/proof`, event: 'proof' },
+    { name: 'canonical status', path: (id) => `/jobs/${id}/callbacks/status`, event: 'status' },
+    { name: 'canonical blocker', path: (id) => `/jobs/${id}/callbacks/blocker`, event: 'blocker' },
+    { name: 'alias plan', path: (id) => `/jobs/${id}/plan`, event: 'plan' },
+    { name: 'alias progress', path: (id) => `/jobs/${id}/progress`, event: 'progress' },
+    { name: 'alias blocker', path: (id) => `/jobs/${id}/blocker`, event: 'blocker' },
+  ];
+
+  for (const c of crossTenantCases) {
+    it(`blocks cross-tenant ${c.name} callback with 404 and appends no activity`, async () => {
+      const { task, jobId } = await createTaskLinkedSymphonyJob();
+      const before = taskActivityCount(task.id);
+
+      const res = await json('POST', c.path(jobId), callbackBodyFor(c.event), {
+        'x-entity-org-id': 'some-other-org',
+        authorization: `Bearer ${CALLBACK_SECRET}`,
+      });
+      expect(res.status).toBe(404);
+
+      // No ActivityEvent of any kind (plan/progress/proof/status/blocker) appended.
+      expect(taskActivityCount(task.id)).toBe(before);
+    });
+  }
+
+  it('accepts an in-scope canonical progress callback (positive retained)', async () => {
+    const { jobId } = await createTaskLinkedSymphonyJob();
+    const res = await json('POST', `/jobs/${jobId}/callbacks/progress`, callbackBodyFor('progress'), {
+      'x-entity-org-id': 'default-org',
+      authorization: `Bearer ${CALLBACK_SECRET}`,
+    });
+    expect(res.status).toBe(202);
+    expect((res.payload as { ok: boolean }).ok).toBe(true);
+  });
+
+  it('accepts an in-scope alias plan callback (positive retained)', async () => {
+    const { jobId } = await createTaskLinkedSymphonyJob();
+    const res = await json('POST', `/jobs/${jobId}/plan`, callbackBodyFor('plan'), {
+      'x-entity-org-id': 'default-org',
+      authorization: `Bearer ${CALLBACK_SECRET}`,
+    });
+    expect(res.status).toBe(202);
+    expect((res.payload as { ok: boolean }).ok).toBe(true);
+  });
+
+  it('preserves unlinked operational callback behavior regardless of request scope', async () => {
+    // Unlinked operational job (no task linkage) is always visible to the
+    // operational callback surface — tenant scope must not gate it.
+    const op = await json('POST', '/jobs', {
+      title: 'Operational sweep',
+      spec: 'Unlinked operational callback target',
+      repo: 'https://github.com/acme/ops',
+      provider: 'symphony',
+    });
+    expect(op.status).toBe(201);
+    const jobId = (op.payload as { job: { id: string; task_id: number | null } }).job.id;
+    expect((op.payload as { job: { task_id: number | null } }).job.task_id).toBeNull();
+
+    const res = await json('POST', `/jobs/${jobId}/callbacks/progress`, callbackBodyFor('progress'), {
+      'x-entity-org-id': 'some-other-org',
+      authorization: `Bearer ${CALLBACK_SECRET}`,
+    });
+    expect(res.status).toBe(202);
+    expect((res.payload as { ok: boolean }).ok).toBe(true);
+  });
+});

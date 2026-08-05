@@ -15,6 +15,7 @@ import {
   validateExecutionCallback,
   type CallbackIntakeDependencies,
   type ExecutionCallbackJobRef,
+  type ExecutionCallbackIntakeService,
 } from './index';
 import { TEST_AUTH, TEST_CALLBACK_SECRET } from './test-helpers';
 
@@ -336,6 +337,66 @@ describe('EEPC-A-03 callback intake mapping', () => {
       expect(badRes.status).toBe(400);
       const badBody = (await badRes.json()) as { error: string };
       expect(badBody.error).toBe('secret_key_forbidden');
+    } finally {
+      await close();
+    }
+  });
+
+  it('HTTP router fails closed (404 unknown_job) and skips intake when authorizeJob denies', async () => {
+    let intakeCalls = 0;
+    const fakeService = {
+      intake: async () => {
+        intakeCalls += 1;
+        return { ok: true, record: { persisted: false, degraded: false }, status: 202 };
+      },
+    } as unknown as ExecutionCallbackIntakeService;
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createExecutionCallbackIntakeRouter(fakeService, {
+        authorizeJob: async () => false,
+      }),
+    );
+    const { baseUrl, close } = await listen(app);
+    try {
+      const res = await fetch(`${baseUrl}/jobs/job-d8/callbacks/progress`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer denied-token' },
+        body: JSON.stringify({ provider: 'symphony', summary: 'denied by scope' }),
+      });
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe('unknown_job');
+      expect(intakeCalls).toBe(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it('HTTP router proceeds to intake when authorizeJob allows', async () => {
+    let intakeCalls = 0;
+    const fakeService = {
+      intake: async () => {
+        intakeCalls += 1;
+        return { ok: true, record: { persisted: false, degraded: false }, status: 202 };
+      },
+    } as unknown as ExecutionCallbackIntakeService;
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createExecutionCallbackIntakeRouter(fakeService, {
+        authorizeJob: async () => true,
+      }),
+    );
+    const { baseUrl, close } = await listen(app);
+    try {
+      const res = await fetch(`${baseUrl}/jobs/job-d8/callbacks/plan`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer allowed-token' },
+        body: JSON.stringify({ provider: 'symphony', summary: 'allowed by scope' }),
+      });
+      expect(res.status).toBe(202);
+      expect(intakeCalls).toBe(1);
     } finally {
       await close();
     }

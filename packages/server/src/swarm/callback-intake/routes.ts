@@ -51,8 +51,21 @@ function readAuthContext(req: Request): CallbackAuthContext {
   return { authorization, callbackToken };
 }
 
+export interface ExecutionCallbackIntakeRouterOptions {
+  /**
+   * D8: optional pre-intake authorization of the target job's visibility to the
+   * request scope. Return false to fail closed (404 unknown_job, no ActivityEvent
+   * intake) for a missing or out-of-scope task-linked job; return true for
+   * unlinked operational jobs and in-scope task-linked jobs. Provider callback
+   * authentication is still enforced by the intake service after this gate, and
+   * the pure intake contract (used in unit tests) is unchanged when omitted.
+   */
+  authorizeJob?: (req: Request, jobId: string) => Promise<boolean>;
+}
+
 export function createExecutionCallbackIntakeRouter(
   service: ExecutionCallbackIntakeService,
+  options?: ExecutionCallbackIntakeRouterOptions,
 ): Router {
   const router = Router();
 
@@ -64,6 +77,20 @@ export function createExecutionCallbackIntakeRouter(
           code: 'missing_job_id',
           message: 'job id is required',
           issues: [{ path: 'jobId', code: 'missing_job_id', message: 'job id is required' }],
+        }),
+      );
+    }
+
+    // D8: fail-closed tenant visibility for task-linked callback intake. Runs
+    // before payload validation / ActivityEvent mapping so a denied request
+    // appends no task activity of any kind; provider callback auth still applies
+    // afterwards for admitted requests. Unlinked operational jobs are visible.
+    if (options?.authorizeJob && !(await options.authorizeJob(req, jobId))) {
+      return res.status(404).json(
+        toPublicCallbackErrorBody({
+          code: 'unknown_job',
+          message: 'Unknown swarm job',
+          issues: [{ path: 'jobId', code: 'unknown_job', message: 'No job found for id' }],
         }),
       );
     }
