@@ -9,6 +9,8 @@ import {
   filterTasksForRequest,
   isOrgAuthorized,
   isTrustedServiceContext,
+  requireDeploymentControlAuthority,
+  requireOrgAuthority,
   resolveAuthorizedOrg,
   resolveRequestActorId,
   resolveRequestActorType,
@@ -200,5 +202,45 @@ describe('request-context authorization helpers (B1–B4)', () => {
     sendPermissionDenied(res, 'nope');
     expect(state.status).toBe(403);
     expect((state.body as { code: string }).code).toBe('permission_denied');
+  });
+});
+
+describe('R6 request-context authorization helpers (operations + onboarding)', () => {
+  it('requireDeploymentControlAuthority: trusted path + global admin allowed; tenant denied', () => {
+    // Trusted service/admin path preserved.
+    expect(requireDeploymentControlAuthority(reqWith(undefined), mockRes().res)).toBe(true);
+    // Global admin (org-less admin grant) allowed.
+    expect(requireDeploymentControlAuthority(reqWith(ctx({ isGlobalAdmin: true })), mockRes().res)).toBe(true);
+    // A tenant viewer/contributor/manager is denied (403) — deployment control
+    // is not open to tenant credentials.
+    const viewer = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'viewer', org_id: 'org-acme' }] } }));
+    const v = mockRes();
+    expect(requireDeploymentControlAuthority(viewer, v.res)).toBe(false);
+    expect(v.state.status).toBe(403);
+    const manager = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'manager', org_id: 'org-acme' }] } }));
+    const m = mockRes();
+    expect(requireDeploymentControlAuthority(manager, m.res)).toBe(false);
+    expect(m.state.status).toBe(403);
+  });
+
+  it('requireOrgAuthority: trusted path + membership+role allowed; foreign/under-privileged denied', () => {
+    // Trusted service/admin path preserved.
+    expect(requireOrgAuthority(reqWith(undefined), mockRes().res, 'org-acme', 'manager')).toBe(true);
+    // Manager in own org allowed.
+    const manager = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'manager', org_id: 'org-acme' }] }, orgIds: ['org-acme'] }));
+    expect(requireOrgAuthority(manager, mockRes().res, 'org-acme', 'manager')).toBe(true);
+    // Viewer in own org denied for a manager-level action.
+    const viewer = reqWith(ctx({ permission: { principal_id: 'p-1', grants: [{ role: 'viewer', org_id: 'org-acme' }] }, orgIds: ['org-acme'] }));
+    const v = mockRes();
+    expect(requireOrgAuthority(viewer, v.res, 'org-acme', 'manager')).toBe(false);
+    expect(v.state.status).toBe(403);
+    // A foreign (non-member) org id is denied before any role check.
+    const foreign = mockRes();
+    expect(requireOrgAuthority(manager, foreign.res, 'org-beta', 'manager')).toBe(false);
+    expect(foreign.state.status).toBe(403);
+    // A missing org id is denied.
+    const missing = mockRes();
+    expect(requireOrgAuthority(manager, missing.res, '  ', 'manager')).toBe(false);
+    expect(missing.state.status).toBe(403);
   });
 });

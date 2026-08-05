@@ -237,6 +237,66 @@ export function resolveAuthorizedOrg(
   return { orgId };
 }
 
+// ---------------------------------------------------------------------------
+// R6 (operations + business onboarding) — deployment-wide & org-scoped gates.
+// These are the principal-aware authorization layers for surfaces that are NOT
+// task objects (swarm daemon control, business onboarding org mutations). They
+// share the same persisted customer-principal model as the task helpers below:
+// the trusted service/admin path is preserved, and a customer principal is
+// evaluated against its server-resolved persisted grants (never caller headers).
+// ---------------------------------------------------------------------------
+
+/**
+ * R6: require deployment-wide control authority for infrastructure/recovery
+ * actions that are not org-scoped (swarm daemon control, manual job healing,
+ * org creation). The trusted service/admin path is preserved. A customer
+ * principal MUST hold an org-less admin grant (global admin); an org-scoped
+ * viewer/contributor/manager is denied so deployment control is never open to
+ * tenant credentials.
+ */
+export function requireDeploymentControlAuthority(req: Request, res: Response): boolean {
+  if (isTrustedServiceContext(req)) return true;
+  const ctx = getCustomerPrincipal(req);
+  if (ctx?.isGlobalAdmin) return true;
+  sendPermissionDenied(res, 'deployment control requires administrator authority');
+  return false;
+}
+
+/**
+ * R6: require that the caller is authorized for a target org at `requiredRole`.
+ * Used by business onboarding org mutations (patch/provision/confirm). The
+ * trusted service/admin path is preserved. A customer principal MUST (a) hold
+ * membership in `orgId` (a guessed/spoofed foreign org is denied) and (b) meet
+ * `requiredRole` via its persisted grants for that org. Cross-org, spoofed-org,
+ * and under-privileged callers are denied before any durable read or mutation.
+ */
+export function requireOrgAuthority(
+  req: Request,
+  res: Response,
+  orgId: string | null | undefined,
+  requiredRole: PermissionRole,
+): boolean {
+  if (isTrustedServiceContext(req)) return true;
+  const normalized = typeof orgId === 'string' ? orgId.trim() : '';
+  if (!normalized) {
+    sendPermissionDenied(res, 'target org is required');
+    return false;
+  }
+  if (!isOrgAuthorized(req, normalized)) {
+    sendPermissionDenied(res, 'target org is outside the principal membership');
+    return false;
+  }
+  const ctx = getCustomerPrincipal(req);
+  const effectiveRole = ctx
+    ? resolveInheritedRole(ctx.permission, { org_id: normalized })
+    : 'none';
+  if (!roleMeets(effectiveRole, requiredRole)) {
+    sendPermissionDenied(res, `${requiredRole} role required for org ${normalized}`);
+    return false;
+  }
+  return true;
+}
+
 export type TaskOperation =
   | 'read' | 'create' | 'update' | 'move' | 'comment' | 'note' | 'activity'
   | 'subtask' | 'project_link' | 'handoff' | 'merge' | 'delete' | 'review' | 'human_gate';

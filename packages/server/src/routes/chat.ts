@@ -15,7 +15,7 @@ import {
 } from '../../../db/src';
 import { ChatModelRegistry, type ChatModelOption } from './chat-model-registry';
 import { requireRequestOrg, sendPermissionDenied, type RequestOrgBinding } from '../request-permissions';
-import { isTrustedServiceContext } from '../principals/request-context';
+import { isTrustedServiceContext, requireOrgAuthority } from '../principals/request-context';
 
 interface ChatObjectRefAccessDecision {
   allowed: boolean;
@@ -847,6 +847,27 @@ export function registerChatRoutes({
     }
     return { object_refs: visibleRefs, restricted_count: restrictedCount };
   }
+
+  /**
+   * D-R6-MUTATION-GATES: chat-wide mutation gate. Every non-GET/HEAD/OPTIONS
+   * request to /api/chat must be backed by a persisted CONTRIBUTOR grant for
+   * the resolved request org. Reads keep their existing per-route read checks
+   * (exempt here). The trusted service/admin path is preserved —
+   * requireOrgAuthority returns true for it. Scope resolution failure already
+   * writes a 400/403 via requireRequestOrg; the gate returns without calling
+   * next() so no duplicate response is ever emitted. Per-route scope checks
+   * (resolveChatScope) remain in place and are unaffected.
+   */
+  app.use('/api/chat', (req, res, next) => {
+    const method = req.method.toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+      return next();
+    }
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return; // scope resolution already wrote 400/403; do not double-respond
+    if (!requireOrgAuthority(req, res, binding.orgId, 'contributor')) return;
+    next();
+  });
 
   app.get('/api/chat/me', (_req, res) => {
     res.json({
