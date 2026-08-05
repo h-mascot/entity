@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { HttpRequestError, buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
+import { resolveTaskDetailViewState } from '../../lib/taskDetailViewState';
 import { useUserProfile } from '../../lib/userProfile';
 import PluginDetailSlot from '../plugins/PluginDetailSlot';
 import MarkdownPreview from '../MarkdownPreview';
@@ -1732,6 +1733,7 @@ export default function TaskDetailPanel({
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [taskNotFound, setTaskNotFound] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [task, setTask] = useState<TaskDetailData | null>(null);
   const [form, setForm] = useState<TaskFormState | null>(null);
@@ -1830,6 +1832,7 @@ export default function TaskDetailPanel({
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setTaskNotFound(false);
     setSaveMessage(null);
     setDetailTab('activity');
     setActivityView('human');
@@ -1876,6 +1879,7 @@ export default function TaskDetailPanel({
         }
 
         setError(toErrorMessage(loadError, 'Unable to load task detail.'));
+        setTaskNotFound(loadError instanceof HttpRequestError && loadError.status === 404);
         setTask(null);
         setForm(null);
       } finally {
@@ -1949,6 +1953,16 @@ export default function TaskDetailPanel({
   }, [activityView, task]);
 
   const commentTree = useMemo(() => buildCommentTree(comments), [comments]);
+  const detailViewState = useMemo(
+    () =>
+      resolveTaskDetailViewState({
+        loading,
+        hasTask: Boolean(task),
+        hasForm: Boolean(form),
+        notFound: taskNotFound,
+      }),
+    [loading, task, form, taskNotFound],
+  );
   const outputLinks = useMemo(() => extractTaskOutputLinks(task?.output ?? ''), [task?.output]);
   const receiptProof = useMemo(() => (task ? buildReceiptProofView(task, outputLinks) : null), [outputLinks, task]);
   const documentObjectViews = useMemo(() => (task ? buildTaskDocumentObjectViews(task, receiptProof) : []), [receiptProof, task]);
@@ -3269,13 +3283,13 @@ export default function TaskDetailPanel({
 	            ))}
 	          </aside>
 	          <div className="h-full overflow-y-auto overscroll-contain px-4 py-3 pr-[5.25rem] sm:px-5 sm:pr-[5.25rem] max-md:h-auto max-md:min-h-0 max-md:flex-1 max-md:!pr-4">
-	          {loading ? (
+	          {detailViewState === 'loading' ? (
 	            <div className="flex flex-col gap-3">
               <div className="h-28 rounded-xl bg-[var(--bg-tertiary)]" />
               <div className="h-40 rounded-xl bg-[var(--bg-tertiary)]" />
               <div className="h-56 rounded-xl bg-[var(--bg-tertiary)]" />
             </div>
-	          ) : task && form ? (
+	          ) : detailViewState === 'ready' && task && form ? (
 	            <div className="flex flex-col gap-3">
               {error ? (
                 <div className="rounded-xl border border-[var(--error)]/40 bg-[var(--surface-error)] px-4 py-3 text-sm text-[var(--error)]">
@@ -4581,11 +4595,50 @@ export default function TaskDetailPanel({
                 ) : null}
               </section>
             </div>
+          ) : detailViewState === 'not-found' ? (
+            <div
+              className="flex h-full flex-col items-center justify-center gap-3 px-4 py-10 text-center"
+              role="alert"
+              aria-live="polite"
+              data-testid="task-detail-not-found"
+            >
+              <span className="text-4xl" aria-hidden="true">🔍</span>
+              <h2 className="text-lg font-semibold text-[var(--text-primary)]">Task not found</h2>
+              <p className="max-w-sm text-sm text-[var(--text-muted)]">
+                We couldn’t find this task. It may have been deleted, or the link may be incorrect.
+              </p>
+              <button
+                type="button"
+                className="mc-shell-btn mc-shell-btn-active mt-1 px-4 py-2 text-sm font-medium text-[var(--text-primary)]"
+                onClick={handleClose}
+              >
+                Back to tasks
+              </button>
+            </div>
           ) : (
-	            <div className="rounded-xl border border-[var(--error)]/40 bg-[var(--surface-error)] px-4 py-3 text-sm text-[var(--error)]">
-	              {error ?? 'Task detail is unavailable.'}
-	            </div>
-	          )}
+            <div
+              className="flex h-full flex-col items-center justify-center gap-3 px-4 py-10 text-center"
+              role="alert"
+              aria-live="polite"
+              data-testid="task-detail-error"
+            >
+              <span className="text-4xl" aria-hidden="true">⚠️</span>
+              <h2 className="text-lg font-semibold text-[var(--text-primary)]">Task detail is unavailable</h2>
+              <p className="max-w-sm text-sm text-[var(--text-muted)]">
+                We couldn’t load this task right now. Check your connection and try again.
+              </p>
+              {error ? (
+                <p className="max-w-sm text-xs text-[var(--text-muted)]">{error}</p>
+              ) : null}
+              <button
+                type="button"
+                className="mc-shell-btn mc-shell-btn-active mt-1 px-4 py-2 text-sm font-medium text-[var(--text-primary)]"
+                onClick={handleClose}
+              >
+                Back to tasks
+              </button>
+            </div>
+          )}
 	          </div>
 	        </div>
       </div>

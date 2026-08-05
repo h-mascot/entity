@@ -74,6 +74,7 @@ import {
   type DocHubTool,
 } from './lib/docHubRoute';
 import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
+import { classifyAppRoute, extractTaskRouteId } from './lib/routeClassification';
 import { shouldBypassGatesForWorkplaneDeepLink } from './lib/workplaneRefreshRestore';
 import { isWorkplaneRoutePath } from './lib/workplaneShellModel';
 import { mobileCommentsPermissionMessage } from './lib/mobileCommentsState';
@@ -157,6 +158,43 @@ function LazySurfaceFallback({ label = 'Loading workspace' }: { label?: string }
       <div className="flex items-center gap-2 rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2">
         <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]" aria-hidden="true" />
         <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Visible, accessible not-found surface for unsupported browser pathnames
+ * (QA-ROUTE-NOT-FOUND). Shows a clear heading + message and a safe action back
+ * to the workspace. Renders no tenant/task details.
+ */
+function RouteNotFoundSurface({
+  heading = 'Page not found',
+  message = 'This link may be incorrect, or the page may have been moved or deleted.',
+}: {
+  heading?: string;
+  message?: string;
+}) {
+  // Full `<a href="/">` navigation (a real browser location change + reload),
+  // not a SPA history rewrite. replaceBrowserPath('/') can set state to its
+  // existing value and skip a rerender, leaving this not-found surface stuck
+  // at "/". A plain anchor guarantees the workspace shell mounts deterministically.
+  return (
+    <div className="flex h-screen w-full items-center justify-center bg-[var(--bg-primary)] px-4 text-[var(--text-secondary)]">
+      <div
+        role="alert"
+        aria-live="polite"
+        className="flex w-full max-w-md flex-col items-center gap-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-6 py-8 text-center"
+      >
+        <span className="text-4xl" aria-hidden="true">🧭</span>
+        <h1 className="text-lg font-semibold text-[var(--text-primary)]">{heading}</h1>
+        <p className="text-sm text-[var(--text-muted)]">{message}</p>
+        <a
+          href="/"
+          className="mc-shell-btn mc-shell-btn-active mt-2 px-4 py-2 text-sm font-medium text-[var(--text-primary)]"
+        >
+          Back to workspace
+        </a>
       </div>
     </div>
   );
@@ -949,16 +987,6 @@ function buildRawFilePreviewUrl(filePath: string | null, sourceId: string | null
 
   const candidates = buildApiCandidates(`/file/raw?${params.toString()}`, apiBase);
   return candidates[0] ?? null;
-}
-
-function extractTaskRouteId(pathname: string): number | null {
-  const match = pathname.match(/^\/(?:task|tasks)\/(\d+)(?:\/|$)/i);
-  if (!match) {
-    return null;
-  }
-
-  const taskId = Number(match[1]);
-  return Number.isInteger(taskId) && taskId > 0 ? taskId : null;
 }
 
 function normalizeAuthorshipActor(author: string): DocumentAuthorshipActor {
@@ -5674,11 +5702,29 @@ export default function App() {
   const businessOnboardingRouteActive = typeof window !== 'undefined' && window.location.pathname === BUSINESS_ONBOARDING_ROUTE;
   const shouldShowOnboarding = Boolean(onboardingToken) || onboardingRouteActive || onboardingCompleted === false;
 
+  // QA-ROUTE-NOT-FOUND — classify unsupported pathnames once, ahead of the
+  // onboarding gates. An unsupported link (e.g. /onboarding/<unknown>) must
+  // show the visible not-found surface even when onboardingCompleted === false;
+  // otherwise the general onboarding gate below would swallow it and render the
+  // onboarding flow. classifyAppRoute returns a supported kind for every real
+  // surface (workspace/onboarding/business/task/docs/workplane), so legitimate
+  // routes pass through unchanged.
+  const routeKind =
+    typeof window !== 'undefined'
+      ? classifyAppRoute(window.location.pathname, window.location.search)
+      : 'workspace';
+
   // THE-858 / WP1-A-03 — Workplane route + shell (URL state from THE-857).
   // THE-859 — workplaneRouteActive updates on Open Workplane pushState/popstate.
   // THE-861 — cold load / hard refresh must restore Workplane ahead of onboarding gates.
   if (workplaneRouteActive) {
     return <LazyWorkplaneShell />;
+  }
+
+  // Render unsupported routes before any onboarding gate so an unknown
+  // /onboarding/* link can never be masked by the onboarding flow.
+  if (routeKind === 'not-found') {
+    return <RouteNotFoundSurface />;
   }
 
   if (businessOnboardingRouteActive) {
