@@ -53,9 +53,9 @@ Swarm capability.
   reload. Rebuild app; browser verify.
 
 ### BRD-003 — Task membership/filter behavior + migration
-- [ ] 3a. Filter adapter (derive visible tasks from board filter_config; Engineering
+- [x] 3a. Filter adapter (derive visible tasks from board filter_config; Engineering
   template defaults use work-domain/project metadata). Pure reducer tests.
-- [ ] 3b. Migrate stored `entity.tasks.tab` (kanban/insights/strategic/plugin ids) to a
+- [x] 3b. Migrate stored `entity.tasks.tab` (kanban/insights/strategic/plugin ids) to a
   valid board on load; never blank screen. Regression tests.
 
 ### BRD-004 — Swarm as task execution capability
@@ -76,6 +76,7 @@ Swarm capability.
 - `packages/server/src/index.ts` (+import +mount `/api/boards`) (BRD-001)
 - commit `ab5f2b7`
 - `packages/app/src/lib/boardsState.ts` (+test), `packages/app/src/lib/boardsClient.ts`, `packages/app/src/components/BoardSwitcher.tsx`, `packages/app/src/App.tsx` (BRD-002)
+- `packages/app/src/lib/boardTaskFilter.ts` (+test), `packages/app/src/lib/boardsState.ts` (resolveInitialActiveBoard), `packages/app/src/App.tsx` (filter wiring) (BRD-003)
 
 ## Resume Instructions
 On compaction/restart: re-read AGENTS.md → CONTEXT.md → external plan.md → source-map.json

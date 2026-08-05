@@ -153,6 +153,24 @@ export function initBoardsState(
   };
 }
 
+/**
+ * Resolve the board to restore on load from stored state. A still-valid stored
+ * board id wins; otherwise the legacy `entity.tasks.tab` value is migrated to a
+ * default board key; otherwise General; otherwise the first board. Returns null
+ * only when there are no boards (rendered as an empty/loading state, never blank).
+ */
+export function resolveInitialActiveBoard(
+  boards: BoardSummary[],
+  storage: { storedBoardId?: number | null; legacyTab?: string | null },
+): number | null {
+  const storedId = storage.storedBoardId ?? null;
+  if (Number.isInteger(storedId) && boards.some((board) => board.id === storedId)) {
+    return storedId as number;
+  }
+  const preferredKey = preferredBoardKeyFromLegacyTab(storage.legacyTab);
+  return resolveActiveId(boards, preferredKey);
+}
+
 export function selectBoard(state: BoardsState, boardId: number): BoardsState {
   if (!state.boards.some((board) => board.id === boardId)) {
     return state;

@@ -86,9 +86,10 @@ import {
 import {
   boardViewToRenderTab,
   initBoardsState,
-  preferredBoardKeyFromLegacyTab,
+  resolveInitialActiveBoard,
   type BoardSummary,
 } from './lib/boardsState';
+import { selectTasksForBoard } from './lib/boardTaskFilter';
 import {
   fetchBoards,
   createBoard as createBoardApi,
@@ -1814,22 +1815,17 @@ export default function App() {
           typeof window !== 'undefined' && window.localStorage
             ? window.localStorage.getItem('entity.tasks.board')
             : null;
-        const storedBoardId = Number(storedBoardIdRaw);
         const legacyTab =
           typeof window !== 'undefined' && window.localStorage
             ? window.localStorage.getItem('entity.tasks.tab')
             : null;
-        const preferredKey =
-          Number.isInteger(storedBoardId) && list.some((board) => board.id === storedBoardId)
-            ? null
-            : preferredBoardKeyFromLegacyTab(legacyTab);
-        const base = initBoardsState(list, preferredKey ?? undefined);
-        const next =
-          Number.isInteger(storedBoardId) && list.some((board) => board.id === storedBoardId)
-            ? { ...base, activeBoardId: storedBoardId as number }
-            : base;
-        setBoardsState(next);
-        const chosen = next.boards.find((board) => board.id === next.activeBoardId) ?? null;
+        const storedBoardId = Number(storedBoardIdRaw);
+        const activeBoardId = resolveInitialActiveBoard(list, {
+          storedBoardId: Number.isInteger(storedBoardId) ? storedBoardId : null,
+          legacyTab,
+        });
+        setBoardsState({ boards: list, activeBoardId });
+        const chosen = list.find((board) => board.id === activeBoardId) ?? null;
         if (chosen) {
           setMcBoardTab(boardViewToRenderTab(chosen.view));
         }
@@ -3930,6 +3926,13 @@ export default function App() {
       return true;
     });
   }, [tasks, mcAssigneeFilter, mcPriorityFilter, mcProjectFilter]);
+  // Apply the active board's persisted filter configuration so a board's contents
+  // derive from its config (BRD-003). General (scope 'all') is a no-op, keeping
+  // all existing tasks visible; Engineering/Strategic render dedicated surfaces.
+  const boardTasks = useMemo(() => {
+    if (!activeBoard) return filteredBoardTasks;
+    return selectTasksForBoard(filteredBoardTasks, activeBoard);
+  }, [filteredBoardTasks, activeBoard]);
   const selectedAgentData = selectedAgent ? agents.find((agent) => agent.id === selectedAgent) : null;
   const selectedSource = currentSourceId ? fileSources.find((source) => source.id === currentSourceId) : null;
   const rightPaneSource = rightPaneSourceId ? fileSources.find((source) => source.id === rightPaneSourceId) : null;
@@ -5537,7 +5540,7 @@ export default function App() {
               searchQuery={taskSearchQuery}
               showArchiveColumn={showArchiveColumn}
               onArchiveColumnVisibilityChange={setShowArchiveColumn}
-              tasks={filteredBoardTasks}
+              tasks={boardTasks}
               loading={tasksLoading}
               error={tasksError}
               returnBoard={mcBoardTab}

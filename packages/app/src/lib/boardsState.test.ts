@@ -12,6 +12,7 @@ import {
   getOrderedBoards,
   getActiveBoard,
   getActiveBoardView,
+  resolveInitialActiveBoard,
   parseBoardSummary,
   parseBoardsListResponse,
   type BoardSummary,
@@ -200,4 +201,31 @@ test('parseBoardsListResponse reads { boards: [...] } and drops invalid rows', (
 
   assert.deepEqual(parseBoardsListResponse(null), []);
   assert.deepEqual(parseBoardsListResponse({ boards: 'nope' }), []);
+});
+
+test('resolveInitialActiveBoard restores a stored board id when it still exists', () => {
+  const boards = [general, analytics, platform];
+  assert.equal(resolveInitialActiveBoard(boards, { storedBoardId: platform.id }), platform.id);
+});
+
+test('resolveInitialActiveBoard migrates a stale stored id via the legacy tab to analytics', () => {
+  const boards = [general, analytics];
+  // stored id 999 no longer exists; legacy tab 'insights' -> analytics
+  assert.equal(
+    resolveInitialActiveBoard(boards, { storedBoardId: 999, legacyTab: 'insights' }),
+    analytics.id,
+  );
+});
+
+test('resolveInitialActiveBoard falls back to General for kanban/unknown/plugin tabs and empty storage', () => {
+  const boards = [general, analytics];
+  assert.equal(resolveInitialActiveBoard(boards, { legacyTab: 'kanban' }), general.id);
+  assert.equal(resolveInitialActiveBoard(boards, { legacyTab: 'strategic' }), general.id);
+  assert.equal(resolveInitialActiveBoard(boards, { legacyTab: 'plugin:geordi' }), general.id);
+  assert.equal(resolveInitialActiveBoard(boards, {}), general.id);
+});
+
+test('resolveInitialActiveBoard never returns a blank screen: falls to first board / null only when empty', () => {
+  assert.equal(resolveInitialActiveBoard([platform], {}), platform.id);
+  assert.equal(resolveInitialActiveBoard([], { legacyTab: 'kanban' }), null);
 });
