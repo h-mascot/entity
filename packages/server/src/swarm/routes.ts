@@ -11,6 +11,7 @@ import {
   listSwarmJobs,
   getSwarmJob,
   createSwarmJob,
+  createActiveTaskSwarmJob,
   updateSwarmJob,
   deleteSwarmJob,
   listSwarmProofs,
@@ -39,8 +40,15 @@ import {
   getValidatedManifestByProvider,
   resolveCallbackAuthSecretFromEnv,
 } from './callback-intake';
-import { findActiveSwarmJob, buildRunWithAgentsJobInput } from './task-run';
-import { createTaskRepository } from '../../../db/src';
+import {
+  buildRunWithAgentsJobInput,
+  resolveRunWithAgentsTarget,
+  isTaskEligibleForAgentRun,
+  isTaskInScope,
+} from './task-run';
+import { createTaskSyncLayer } from '../../../db/src/task-sync';
+import { DEFAULT_WORKSPACE_ORG_ID, DEFAULT_WORKSPACE_TEAM_ID } from '../../../db/src';
+import type { TaskRecord } from '../../../db/src';
 
 function readTrimmedString(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -62,6 +70,31 @@ function isSwarmPriority(value: string): value is NonNullable<CreateSwarmJobInpu
 
 function isSwarmStatus(value: string): value is NonNullable<UpdateSwarmJobInput['status']> {
   return SWARM_JOB_STATUSES.includes(value as (typeof SWARM_JOB_STATUSES)[number]);
+}
+
+/** Request-derived org/team scope for Run-with-agents authorization (fail closed). */
+function resolveRequestScope(req: Request): { orgId: string; teamId: string } {
+  const headerOrg = typeof req.header('x-entity-org-id') === 'string' ? req.header('x-entity-org-id')!.trim() : '';
+  const headerTeam = typeof req.header('x-entity-team-id') === 'string' ? req.header('x-entity-team-id')!.trim() : '';
+  return {
+    orgId: headerOrg || DEFAULT_WORKSPACE_ORG_ID,
+    teamId: headerTeam || DEFAULT_WORKSPACE_TEAM_ID,
+  };
+}
+
+export interface SwarmRouterDeps {
+  /** Active task source (configured taskSyncLayer). Defaults to a local task-sync layer. */
+  getTask?: (id: number) => Promise<TaskRecord | undefined>;
+}
+
+// Lazy default task source so test/runtime env is read at first use, never an
+// ad-hoc local repository that bypasses the configured adapter / tenant scope.
+let _defaultGetTask: ((id: number) => Promise<TaskRecord | undefined>) | null = null;
+function defaultGetTask(id: number): Promise<TaskRecord | undefined> {
+  if (!_defaultGetTask) {
+    _defaultGetTask = createTaskSyncLayer().getTask;
+  }
+  return _defaultGetTask(id);
 }
 
 function buildCreateJobPayload(body: Record<string, unknown>): CreateSwarmJobInput & { shouldQueue: boolean } {
@@ -117,8 +150,9 @@ function buildJobUpdates(body: Record<string, unknown>): UpdateSwarmJobInput {
   return updates;
 }
 
-export function createSwarmRouter(): Router {
+export function createSwarmRouter(deps: SwarmRouterDeps = {}): Router {
   const router = Router();
+  const resolveTask = deps.getTask ?? defaultGetTask;
 
   // EEPC-A-03 — callback intake → ActivityEvents (does not replace legacy mutation routes).
   // EEPC-A-07 — authRequired callbacks resolve secrets from env (never logged / never in errors).
@@ -224,7 +258,10 @@ export function createSwarmRouter(): Router {
 
   // ── Run with agents (task-linked) ──
   // BRD-004: Swarm is invoked from an eligible task, not presented as a board.
-  // Creates a task-linked job (or returns the existing in-flight one) and queues it.
+  // Reads the task through the configured task source (taskSyncLayer), enforces
+  // request-derived tenant scope and eligibility, resolves a real dispatch
+  // target (fail closed — never an example placeholder), and creates at most one
+  // active job per task via an atomic DB invariant.
   router.post('/tasks/:taskId/run', async (req: Request, res: Response) => {
     try {
       const taskId = Number(req.params.taskId);
@@ -232,22 +269,45 @@ export function createSwarmRouter(): Router {
         res.status(400).json({ error: 'taskId must be a positive integer' });
         return;
       }
-      const task = createTaskRepository().getTask(taskId);
-      if (!task) {
+      const task = await resolveTask(taskId);
+      if (!task || !isTaskInScope({ org_id: task.org_id, team_id: task.team_id }, resolveRequestScope(req))) {
+        // Fail closed: do not leak existence of out-of-scope tasks.
         res.status(404).json({ error: 'task not found' });
         return;
       }
-
-      const existing = findActiveSwarmJob(listSwarmJobs({ task_id: taskId }));
-      if (existing) {
-        res.status(200).json({ job: getSwarmJob(existing.id), alreadyActive: true });
+      if (
+        !isTaskEligibleForAgentRun({
+          name: task.name,
+          archived: task.archived,
+          column: task.column,
+        })
+      ) {
+        res.status(409).json({
+          error: 'task is not eligible for an agent run',
+          code: 'TASK_NOT_ELIGIBLE',
+        });
         return;
       }
-
-      const created = createSwarmJob(buildRunWithAgentsJobInput(task));
-      updateSwarmJob(created.id, { status: 'queued' });
+      const target = resolveRunWithAgentsTarget({
+        body: (req.body ?? {}) as Record<string, unknown>,
+        task: { metadata: task.metadata },
+        env: process.env,
+      });
+      if (!target) {
+        res.status(400).json({
+          error: 'no execution target configured for Run with agents',
+          code: 'NO_EXECUTION_TARGET',
+        });
+        return;
+      }
+      const result = createActiveTaskSwarmJob(buildRunWithAgentsJobInput(task, { target }));
+      if (!result.created) {
+        res.status(200).json({ job: result.job, alreadyActive: true });
+        return;
+      }
+      updateSwarmJob(result.job.id, { status: 'queued' });
       await kickAutoDispatch();
-      res.status(201).json({ job: getSwarmJob(created.id) });
+      res.status(201).json({ job: getSwarmJob(result.job.id) ?? result.job });
     } catch (error) {
       res.status(500).json({ error: 'Failed to start run' });
     }

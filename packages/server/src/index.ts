@@ -413,7 +413,7 @@ registerPluginRuntimeModules({
   workspaceRoot: WORKSPACE,
 });
 // Mount core swarm lifecycle routes (dispatch, accept, reject, cancel, providers)
-app.use("/api/swarm", createSwarmRouter());
+app.use("/api/swarm", createSwarmRouter({ getTask: (id) => taskSyncLayer.getTask(id) }));
 
 // Customizable boards API (General/Analytics defaults; Blank/Strategic/Engineering
 // templates). Swarm is NOT a board — see task-detail "Run with agents" (BRD-004).

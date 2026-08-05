@@ -1,86 +1,36 @@
-# Plan — Entity Customizable Boards (Governed Runner)
+# Active Plan — Luna CHANGES_REQUESTED Repair Generation 1
 
-**Created:** 2026-08-05
-**Agent:** Pi glm5.2 (worker), Luna gpt-5.6 (read-only review)
-**Status:** IN PROGRESS
-**Worktree:** `/Users/enterprise/Code/entity-customizable-boards-runner-20260805`
-**Branch:** `runner/customizable-boards-20260805`
-**Base:** `6049cdf1fb1006ff8eedb5a60b51bb08f8e2c91b`
-**External authority:** `/Users/enterprise/clawd/output/entity/customizable-boards-runner-20260805/plan.md`
+Run: `entity-customizable-boards-runner-20260805`
+Reviewed clean HEAD (start): `d83bac03673d289f2d9e6431fbd82da858f8f715`
+Worker: Pi citadel/glm5.2 (medium), sole gen-1 repair worker.
+Production: FORBIDDEN. Do not touch canonical `/Users/enterprise/Code/entity` or sandbox.
 
-## Task
-Replace the fixed Tasks peer tabs (`Kanban / Strategic / Insights / Swarm`) with a
-customizable, persistent board model. Defaults: **General** and **Analytics**.
-Templates: **Blank / Strategic / Engineering**. Swarm becomes a task execution
-capability ("Run with agents"), not a board. Preserve all existing tasks/data and
-Swarm capability.
+## Slices (from repair-map-g1.md) — sequential narrow TDD
 
-## Context
-- Existing fixed tabs: `packages/app/src/lib/mcBoardTabs.ts` + `App.tsx` (`mcBoardTab`).
-- DB patterns: standalone modules (`packages/db/src/file-sources.ts`) with
-  `getEntityDatabase(ensureXSchema)` + `createXRepository()` factory; strategic repo
-  singleton in `packages/db/src/index.ts`. Server imports db via `../../db/src/*`.
-- Swarm jobs already carry `task_id` (`packages/server/src/swarm/db.ts`).
-- Strict TDD: RED first (record cmd+output), then GREEN, refactor while green.
+### Phase A — Swarm server cluster (share swarm/routes.ts, task-run.ts, db.ts)
+- [x] A1. BRD-004 dispatch target fail-closed (no example placeholder) — task-run.ts
+- [x] A2. BRD-004 eligibility predicate — task-run.ts + routes.ts
+- [x] A3. BRD-004 source/auth: active task source (taskSyncLayer) + request scope — routes.ts
+- [x] A4. BRD-004 atomic duplicate guard: partial unique index + transactional insert — db.ts + routes.ts
 
-## Dependencies
-- BRD-002 depends on BRD-001 (board API + domain types).
-- BRD-003 depends on BRD-002 (board switcher UI + stored-tab migration).
-- BRD-004 depends on BRD-001 (board API exists) but is otherwise independent of 002/003.
-- BRD-005 (gates/review/delivery) depends on all prior.
+### Phase B — Boards DB + route (share db/src/boards.ts, server/routes/boards.ts)
+- [ ] B1. BRD-001 tenant scope: request-derived org/team, scoped repository, isolation — boards.ts + routes/boards.ts
+- [ ] B2. BRD-001 defaults guaranteed before first create — boards.ts (+ route POST seeds)
 
-## Plan (slices, each = RED → GREEN → refactor → commit)
+### Phase C — App UI (pure-logic tested via node:test in app/src/lib)
+- [ ] C1. BRD-002 customization controls (view/filter + reorder) — BoardSwitcher + App.tsx + lib helper
+- [ ] C2. BRD-003 membership: persisted filter applied to Engineering/Strategic — boardTaskFilter/MCEngineeringEntry/App.tsx
+- [ ] C3. BRD-003 deletion reselection drives render tab — boardsState helper + App.tsx
+- [ ] C4. BRD-004 proof/status: polling + terminal + proof affordance — swarmTaskRunClient lib + TaskDetailPanel
 
-### BRD-001 — Persistent board domain + API
-- [x] 1a. Pure domain helpers (views/templates/validation, filter-config normalize,
-  legacy-tab→default-board-key migration). `packages/db/src/boards.ts`
-  - **Verify:** `cd packages/db && npx vitest run src/boards.test.ts -t "domain"`
-- [x] 1b. Repository persistence (schema ensure, CRUD, seed General/Analytics idempotent,
-  reorder, delete-default guard) against temp DB. `packages/db/src/boards.ts`
-  - **Verify:** `cd packages/db && npx vitest run src/boards.test.ts`
-- [x] 1c. REST API `createBoardsRouter()` (list/create/update/reorder/delete + error
-  paths), mounted at `/api/boards`. `packages/server/src/routes/boards.ts` + index.ts mount
-  - **Verify:** `cd packages/server && npx vitest run src/routes/boards.test.ts`
-- [x] 1d. Full db+server gate for BRD-001. Commit slice.
-  - **Verify:** `cd packages/db && npx vitest run && cd ../server && npm run build && npx vitest run`
+## Final gate
+- [ ] server build + vitest; app test; db test
+- [ ] tsconfig check (app/server)
+- [ ] ctrl:gate under Node 22 (`/opt/homebrew/opt/node@22/bin/node`)
+- [ ] git diff --check; private-default + secrets/diff scope; diff vs base = BRD scope only
+- [ ] scoped commits; clean worktree
+- [ ] update receipts (red-green, focused-proof, ctrl-gate, runner-state READY_FOR_REVIEW at new HEAD); do NOT rewrite historical Luna JSON
+- [ ] STOP. No review/push/PR/merge/deploy.
 
-### BRD-002 — Board navigation + customization UI
-- [x] 2a. Board reducer/adapter (load, select, create-from-template, rename, reorder,
-  delete) as pure logic in `packages/app/src/lib/boards*.ts`. RED-first.
-- [x] 2b. Board switcher component in App.tsx replacing fixed tabs; General=board,
-  Analytics=analytics; + Add board from templates. Responsive/mobile-safe, accessible.
-- [x] 2c. Wire board selection to existing TaskBoard/analytics surfaces; persist after
-  reload. Rebuild app; browser verify.
-
-### BRD-003 — Task membership/filter behavior + migration
-- [x] 3a. Filter adapter (derive visible tasks from board filter_config; Engineering
-  template defaults use work-domain/project metadata). Pure reducer tests.
-- [x] 3b. Migrate stored `entity.tasks.tab` (kanban/insights/strategic/plugin ids) to a
-  valid board on load; never blank screen. Regression tests.
-
-### BRD-004 — Swarm as task execution capability
-- [x] 4a. Remove Swarm from board selector (already not a default board; ensure no entry).
-- [x] 4b. "Run with agents" control in TaskDetailPanel: create task-linked swarm job via
-  `/api/swarm/jobs`, prevent duplicate active jobs, show progress/error/proof. RED-first
-  route/state tests for linkage, duplicate-active handling, error paths.
-
-### BRD-005 — Proof, review, delivery, sandbox QA
-- [x] 5a. `npm run ctrl:gate` (build + unit) from this worktree; save `ctrl-gate.log`.
-- [x] 5b. Private-default/secrets/diff inspection; save receipts.
-- [ ] 5c. Fresh read-only Luna-high review at HEAD (MANAGER-OWNED); bounded repair if actionable.
-- [ ] 5d. Non-production delivery + sandbox browser QA (MANAGER-OWNED). Stop at READY_FOR_REVIEW.
-
-## Files Touched (running log)
-- `packages/db/src/boards.ts`, `packages/db/src/boards.test.ts` (BRD-001)
-- `packages/server/src/routes/boards.ts`, `packages/server/src/routes/boards.test.ts` (BRD-001)
-- `packages/server/src/index.ts` (+import +mount `/api/boards`) (BRD-001)
-- commit `ab5f2b7`
-- `packages/app/src/lib/boardsState.ts` (+test), `packages/app/src/lib/boardsClient.ts`, `packages/app/src/components/BoardSwitcher.tsx`, `packages/app/src/App.tsx` (BRD-002)
-- `packages/app/src/lib/boardTaskFilter.ts` (+test), `packages/app/src/lib/boardsState.ts` (resolveInitialActiveBoard), `packages/app/src/App.tsx` (filter wiring) (BRD-003)
-- `packages/server/src/swarm/task-run.ts` (+test), `packages/server/src/swarm/routes.ts` (POST /tasks/:taskId/run), `packages/server/src/swarm/task-run-routes.test.ts`, `packages/app/src/lib/swarmTaskRunClient.ts`, `packages/app/src/components/mission-control/TaskDetailPanel.tsx` (BRD-004)
-
-## Resume Instructions
-On compaction/restart: re-read AGENTS.md → CONTEXT.md → external plan.md → source-map.json
-→ runner-state.json → `git status`/`git log`. Find first unchecked `[ ]` above and
-continue from there. Do NOT redo completed steps. Keep receipts in the external receipt
-root only.
+## Resume
+Continue from first unchecked `[ ]`. After Phase A/B/C, run final gate. State ends READY_FOR_REVIEW.
