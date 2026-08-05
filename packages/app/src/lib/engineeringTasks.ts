@@ -8,6 +8,7 @@ import type {
   TaskPriority,
 } from '../hooks/useTaskBoard.ts';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from './http.ts';
+import type { BoardFilterConfigLike } from './boardTaskFilter.ts';
 
 const ENGINEERING_WORK_DOMAIN = 'engineering';
 const TASK_PAGE_LIMIT = 2_000;
@@ -31,8 +32,32 @@ interface LoadEngineeringTasksOptions {
   request?: EngineeringTaskRequest;
 }
 
+/**
+ * Default Engineering-template task filter applied when no customized board
+ * filter is supplied, preserving the template's engineering work-domain scope
+ * while letting a customized board override it (e.g. scope=all) (BRD-002/003).
+ */
+export const ENGINEERING_DEFAULT_FILTER: BoardFilterConfigLike = {
+  scope: 'workDomain',
+  workDomain: ENGINEERING_WORK_DOMAIN,
+};
+
+/**
+ * Resolve the effective Engineering board filter: the persisted custom filter
+ * wins; otherwise the engineering work-domain default (BRD-002/003).
+ */
+export function resolveEngineeringBoardFilter(
+  boardFilter?: BoardFilterConfigLike | null,
+): BoardFilterConfigLike {
+  return boardFilter ?? ENGINEERING_DEFAULT_FILTER;
+}
+
 export function buildEngineeringTaskCandidates(apiBase = ''): string[] {
-  return buildApiCandidates(`/tasks?work_domain=${ENGINEERING_WORK_DOMAIN}`, apiBase);
+  // D10 (BRD-002/003): the Engineering board's membership source is the
+  // canonical task list, not the dedicated work-domain endpoint, so a customized
+  // board filter (e.g. scope=all) can select non-engineering tasks. The active
+  // board's persisted filter narrows this list locally.
+  return buildApiCandidates('/tasks', apiBase);
 }
 
 export function isEngineeringViewportMatch(viewport: MCViewport, width: number): boolean {
@@ -55,7 +80,8 @@ export function resolveEngineeringHighlightTaskId(
 }
 
 function appendPageQuery(url: string, offset: number): string {
-  return `${url}&limit=${TASK_PAGE_LIMIT}&offset=${offset}`;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}limit=${TASK_PAGE_LIMIT}&offset=${offset}`;
 }
 
 function readTaskPageMeta(payload: unknown): TaskPageMeta | null {
@@ -116,18 +142,14 @@ function normalizeProjects(value: unknown): TaskBoardProject[] {
   });
 }
 
-function normalizeEngineeringTask(raw: unknown): TaskBoardTask | null {
+// D10 (BRD-002/003): the normalizer accepts the full canonical task list (any
+// work domain) so the active board persisted filter controls membership locally.
+function normalizeBoardTask(raw: unknown): TaskBoardTask | null {
   if (!raw || typeof raw !== 'object') {
     return null;
   }
 
   const row = raw as Record<string, unknown>;
-  if (
-    row.work_domain !== ENGINEERING_WORK_DOMAIN ||
-    row.work_domain_state !== 'resolved'
-  ) {
-    return null;
-  }
 
   const id = Number(row.id);
   const name = optionalString(row.name);
@@ -180,8 +202,8 @@ function normalizeEngineeringTask(raw: unknown): TaskBoardTask | null {
     updated_at: timestamp(row.updated_at ?? row.created_at),
     metadata: typeof row.metadata === 'string' ? row.metadata : null,
     worktype: optionalString(row.worktype),
-    work_domain: ENGINEERING_WORK_DOMAIN,
-    work_domain_state: 'resolved',
+    work_domain: optionalString(row.work_domain),
+    work_domain_state: optionalString(row.work_domain_state),
     policy_inputs_json:
       typeof row.policy_inputs_json === 'string' ? row.policy_inputs_json : null,
     review_required: row.review_required === true || row.review_required === 1,
@@ -211,7 +233,7 @@ export function filterEngineeringTaskPayload(payload: unknown): TaskBoardTask[] 
       : [];
 
   return rawTasks
-    .map(normalizeEngineeringTask)
+    .map(normalizeBoardTask)
     .filter((task): task is TaskBoardTask => task !== null);
 }
 

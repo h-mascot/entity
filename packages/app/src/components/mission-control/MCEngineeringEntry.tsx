@@ -5,6 +5,7 @@ import { useTaskBoard, type TaskBoardTask, type TaskColumn } from '../../hooks/u
 import {
   isEngineeringViewportMatch,
   loadEngineeringTasks,
+  resolveEngineeringBoardFilter,
   resolveEngineeringHighlightTaskId,
   toEngineeringLoadError,
 } from '../../lib/engineeringTasks';
@@ -158,12 +159,14 @@ export default function MCEngineeringEntry({
     void reload();
     onCloseTask?.();
   }, [onCloseTask, reload]);
-  // BRD-003: apply the active board's persisted filter so a customized Engineering
-  // board's contents derive from its configuration (e.g. a project subset), not a
-  // fixed work-domain fetch alone. Defaults to all loaded engineering tasks.
+  // BRD-002/003 / D10: membership operates over the canonical task list and the
+  // active board's persisted filter controls contents locally. The default
+  // Engineering template still narrows to the engineering work domain when no
+  // custom filter is supplied.
+  const effectiveFilter = resolveEngineeringBoardFilter(boardFilter);
   const visibleTasks = useMemo(
-    () => (boardFilter ? selectTasksForBoard(tasks, { filter_config: boardFilter }) : tasks),
-    [tasks, boardFilter],
+    () => selectTasksForBoard(tasks, { filter_config: effectiveFilter }),
+    [tasks, effectiveFilter],
   );
   const safeHighlightTaskId = resolveEngineeringHighlightTaskId(visibleTasks, highlightTaskId);
 
