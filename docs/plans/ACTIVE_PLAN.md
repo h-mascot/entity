@@ -24,13 +24,13 @@ Production: FORBIDDEN. Do not touch canonical `/Users/enterprise/Code/entity` or
 - [x] C4. BRD-004 proof/status: polling + terminal + proof affordance — swarmTaskRunClient lib + TaskDetailPanel
 
 ## Final gate
-- [ ] server build + vitest; app test; db test
-- [ ] tsconfig check (app/server)
-- [ ] ctrl:gate under Node 22 (`/opt/homebrew/opt/node@22/bin/node`)
-- [ ] git diff --check; private-default + secrets/diff scope; diff vs base = BRD scope only
-- [ ] scoped commits; clean worktree
-- [ ] update receipts (red-green, focused-proof, ctrl-gate, runner-state READY_FOR_REVIEW at new HEAD); do NOT rewrite historical Luna JSON
-- [ ] STOP. No review/push/PR/merge/deploy.
+- [x] server build + vitest; app test; db test  (db 99, server 1386, app 455)
+- [x] tsconfig check (app/server)  (server tsc clean, app tsc+vite clean)
+- [x] ctrl:gate under Node 22 (`/opt/homebrew/opt/node@22/bin/node`)  (exit 0; ctrl-gate-g1.log)
+- [x] git diff --check; private-default + secrets/diff scope; diff vs base = BRD scope only  (0 errors; BRD-only)
+- [x] scoped commits; clean worktree  (1f5b3f2, a0fc4a0, b4495eb; HEAD b4495eb, clean)
+- [x] update receipts (red-green, focused-proof, ctrl-gate, runner-state READY_FOR_REVIEW at new HEAD); do NOT rewrite historical Luna JSON
+- [x] STOP. No review/push/PR/merge/deploy.
 
 ## Resume
 Continue from first unchecked `[ ]`. After Phase A/B/C, run final gate. State ends READY_FOR_REVIEW.
