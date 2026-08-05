@@ -39,6 +39,8 @@ import {
   getValidatedManifestByProvider,
   resolveCallbackAuthSecretFromEnv,
 } from './callback-intake';
+import { findActiveSwarmJob, buildRunWithAgentsJobInput } from './task-run';
+import { createTaskRepository } from '../../../db/src';
 
 function readTrimmedString(value: unknown): string | undefined {
   if (typeof value !== 'string') {
@@ -218,6 +220,37 @@ export function createSwarmRouter(): Router {
       return;
     }
     res.json({ ok: true });
+  });
+
+  // ── Run with agents (task-linked) ──
+  // BRD-004: Swarm is invoked from an eligible task, not presented as a board.
+  // Creates a task-linked job (or returns the existing in-flight one) and queues it.
+  router.post('/tasks/:taskId/run', async (req: Request, res: Response) => {
+    try {
+      const taskId = Number(req.params.taskId);
+      if (!Number.isInteger(taskId) || taskId <= 0) {
+        res.status(400).json({ error: 'taskId must be a positive integer' });
+        return;
+      }
+      const task = createTaskRepository().getTask(taskId);
+      if (!task) {
+        res.status(404).json({ error: 'task not found' });
+        return;
+      }
+
+      const existing = findActiveSwarmJob(listSwarmJobs({ task_id: taskId }));
+      if (existing) {
+        res.status(200).json({ job: getSwarmJob(existing.id), alreadyActive: true });
+        return;
+      }
+
+      const created = createSwarmJob(buildRunWithAgentsJobInput(task));
+      updateSwarmJob(created.id, { status: 'queued' });
+      await kickAutoDispatch();
+      res.status(201).json({ job: getSwarmJob(created.id) });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to start run' });
+    }
   });
 
   // ── Dispatch & Status ──

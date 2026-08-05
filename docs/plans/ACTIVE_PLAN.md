@@ -59,8 +59,8 @@ Swarm capability.
   valid board on load; never blank screen. Regression tests.
 
 ### BRD-004 — Swarm as task execution capability
-- [ ] 4a. Remove Swarm from board selector (already not a default board; ensure no entry).
-- [ ] 4b. "Run with agents" control in TaskDetailPanel: create task-linked swarm job via
+- [x] 4a. Remove Swarm from board selector (already not a default board; ensure no entry).
+- [x] 4b. "Run with agents" control in TaskDetailPanel: create task-linked swarm job via
   `/api/swarm/jobs`, prevent duplicate active jobs, show progress/error/proof. RED-first
   route/state tests for linkage, duplicate-active handling, error paths.
 
@@ -77,6 +77,7 @@ Swarm capability.
 - commit `ab5f2b7`
 - `packages/app/src/lib/boardsState.ts` (+test), `packages/app/src/lib/boardsClient.ts`, `packages/app/src/components/BoardSwitcher.tsx`, `packages/app/src/App.tsx` (BRD-002)
 - `packages/app/src/lib/boardTaskFilter.ts` (+test), `packages/app/src/lib/boardsState.ts` (resolveInitialActiveBoard), `packages/app/src/App.tsx` (filter wiring) (BRD-003)
+- `packages/server/src/swarm/task-run.ts` (+test), `packages/server/src/swarm/routes.ts` (POST /tasks/:taskId/run), `packages/server/src/swarm/task-run-routes.test.ts`, `packages/app/src/lib/swarmTaskRunClient.ts`, `packages/app/src/components/mission-control/TaskDetailPanel.tsx` (BRD-004)
 
 ## Resume Instructions
 On compaction/restart: re-read AGENTS.md → CONTEXT.md → external plan.md → source-map.json
