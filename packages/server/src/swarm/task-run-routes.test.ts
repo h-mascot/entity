@@ -281,3 +281,156 @@ describe('task-linked Swarm read scoping (D5)', () => {
     expect(crossTenant.status).toBe(404);
   });
 });
+
+describe('unfiltered GET /jobs cross-tenant scoping (D5 g4)', () => {
+  beforeEach(() => {
+    process.env.ENTITY_TRUST_TENANT_HEADERS = '1';
+  });
+  afterEach(() => {
+    delete process.env.ENTITY_TRUST_TENANT_HEADERS;
+  });
+
+  it('filters cross-tenant task-linked jobs out of the unfiltered list while keeping unlinked jobs', async () => {
+    // Task-linked job owned by default-org (created through the governed path).
+    const task = createTask('Owned execution', 'Scoped run');
+    const run = await json('POST', `/tasks/${task.id}/run`, undefined, {
+      'x-entity-org-id': 'default-org',
+    });
+    expect(run.status).toBe(201);
+    const linkedJobId = (run.payload as { job: { id: string } }).job.id;
+
+    // Unlinked operational job (no task linkage) — always visible operationally.
+    const op = await json('POST', '/jobs', {
+      title: 'Operational sweep',
+      spec: 'Unlinked operational job',
+      repo: 'https://github.com/acme/ops',
+      provider: 'symphony',
+    });
+    expect(op.status).toBe(201);
+    const opJobId = (op.payload as { job: { id: string } }).job.id;
+
+    // In-scope request sees both the task-linked job and the unlinked job.
+    const inScope = await json('GET', '/jobs', undefined, {
+      'x-entity-org-id': 'default-org',
+    });
+    expect(inScope.status).toBe(200);
+    const inScopeIds = (inScope.payload as { jobs: Array<{ id: string }> }).jobs.map((j) => j.id);
+    expect(inScopeIds).toContain(linkedJobId);
+    expect(inScopeIds).toContain(opJobId);
+
+    // Cross-tenant request must NOT see the task-linked job, but the unlinked
+    // operational job remains visible (operational surface retained).
+    const crossTenant = await json('GET', '/jobs', undefined, {
+      'x-entity-org-id': 'some-other-org',
+    });
+    expect(crossTenant.status).toBe(200);
+    const crossIds = (crossTenant.payload as { jobs: Array<{ id: string }> }).jobs.map((j) => j.id);
+    expect(crossIds).not.toContain(linkedJobId);
+    expect(crossIds).toContain(opJobId);
+  });
+});
+
+describe('task-linked mutation cross-tenant scoping (D5 g4)', () => {
+  beforeEach(() => {
+    process.env.ENTITY_TRUST_TENANT_HEADERS = '1';
+  });
+  afterEach(() => {
+    delete process.env.ENTITY_TRUST_TENANT_HEADERS;
+  });
+
+  // Creates a task-linked job owned by default-org and returns its id plus the
+  // initial status snapshot for post-mutation unchanged assertions.
+  async function createOwnedLinkedJob() {
+    const task = createTask('Owned mutable run', 'Scoped mutation target');
+    const run = await json('POST', `/tasks/${task.id}/run`, undefined, {
+      'x-entity-org-id': 'default-org',
+    });
+    expect(run.status).toBe(201);
+    const jobId = (run.payload as { job: { id: string; status: string } }).job.id;
+    const before = (await json('GET', `/jobs/${jobId}`, undefined, {
+      'x-entity-org-id': 'default-org',
+    }).then((r) => r.payload as { job: { status: string; spec: string } })).job;
+    return { task, jobId, beforeStatus: before.status, beforeSpec: before.spec };
+  }
+
+  // Every task-linked mutation/control/proof path must fail closed (404) for a
+  // cross-tenant caller and leave the job state untouched. Unlinked operational
+  // behavior is covered by the existing routes/e2e suites and is intentionally
+  // not re-asserted here.
+  const cases: Array<{
+    name: string;
+    method: string;
+    path: (jobId: string) => string;
+    body?: unknown;
+    proofsBefore?: number;
+  }> = [
+    { name: 'PATCH update', method: 'PATCH', path: (id) => `/jobs/${id}`, body: { spec: 'hacked cross-tenant' } },
+    { name: 'DELETE', method: 'DELETE', path: (id) => `/jobs/${id}` },
+    { name: 'dispatch', method: 'POST', path: (id) => `/jobs/${id}/dispatch` },
+    { name: 'check status', method: 'POST', path: (id) => `/jobs/${id}/check` },
+    { name: 'accept', method: 'POST', path: (id) => `/jobs/${id}/accept` },
+    { name: 'reject', method: 'POST', path: (id) => `/jobs/${id}/reject`, body: { feedback: 'no' } },
+    { name: 'cancel', method: 'POST', path: (id) => `/jobs/${id}/cancel` },
+    { name: 'claim', method: 'POST', path: (id) => `/jobs/${id}/claim`, body: { claimed_by: 'x', run_handle: 'x:h' } },
+    { name: 'release', method: 'POST', path: (id) => `/jobs/${id}/release` },
+    { name: 'status mutation', method: 'POST', path: (id) => `/jobs/${id}/status`, body: { status: 'running' } },
+    { name: 'proof', method: 'POST', path: (id) => `/jobs/${id}/proof`, body: { commit_sha: 'abc' } },
+    { name: 'complete', method: 'POST', path: (id) => `/jobs/${id}/complete` },
+    { name: 'fail', method: 'POST', path: (id) => `/jobs/${id}/fail`, body: { reason: 'boom' } },
+  ];
+
+  for (const c of cases) {
+    it(`blocks cross-tenant ${c.name} with 404 and leaves the job untouched`, async () => {
+      const { jobId, beforeStatus, beforeSpec } = await createOwnedLinkedJob();
+
+      const res = await json(c.method, c.path(jobId), c.body, {
+        'x-entity-org-id': 'some-other-org',
+      });
+      expect(res.status).toBe(404);
+
+      // Job still exists for the in-scope owner and is unchanged.
+      const after = await json('GET', `/jobs/${jobId}`, undefined, {
+        'x-entity-org-id': 'default-org',
+      });
+      expect(after.status).toBe(200);
+      const afterJob = (after.payload as { job: { status: string; spec: string }; proofs: unknown[] }).job;
+      expect(afterJob.status).toBe(beforeStatus);
+      expect(afterJob.spec).toBe(beforeSpec);
+
+      // No proof was appended cross-tenant.
+      const proofs = await json('GET', `/jobs/${jobId}/proofs`, undefined, {
+        'x-entity-org-id': 'default-org',
+      });
+      expect((proofs.payload as { proofs: unknown[] }).proofs).toHaveLength(0);
+    });
+  }
+});
+
+describe('generic POST /jobs task-linked creation boundary (D5 g4)', () => {
+  it('rejects task_id on the generic create path (task linkage is governed)', async () => {
+    const task = createTask('Should not link here', 'via generic create');
+    const res = await json('POST', '/jobs', {
+      title: 'Arbitrary link',
+      spec: 'Attempt to bypass governed lifecycle',
+      repo: 'https://github.com/acme/entity',
+      provider: 'symphony',
+      task_id: task.id,
+    });
+    expect(res.status).toBe(400);
+    expect((res.payload as { code?: string }).code).toBe('TASK_LINK_REQUIRES_GOVERNED_PATH');
+    // No job was created for this task.
+    expect(listSwarmJobs({ task_id: task.id })).toHaveLength(0);
+  });
+
+  it('still creates unlinked operational jobs on the generic create path', async () => {
+    const res = await json('POST', '/jobs', {
+      title: 'Operational job',
+      spec: 'Unlinked operational creation is preserved',
+      repo: 'https://github.com/acme/ops',
+      provider: 'symphony',
+    });
+    expect(res.status).toBe(201);
+    const job = (res.payload as { job: { task_id: number | null } }).job;
+    expect(job.task_id).toBeNull();
+  });
+});
