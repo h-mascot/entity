@@ -139,7 +139,7 @@ function higherRole(left: PermissionRole, right: PermissionRole): PermissionRole
   return ROLE_RANK[left] >= ROLE_RANK[right] ? left : right;
 }
 
-function roleMeets(role: PermissionRole, required: PermissionRole): boolean {
+export function roleMeets(role: PermissionRole, required: PermissionRole): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[required];
 }
 

@@ -9,6 +9,11 @@ import {
   type UpdateTaskInput,
 } from '../../../db/src';
 import { asyncHandler } from '../middleware/async-handler';
+import {
+  authorizeTaskOperation,
+  resolveRequestActorId,
+  resolveRequestActorType,
+} from '../principals/request-context';
 
 export interface TaskReviewGateRouterDependencies {
   getTask: (taskId: number) => Promise<TaskRecord | undefined> | TaskRecord | undefined;
@@ -23,16 +28,16 @@ function parsePositiveTaskId(value: string): number | null {
 }
 
 function readActor(req: Request, fallback: string): string {
-  const headerActor = req.header('X-Entity-Actor') ?? req.header('X-Agent-Name');
-  if (typeof headerActor === 'string' && headerActor.trim()) {
-    return headerActor.trim();
-  }
-  const body = req.body as Record<string, unknown> | undefined;
-  const bodyActor = body?.actor_principal_id ?? body?.actorPrincipalId ?? body?.actor;
-  return typeof bodyActor === 'string' && bodyActor.trim() ? bodyActor.trim() : fallback;
+  // Actor identity is server-resolved for customer principals (Terra B2); the
+  // historical header/body convention is preserved only for the trusted
+  // service/admin path. A caller can no longer impersonate reviewer-1/approver-1
+  // by sending X-Entity-Actor.
+  return resolveRequestActorId(req, fallback);
 }
 
 function readActorType(req: Request): ReviewGateActorType {
+  const resolved = resolveRequestActorType(req, 'unknown');
+  if (resolved !== 'unknown') return resolved;
   const body = req.body as Record<string, unknown> | undefined;
   const raw = req.header('X-Entity-Actor-Type') ?? body?.actor_type ?? body?.actorType;
   return raw === 'human' || raw === 'agent' || raw === 'system' || raw === 'workflow' ? raw : 'unknown';
@@ -81,7 +86,11 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
   const router = Router();
   const defaultActor = dependencies.defaultActor ?? 'Human';
 
-  async function getTaskOrRespond(req: Request, res: Response) {
+  async function getTaskOrRespond(
+    req: Request,
+    res: Response,
+    operation: 'read' | 'review' | 'human_gate' = 'read',
+  ) {
     const taskId = parsePositiveTaskId(req.params.id);
     if (!taskId) {
       res.status(400).json({ error: 'invalid task id' });
@@ -92,6 +101,8 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
       res.status(404).json({ error: 'task not found' });
       return null;
     }
+    // Tenant-authorize the loaded task before any exposure or mutation (B3).
+    if (!authorizeTaskOperation(req, res, task, operation)) return null;
     return task;
   }
 
@@ -114,7 +125,7 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
   }));
 
   async function applyReviewDecision(req: Request, res: Response, decision: 'accepted' | 'request_fix') {
-    const task = await getTaskOrRespond(req, res);
+    const task = await getTaskOrRespond(req, res, 'review');
     if (!task) return;
     const actor = readActor(req, defaultActor);
     const result = buildTaskReviewDecisionUpdates({
@@ -151,7 +162,7 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
   router.post('/:id/review/request-fix', asyncHandler(async (req, res) => applyReviewDecision(req, res, 'request_fix')));
 
   router.post('/:id/human-gate/request', asyncHandler(async (req, res) => {
-    const task = await getTaskOrRespond(req, res);
+    const task = await getTaskOrRespond(req, res, 'human_gate');
     if (!task) return;
     const actor = readActor(req, defaultActor);
     const result = buildTaskHumanGateRequestUpdates({
@@ -184,7 +195,7 @@ export function createTaskReviewGateRouter(dependencies: TaskReviewGateRouterDep
   }));
 
   async function applyHumanGateDecision(req: Request, res: Response, decision: 'approved' | 'rejected') {
-    const task = await getTaskOrRespond(req, res);
+    const task = await getTaskOrRespond(req, res, 'human_gate');
     if (!task) return;
     const actor = readActor(req, defaultActor);
     const actorType = readActorType(req);

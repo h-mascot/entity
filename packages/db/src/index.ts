@@ -11439,6 +11439,18 @@ export {
   type StoredActivityEventSpine,
 } from './activity-event-spine-store';
 
+// Task handoffs — tenant-scoped handoff DAG (Curacel pilot C-8)
+export {
+  TASK_HANDOFF_STATUSES,
+  createTaskHandoffRepository,
+  ensureTaskHandoffsSchema,
+  type TaskDependencyStatus,
+  type TaskHandoffChain,
+  type TaskHandoffRecord,
+  type TaskHandoffRepository,
+  type TaskHandoffStatus,
+} from './task-handoffs';
+
 
 export function getSubscribedCrews(agentSlug: string): CrewRecord[] {
   return getStrategicRepository().getSubscribedCrews(agentSlug);

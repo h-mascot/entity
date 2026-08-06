@@ -16,6 +16,7 @@ import {
 } from '../../../db/src';
 import { ChatModelRegistry, type ChatModelOption } from './chat-model-registry';
 import { requireRequestOrg, sendPermissionDenied, type RequestOrgBinding } from '../request-permissions';
+import { isTrustedServiceContext, requireOrgAuthority } from '../principals/request-context';
 import { type PrincipalGrant } from '../permissions';
 import { createAgentNoiseGuard, type AgentNoiseGuard, type NoiseReservation } from './agent-noise-guard';
 import { getEntityDatabase } from '../../../db/src/entity-db';
@@ -36,6 +37,8 @@ interface ChatRouteDependencies {
   clickClackBridge?: ClickClackChatBridge;
   clickClackReadiness?: ClickClackReadinessProbe;
   chatObjectRefAccess?: ChatObjectRefAccess;
+  /** Resolve task ownership for tenant-safe task chat and ObjectRef checks. */
+  getTaskOrg?: (taskId: string) => Promise<string | null | undefined> | string | null | undefined;
   /**
    * THE-931: gate chat *history* reads (message/channel/thread content) on the
    * org/team-grant ownership model. Defaults to principalCanReadChatHistory.
@@ -160,10 +163,10 @@ export interface ScopedChatRepository {
   listChannelObjectRefs(id: string): ObjectRef[];
   listThreadObjectRefs(id: string): ObjectRef[];
   listCategories(): ChatCategoryRecord[];
-  createCategory(input: { name: string; emoji?: string; order?: number }): ChatCategoryRecord;
+  createCategory(input: { name: string; emoji?: string; order?: number; id?: string }): ChatCategoryRecord;
   /** Returns null when the principal has no creation scope (fail closed). */
   creationScope(): ChatCreationScope | null;
-  createChannel(input: { name: string; description?: string; category_id: string; order?: number; agents?: string[] }): ChatChannelRecord;
+  createChannel(input: { name: string; description?: string; category_id: string; order?: number; agents?: string[] }): ChatChannelRecord | undefined;
   updateChannel(id: string, patch: { name?: string; description?: string; category_id?: string; order?: number; agents?: string[] }): ChatChannelRecord | undefined;
   deleteChannel(id: string): boolean;
   markChannelRead(id: string): boolean;
@@ -223,6 +226,7 @@ export function createScopedChatRepository(
     createCategory: (input) => {
       if (!creationScope) throw new Error('chat category creation requires an assignment');
       return repo.createCategory({
+        id: input.id,
         name: input.name,
         emoji: input.emoji,
         order: input.order,
@@ -238,7 +242,7 @@ export function createScopedChatRepository(
       if (!categoryMatchesOwner(category, {
         org_id: creationScope.orgId,
         team_id: creationScope.teamId,
-      })) throw new Error('category not found');
+      })) return undefined;
       return repo.createChannel({
         name: input.name,
         description: input.description,
@@ -1027,53 +1031,34 @@ async function requestLlmResponse(agent: string, content: string, modelId?: stri
   }
 }
 
-async function ensureDefaults() {
+async function ensureDefaults(orgId?: string, options: { legacy?: boolean } = {}) {
   const repo = createChatRepository();
-  const categories = repo.listCategories();
-  const byName = new Map(categories.map((row) => [row.name.trim().toLowerCase(), row]));
-
-  const general = byName.get('general') ?? repo.createCategory({ id: 'general', name: 'General', emoji: '💬', order: 0 });
-  const agents = byName.get('agents') ?? repo.createCategory({ id: 'agents', name: 'Agents', emoji: '🤖', order: 1 });
-
-  const channels = repo.listChannels();
-  const channelByName = new Map(channels.map((row) => [row.name.trim().toLowerCase(), row]));
-
-  if (!channelByName.has('command-deck')) {
-    repo.createChannel({ id: 'command-deck', name: 'command-deck', category_id: general.id, order: 0, agents: [] });
+  // THE-931 (R2) + ClickClack local compatibility: namespaced per-org channels
+  // are the tenant-isolated path for customer principals. The trusted
+  // service/admin path (local dev, no customer credential) keeps current-main's
+  // legacy unnamespaced, org-less default channels so existing local flows that
+  // address e.g. "command-deck" by literal id keep resolving. Legacy channels
+  // are visible only to the local-admin principal (includeLegacy), so this never
+  // widens access for tenant/customer principals.
+  const scoped = !options.legacy && typeof orgId === 'string' && orgId.trim() ? orgId.trim() : undefined;
+  const prefix = scoped ? `${scoped}::` : '';
+  const categoryOrgId = scoped ?? null;
+  const general = repo.getCategoryByName('General', scoped)
+    ?? repo.createCategory({ id: `${prefix}general`, name: 'General', emoji: '💬', order: 0, org_id: categoryOrgId });
+  const agents = repo.getCategoryByName('Agents', scoped)
+    ?? repo.createCategory({ id: `${prefix}agents`, name: 'Agents', emoji: '🤖', order: 1, org_id: categoryOrgId });
+  const defaults = [
+    ['command-deck', general.id, 0, []], ['ada', agents.id, 0, ['ada']],
+    ['spock', agents.id, 1, ['spock']], ['scotty', agents.id, 2, ['scotty']],
+    ['geordi', agents.id, 3, ['geordi']], ['zora', agents.id, 4, ['zora']],
+    ['midas', agents.id, 5, ['midas']], ['random', general.id, 1, []],
+  ] as const;
+  for (const [name, categoryId, order, agentsList] of defaults) {
+    if (!repo.getChannelByName(name, scoped)) {
+      repo.createChannel({ id: `${prefix}${name}`, name, category_id: categoryId, order, agents: [...agentsList], org_id: categoryOrgId });
+    }
   }
-
-  if (!channelByName.has('ada')) {
-    repo.createChannel({ id: 'ada', name: 'ada', category_id: agents.id, order: 0, agents: ['ada'] });
-  }
-
-  if (!channelByName.has('spock')) {
-    repo.createChannel({ id: 'spock', name: 'spock', category_id: agents.id, order: 1, agents: ['spock'] });
-  }
-
-  if (!channelByName.has('scotty')) {
-    repo.createChannel({ id: 'scotty', name: 'scotty', category_id: agents.id, order: 2, agents: ['scotty'] });
-  }
-
-  if (!channelByName.has('geordi')) {
-    repo.createChannel({ id: 'geordi', name: 'geordi', category_id: agents.id, order: 3, agents: ['geordi'] });
-  }
-
-  if (!channelByName.has('zora')) {
-    repo.createChannel({ id: 'zora', name: 'zora', category_id: agents.id, order: 4, agents: ['zora'] });
-  }
-
-  if (!channelByName.has('midas')) {
-    repo.createChannel({ id: 'midas', name: 'midas', category_id: agents.id, order: 5, agents: ['midas'] });
-  }
-
-  if (!channelByName.has('random')) {
-    repo.createChannel({ id: 'random', name: 'random', category_id: general.id, order: 1, agents: [] });
-  }
-
-  return {
-    categories: repo.listCategories().map(toCategory),
-    channels: repo.listChannels().map(toChannel),
-  };
+  return { categories: repo.listCategories(scoped).map(toCategory), channels: repo.listChannels(scoped).map(toChannel) };
 }
 
 function prettifyOllamaName(name: string): string {
@@ -1135,6 +1120,7 @@ export function registerChatRoutes({
   clickClackBridge,
   clickClackReadiness,
   chatObjectRefAccess = allowChatObjectRef,
+  getTaskOrg,
   chatHistoryAccess = principalCanReadChatHistory,
   agentNoiseGuard,
 }: ChatRouteDependencies): void {
@@ -1161,6 +1147,23 @@ export function registerChatRoutes({
       policy: readChatNoiseSettings,
     });
   })();
+
+  // D-R6-MUTATION-GATES: chat-wide mutation gate. Every non-GET/HEAD/OPTIONS
+  // request to /api/chat must be backed by a CONTRIBUTOR grant for the resolved
+  // request org (the trusted service/admin path is preserved). Reads keep their
+  // existing per-route checks. Scope resolution failure already writes a
+  // 400/403 via requireRequestOrg; the gate returns without calling next() so no
+  // duplicate response is ever emitted.
+  app.use('/api/chat', (req, res, next) => {
+    const method = req.method.toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+      return next();
+    }
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return; // scope resolution already wrote 400/403; do not double-respond
+    if (!requireOrgAuthority(req, res, binding.orgId, 'contributor')) return;
+    next();
+  });
 
   app.get('/api/chat/me', (_req, res) => {
     res.json({
@@ -1234,7 +1237,7 @@ export function registerChatRoutes({
     }
   });
 
-  app.get('/api/chat/task/:taskId', (req, res) => {
+  app.get('/api/chat/task/:taskId', async (req, res) => {
     try {
       const taskId = String(req.params.taskId ?? '').trim();
       if (!taskId) {
@@ -1244,6 +1247,13 @@ export function registerChatRoutes({
       const binding = requireRequestOrg(req, res);
       if (!binding) return undefined;
       const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+      // Fail closed for unknown and foreign tasks before attempting chat lookup.
+      if (getTaskOrg) {
+        const taskOrg = await getTaskOrg(taskId);
+        if (!taskOrg || taskOrg !== binding.orgId) {
+          return res.status(404).json({ error: 'task not found' });
+        }
+      }
       // THE-931: denied principals get the same empty shape as a task with no
       // channel — no existence leak.
       if (!scoped.historyAllowed()) {
@@ -1470,6 +1480,7 @@ export function registerChatRoutes({
         return sendPermissionDenied(res, 'chat category creation requires an assignment');
       }
       const category = scoped.createCategory({
+        id: typeof req.body?.id === 'string' ? req.body.id : undefined,
         name: String(req.body?.name ?? '').trim(),
         emoji: typeof req.body?.emoji === 'string' ? req.body.emoji : undefined,
         order: Number.isFinite(Number(req.body?.order)) ? Number(req.body.order) : undefined,
@@ -1505,6 +1516,9 @@ export function registerChatRoutes({
         order: Number.isFinite(Number(req.body?.order)) ? Number(req.body.order) : undefined,
         agents: normalizeAgents(req.body?.agents),
       });
+      if (!channel) {
+        return res.status(404).json({ error: 'category not found' });
+      }
 
       return res.status(201).json({ channel: toChannel(channel) });
     } catch (err) {
@@ -1522,7 +1536,9 @@ export function registerChatRoutes({
       const channel = scoped.updateChannel(req.params.channelId, {
         name: typeof req.body?.name === 'string' ? req.body.name : undefined,
         description: typeof req.body?.description === 'string' ? req.body.description : undefined,
-        category_id: typeof req.body?.categoryId === 'string' ? req.body.categoryId : undefined,
+        category_id: typeof (req.body?.categoryId ?? req.body?.category_id) === 'string'
+          ? String(req.body.categoryId ?? req.body.category_id)
+          : undefined,
         order: Number.isFinite(Number(req.body?.order)) ? Number(req.body.order) : undefined,
         agents: Array.isArray(req.body?.agents) ? normalizeAgents(req.body.agents) : undefined,
       });
@@ -1600,7 +1616,7 @@ export function registerChatRoutes({
     const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
     if (!scoped.historyAllowed()) return denyChatHistory(res, 'chat setup unavailable');
     try {
-      const snapshot = await ensureDefaults();
+      const snapshot = await ensureDefaults(binding.orgId, { legacy: isTrustedServiceContext(req) });
       // THE-931 (R2): ensureDefaults bootstraps legacy unowned channels/categories;
       // the setup surface returns only channels AND categories the principal owns
       // (legacy rows fail closed for every non-local-admin principal). Ownership
