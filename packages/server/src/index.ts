@@ -118,6 +118,9 @@ import { ensureDevDocumentsToken, shouldProvisionDevDocumentsToken } from "./edi
 import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
+import { createTaskHandoffRouter } from "./routes/task-handoffs";
+import { createCustomerPrincipalMiddleware } from "./principals/request-context";
+import { createDataPlaneCredentialGuard } from "./middleware/data-plane-credential";
 import { registerStrategicRoutes, registerTaskRoutes } from "./routes/tasks";
 import {
   buildTaskPreview,
@@ -196,6 +199,7 @@ import { createTaskSyncLayer, normalizeDbMode } from "../../db/src/task-sync";
 import {
   createAgentRegistryRepository,
   createModuleRegistryRepository,
+  createTaskHandoffRepository,
 } from "../../db/src";
 
 const app = express();
@@ -215,6 +219,18 @@ const notificationRepository = createNotificationRepository();
 
 // API authentication — requires ENTITY_API_TOKEN env var; skips when unset (dev mode)
 app.use(createApiAuthMiddleware());
+// Layer an individually revocable per-request customer principal on top of
+// the deployment bearer (Terra B1). Runs after api-auth; resolves an optional
+// x-entity-access-token to an active principal + scoped grants. Absent token
+// => trusted service/admin path is unchanged (PR #71/#72 preserved).
+app.use(createCustomerPrincipalMiddleware());
+// Centralized customer data-plane credential guard (Terra R1). With API auth
+// enabled, the shared ENTITY_API_TOKEN is TRANSPORT ONLY; every customer
+// data-plane route additionally requires a valid, active, individually
+// revocable x-entity-access-token. Missing/invalid/revoked/disabled credentials
+// fail closed (403) and never downgrade. Public/control routes pass through;
+// local dev (API auth disabled) is inert.
+app.use(createDataPlaneCredentialGuard());
 
 registerCoreProbeRoutes(app, phase2Flags);
 registerConfigRoutes(app);
@@ -492,7 +508,10 @@ registerAgentRegistryRoutes(app, {
 
 
 
+const taskHandoffRepo = createTaskHandoffRepository();
+
 const taskRouteDeps = {
+  curacelHandoffRepository: taskHandoffRepo,
   AGENT_CONFIG, WORKSPACE, broadcast, buildTaskPreview,
   deriveSubtaskBreakdown, evidenceArtifactRepository, isValidTaskColumn,
   mergeTaskMetadataWithParentLink, normalizeBlockerReasonInput,
@@ -564,6 +583,18 @@ app.use("/api/tasks", createTaskReviewGateRouter({
   activityRepository,
   defaultActor: getDefaultTaskActor(),
 }));
+// Task handoffs (Curacel pilot C-8): org-scoped handoff DAG. Authorization is
+// main's bearer-token middleware; the tenant boundary is enforced by the
+// org-scoped repository (org derived from the task row, never a header).
+const taskHandoffRouter = createTaskHandoffRouter({
+  handoffRepo: taskHandoffRepo,
+  taskStore: { getTask: (taskId: number) => taskSyncLayer.getTask(taskId) },
+  resolveTargetAgent: ({ agentId }) =>
+    Boolean(agentRegistryRepo.getAgent(agentId) ?? agentRegistryRepo.getAgentBySlug(agentId)),
+  defaultActor: getDefaultTaskActor(),
+});
+app.use("/tasks", taskHandoffRouter);
+app.use("/api/tasks", taskHandoffRouter);
 registerStrategicRoutes(app, "", taskRouteDeps);
 registerStrategicRoutes(app, "/api", taskRouteDeps);
 if (!AGENT_NATIVE_EDITOR_ENABLED) {
@@ -594,7 +625,7 @@ const clickClackBridge = process.env.ENTITY_CHAT_CLICKCLACK_BRIDGE === '1'
   ? createClickClackBridge()
   : undefined;
 registerClickClackProxyRoutes(app);
-registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge });
+registerChatRoutes({ app, openClawBaseUrl: OPENCLAW, clickClackBridge, getTaskOrg: async (taskId) => (await taskSyncLayer.getTask(Number(taskId)))?.org_id ?? null });
 
 
 // TTS routes

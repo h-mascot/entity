@@ -106,3 +106,35 @@ test('workspace tab routes round-trip through browser history state', () => {
   assert.equal(resolveWorkspaceTabRoute('/', '?tab=tasks'), 'tasks');
   assert.equal(resolveWorkspaceTabRoute('/task/42', '?tab=agents'), null);
 });
+
+test('workspace tab deep links resolve every supported tab including admin (QA-ADMIN-NAVIGATION)', () => {
+  // The visible Admin control pushes /?tab=admin; the workspace shell must
+  // resolve it to the admin tab on both click and cold reload/deep-link so the
+  // existing AdminView renders instead of falling through to the default.
+  assert.equal(resolveWorkspaceTabRoute('/', '?tab=admin'), 'admin');
+  assert.equal(resolveWorkspaceTabRoute('/', '?tab=services'), 'services');
+  assert.equal(resolveWorkspaceTabRoute('/', '?tab=chat'), 'chat');
+  assert.equal(resolveWorkspaceTabRoute('/', '?tab=files'), 'files');
+  // Unknown / missing tabs never return null on root — they default to files so
+  // a stale or malformed link still renders a supported surface.
+  assert.equal(resolveWorkspaceTabRoute('/', '?tab=bogus'), 'files');
+  assert.equal(resolveWorkspaceTabRoute('/', '?tab='), 'files');
+  // Non-root pathnames are not workspace-tab routes; the standalone /admin path
+  // is intentionally classified as unsupported elsewhere (Page not found).
+  assert.equal(resolveWorkspaceTabRoute('/admin', ''), null);
+  assert.equal(resolveWorkspaceTabRoute('/admin', '?tab=admin'), null);
+  assert.equal(resolveWorkspaceTabRoute('/tasks', ''), null);
+  assert.equal(resolveWorkspaceTabRoute('/task/42', '?tab=admin'), null);
+});
+
+test('workspace tab deep links never restore a stale Doc Hub file for non-files tabs', () => {
+  // Cold load of /?tab=admin must not pull a last-opened file back out of
+  // localStorage, otherwise the shell would switch to the files/Doc Hub surface.
+  assert.equal(shouldRestoreLastDocHubFile('/', '?tab=admin'), false);
+  assert.equal(shouldRestoreLastDocHubFile('/', '?tab=services'), false);
+  assert.equal(shouldRestoreLastDocHubFile('/', '?tab=chat'), false);
+  assert.equal(shouldRestoreLastDocHubFile('/', '?tab=tasks'), false);
+  assert.equal(shouldRestoreLastDocHubFile('/', '?tab=files'), true);
+  assert.equal(resolveDocHubRouteTarget('/', '?tab=admin'), null);
+  assert.equal(resolveDocHubRouteTarget('/', '?tab=admin&file=old.md&source=book'), null);
+});

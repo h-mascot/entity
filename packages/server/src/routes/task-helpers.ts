@@ -1,6 +1,7 @@
 import path from "path";
 import type { Request } from "express";
 import { TASK_COLUMNS, type ActivityEventPayload, type TaskRecord } from "../../../db/src";
+import { getCustomerPrincipal } from "../principals/request-context";
 
 const TASK_COLUMN_SET = new Set<string>(TASK_COLUMNS);
 
@@ -324,6 +325,15 @@ export function getTaskActorFromRequest(
   req: Request,
   fallback = "Human",
 ): string {
+  // Server-resolved customer principal wins for durable actor attribution
+  // (Terra B2): a caller-supplied X-Entity-Actor / X-Agent-Name / body actor
+  // MUST NOT grant authority or determine durable attribution. The trusted
+  // service/admin path (no customer credential) keeps the historical header
+  // convention (PR #71/#72 preserved).
+  const customer = getCustomerPrincipal(req);
+  if (customer) {
+    return customer.principalId;
+  }
   const entityActor = req.header("X-Entity-Actor");
   if (typeof entityActor === "string" && entityActor.trim()) {
     return entityActor.trim();

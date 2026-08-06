@@ -28,6 +28,7 @@ import {
   cancelJob,
   kickAutoDispatch,
 } from './dispatcher';
+import { requireDeploymentControlAuthority } from '../principals/request-context';
 import {
   getRegisteredExecutionEngineHealth,
   listRegisteredExecutionEngines,
@@ -219,6 +220,24 @@ export function createSwarmRouter(deps: SwarmRouterDeps = {}): Router {
       },
     }),
   );
+
+  /**
+   * D-R6-MUTATION-GATES: router-level operations mutation gate. Every
+   * non-GET/HEAD/OPTIONS route after the external callback intake requires
+   * deployment-control authority (global admin / trusted service). Tenant
+   * viewer/contributor/manager credentials are denied so job, provider, and
+   * heal mutations are never open to tenant authority. The callback intake
+   * router above is mounted FIRST and handles its own signed auth, so external
+   * intake stays reachable without admin authority.
+   */
+  router.use((req, res, next) => {
+    const method = req.method.toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+      return next();
+    }
+    if (!requireDeploymentControlAuthority(req, res)) return;
+    next();
+  });
 
   // ── Jobs CRUD ──
 
@@ -750,6 +769,8 @@ export function createSwarmRouter(deps: SwarmRouterDeps = {}): Router {
   });
 
   // POST /api/swarm/providers/eforge/control
+  // R6 (operations): daemon start/stop/restart is deployment-wide process
+  // control, gated by the router-level deployment-control authority gate above.
   router.post('/providers/eforge/control', async (req: Request, res: Response) => {
     try {
       const { action } = req.body as { action: string };
@@ -758,11 +779,24 @@ export function createSwarmRouter(deps: SwarmRouterDeps = {}): Router {
         return;
       }
 
-      const { exec } = await import('child_process');
+      const { execFile } = await import('child_process');
       const { promisify } = await import('util');
-      const execAsync = promisify(exec);
+      const execFileAsync = promisify(execFile);
 
-      const { stdout, stderr } = await execAsync(`/opt/homebrew/bin/eforge daemon ${action}`);
+      // Configurable so deployments and tests can point control at the right
+      // binary; defaults to the bundled eforge CLI. Bounded so a blocking daemon
+      // command can never hang this admin-only endpoint or its request socket.
+      //
+      // No shell: the executable path is passed as a single value (never
+      // interpolated into shell text), so a misconfigured
+      // ENTITY_EFORGE_CONTROL_COMMAND cannot inject commands. `action` is the
+      // fixed allowlist value validated above. execFile resolves the binary
+      // directly; ENOENT/non-zero exit surfaces as a 500 via the catch below.
+      const eforgeBin = process.env.ENTITY_EFORGE_CONTROL_COMMAND ?? '/opt/homebrew/bin/eforge';
+      const { stdout, stderr } = await execFileAsync(eforgeBin, ['daemon', action], {
+        timeout: 5000,
+        maxBuffer: 1024 * 1024 * 4,
+      });
       res.json({ success: true, action, output: stdout || stderr });
     } catch (error) {
       res.status(500).json({ error: 'Failed to control eforge daemon', details: String(error) });
@@ -810,6 +844,8 @@ export function createSwarmRouter(deps: SwarmRouterDeps = {}): Router {
   // ── Self-Healing ──
 
   // POST /api/swarm/heal - Manual heal trigger
+  // R6 (operations): manual recovery of stuck jobs is a deployment-wide
+  // mutation, gated by the router-level deployment-control authority gate above.
   router.post("/heal", async (_req: Request, res: Response) => {
     try {
       const result = await healStuckJobs();

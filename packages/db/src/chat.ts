@@ -64,7 +64,7 @@ export interface CreateChatCategoryInput {
   name: string;
   emoji?: string;
   order?: number;
-  org_id?: string;
+  org_id?: string | null;
   team_id?: string;
 }
 
@@ -75,7 +75,7 @@ export interface CreateChatChannelInput {
   category_id: string;
   order?: number;
   agents?: string[];
-  org_id?: string;
+  org_id?: string | null;
   team_id?: string;
 }
 
@@ -99,7 +99,7 @@ export interface CreateChatMessageInput {
   status?: string;
   timestamp?: string;
   reply_to?: string;
-  org_id?: string;
+  org_id?: string | null;
   team_id?: string;
 }
 
@@ -112,41 +112,43 @@ export interface CreateChatThreadInput {
   channel_id: string;
   parent_message_id: string;
   title: string;
-  org_id?: string;
+  org_id?: string | null;
   team_id?: string;
 }
 
+export type ChatOrgScope = string | undefined;
+
 export interface ChatRepository {
-  listCategories: () => ChatCategoryRecord[];
+  listCategories: (orgId?: ChatOrgScope) => ChatCategoryRecord[];
   createCategory: (input: CreateChatCategoryInput) => ChatCategoryRecord;
-  getCategory: (id: string) => ChatCategoryRecord | undefined;
-  getCategoryByName: (name: string) => ChatCategoryRecord | undefined;
+  getCategory: (id: string, orgId?: ChatOrgScope) => ChatCategoryRecord | undefined;
+  getCategoryByName: (name: string, orgId?: ChatOrgScope) => ChatCategoryRecord | undefined;
 
-  listChannels: () => ChatChannelRecord[];
-  listChannelsByCategory: (categoryId: string) => ChatChannelRecord[];
-  getChannel: (id: string) => ChatChannelRecord | undefined;
-  getChannelByName: (name: string) => ChatChannelRecord | undefined;
+  listChannels: (orgId?: ChatOrgScope) => ChatChannelRecord[];
+  listChannelsByCategory: (categoryId: string, orgId?: ChatOrgScope) => ChatChannelRecord[];
+  getChannel: (id: string, orgId?: ChatOrgScope) => ChatChannelRecord | undefined;
+  getChannelByName: (name: string, orgId?: ChatOrgScope) => ChatChannelRecord | undefined;
   createChannel: (input: CreateChatChannelInput) => ChatChannelRecord;
-  updateChannel: (id: string, patch: UpdateChatChannelInput) => ChatChannelRecord | undefined;
-  deleteChannel: (id: string) => boolean;
-  markChannelRead: (id: string) => void;
+  updateChannel: (id: string, patch: UpdateChatChannelInput, orgId?: ChatOrgScope) => ChatChannelRecord | undefined;
+  deleteChannel: (id: string, orgId?: ChatOrgScope) => boolean;
+  markChannelRead: (id: string, orgId?: ChatOrgScope) => void;
   touchChannelLastMessage: (id: string, timestamp: string) => void;
-  linkChannelObject: (id: string, objectRef: ObjectRef) => ChatChannelRecord | undefined;
-  listChannelObjectRefs: (id: string) => ObjectRef[];
+  linkChannelObject: (id: string, objectRef: ObjectRef, orgId?: ChatOrgScope) => ChatChannelRecord | undefined;
+  listChannelObjectRefs: (id: string, orgId?: ChatOrgScope) => ObjectRef[];
 
-  listMessagesByChannel: (channelId: string) => ChatMessageRecord[];
-  listMessagesByThread: (threadId: string) => ChatMessageRecord[];
-  getMessage: (id: string) => ChatMessageRecord | undefined;
+  listMessagesByChannel: (channelId: string, orgId?: ChatOrgScope) => ChatMessageRecord[];
+  listMessagesByThread: (threadId: string, orgId?: ChatOrgScope) => ChatMessageRecord[];
+  getMessage: (id: string, orgId?: ChatOrgScope) => ChatMessageRecord | undefined;
   createMessage: (input: CreateChatMessageInput) => ChatMessageRecord;
   updateMessageStatus: (id: string, patch: UpdateChatMessageStatusInput) => ChatMessageRecord | undefined;
 
-  listThreadsByChannel: (channelId: string) => ChatThreadRecord[];
-  getThread: (id: string) => ChatThreadRecord | undefined;
-  getThreadByParentMessage: (parentMessageId: string) => ChatThreadRecord | undefined;
+  listThreadsByChannel: (channelId: string, orgId?: ChatOrgScope) => ChatThreadRecord[];
+  getThread: (id: string, orgId?: ChatOrgScope) => ChatThreadRecord | undefined;
+  getThreadByParentMessage: (parentMessageId: string, orgId?: ChatOrgScope) => ChatThreadRecord | undefined;
   createThread: (input: CreateChatThreadInput) => ChatThreadRecord;
   incrementThreadCount: (id: string, timestamp: string) => void;
-  linkThreadObject: (id: string, objectRef: ObjectRef) => ChatThreadRecord | undefined;
-  listThreadObjectRefs: (id: string) => ObjectRef[];
+  linkThreadObject: (id: string, objectRef: ObjectRef, orgId?: ChatOrgScope) => ChatThreadRecord | undefined;
+  listThreadObjectRefs: (id: string, orgId?: ChatOrgScope) => ObjectRef[];
 }
 
 function normalizeTimestamp(value?: string | null): string {
@@ -666,24 +668,33 @@ export function createChatRepository(): ChatRepository {
   const db = getEntityDatabase(ensureChatSchema);
 
   const listCategoriesStmt = db.prepare('SELECT * FROM chat_categories ORDER BY "order" ASC, name COLLATE NOCASE ASC');
+  const listCategoriesOrgStmt = db.prepare('SELECT * FROM chat_categories WHERE org_id = ? ORDER BY "order" ASC, name COLLATE NOCASE ASC');
   const getCategoryByNameStmt = db.prepare('SELECT * FROM chat_categories WHERE lower(name) = lower(?)');
+  const getCategoryByNameOrgStmt = db.prepare('SELECT * FROM chat_categories WHERE lower(name) = lower(?) AND org_id = ?');
   const createCategoryStmt = db.prepare(`
     INSERT INTO chat_categories (id, name, emoji, "order", org_id, team_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
   `);
   const getCategoryStmt = db.prepare('SELECT * FROM chat_categories WHERE id = ?');
+  const getCategoryOrgStmt = db.prepare('SELECT * FROM chat_categories WHERE id = ? AND org_id = ?');
   const getCategoryInExactScopeStmt = db.prepare('SELECT id FROM chat_categories WHERE id = ? AND org_id IS ? AND team_id IS ?');
 
   const listChannelsStmt = db.prepare('SELECT * FROM chat_channels ORDER BY category_id ASC, "order" ASC, name COLLATE NOCASE ASC');
+  const listChannelsOrgStmt = db.prepare('SELECT * FROM chat_channels WHERE org_id = ? ORDER BY category_id ASC, "order" ASC, name COLLATE NOCASE ASC');
   const listChannelsByCategoryStmt = db.prepare('SELECT * FROM chat_channels WHERE category_id = ? ORDER BY "order" ASC, name COLLATE NOCASE ASC');
+  const listChannelsByCategoryOrgStmt = db.prepare('SELECT * FROM chat_channels WHERE category_id = ? AND org_id = ? ORDER BY "order" ASC, name COLLATE NOCASE ASC');
   const getChannelStmt = db.prepare('SELECT * FROM chat_channels WHERE id = ?');
+  const getChannelOrgStmt = db.prepare('SELECT * FROM chat_channels WHERE id = ? AND org_id = ?');
   const getChannelByNameStmt = db.prepare('SELECT * FROM chat_channels WHERE lower(name) = lower(?)');
+  const getChannelByNameOrgStmt = db.prepare('SELECT * FROM chat_channels WHERE lower(name) = lower(?) AND org_id = ?');
   const createChannelStmt = db.prepare(`
     INSERT INTO chat_channels (id, name, description, category_id, "order", agents, unread_count, last_message_at, org_id, team_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, CURRENT_TIMESTAMP)
   `);
   const deleteChannelStmt = db.prepare('DELETE FROM chat_channels WHERE id = ?');
+  const deleteChannelOrgStmt = db.prepare('DELETE FROM chat_channels WHERE id = ? AND org_id = ?');
   const markChannelReadStmt = db.prepare('UPDATE chat_channels SET unread_count = 0 WHERE id = ?');
+  const markChannelReadOrgStmt = db.prepare('UPDATE chat_channels SET unread_count = 0 WHERE id = ? AND org_id = ?');
   const touchChannelStmt = db.prepare('UPDATE chat_channels SET last_message_at = ? WHERE id = ?');
   const incUnreadStmt = db.prepare('UPDATE chat_channels SET unread_count = unread_count + 1 WHERE id = ?');
   const updateChannelObjectRefsStmt = db.prepare('UPDATE chat_channels SET linked_object_refs_json = ? WHERE id = ?');
@@ -699,6 +710,7 @@ export function createChatRepository(): ChatRepository {
     ORDER BY datetime(timestamp) ASC, datetime(created_at) ASC, id ASC
   `);
   const getMessageStmt = db.prepare('SELECT * FROM chat_messages WHERE id = ?');
+  const getMessageOrgStmt = db.prepare('SELECT * FROM chat_messages WHERE id = ? AND org_id = ?');
   const createMessageStmt = db.prepare(`
     INSERT INTO chat_messages (
       id, channel_id, thread_id, sender, sender_emoji, content, model, is_local, status, timestamp, created_at, updated_at, reply_to, org_id, team_id
@@ -717,7 +729,9 @@ export function createChatRepository(): ChatRepository {
   const updateThreadObjectRefsStmt = db.prepare('UPDATE chat_threads SET linked_object_refs_json = ? WHERE id = ?');
 
   return {
-    listCategories: () => (listCategoriesStmt.all() as Array<Record<string, unknown>>).map(mapCategoryRow),
+    listCategories: (orgId) => (orgId === undefined
+      ? listCategoriesStmt.all() as Array<Record<string, unknown>>
+      : listCategoriesOrgStmt.all(orgId) as Array<Record<string, unknown>>).map(mapCategoryRow),
 
     createCategory: (input) => {
       const name = input.name.trim();
@@ -732,27 +746,31 @@ export function createChatRepository(): ChatRepository {
       return mapCategoryRow(row);
     },
 
-    getCategory: (id) => {
-      const row = getCategoryStmt.get(id) as Record<string, unknown> | undefined;
+    getCategory: (id, orgId) => {
+      const row = (orgId === undefined ? getCategoryStmt.get(id) : getCategoryOrgStmt.get(id, orgId)) as Record<string, unknown> | undefined;
       return row ? mapCategoryRow(row) : undefined;
     },
 
-    getCategoryByName: (name) => {
-      const row = getCategoryByNameStmt.get(name) as Record<string, unknown> | undefined;
+    getCategoryByName: (name, orgId) => {
+      const row = (orgId === undefined ? getCategoryByNameStmt.get(name) : getCategoryByNameOrgStmt.get(name, orgId)) as Record<string, unknown> | undefined;
       return row ? mapCategoryRow(row) : undefined;
     },
 
-    listChannels: () => (listChannelsStmt.all() as Array<Record<string, unknown>>).map(mapChannelRow),
+    listChannels: (orgId) => (orgId === undefined
+      ? listChannelsStmt.all() as Array<Record<string, unknown>>
+      : listChannelsOrgStmt.all(orgId) as Array<Record<string, unknown>>).map(mapChannelRow),
 
-    listChannelsByCategory: (categoryId) => (listChannelsByCategoryStmt.all(categoryId) as Array<Record<string, unknown>>).map(mapChannelRow),
+    listChannelsByCategory: (categoryId, orgId) => (orgId === undefined
+      ? listChannelsByCategoryStmt.all(categoryId) as Array<Record<string, unknown>>
+      : listChannelsByCategoryOrgStmt.all(categoryId, orgId) as Array<Record<string, unknown>>).map(mapChannelRow),
 
-    getChannel: (id) => {
-      const row = getChannelStmt.get(id) as Record<string, unknown> | undefined;
+    getChannel: (id, orgId) => {
+      const row = (orgId === undefined ? getChannelStmt.get(id) : getChannelOrgStmt.get(id, orgId)) as Record<string, unknown> | undefined;
       return row ? mapChannelRow(row) : undefined;
     },
 
-    getChannelByName: (name) => {
-      const row = getChannelByNameStmt.get(name) as Record<string, unknown> | undefined;
+    getChannelByName: (name, orgId) => {
+      const row = (orgId === undefined ? getChannelByNameStmt.get(name) : getChannelByNameOrgStmt.get(name, orgId)) as Record<string, unknown> | undefined;
       return row ? mapChannelRow(row) : undefined;
     },
 
@@ -785,8 +803,8 @@ export function createChatRepository(): ChatRepository {
       return mapChannelRow(row);
     },
 
-    updateChannel: (id, patch) => {
-      const existing = getChannelStmt.get(id) as Record<string, unknown> | undefined;
+    updateChannel: (id, patch, orgId) => {
+      const existing = (orgId === undefined ? getChannelStmt.get(id) : getChannelOrgStmt.get(id, orgId)) as Record<string, unknown> | undefined;
       if (!existing) {
         return undefined;
       }
@@ -835,18 +853,19 @@ export function createChatRepository(): ChatRepository {
       return row ? mapChannelRow(row) : undefined;
     },
 
-    deleteChannel: (id) => deleteChannelStmt.run(id).changes > 0,
+    deleteChannel: (id, orgId) => (orgId === undefined ? deleteChannelStmt.run(id) : deleteChannelOrgStmt.run(id, orgId)).changes > 0,
 
-    markChannelRead: (id) => {
-      markChannelReadStmt.run(id);
+    markChannelRead: (id, orgId) => {
+      if (orgId === undefined) markChannelReadStmt.run(id);
+      else markChannelReadOrgStmt.run(id, orgId);
     },
 
     touchChannelLastMessage: (id, timestamp) => {
       touchChannelStmt.run(normalizeTimestamp(timestamp), id);
     },
 
-    linkChannelObject: (id, objectRef) => {
-      const row = getChannelStmt.get(id) as Record<string, unknown> | undefined;
+    linkChannelObject: (id, objectRef, orgId) => {
+      const row = (orgId === undefined ? getChannelStmt.get(id) : getChannelOrgStmt.get(id, orgId)) as Record<string, unknown> | undefined;
       if (!row) return undefined;
       const refs = appendObjectRef(mapChannelRow(row).linked_object_refs, objectRef);
       updateChannelObjectRefsStmt.run(JSON.stringify(refs), id);
@@ -863,8 +882,8 @@ export function createChatRepository(): ChatRepository {
 
     listMessagesByThread: (threadId) => (listMessagesByThreadStmt.all(threadId) as Array<Record<string, unknown>>).map(mapMessageRow),
 
-    getMessage: (id) => {
-      const row = getMessageStmt.get(id) as Record<string, unknown> | undefined;
+    getMessage: (id, orgId) => {
+      const row = (orgId === undefined ? getMessageStmt.get(id) : getMessageOrgStmt.get(id, orgId)) as Record<string, unknown> | undefined;
       return row ? mapMessageRow(row) : undefined;
     },
 

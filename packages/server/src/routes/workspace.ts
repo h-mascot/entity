@@ -10,6 +10,8 @@ import type {
   UpdateTeamInput,
   WorkspaceScopeRepository,
 } from '../../../db/src';
+import { getCustomerPrincipal, isTrustedServiceContext, sendPermissionDenied } from '../principals/request-context';
+import { readDefaultOrgId } from '../config/admin-runtime';
 
 interface WorkspaceRouterDeps {
   workspaceRepo: WorkspaceScopeRepository;
@@ -112,6 +114,76 @@ function scopeFromRequest(req: Request, options: { requireTeam?: boolean } = {})
   return typeof teamId === 'string' ? { orgId, teamId } : { orgId };
 }
 
+/**
+ * R4: resolve the customer principal-derived org id. The caller MUST gate the
+ * trusted service/admin path with `isTrustedServiceContext(req)` first; this
+ * resolver only handles customer principals. The org is derived from the
+ * authenticated principal's persisted grants; a requested path/header/query org
+ * is honored ONLY when it lies within the membership (it can narrow, never
+ * widen). Absent/ambiguous customer scope fails closed. Returns the resolved
+ * org id, or null when a 400/403 response has already been written.
+ */
+function resolveCustomerOrgId(req: Request, res: Response): string | null {
+  const ctx = getCustomerPrincipal(req);
+  if (!ctx) {
+    // Defensive: should be unreachable because callers gate the trusted path.
+    sendPermissionDenied(res, 'customer principal required');
+    return null;
+  }
+  // R4: gather every caller-supplied org signal (path, header, query). Any signal
+  // naming an org outside the membership is a spoofing attempt and is rejected;
+  // the effective scope can only narrow within grants.
+  const pathOrg = readString(req.params.orgId);
+  const headerOrg = readString(req.header('x-entity-org-id')) ?? readString(req.header('x-entity-org'));
+  const queryOrg = readString(req.query.orgId) ?? readString(req.query.org_id);
+  const signals = [pathOrg, headerOrg, queryOrg].filter((value): value is string => Boolean(value));
+  if (ctx.isGlobalAdmin) {
+    const orgId = signals[0] ?? readDefaultOrgId();
+    if (!orgId) {
+      res.status(400).json({ error: 'request org required', code: 'request_org_required' });
+      return null;
+    }
+    return orgId;
+  }
+  for (const signal of signals) {
+    if (!ctx.orgIds.includes(signal)) {
+      sendPermissionDenied(res, 'requested org is outside the principal membership');
+      return null;
+    }
+  }
+  const orgId = signals[0] ?? (ctx.orgIds.length === 1 ? ctx.orgIds[0] : null);
+  if (!orgId) {
+    res.status(400).json({
+      error: 'request org required',
+      code: 'request_org_required',
+      reason: 'customer principal has multiple org scopes; specify one',
+    });
+    return null;
+  }
+  return orgId;
+}
+
+/**
+ * R4: resolve the principal-derived workspace scope. Returns:
+ *   - undefined: trusted path -> route uses legacy scopeFromRequest/requireOrgId (unchanged)
+ *   - null: customer fail-closed (response sent; route returns)
+ *   - OrgQueryContext: customer principal-derived scope (teamId, when required, still
+ *     comes from path/header/query but is scoped to the principal's org by the repo)
+ */
+function resolveRequestScope(
+  req: Request,
+  res: Response,
+  options: { requireTeam?: boolean } = {},
+): OrgQueryContext | null | undefined {
+  if (isTrustedServiceContext(req)) return undefined;
+  const orgId = resolveCustomerOrgId(req, res);
+  if (orgId === null) return null;
+  const teamId = options.requireTeam
+    ? requireTeamId(req)
+    : readScopedString(req, 'teamId', 'x-entity-team-id');
+  return typeof teamId === 'string' ? { orgId, teamId } : { orgId };
+}
+
 function sendRouteError(res: Response, error: unknown): Response {
   if (error instanceof WorkspaceApiError) {
     return res.status(error.statusCode).json({ error: error.message });
@@ -184,8 +256,15 @@ function parseUpdateProject(body: Record<string, unknown>): UpdateProjectInput {
 export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): Router {
   const router = createRouter();
 
-  router.get('/orgs', (_req, res) => {
-    return res.json({ orgs: workspaceRepo.listOrgs() });
+  router.get('/orgs', (req, res) => {
+    const customer = getCustomerPrincipal(req);
+    const all = workspaceRepo.listOrgs();
+    // R4: a customer principal only sees its membership; trusted/admin see all.
+    if (!customer || customer.isGlobalAdmin) {
+      return res.json({ orgs: all });
+    }
+    const allowed = new Set(customer.orgIds);
+    return res.json({ orgs: all.filter((org) => allowed.has(org.id)) });
   });
 
   router.post('/orgs', (req, res) => {
@@ -199,7 +278,10 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.get('/orgs/:orgId', (req, res) => {
     try {
-      const org = workspaceRepo.getOrg(requireOrgId(req));
+      const resolution = resolveRequestScope(req, res);
+      if (resolution === null) return undefined;
+      const orgId = resolution ? resolution.orgId : requireOrgId(req);
+      const org = workspaceRepo.getOrg(orgId);
       if (!org) return res.status(404).json({ error: 'org not found' });
       return res.json({ org });
     } catch (error) {
@@ -209,7 +291,10 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.patch('/orgs/:orgId', (req, res) => {
     try {
-      const org = workspaceRepo.updateOrg(requireOrgId(req), parseUpdateOrg(parseBody(req)));
+      const resolution = resolveRequestScope(req, res);
+      if (resolution === null) return undefined;
+      const orgId = resolution ? resolution.orgId : requireOrgId(req);
+      const org = workspaceRepo.updateOrg(orgId, parseUpdateOrg(parseBody(req)));
       if (!org) return res.status(404).json({ error: 'org not found' });
       return res.json({ org });
     } catch (error) {
@@ -219,7 +304,10 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.get('/orgs/:orgId/teams', (req, res) => {
     try {
-      return res.json({ teams: workspaceRepo.listTeams(scopeFromRequest(req)) });
+      const resolution = resolveRequestScope(req, res);
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req);
+      return res.json({ teams: workspaceRepo.listTeams(scope) });
     } catch (error) {
       return sendRouteError(res, error);
     }
@@ -227,7 +315,10 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.post('/orgs/:orgId/teams', (req, res) => {
     try {
-      const team = workspaceRepo.createTeam(scopeFromRequest(req), parseCreateTeam(parseBody(req)));
+      const resolution = resolveRequestScope(req, res);
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req);
+      const team = workspaceRepo.createTeam(scope, parseCreateTeam(parseBody(req)));
       return res.status(201).json({ team });
     } catch (error) {
       return sendRouteError(res, error);
@@ -236,7 +327,10 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.get('/teams/:teamId', (req, res) => {
     try {
-      const team = workspaceRepo.getTeam(scopeFromRequest(req, { requireTeam: true }), requireTeamId(req));
+      const resolution = resolveRequestScope(req, res, { requireTeam: true });
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
+      const team = workspaceRepo.getTeam(scope, requireTeamId(req));
       if (!team) return res.status(404).json({ error: 'team not found in org' });
       return res.json({ team });
     } catch (error) {
@@ -246,7 +340,9 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.patch('/teams/:teamId', (req, res) => {
     try {
-      const scope = scopeFromRequest(req, { requireTeam: true });
+      const resolution = resolveRequestScope(req, res, { requireTeam: true });
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
       const team = workspaceRepo.updateTeam(scope, requireTeamId(req), parseUpdateTeam(parseBody(req)));
       if (!team) return res.status(404).json({ error: 'team not found in org' });
       return res.json({ team });
@@ -257,7 +353,10 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.get('/orgs/:orgId/teams/:teamId/projects', (req, res) => {
     try {
-      return res.json({ projects: workspaceRepo.listProjects(scopeFromRequest(req, { requireTeam: true })) });
+      const resolution = resolveRequestScope(req, res, { requireTeam: true });
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
+      return res.json({ projects: workspaceRepo.listProjects(scope) });
     } catch (error) {
       return sendRouteError(res, error);
     }
@@ -265,8 +364,11 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.post('/orgs/:orgId/teams/:teamId/projects', (req, res) => {
     try {
+      const resolution = resolveRequestScope(req, res, { requireTeam: true });
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
       const project = workspaceRepo.createProject(
-        scopeFromRequest(req, { requireTeam: true }),
+        scope,
         parseCreateProject(parseBody(req)),
       );
       return res.status(201).json({ project });
@@ -277,7 +379,10 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.get('/teams/:teamId/projects', (req, res) => {
     try {
-      return res.json({ projects: workspaceRepo.listProjects(scopeFromRequest(req, { requireTeam: true })) });
+      const resolution = resolveRequestScope(req, res, { requireTeam: true });
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
+      return res.json({ projects: workspaceRepo.listProjects(scope) });
     } catch (error) {
       return sendRouteError(res, error);
     }
@@ -285,8 +390,11 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.post('/teams/:teamId/projects', (req, res) => {
     try {
+      const resolution = resolveRequestScope(req, res, { requireTeam: true });
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
       const project = workspaceRepo.createProject(
-        scopeFromRequest(req, { requireTeam: true }),
+        scope,
         parseCreateProject(parseBody(req)),
       );
       return res.status(201).json({ project });
@@ -297,7 +405,10 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.get('/projects/:projectId', (req, res) => {
     try {
-      const project = workspaceRepo.getProject(scopeFromRequest(req, { requireTeam: true }), requireProjectId(req));
+      const resolution = resolveRequestScope(req, res, { requireTeam: true });
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
+      const project = workspaceRepo.getProject(scope, requireProjectId(req));
       if (!project) return res.status(404).json({ error: 'project not found in scope' });
       return res.json({ project });
     } catch (error) {
@@ -307,8 +418,11 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
 
   router.patch('/projects/:projectId', (req, res) => {
     try {
+      const resolution = resolveRequestScope(req, res, { requireTeam: true });
+      if (resolution === null) return undefined;
+      const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
       const project = workspaceRepo.updateProject(
-        scopeFromRequest(req, { requireTeam: true }),
+        scope,
         requireProjectId(req),
         parseUpdateProject(parseBody(req)),
       );

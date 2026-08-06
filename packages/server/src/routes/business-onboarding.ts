@@ -16,6 +16,10 @@ import { getEntityDatabase } from '../../../db/src/entity-db';
 import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../config/settings-store';
 import { ADMIN_SETTINGS_KEYS } from '../config/admin-settings';
 import { getAdminSettings } from '../config/admin-settings-store';
+import {
+  requireDeploymentControlAuthority,
+  requireOrgAuthority,
+} from '../principals/request-context';
 
 function readBusinessOnboardingSettings() {
   const db = getEntityDatabase(ensureAppSettingsTable);
@@ -559,6 +563,11 @@ export function createBusinessOnboardingRouter({
   });
 
   router.post('/onboarding/business/start', (req, res) => {
+    // R6: creating a new tenant org is a deployment-admin action under persisted
+    // grants — a customer principal must hold an org-less admin grant (global
+    // admin). Trusted service/admin path preserved. A tenant principal cannot
+    // mint arbitrary new orgs.
+    if (!requireDeploymentControlAuthority(req, res)) return;
     try {
       const settings = readBusinessOnboardingSettings();
       if (!settings.enabled) {
@@ -585,6 +594,10 @@ export function createBusinessOnboardingRouter({
 
   router.patch('/onboarding/business/:orgId', (req, res) => {
     try {
+      // R6: authorize the path-param org BEFORE resolving it, so a foreign org
+      // id is denied (403) without leaking whether it exists. Only a caller
+      // authorized for this org at manager role may mutate it.
+      if (!requireOrgAuthority(req, res, String(req.params.orgId), 'manager')) return;
       const org = getOrgOrThrow(workspaceRepo, String(req.params.orgId));
       const body = parseBody(req);
       const domains = 'domains' in body ? domainsFromUnknown(body.domains, { allowEmpty: true }) : undefined;
@@ -606,10 +619,14 @@ export function createBusinessOnboardingRouter({
       if (!settings.enabled) {
         return res.status(403).json({ error: 'business onboarding is disabled by admin settings' });
       }
+      // R6: provisioning creates teams/projects/tasks in this org. Authorize
+      // the path-param org BEFORE resolving it so a foreign org id is denied
+      // (403) without leaking existence; only manager role may provision.
+      if (!requireOrgAuthority(req, res, String(req.params.orgId), 'manager')) return;
+      const org = getOrgOrThrow(workspaceRepo, String(req.params.orgId));
       if (settings.requireDryRun && req.body?.dryRun !== true && req.body?.dryRunConfirmed !== true) {
         return res.status(400).json({ error: 'dryRun=true or dryRunConfirmed=true is required before business onboarding provision' });
       }
-      const org = getOrgOrThrow(workspaceRepo, String(req.params.orgId));
       const body = parseBody(req);
       const storedDomains = parseStoredDomains(org);
       const domains = 'domains' in body
@@ -659,6 +676,10 @@ export function createBusinessOnboardingRouter({
 
   router.post('/onboarding/business/:orgId/confirm', (req, res) => {
     try {
+      // R6: confirm is an org management mutation. Authorize the path-param org
+      // BEFORE resolving it so a foreign org id is denied (403) without leaking
+      // existence; only manager role may confirm.
+      if (!requireOrgAuthority(req, res, String(req.params.orgId), 'manager')) return;
       const org = getOrgOrThrow(workspaceRepo, String(req.params.orgId));
       const blueprint = parseStoredBlueprint(org);
       if (!blueprint) {

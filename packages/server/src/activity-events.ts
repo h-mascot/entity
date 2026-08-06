@@ -1,4 +1,4 @@
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import {
   ACTIVITY_EVENT_PAYLOAD_VERSION,
   ACTIVITY_EVENT_TYPES,
@@ -12,6 +12,8 @@ import {
   type TaskRecord,
 } from '../../db/src';
 import { asyncHandler } from './middleware/async-handler';
+import { isTrustedServiceContext } from './principals/request-context';
+import { requireRequestOrg } from './request-permissions';
 
 const ACTIVITY_EVENT_TYPE_SET = new Set<string>(ACTIVITY_EVENT_TYPES);
 
@@ -343,6 +345,23 @@ function readOrgScope(req: Request): ActivityEventQueryContext {
   return orgId ? { orgId } : {};
 }
 
+/**
+ * R4: resolve the principal-derived activity scope. For a customer principal the
+ * scope is membership-derived via the shared `requireRequestOrg` resolver (a
+ * caller-selected org only narrows; omitted/ambiguous scope fails closed). The
+ * trusted service/admin path preserves the existing header/query convention so
+ * admin tooling is unchanged.
+ *
+ * Returns `{ context }` on success, or `null` when a customer credential could
+ * not be scoped (a 400/403 response has already been written).
+ */
+function resolveActivityScope(req: Request, res: Response): { context: ActivityEventQueryContext } | null {
+  if (isTrustedServiceContext(req)) return { context: readOrgScope(req) };
+  const binding = requireRequestOrg(req, res);
+  if (!binding) return null;
+  return { context: { orgId: binding.orgId } };
+}
+
 function isTaskVisible(task: TaskRecord, context?: ActivityEventQueryContext): boolean {
   if (!context?.orgId || !task.org_id) {
     return true;
@@ -618,9 +637,11 @@ export function createActivityEventRouter(service: ActivityEventService): Router
   router.get('/tasks/:id/activity-events', asyncHandler(async (req, res) => {
     const taskId = Number(req.params.id);
     const limitRaw = Number(req.query.limit ?? 50);
+    const scope = resolveActivityScope(req, res);
+    if (!scope) return undefined;
     const result = await service.queryTaskEvents(taskId, {
       limit: Number.isFinite(limitRaw) ? limitRaw : 50,
-      context: readOrgScope(req),
+      context: scope.context,
     });
 
     if (!result.ok) {
@@ -637,6 +658,8 @@ export function createActivityEventRouter(service: ActivityEventService): Router
   router.post('/tasks/:id/activity-events', asyncHandler(async (req, res) => {
     const taskId = Number(req.params.id);
     const body = req.body ?? {};
+    const scope = resolveActivityScope(req, res);
+    if (!scope) return undefined;
     const result = await service.appendTaskEvent(
       taskId,
       {
@@ -648,7 +671,7 @@ export function createActivityEventRouter(service: ActivityEventService): Router
         payload: body.payload,
         metadata: body.metadata,
       },
-      readOrgScope(req),
+      scope.context,
     );
 
     if (!result.ok) {

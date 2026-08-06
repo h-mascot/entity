@@ -7,7 +7,7 @@
  * adapted signals. No import mutations. No review-gate enforcement.
  */
 
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import type {
   ActivityEventSpineRepository,
   AppendActivityEventSpineInput,
@@ -20,6 +20,8 @@ import {
   type MergedActivitySpineEvent,
 } from './activity-event-spine-adapters';
 import { asyncHandler } from './middleware/async-handler';
+import { isTrustedServiceContext } from './principals/request-context';
+import { requireRequestOrg } from './request-permissions';
 
 export interface ActivitySpineEventQueryContext {
   orgId?: string;
@@ -83,6 +85,18 @@ function readOrgScope(req: Request): ActivitySpineEventQueryContext {
   const queryOrg = typeof req.query.orgId === 'string' ? req.query.orgId : undefined;
   const orgId = (headerOrg ?? queryOrg)?.trim();
   return orgId ? { orgId } : {};
+}
+
+/**
+ * R4: resolve the principal-derived activity spine scope (see activity-events).
+ * Customer scope is membership-derived and fails closed; trusted path preserves
+ * the header/query convention. Returns `{ context }` or `null` (response sent).
+ */
+function resolveActivitySpineScope(req: Request, res: Response): { context: ActivitySpineEventQueryContext } | null {
+  if (isTrustedServiceContext(req)) return { context: readOrgScope(req) };
+  const binding = requireRequestOrg(req, res);
+  if (!binding) return null;
+  return { context: { orgId: binding.orgId } };
 }
 
 function readIncludeAdapted(req: Request): boolean {
@@ -316,9 +330,11 @@ export function createActivitySpineEventRouter(service: ActivitySpineEventServic
     asyncHandler(async (req, res) => {
       const taskId = Number(req.params.id);
       const limitRaw = Number(req.query.limit ?? 200);
+      const scope = resolveActivitySpineScope(req, res);
+      if (!scope) return undefined;
       const result = await service.queryTaskSpineEvents(taskId, {
         limit: Number.isFinite(limitRaw) ? limitRaw : 200,
-        context: readOrgScope(req),
+        context: scope.context,
         includeAdapted: readIncludeAdapted(req),
       });
 
@@ -354,10 +370,12 @@ export function createActivitySpineEventRouter(service: ActivitySpineEventServic
     '/tasks/:id/activity-spine-events',
     asyncHandler(async (req, res) => {
       const taskId = Number(req.params.id);
+      const scope = resolveActivitySpineScope(req, res);
+      if (!scope) return undefined;
       const result = await service.appendTaskSpineEvent(
         taskId,
         parseAppendBody(req.body),
-        readOrgScope(req),
+        scope.context,
       );
 
       if (!result.ok) {

@@ -16,6 +16,13 @@ import {
   createPrincipalRepository,
   type PrincipalRepository,
 } from "../../../db/src/principals";
+import {
+  authorizeTaskCreateScope,
+  authorizeTaskOperation,
+  authorizeTaskOrg,
+  filterTasksForRequest,
+  resolveAuthorizedOrg,
+} from "../principals/request-context";
 
 type RegisterTaskRoutesDeps = Record<string, any>;
 
@@ -244,7 +251,9 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const excludeTaskId = parsePositiveId(req.query.excludeTaskId);
 
     try {
-      const tasks = await taskSyncLayer.listTasks();
+      // Tenant-authorize the duplicate search (Terra R3): a customer only
+      // ever sees candidates within their membership org(s).
+      const tasks = filterTasksForRequest(req, await taskSyncLayer.listTasks());
       const candidates = findTaskDuplicateCandidates(title, tasks, {
         excludeTaskId:
           typeof excludeTaskId === "number" ? excludeTaskId : undefined,
@@ -331,8 +340,12 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       }
 
       const enrichedTasks = enrichTasksWithSubtaskSummary(tasks);
-      const total = enrichedTasks.length;
-      const paginatedTasks = paginateTasks(enrichedTasks, pagination);
+      // Tenant-authorize the list for customer principals (Terra B3): a
+      // customer never sees tasks outside their membership org(s). Trusted
+      // service/admin path is unchanged (filter is a no-op).
+      const tenantScopedTasks = filterTasksForRequest(req, enrichedTasks);
+      const total = tenantScopedTasks.length;
+      const paginatedTasks = paginateTasks(tenantScopedTasks, pagination);
       // Only embed activity when explicitly requested (?includeActivity=true)
       // This avoids 296 individual SQLite queries on every poll
       const includeActivity =
@@ -366,7 +379,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       String(req.query.includeBlocked ?? "false").toLowerCase() === "true";
 
     try {
-      const tasks = await taskSyncLayer.listTasks();
+      // Tenant-authorize the stale scan (Terra R3).
+      const tasks = filterTasksForRequest(req, await taskSyncLayer.listTasks());
       const now = Date.now();
       const stale = tasks
         .filter((task: any) => {
@@ -417,7 +431,9 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const stalledHours = Number.isFinite(stalledHoursRaw) && stalledHoursRaw > 0 ? stalledHoursRaw : 24;
 
     try {
-      const tasks = await taskSyncLayer.listTasks();
+      // Tenant-authorize the inbox (Terra R3): a customer only sees their
+      // own org's owner accountability, never another tenant's.
+      const tasks = filterTasksForRequest(req, await taskSyncLayer.listTasks());
       return res.json(buildOwnerAccountabilityInbox({
         ownerPrincipalId,
         tasks,
@@ -440,8 +456,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
-
-      // Always include activity for single-task detail view
+      // Tenant-authorize the loaded task before exposure (Terra B3).
+      if (!authorizeTaskOperation(req, res, task, "read")) return;
       const activity = activityRepository.listActivitiesByTaskId(id, 20);
       const subtasks = await taskSyncLayer.listSubtasks(id);
       const enrichedTask = enrichTasksWithSubtaskSummary([
@@ -527,6 +543,17 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     if ("error" in taskScope) {
       return res.status(400).json(taskScope);
     }
+    // Tenant-authorize task creation scope (Terra B3): a customer principal may
+    // only create work in an org it is a member of. The caller body org_id must
+    // match the authenticated membership; it can never create in another org.
+    const authorizedCreateOrg = resolveAuthorizedOrg(req, res, taskScope.org_id ?? null);
+    if (authorizedCreateOrg === null) {
+      // null with a response already sent means denied (403/400). null without a
+      // response means trusted path / global-admin without explicit org: defer.
+      if (res.headersSent) return;
+    } else {
+      taskScope.org_id = authorizedCreateOrg.orgId;
+    }
     if ((taskScope.org_id || taskScope.team_id || taskScope.project_id) && !workspaceRepo) {
       return res.status(500).json({ error: "workspace scope repository unavailable" });
     }
@@ -580,6 +607,11 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         }
         requestedProjectIds = parsedProjectIds;
       }
+      const proposedCreateScope = {
+        ...taskScope,
+        projects: requestedProjectIds?.map((id) => ({ id })),
+      };
+      if (!authorizeTaskCreateScope(req, res, proposedCreateScope)) return;
 
       const normalizedDueDate =
         typeof due_date === "string"
@@ -784,6 +816,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!existingTask) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before mutation (Terra B3).
+      if (!authorizeTaskOrg(req, res, existingTask, "write")) return;
       const accountabilityUpdates = parseTaskAccountabilityUpdates(
         req.body as Record<string, unknown>,
       );
@@ -799,7 +833,21 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         }
         requestedProjectIds = parsedProjectIds;
       }
-
+      // Authorize the PROPOSED durable scope before any dedupe/mutation (D-R2):
+      // the existing-scope check above only proves the caller may edit the task
+      // as-is. If projectIds is supplied it can relink/expand the task into a
+      // project the caller has no grant for (project-A -> project-B), so we must
+      // authorize the full proposed scope. When projectIds is omitted the
+      // durable scope is unchanged and existingTask already covers it.
+      const proposedTask =
+        typeof projectIds !== "undefined"
+          ? {
+              ...existingTask,
+              project_id: requestedProjectIds![0] ?? null,
+              projects: requestedProjectIds!.map((id: number) => ({ id })),
+            }
+          : existingTask;
+      if (!authorizeTaskOperation(req, res, proposedTask, "update")) return;
       const normalizedDueDate =
         typeof due_date === "string"
           ? due_date
@@ -1168,6 +1216,10 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!targetTask || !sourceTask) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize BOTH tasks before merging (Terra R3): a caller may
+      // never mutate another tenant's task by merging into or out of it.
+      if (!authorizeTaskOrg(req, res, targetTask, "write")) return;
+      if (!authorizeTaskOrg(req, res, sourceTask, "write")) return;
 
       const mergeNote = buildMergeAuditNote(sourceTask, targetTask);
       const targetAuditComment = taskCommentRepository.createComment({
@@ -1269,6 +1321,9 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!existingTask) {
         return res.status(404).json({ error: "task not found" });
       }
+
+      // Tenant-authorize before move (Terra B3).
+      if (!authorizeTaskOrg(req, res, existingTask, "write")) return;
 
       const accountabilityCheck = validateTaskAccountability({
         column,
@@ -1442,6 +1497,9 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
 
     try {
       const task = await taskSyncLayer.getTask(id);
+      // Tenant-authorize before delete (Terra B3). Authorize before destroying so
+      // a cross-tenant caller cannot delete another org's task by guessed id.
+      if (!authorizeTaskOrg(req, res, task, "write")) return;
       const deleted = await taskSyncLayer.deleteTask(id);
       if (!deleted) {
         return res.status(404).json({ error: "task not found" });
@@ -1490,6 +1548,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before mutating (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "write")) return;
 
       logActivity({
         source: "task",
@@ -1514,6 +1574,12 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
 
   // ── Task handoffs (THE-933) ────────────────────────────────────────────
   const handoffRepo = deps.handoffRepository ?? createHandoffRepository();
+  // Curacel pilot C-8 (R5): the org-scoped Curacel handoff DAG. The THE-933
+  // GET /tasks/:id/handoffs handler augments its {handoffs} response with the
+  // tenant-authorized Curacel {incoming,outgoing} arrays from this repository
+  // so both contracts coexist on the same endpoint (the THE-933 handler is
+  // registered first and wins the route; the Curacel GET is shadowed).
+  const curacelHandoffRepo = deps.curacelHandoffRepository;
   const principalRepo: PrincipalRepository =
     deps.principalRepository ?? createPrincipalRepository();
   // THE-933 (blocker): cloud handoffs have no atomic cloud adapter and are
@@ -1575,7 +1641,22 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
 
     const cloudId = typeof req.query.cloudId === "string" ? req.query.cloudId : null;
     const handoffs = handoffRepo.listForTask(id, { mode, orgId: binding.orgId, cloudId });
-    return res.json({ handoffs });
+
+    // Curacel pilot C-8 (R5): augment the THE-933 {handoffs} response with the
+    // tenant-authorized Curacel incoming/outgoing arrays so both contracts
+    // coexist on the same endpoint. The Curacel repository is org-scoped; the
+    // task's own org_id (already read-authorized above) is the durable scope,
+    // never a caller-supplied org header. A task without an org_id yields empty
+    // arrays (the Curacel DAG requires a durable org scope).
+    let incoming: unknown[] = [];
+    let outgoing: unknown[] = [];
+    const curacelOrgId = typeof task.org_id === "string" ? task.org_id.trim() : "";
+    if (curacelHandoffRepo && curacelOrgId) {
+      const curacel = curacelHandoffRepo.listForTask(curacelOrgId, id);
+      incoming = curacel.incoming;
+      outgoing = curacel.outgoing;
+    }
+    return res.json({ handoffs, incoming, outgoing });
   }));
 
   app.post(`${tasksBase}/:id/handoff`, asyncHandler(async (req, res) => {
@@ -1675,6 +1756,12 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     const limit = Number.isFinite(limitRaw) ? limitRaw : 20;
 
     try {
+      // Tenant-authorize the parent task before reading its activity (Terra R3).
+      const task = await taskSyncLayer.getTask(id);
+      if (!task) {
+        return res.status(404).json({ error: "task not found" });
+      }
+      if (!authorizeTaskOrg(req, res, task, "read")) return;
       const activities = activityRepository.listActivitiesByTaskId(id, limit);
       return res.json(activities);
     } catch (err) {
@@ -1715,16 +1802,18 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before mutating (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "write")) return;
 
+      // Server-resolved durable actor attribution (Terra R5): the customer
+      // principal id is the authoritative `agent_name`; the caller-supplied
+      // `user` body field is kept only as metadata and never as attribution.
       logActivity({
         source: "task",
         type: "task_updated",
         action: action.trim(),
         description: details.trim(),
-        agentName:
-          typeof user === "string" && user.trim()
-            ? user
-            : task.assignee || undefined,
+        agentName: getTaskActorFromRequest(req),
         taskId: id,
         metadata: { user, session_id, activityType: type },
       });
@@ -1749,6 +1838,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!parentTask) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize the parent task before generating subtasks (Terra R3).
+      if (!authorizeTaskOrg(req, res, parentTask, "write")) return;
 
       const existingTasks = await taskSyncLayer.listTasks();
       const existingSubtasks = existingTasks.filter(
@@ -1825,6 +1916,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before reading comments (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "read")) return;
 
       const limit =
         typeof req.query.limit === "undefined"
@@ -1886,11 +1979,18 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before creating a comment (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "write")) return;
 
+      // Server-resolved durable actor attribution (Terra R5): a customer
+      // principal's comment is attributed to the server-resolved principal id.
+      // Caller-supplied `author` body field is ignored for attribution (kept
+      // only in metadata) so a customer cannot spoof the durable audit identity.
+      const commentActor = getTaskActorFromRequest(req);
       const comment = taskCommentRepository.createComment({
         task_id: id,
         body: body.trim(),
-        author: typeof author === "string" ? author : undefined,
+        author: commentActor,
         parent_id: parentId,
       });
 
@@ -1899,10 +1999,7 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         type: "task_comment",
         action: "Added comment",
         description: body.trim().slice(0, 200),
-        agentName:
-          typeof author === "string" && author.trim()
-            ? author
-            : task?.assignee || undefined,
+        agentName: commentActor,
         taskId: id,
         metadata: { author, taskName: task?.name },
       });
@@ -2320,6 +2417,8 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before reading task projects (Terra R3).
+      if (!authorizeTaskOperation(req, res, task, "read")) return;
 
       return res.json(task.projects ?? []);
     } catch (err) {
@@ -2346,6 +2445,8 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
     if (!task) {
       return res.status(404).json({ error: "task not found" });
     }
+    // Tenant-authorize before linking projects (Terra R3).
+    if (!authorizeTaskOperation(req, res, task, "project_link")) return;
 
     if (typeof projectIds !== "undefined") {
       const parsedProjectIds = parsePositiveIdList(projectIds);
@@ -2355,6 +2456,12 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
           .json({ error: "projectIds must be an array of positive integers" });
       }
 
+      const proposedTask = {
+        ...task,
+        project_id: parsedProjectIds[0] ?? null,
+        projects: parsedProjectIds.map((id: number) => ({ id })),
+      };
+      if (!authorizeTaskOperation(req, res, proposedTask, "project_link")) return;
       try {
         const updatedTask = await taskBackend.updateTask(taskId, {
           projectIds: parsedProjectIds,
@@ -2383,6 +2490,12 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       const nextProjectIds = currentIds.includes(projectId)
         ? currentIds
         : [...currentIds, projectId];
+      const proposedTask = {
+        ...task,
+        project_id: nextProjectIds[0] ?? null,
+        projects: nextProjectIds.map((id) => ({ id })),
+      };
+      if (!authorizeTaskOperation(req, res, proposedTask, "project_link")) return;
       const updatedTask = await taskBackend.updateTask(taskId, {
         projectIds: nextProjectIds,
       });
@@ -2417,15 +2530,24 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before unlinking projects (Terra R3).
+      if (!authorizeTaskOperation(req, res, task, "project_link")) return;
 
       const currentProjectIds = orderTaskProjectIdsWithPrimary(task);
       if (!currentProjectIds.includes(projectId)) {
         return res.status(404).json({ error: "task project link not found" });
       }
+      const nextProjectIds = currentProjectIds.filter(
+        (currentId: number) => currentId !== projectId,
+      );
+      const proposedTask = {
+        ...task,
+        project_id: nextProjectIds[0] ?? null,
+        projects: nextProjectIds.map((id) => ({ id })),
+      };
+      if (!authorizeTaskOperation(req, res, proposedTask, "project_link")) return;
       const updatedTask = await taskBackend.updateTask(taskId, {
-        projectIds: currentProjectIds.filter(
-          (currentId: number) => currentId !== projectId,
-        ),
+        projectIds: nextProjectIds,
       });
       if (!updatedTask) {
         return res.status(404).json({ error: "task not found" });
@@ -2450,6 +2572,8 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
       if (!task) {
         return res.status(404).json({ error: "task not found" });
       }
+      // Tenant-authorize before reading task history (Terra R3).
+      if (!authorizeTaskOrg(req, res, task, "read")) return;
 
       const history = getTaskHistory(taskId);
       return res.json(history);
