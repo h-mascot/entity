@@ -1,7 +1,7 @@
 {
-  "updatedAt": "2026-08-04T22:13:36.610Z",
+  "updatedAt": "2026-08-07T00:19:08.671Z",
   "command": "update",
-  "model": "gpt-5.4-mini",
+  "model": "azure-openai-responses/gpt-5.4-mini",
   "status": "complete",
   "language": "en"
 }
