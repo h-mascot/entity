@@ -89,6 +89,35 @@ export function getFirstVisibleWorkspaceTab(visibility: WorkspaceModuleVisibilit
   return getVisibleWorkspaceTabs(visibility)[0] ?? 'admin';
 }
 
+export function resolveVisibleWorkspaceTab(
+  requestedTab: WorkspaceTab,
+  visibility: WorkspaceModuleVisibility,
+): WorkspaceTab {
+  return isWorkspaceTabVisible(requestedTab, visibility)
+    ? requestedTab
+    : getFirstVisibleWorkspaceTab(visibility);
+}
+
+export function buildVisibleWorkspaceFallbackUrl(
+  currentUrl: string,
+  fallbackTab: WorkspaceTab,
+): string {
+  const nextUrl = new URL(currentUrl);
+  nextUrl.pathname = '/';
+  nextUrl.searchParams.delete('tab');
+  if (fallbackTab !== 'files') {
+    nextUrl.searchParams.set('tab', fallbackTab);
+  }
+  return nextUrl.toString();
+}
+
+export function shouldApplyWorkspaceNavigationSettingsResponse(
+  requestRevision: number,
+  currentRevision: number,
+): boolean {
+  return requestRevision === currentRevision;
+}
+
 export function getNavigationGroups(
   visibility: WorkspaceModuleVisibility,
 ): WorkspaceNavigationGroup[] {

@@ -97,13 +97,16 @@ import {
 import { selectTasksForBoard } from './lib/boardTaskFilter';
 import { runBoardReload } from './lib/boardReload';
 import {
+  buildVisibleWorkspaceFallbackUrl,
   DEFAULT_WORKSPACE_MODULE_VISIBILITY,
   getFirstVisibleWorkspaceTab,
   getNavigationGroups,
   getVisibleWorkspaceTabs,
   isWorkspaceTabVisible,
   normalizeWorkspaceModuleVisibility,
+  resolveVisibleWorkspaceTab,
   resolveWorkspaceGroup,
+  shouldApplyWorkspaceNavigationSettingsResponse,
   type WorkspaceModuleVisibility,
   type WorkspaceTab,
 } from './lib/workspaceNavigation';
@@ -1731,40 +1734,74 @@ export default function App() {
 
   const [mobileTab, setMobileTab] = useState<MobileTab>('files');
   const [tabletSidebarOpen, setTabletSidebarOpen] = useState(false);
+  const sidebarTabRef = useRef(sidebarTab);
+  const mobileTabRef = useRef(mobileTab);
+  const workspaceNavigationSettingsRevisionRef = useRef(0);
+
+  useEffect(() => {
+    sidebarTabRef.current = sidebarTab;
+    mobileTabRef.current = mobileTab;
+  }, [mobileTab, sidebarTab]);
+
+  const activateVisibleWorkspaceTab = useCallback((requestedTab: WorkspaceTab): boolean => {
+    const resolvedTab = resolveVisibleWorkspaceTab(requestedTab, workspaceModuleVisibility);
+    setSidebarTab(resolvedTab);
+    setMobileTab(resolvedTab);
+    sidebarTabRef.current = resolvedTab;
+    mobileTabRef.current = resolvedTab;
+
+    if (resolvedTab !== requestedTab && typeof window !== 'undefined') {
+      const previousState = window.history.state && typeof window.history.state === 'object'
+        ? window.history.state
+        : {};
+      window.history.replaceState(
+        { ...previousState, mode: resolvedTab },
+        '',
+        buildVisibleWorkspaceFallbackUrl(window.location.href, resolvedTab),
+      );
+    }
+
+    return resolvedTab === requestedTab;
+  }, [workspaceModuleVisibility]);
 
   const applyWorkspaceNavigationSettings = useCallback((settings: Record<string, unknown>) => {
     const nextVisibility = normalizeWorkspaceModuleVisibility(settings);
+    const currentSidebarTab = sidebarTabRef.current;
+    const nextSidebarTab = resolveVisibleWorkspaceTab(currentSidebarTab, nextVisibility);
+    const currentMobileTab = mobileTabRef.current;
+    const nextMobileTab = currentMobileTab === 'activity'
+      ? currentMobileTab
+      : resolveVisibleWorkspaceTab(currentMobileTab, nextVisibility);
+
     setWorkspaceModuleVisibility(nextVisibility);
     if (!nextVisibility.terminal) {
       setActivityPanelOpen(false);
     }
-    setSidebarTab((currentTab) => {
-      if (isWorkspaceTabVisible(currentTab, nextVisibility)) {
-        return currentTab;
-      }
+    setSidebarTab(nextSidebarTab);
+    setMobileTab(nextMobileTab);
+    sidebarTabRef.current = nextSidebarTab;
+    mobileTabRef.current = nextMobileTab;
 
-      const fallbackTab = getFirstVisibleWorkspaceTab(nextVisibility);
-      if (typeof window !== 'undefined') {
-        const nextUrl = new URL(window.location.href);
-        nextUrl.pathname = '/';
-        nextUrl.search = '';
-        if (fallbackTab !== 'files') {
-          nextUrl.searchParams.set('tab', fallbackTab);
-        }
-        window.history.replaceState({ mode: fallbackTab }, '', nextUrl.toString());
-      }
-      return fallbackTab;
-    });
-    setMobileTab((currentTab) => {
-      if (currentTab === 'activity' || isWorkspaceTabVisible(currentTab, nextVisibility)) {
-        return currentTab;
-      }
-      return getFirstVisibleWorkspaceTab(nextVisibility);
-    });
+    if (nextSidebarTab !== currentSidebarTab && typeof window !== 'undefined') {
+      const previousState = window.history.state && typeof window.history.state === 'object'
+        ? window.history.state
+        : {};
+      window.history.replaceState(
+        { ...previousState, mode: nextSidebarTab },
+        '',
+        buildVisibleWorkspaceFallbackUrl(window.location.href, nextSidebarTab),
+      );
+    }
   }, []);
+
+  const handleWorkspaceNavigationSettingsChange = useCallback((settings: Record<string, unknown>) => {
+    workspaceNavigationSettingsRevisionRef.current += 1;
+    applyWorkspaceNavigationSettings(settings);
+  }, [applyWorkspaceNavigationSettings]);
 
   useEffect(() => {
     const controller = new AbortController();
+    const requestRevision = workspaceNavigationSettingsRevisionRef.current;
 
     void fetch(`${runtime.apiBase}/api/admin/settings/navigation`, withApiToken({ signal: controller.signal }))
       .then(async (response) => {
@@ -1774,7 +1811,13 @@ export default function App() {
         return response.json() as Promise<{ settings?: Record<string, unknown> }>;
       })
       .then((body) => {
-        if (!controller.signal.aborted) {
+        if (
+          !controller.signal.aborted
+          && shouldApplyWorkspaceNavigationSettingsResponse(
+            requestRevision,
+            workspaceNavigationSettingsRevisionRef.current,
+          )
+        ) {
           applyWorkspaceNavigationSettings(body.settings ?? {});
         }
       })
@@ -2220,9 +2263,10 @@ export default function App() {
   const openDocHubTarget = useCallback((target: {
     sourceId: string | null;
     path: string;
-  }) => {
-    setSidebarTab('files');
-    setMobileTab('files');
+  }): boolean => {
+    if (!activateVisibleWorkspaceTab('files')) {
+      return false;
+    }
     setTabletSidebarOpen(false);
     setCurrentSourceId(target.sourceId);
     setCurrentFile(target.path);
@@ -2235,7 +2279,8 @@ export default function App() {
     setReloadPrompt(null);
     setHighlightTaskId(null);
     setOpenFileTabs((previous) => upsertOpenFileTab(previous, buildOpenFileTab(target.sourceId, target.path)));
-  }, []);
+    return true;
+  }, [activateVisibleWorkspaceTab]);
 
   const navigateToDocsPath = useCallback(
     (nextPath: string, replace = false, returnTaskId?: number | null): boolean => {
@@ -2447,6 +2492,14 @@ export default function App() {
         typeof historyRecord?.board === 'string' ? historyRecord.board.trim() : '';
       setActiveDocHubTool(synchronized.activeTool);
       if (target) {
+        if (!activateVisibleWorkspaceTab('files')) {
+          pendingDeepLinkRestorationRef.current = null;
+          setDocIntelligenceFocus(null);
+          setCurrentSourceId(null);
+          setCurrentFile(null);
+          setHighlightTaskId(null);
+          return;
+        }
         pendingDeepLinkRestorationRef.current = {
           fileKey: buildFileLoadKey(target.sourceId, target.path),
           contentClass: target.sourceId === null ? 'workspace' : 'source',
@@ -2455,11 +2508,16 @@ export default function App() {
         setDocIntelligenceFocus(resolveDocHubRailFocus(synchronized.activeTool ?? undefined));
         openDocHubTarget(target);
       } else if (routeTaskId !== null) {
+        if (!activateVisibleWorkspaceTab('tasks')) {
+          setDocIntelligenceFocus(null);
+          setCurrentSourceId(null);
+          setCurrentFile(null);
+          setHighlightTaskId(null);
+          return;
+        }
         setDocIntelligenceFocus(null);
         setCurrentSourceId(null);
         setCurrentFile(null);
-        setSidebarTab('tasks');
-        setMobileTab('tasks');
         // THE-860: restore board tab from return navigation history state when present.
         setMcBoardTab(historyBoard ? normalizeStoredMCBoardTab(historyBoard) : 'kanban');
         setHighlightTaskId(routeTaskId);
@@ -2469,11 +2527,16 @@ export default function App() {
           new URLSearchParams(window.location.search).get('tab') === 'tasks')
       ) {
         // THE-860: board/list return lands on tasks workspace (not Doc Hub).
+        if (!activateVisibleWorkspaceTab('tasks')) {
+          setDocIntelligenceFocus(null);
+          setCurrentSourceId(null);
+          setCurrentFile(null);
+          setHighlightTaskId(null);
+          return;
+        }
         setDocIntelligenceFocus(null);
         setCurrentSourceId(null);
         setCurrentFile(null);
-        setSidebarTab('tasks');
-        setMobileTab('tasks');
         if (historyBoard) {
           setMcBoardTab(normalizeStoredMCBoardTab(historyBoard));
         }
@@ -2493,8 +2556,7 @@ export default function App() {
         setCurrentFile(null);
         const workspaceTab = resolveWorkspaceTabRoute(window.location.pathname, window.location.search);
         if (workspaceTab) {
-          setSidebarTab(workspaceTab);
-          setMobileTab(workspaceTab);
+          activateVisibleWorkspaceTab(workspaceTab);
         }
       }
     };
@@ -2503,7 +2565,7 @@ export default function App() {
 
     window.addEventListener('popstate', syncRouteState);
     return () => window.removeEventListener('popstate', syncRouteState);
-  }, [openDocHubTarget]);
+  }, [activateVisibleWorkspaceTab, openDocHubTarget]);
 
   const activateMobileDocHubTool = useCallback((tool: DocHubTool) => {
     if (typeof window === 'undefined') return;
@@ -3550,9 +3612,10 @@ export default function App() {
   }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentSourceId, fileContent, writeSourceFile]);
 
   const handleFileSelect = (path: string) => {
+    if (!activateVisibleWorkspaceTab('files')) {
+      return;
+    }
     const sourceId = runtime.fsMultiSourceEnabled ? 'workspace' : null;
-    setSidebarTab('files');
-    setMobileTab('files');
     setTabletSidebarOpen(false);
     setCurrentSourceId(sourceId);
     setCurrentFile(path);
@@ -3568,8 +3631,9 @@ export default function App() {
   };
 
   const handleSourceFileSelect = (sourceId: string, path: string) => {
-    setSidebarTab('files');
-    setMobileTab('files');
+    if (!activateVisibleWorkspaceTab('files')) {
+      return;
+    }
     setTabletSidebarOpen(false);
     setCurrentSourceId(sourceId);
     setCurrentFile(path);
@@ -3583,8 +3647,9 @@ export default function App() {
   };
 
   const handleRightPaneFileSelect = useCallback((path: string) => {
-    setSidebarTab('files');
-    setMobileTab('files');
+    if (!activateVisibleWorkspaceTab('files')) {
+      return;
+    }
     setTabletSidebarOpen(false);
     setRightPaneSourceId(null);
     setRightPaneFile(path);
@@ -3594,11 +3659,12 @@ export default function App() {
     setRightPaneCacheMeta(defaultFileCacheMeta());
     setRightPaneContent('');
     rightLastContentRef.current = '';
-  }, []);
+  }, [activateVisibleWorkspaceTab]);
 
   const handleRightPaneSourceFileSelect = useCallback((sourceId: string, path: string) => {
-    setSidebarTab('files');
-    setMobileTab('files');
+    if (!activateVisibleWorkspaceTab('files')) {
+      return;
+    }
     setTabletSidebarOpen(false);
     setRightPaneSourceId(sourceId);
     setRightPaneFile(path);
@@ -3608,7 +3674,7 @@ export default function App() {
     setRightPaneCacheMeta(defaultFileCacheMeta());
     setRightPaneContent('');
     rightLastContentRef.current = '';
-  }, []);
+  }, [activateVisibleWorkspaceTab]);
 
   const exitSplitMode = useCallback(() => {
     setSplitResizing(false);
@@ -3635,6 +3701,9 @@ export default function App() {
   }, []);
 
   const handleWatchModeAutoOpenFile = useCallback((path: string) => {
+    if (!activateVisibleWorkspaceTab('files')) {
+      return;
+    }
     setCurrentSourceId(runtime.fsMultiSourceEnabled ? 'workspace' : null);
     setCurrentFile(path);
     setCurrentFileReadOnly(false);
@@ -3645,7 +3714,7 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
-  }, []);
+  }, [activateVisibleWorkspaceTab]);
 
   const handleBackToDashboard = () => {
     if (typeof window !== 'undefined') {
@@ -3655,10 +3724,12 @@ export default function App() {
       const exitPath = buildDocHubExitPath(returnTaskId);
       window.history.pushState(null, '', exitPath);
       if (exitPath !== '/') {
-        setSidebarTab('tasks');
-        setMobileTab('tasks');
-        setMcBoardTab('kanban');
-        setHighlightTaskId(extractTaskRouteId(exitPath));
+        if (activateVisibleWorkspaceTab('tasks')) {
+          setMcBoardTab('kanban');
+          setHighlightTaskId(extractTaskRouteId(exitPath));
+        } else {
+          setHighlightTaskId(null);
+        }
       } else {
         setHighlightTaskId(null);
       }
@@ -3685,9 +3756,10 @@ export default function App() {
   }, [currentFile, currentSourceId]);
 
   const handleSelectOpenFileTab = useCallback((tab: OpenFileTab) => {
+    if (!activateVisibleWorkspaceTab('files')) {
+      return;
+    }
     if (tab.sourceId) {
-      setSidebarTab('files');
-      setMobileTab('files');
       setTabletSidebarOpen(false);
       setCurrentSourceId(tab.sourceId);
       setCurrentFile(tab.path);
@@ -3700,8 +3772,6 @@ export default function App() {
       return;
     }
 
-    setSidebarTab('files');
-    setMobileTab('files');
     setTabletSidebarOpen(false);
     setCurrentSourceId(runtime.fsMultiSourceEnabled ? 'workspace' : null);
     setCurrentFile(tab.path);
@@ -3713,7 +3783,7 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
-  }, [watchMode]);
+  }, [activateVisibleWorkspaceTab, watchMode]);
 
   const handleCloseOpenFileTab = useCallback((tabKey: string) => {
     setOpenFileTabs((prev) => {
@@ -3747,6 +3817,9 @@ export default function App() {
     taskId: number,
     preferredBoardTab: MCBoardTab = 'kanban',
   ) => {
+    if (!activateVisibleWorkspaceTab('tasks')) {
+      return;
+    }
     if (typeof window !== 'undefined') {
       const nextUrl = new URL(window.location.href);
       nextUrl.pathname = '/task/' + taskId;
@@ -3760,8 +3833,6 @@ export default function App() {
     setCurrentSourceId(null);
     setCurrentFile(null);
     setMcBoardTab(preferredBoardTab);
-    setSidebarTab('tasks');
-    setMobileTab('tasks');
     setTabletSidebarOpen(false);
     setHighlightTaskId(taskId);
   };
@@ -3771,6 +3842,11 @@ export default function App() {
   };
 
   const handleSidebarTabChange = (tab: WorkspaceTab) => {
+    const resolvedTab = resolveVisibleWorkspaceTab(tab, workspaceModuleVisibility);
+    if (resolvedTab !== tab) {
+      activateVisibleWorkspaceTab(tab);
+      return;
+    }
     if (typeof window !== 'undefined' && (tab !== 'files' || !currentFile)) {
       const nextUrl = new URL(window.location.href);
       nextUrl.pathname = '/';
@@ -3795,8 +3871,7 @@ export default function App() {
       setReloadPrompt(null);
       setHighlightTaskId(null);
     }
-    setSidebarTab(tab);
-    setMobileTab(tab);
+    activateVisibleWorkspaceTab(tab);
     setTabletSidebarOpen(false);
   };
 
@@ -4894,7 +4969,7 @@ export default function App() {
     <Suspense fallback={<LazySurfaceFallback label="Loading admin" />}>
       <AdminView
         adminSection={adminSection}
-        onNavigationSettingsChange={applyWorkspaceNavigationSettings}
+        onNavigationSettingsChange={handleWorkspaceNavigationSettingsChange}
         onOpenTaskMasterSettings={() => setAdminSection('taskMaster')}
         onInstallApp={() => void handleInstallClick()}
         installPromptAvailable={Boolean(deferredInstallPrompt)}
