@@ -81,4 +81,21 @@ describe('admin settings store partial patch', () => {
     expect(stored.defaultOrgId).toBe('default-org');
     expect(stored.allowHeaderCompat).toBe(true);
   });
+
+  it('persists workspace navigation visibility independently of access control', () => {
+    const updated = patchAdminSettings(db, ADMIN_SETTINGS_KEYS.navigation, {
+      chat: false,
+      terminal: false,
+    });
+
+    expect(updated).toMatchObject({
+      files: true,
+      tasks: true,
+      agents: true,
+      services: true,
+      chat: false,
+      terminal: false,
+    });
+    expect(getAdminSettings(db, ADMIN_SETTINGS_KEYS.navigation)).toEqual(updated);
+  });
 });

@@ -201,6 +201,8 @@ const MOBILE_TAB_TITLES: Record<string, string> = {
 const ADMIN_MOBILE_SECTIONS: Array<{ id: string; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'profile', label: 'Profile' },
+  { id: 'navigation', label: 'Modules' },
+  { id: 'accessControl', label: 'Users & Access' },
   { id: 'missionControl', label: 'Mission Control' },
   { id: 'agents', label: 'Agents' },
   { id: 'integrations', label: 'Integrations' },
@@ -300,6 +302,7 @@ function fileBaseName(path: string): string {
 export default function MobileView(props: any) {
   const {
     mobileTab,
+    visibleMobileTabs,
     workspaceTab,
     onlineAgents,
     agents,
@@ -1796,6 +1799,7 @@ export default function MobileView(props: any) {
       {!inDeepView && (
         <MobileBottomNav
           activeTab={mobileTab}
+          visibleTabs={visibleMobileTabs}
           onChange={(tab) => {
             setTabletSidebarOpen(false);
             setMobileTab(tab);

@@ -16,6 +16,7 @@ const AdminSettingsForm = lazy(() => import('../components/settings/AdminSetting
 type AdminSection =
   | 'general'
   | 'profile'
+  | 'navigation'
   | 'accessControl'
   | 'businessOnboarding'
   | 'missionControl'
@@ -30,7 +31,6 @@ type AdminSection =
   | 'agents'
   | 'voice'
   | 'taskMaster'
-  | 'enterprise'
   | 'docs';
 type AppTheme = 'dark' | 'light' | 'kitz' | 'nebula' | 'aurora' | 'paper';
 type DocumentsAuthOrigin = 'dev-runtime' | 'user';
@@ -47,13 +47,7 @@ type DocsTtsProviderOption = {
 
 interface AdminViewProps {
   adminSection: AdminSection;
-  enterpriseFrameNonce: number;
-  enterpriseFrameSrc: string;
-  enterpriseFrameReady: boolean;
-  enterpriseFrameTimedOut: boolean;
-  setEnterpriseFrameReady: (ready: boolean) => void;
-  setEnterpriseFrameTimedOut: (timedOut: boolean) => void;
-  setEnterpriseFrameNonce: Dispatch<SetStateAction<number>>;
+  onNavigationSettingsChange: (settings: Record<string, unknown>) => void;
   loginRequired: boolean;
   toggleLoginRequirement: (required: boolean) => void;
   authSession: { username: string } | null;
@@ -225,13 +219,7 @@ function LazyTaskMasterSettings(props: { apiBase: string }) {
 
 export default function AdminView({
   adminSection,
-  enterpriseFrameNonce,
-  enterpriseFrameSrc,
-  enterpriseFrameReady,
-  enterpriseFrameTimedOut,
-  setEnterpriseFrameReady,
-  setEnterpriseFrameTimedOut,
-  setEnterpriseFrameNonce,
+  onNavigationSettingsChange,
   loginRequired,
   toggleLoginRequirement,
   authSession,
@@ -277,54 +265,32 @@ export default function AdminView({
   installPromptAvailable = false,
   pwaInstalled = false,
 }: AdminViewProps) {
-  if (adminSection === 'enterprise') {
-    return (
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <iframe
-          key={enterpriseFrameNonce}
-          src={enterpriseFrameSrc}
-          title="Openclaw Admin"
-          className="block h-full w-full border-0 bg-[var(--bg-secondary)]"
-          loading="eager"
-          onLoad={() => {
-            setEnterpriseFrameReady(true);
-            setEnterpriseFrameTimedOut(false);
-          }}
-          onError={() => {
-            setEnterpriseFrameReady(false);
-            setEnterpriseFrameTimedOut(true);
-          }}
-        />
-        {!enterpriseFrameReady && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--bg-primary)]/45 p-4">
-            <div className="mc-shell-card w-full max-w-md border border-[var(--border-secondary)] p-4 text-center">
-              <div className="mb-2 text-sm font-medium text-[var(--text-primary)]">
-                {enterpriseFrameTimedOut ? 'Unable to load Openclaw in this view' : 'Loading Openclaw...'}
-              </div>
-              <div className="mb-3 text-xs text-[var(--text-muted)]">
-                {enterpriseFrameTimedOut
-                  ? 'Embedding may be blocked by browser or network security. Retry, or open it in a new tab.'
-                  : 'Connecting to the embedded admin dashboard.'}
-              </div>
-              <div className="flex items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEnterpriseFrameNonce((value) => value + 1)}
-                  className="mc-shell-btn px-3 py-1 text-xs"
-                >
-                  Retry
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-0 flex-1 overflow-auto p-4 lg:p-6">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
+        {adminSection === 'navigation' && (
+          <div className="grid gap-3">
+            <LazyAdminSettingsForm
+              apiBase={apiBase}
+              section="navigation"
+              title="Workspace modules"
+              description="Choose which modules appear in Entity. This controls navigation visibility, not user permissions. Admin always remains available."
+              onSettingsChange={onNavigationSettingsChange}
+              fields={[
+                { kind: 'boolean', key: 'files', label: 'Files', hint: 'Document and multi-source file workspace.' },
+                { kind: 'boolean', key: 'tasks', label: 'Tasks', hint: 'Mission Control boards and workplanes.' },
+                { kind: 'boolean', key: 'agents', label: 'Agents', hint: 'Crew monitoring and agent detail.' },
+                { kind: 'boolean', key: 'services', label: 'Services', hint: 'Operational services registry.' },
+                { kind: 'boolean', key: 'chat', label: 'Chat', hint: 'Workspace channels and conversations.' },
+                { kind: 'boolean', key: 'terminal', label: 'Terminal', hint: 'Bottom terminal panel across workspace views.' },
+              ]}
+            />
+            <div className="border-t border-[var(--border-secondary)] pt-3 text-xs text-[var(--text-muted)]">
+              Module visibility is presentation-only. Use Users &amp; Access to control who can read, write, or administer workspace resources.
+            </div>
+          </div>
+        )}
+
         {adminSection === 'general' && (
           <>
             <div className="grid gap-3 md:grid-cols-2">

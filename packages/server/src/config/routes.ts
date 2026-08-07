@@ -790,6 +790,7 @@ export function registerConfigRoutes(app: express.Express): void {
   const requireAdmin = createRequireAdminPrincipal();
 
   for (const [section, key] of Object.entries({
+    navigation: ADMIN_SETTINGS_KEYS.navigation,
     accessControl: ADMIN_SETTINGS_KEYS.accessControl,
     businessOnboarding: ADMIN_SETTINGS_KEYS.businessOnboarding,
     engineering: ADMIN_SETTINGS_KEYS.engineering,

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   AccessControlSettingsSchema,
   ChannelsSettingsSchema,
+  NavigationSettingsSchema,
   parseAdminSettings,
   ADMIN_SETTINGS_KEYS,
+  type NavigationSettings,
   type ScopedSearchSettings,
 } from './admin-settings';
 
@@ -29,5 +31,34 @@ describe('admin settings schemas', () => {
       includeTaskProof: false,
     }) as ScopedSearchSettings;
     expect(parsed.defaultCollection).toBe('memory');
+  });
+
+  it('accepts workspace module visibility settings and rejects missing module flags', () => {
+    const parsed = NavigationSettingsSchema.parse({
+      files: true,
+      tasks: true,
+      agents: true,
+      services: false,
+      chat: false,
+      terminal: false,
+    });
+
+    expect(parsed.chat).toBe(false);
+    expect(parsed.terminal).toBe(false);
+    expect(() => NavigationSettingsSchema.parse({ chat: false })).toThrow();
+  });
+
+  it('routes navigation settings through the persisted admin settings contract', () => {
+    const parsed = parseAdminSettings(ADMIN_SETTINGS_KEYS.navigation, {
+      files: true,
+      tasks: false,
+      agents: true,
+      services: true,
+      chat: false,
+      terminal: true,
+    }) as NavigationSettings;
+
+    expect(parsed.tasks).toBe(false);
+    expect(parsed.services).toBe(true);
   });
 });
