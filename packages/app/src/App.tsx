@@ -44,7 +44,7 @@ import {
   resolveAgentAvatarUrl,
 } from './lib/agentRegistry';
 import { readUserProfile, useUserProfile } from './lib/userProfile';
-import { buildApiCandidates, HttpRequestError, requestJsonWithFallback } from './lib/http';
+import { buildApiCandidates, HttpRequestError, requestJsonWithFallback, withApiToken } from './lib/http';
 import { loadAdminRuntimeSettings } from './lib/adminRuntimeSettings';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
 import { buildFileLoadKey } from './lib/fileLoadIdentity';
@@ -96,6 +96,17 @@ import {
 } from './lib/boardsState';
 import { selectTasksForBoard } from './lib/boardTaskFilter';
 import { runBoardReload } from './lib/boardReload';
+import {
+  DEFAULT_WORKSPACE_MODULE_VISIBILITY,
+  getFirstVisibleWorkspaceTab,
+  getNavigationGroups,
+  getVisibleWorkspaceTabs,
+  isWorkspaceTabVisible,
+  normalizeWorkspaceModuleVisibility,
+  resolveWorkspaceGroup,
+  type WorkspaceModuleVisibility,
+  type WorkspaceTab,
+} from './lib/workspaceNavigation';
 import {
   fetchBoards,
   createBoard as createBoardApi,
@@ -164,7 +175,6 @@ const DOCUMENTS_AUTH_KEY = 'entity.documents.auth.v1';
 const MC_SHOW_ARCHIVE_KEY = 'mc_showArchive';
 const THEME_KEY = 'entity.theme.v1';
 const DEFAULT_LOGIN_PASSWORD = 'mission';
-const ENTERPRISE_ADMIN_URL = '';
 const BUSINESS_ONBOARDING_ROUTE = '/onboarding/business';
 
 type DocumentsAuthOrigin = 'dev-runtime' | 'user';
@@ -402,7 +412,7 @@ interface AuthSession {
   loggedInAt: string;
 }
 
-type WorkspaceTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'admin';
+
 type CurrentFileLoadState =
   | { status: 'idle' }
   | { status: 'loading' | 'ready'; fileKey: string }
@@ -566,6 +576,7 @@ type MCProjectFilter = (typeof PROJECT_FILTER_OPTIONS)[number];
 type AdminSection =
   | 'general'
   | 'profile'
+  | 'navigation'
   | 'accessControl'
   | 'businessOnboarding'
   | 'missionControl'
@@ -579,13 +590,13 @@ type AdminSection =
   | 'tts'
   | 'plugins'
   | 'voice'
-  | 'enterprise'
   | 'taskMaster'
   | 'docs';
 const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   general: 'General',
   profile: 'User Profile',
-  accessControl: 'Access Control',
+  navigation: 'Modules',
+  accessControl: 'Users & Access',
   businessOnboarding: 'Business Onboarding',
   missionControl: 'Mission Control',
   engineering: 'Engineering',
@@ -598,7 +609,7 @@ const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   tts: 'Listen / TTS',
   plugins: 'Plugins',
   voice: 'Voice',
-  enterprise: 'Openclaw',
+
   taskMaster: 'Task Master',
   docs: 'Docs',
 };
@@ -1609,6 +1620,9 @@ export default function App() {
       : { status: 'loading', fileKey: rightPaneFileKey };
   const [authorshipRanges, setAuthorshipRanges] = useState<DocumentAuthorshipRangeRecord[]>([]);
   const [manualAuthorshipAuthor, setManualAuthorshipAuthor] = useState<DocumentAuthorshipActor>('human');
+  const [workspaceModuleVisibility, setWorkspaceModuleVisibility] = useState<WorkspaceModuleVisibility>(
+    DEFAULT_WORKSPACE_MODULE_VISIBILITY,
+  );
   const [sidebarTab, setSidebarTab] = useState<WorkspaceTab>(() => {
     if (initialDocHubTarget) {
       return 'files';
@@ -1717,6 +1731,59 @@ export default function App() {
 
   const [mobileTab, setMobileTab] = useState<MobileTab>('files');
   const [tabletSidebarOpen, setTabletSidebarOpen] = useState(false);
+
+  const applyWorkspaceNavigationSettings = useCallback((settings: Record<string, unknown>) => {
+    const nextVisibility = normalizeWorkspaceModuleVisibility(settings);
+    setWorkspaceModuleVisibility(nextVisibility);
+    if (!nextVisibility.terminal) {
+      setActivityPanelOpen(false);
+    }
+    setSidebarTab((currentTab) => {
+      if (isWorkspaceTabVisible(currentTab, nextVisibility)) {
+        return currentTab;
+      }
+
+      const fallbackTab = getFirstVisibleWorkspaceTab(nextVisibility);
+      if (typeof window !== 'undefined') {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.pathname = '/';
+        nextUrl.search = '';
+        if (fallbackTab !== 'files') {
+          nextUrl.searchParams.set('tab', fallbackTab);
+        }
+        window.history.replaceState({ mode: fallbackTab }, '', nextUrl.toString());
+      }
+      return fallbackTab;
+    });
+    setMobileTab((currentTab) => {
+      if (currentTab === 'activity' || isWorkspaceTabVisible(currentTab, nextVisibility)) {
+        return currentTab;
+      }
+      return getFirstVisibleWorkspaceTab(nextVisibility);
+    });
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void fetch(`${runtime.apiBase}/api/admin/settings/navigation`, withApiToken({ signal: controller.signal }))
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load workspace modules (${response.status})`);
+        }
+        return response.json() as Promise<{ settings?: Record<string, unknown> }>;
+      })
+      .then((body) => {
+        if (!controller.signal.aborted) {
+          applyWorkspaceNavigationSettings(body.settings ?? {});
+        }
+      })
+      .catch(() => {
+        // Older runtimes have no navigation settings yet; visible defaults preserve compatibility.
+      });
+
+    return () => controller.abort();
+  }, [applyWorkspaceNavigationSettings]);
   const [editMode, setEditMode] = useState(false);
   const [watchMode, setWatchMode] = useState(false);
   const [editorCollabMode, setEditorCollabMode] = useState<EditorCollaborationMode>('editing');
@@ -1989,9 +2056,6 @@ export default function App() {
   const [createTaskModalOpen, setCreateTaskModalOpen] = useState(false);
   const [createTaskWorkDomain, setCreateTaskWorkDomain] = useState<'engineering' | null>(null);
   const [adminSection, setAdminSection] = useState<AdminSection>('general');
-  const [enterpriseFrameNonce, setEnterpriseFrameNonce] = useState(0);
-  const [enterpriseFrameReady, setEnterpriseFrameReady] = useState(false);
-  const [enterpriseFrameTimedOut, setEnterpriseFrameTimedOut] = useState(false);
   const [appTheme, setAppTheme] = useState<AppTheme>(() => readThemePreference());
   const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
   const [, refreshBrowserRoute] = useState(0);
@@ -2699,20 +2763,6 @@ export default function App() {
     applyDocumentTheme(appTheme);
   }, [appTheme]);
 
-  useEffect(() => {
-    if (sidebarTab !== 'admin' || adminSection !== 'enterprise') {
-      return;
-    }
-
-    setEnterpriseFrameReady(false);
-    setEnterpriseFrameTimedOut(false);
-
-    const timeoutId = window.setTimeout(() => {
-      setEnterpriseFrameTimedOut(true);
-    }, 5000);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [sidebarTab, adminSection, enterpriseFrameNonce]);
 
   // Update ref
   useEffect(() => {
@@ -4193,7 +4243,10 @@ export default function App() {
   const activeTasks = tasks.filter((task) => task.column === 'doing');
   const onlineAgents = agents.filter((agent) => agent.status === 'online').length;
   const workspaceTab = isMobile ? mobileTab : sidebarTab;
-  const enterpriseFrameSrc = ENTERPRISE_ADMIN_URL;
+  const navigationGroups = getNavigationGroups(workspaceModuleVisibility);
+  const visibleMobileTabs: MobileTab[] = [...getVisibleWorkspaceTabs(workspaceModuleVisibility), 'activity'];
+  const activeNavigationGroup = navigationGroups.find((group) => group.id === resolveWorkspaceGroup(sidebarTab))
+    ?? navigationGroups[navigationGroups.length - 1];
 
   useEffect(() => {
     documentsReadyRef.current = documentsReady;
@@ -4758,44 +4811,82 @@ export default function App() {
   };
 
   const renderAdminSidebarPanel = () => {
-    const items: Array<{ key: AdminSection; title: string; hint: string }> = [
-      { key: 'general', title: 'General settings', hint: 'Workspace + security' },
-      { key: 'profile', title: 'User profile', hint: 'Name + avatar' },
-      { key: 'accessControl', title: 'Access control', hint: 'Auth + RBAC posture' },
-      { key: 'businessOnboarding', title: 'Business onboarding', hint: 'Setup flow + modules' },
-      { key: 'missionControl', title: 'Mission Control', hint: 'Board + data behavior' },
-      { key: 'engineering', title: 'Engineering', hint: 'Domain board + import gates' },
-      { key: 'workplanes', title: 'Workplanes', hint: 'Task cockpit + proof panels' },
-      { key: 'strategicRoadmap', title: 'Strategic roadmap', hint: 'Roadmap data + ordering' },
-      { key: 'scopedSearch', title: 'Scoped search', hint: 'Docs/task/proof search' },
-      { key: 'channels', title: 'Channels', hint: 'Adapter intake + notifications' },
-      { key: 'agents', title: 'Agent settings', hint: 'TTL, modules, revoke audit + registry' },
-      { key: 'integrations', title: 'Integrations', hint: 'Gateway + sync' },
-      { key: 'plugins', title: 'Plugins', hint: 'Registry + runtime toggles' },
-      { key: 'voice', title: 'Voice / TTS', hint: 'TTS provider + settings' },
-      { key: 'taskMaster', title: 'Task Master', hint: 'AI agent settings + logs' },
-      { key: 'docs', title: 'Docs', hint: 'Doc Hub + Intelligence' },
-      { key: 'enterprise', title: 'Openclaw', hint: 'Embedded crew admin' },
+    const groups: Array<{
+      label: string;
+      items: Array<{ key: AdminSection; title: string; hint: string }>;
+    }> = [
+      {
+        label: 'Workspace',
+        items: [
+          { key: 'general', title: 'General', hint: 'Workspace, theme, and sources' },
+          { key: 'profile', title: 'Profile', hint: 'Your human identity' },
+          { key: 'navigation', title: 'Modules', hint: 'Show or hide workspace modules' },
+        ],
+      },
+      {
+        label: 'People',
+        items: [
+          { key: 'accessControl', title: 'Users & Access', hint: 'Users, roles, grants, and auth' },
+          { key: 'agents', title: 'Agents', hint: 'Registry, scopes, and invite policy' },
+        ],
+      },
+      {
+        label: 'Work',
+        items: [
+          { key: 'missionControl', title: 'Tasks', hint: 'Board and data behavior' },
+          { key: 'workplanes', title: 'Workplanes', hint: 'Task cockpit and proof panels' },
+          { key: 'engineering', title: 'Engineering', hint: 'Domain board and import gates' },
+          { key: 'strategicRoadmap', title: 'Strategic roadmap', hint: 'Roadmap lanes and ordering' },
+          { key: 'businessOnboarding', title: 'Business onboarding', hint: 'Setup flow and module bundle' },
+        ],
+      },
+      {
+        label: 'Content',
+        items: [
+          { key: 'docs', title: 'Docs', hint: 'Doc Hub and Intelligence' },
+          { key: 'scopedSearch', title: 'Search', hint: 'Docs, tasks, and proof search' },
+          { key: 'channels', title: 'Channels', hint: 'Adapter intake and notifications' },
+          { key: 'voice', title: 'Voice & TTS', hint: 'Speech providers and playback' },
+        ],
+      },
+      {
+        label: 'System',
+        items: [
+          { key: 'integrations', title: 'Integrations', hint: 'Gateway, documents, and sync' },
+          { key: 'plugins', title: 'Plugins', hint: 'Registry and runtime toggles' },
+          { key: 'taskMaster', title: 'Task Master', hint: 'AI settings and logs' },
+        ],
+      },
     ];
 
     return (
-      <div className="p-2">
-        {items.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => setAdminSection(item.key)}
-            className={`mc-shell-card mb-1 w-full border px-3 py-2 text-left transition-colors ${
-              adminSection === item.key
-                ? 'border-[var(--accent)] bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
-            }`}
-          >
-            <div className="text-sm font-medium">{item.title}</div>
-            <div className="text-xs text-[var(--text-muted)]">{item.hint}</div>
-          </button>
+      <nav className="space-y-4 p-3" aria-label="Admin settings">
+        {groups.map((group) => (
+          <div key={group.label}>
+            <div className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              {group.label}
+            </div>
+            <div className="divide-y divide-[var(--border-primary)] border-y border-[var(--border-primary)]">
+              {group.items.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setAdminSection(item.key)}
+                  aria-current={adminSection === item.key ? 'page' : undefined}
+                  className={`w-full border-l-2 px-3 py-2 text-left transition-colors ${
+                    adminSection === item.key
+                      ? 'border-[var(--accent)] bg-[var(--bg-tertiary)] text-[var(--text-primary)]'
+                      : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]'
+                  }`}
+                >
+                  <div className="text-sm font-medium">{item.title}</div>
+                  <div className="text-xs text-[var(--text-muted)]">{item.hint}</div>
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
-      </div>
+      </nav>
     );
   };
 
@@ -4803,17 +4894,11 @@ export default function App() {
     <Suspense fallback={<LazySurfaceFallback label="Loading admin" />}>
       <AdminView
         adminSection={adminSection}
+        onNavigationSettingsChange={applyWorkspaceNavigationSettings}
         onOpenTaskMasterSettings={() => setAdminSection('taskMaster')}
         onInstallApp={() => void handleInstallClick()}
         installPromptAvailable={Boolean(deferredInstallPrompt)}
         pwaInstalled={pwaInstalled}
-        enterpriseFrameNonce={enterpriseFrameNonce}
-        enterpriseFrameSrc={enterpriseFrameSrc}
-        enterpriseFrameReady={enterpriseFrameReady}
-        enterpriseFrameTimedOut={enterpriseFrameTimedOut}
-        setEnterpriseFrameReady={setEnterpriseFrameReady}
-        setEnterpriseFrameTimedOut={setEnterpriseFrameTimedOut}
-        setEnterpriseFrameNonce={setEnterpriseFrameNonce}
         loginRequired={loginRequired}
         toggleLoginRequirement={toggleLoginRequirement}
         authSession={authSession}
@@ -4915,16 +5000,7 @@ export default function App() {
       >
         Open plugin admin
       </button>
-      {ENTERPRISE_ADMIN_URL && (
-        <a
-          href={ENTERPRISE_ADMIN_URL}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="mc-shell-btn px-3 py-2 text-left text-xs"
-        >
-          Open Crew Admin
-        </a>
-      )}
+
     </div>
   );
 
@@ -4983,66 +5059,18 @@ export default function App() {
     if (sidebarTab === 'admin') {
       return (
         <div className="flex w-full flex-wrap items-center justify-between gap-2">
-          <div className="text-xs text-[var(--text-muted)]">Admin control center</div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-[var(--text-muted)]">Admin</span>
+            <span className="text-[var(--border-secondary)]" aria-hidden="true">/</span>
+            <span className="font-medium text-[var(--text-primary)]">{ADMIN_SECTION_LABELS[adminSection]}</span>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => setAdminSection('general')} className="mc-shell-btn px-2 py-1 text-xs">
-              General
+            <button type="button" onClick={() => setAdminSection('navigation')} className="mc-shell-btn px-2 py-1 text-xs">
+              Modules
             </button>
             <button type="button" onClick={() => setAdminSection('accessControl')} className="mc-shell-btn px-2 py-1 text-xs">
-              Access
+              Users &amp; Access
             </button>
-            <button type="button" onClick={() => setAdminSection('businessOnboarding')} className="mc-shell-btn px-2 py-1 text-xs">
-              Onboarding
-            </button>
-            <button type="button" onClick={() => setAdminSection('missionControl')} className="mc-shell-btn px-2 py-1 text-xs">
-              Mission Control
-            </button>
-            <button type="button" onClick={() => setAdminSection('engineering')} className="mc-shell-btn px-2 py-1 text-xs">
-              Engineering
-            </button>
-            <button type="button" onClick={() => setAdminSection('workplanes')} className="mc-shell-btn px-2 py-1 text-xs">
-              Workplanes
-            </button>
-            <button type="button" onClick={() => setAdminSection('strategicRoadmap')} className="mc-shell-btn px-2 py-1 text-xs">
-              Strategic
-            </button>
-            <button type="button" onClick={() => setAdminSection('scopedSearch')} className="mc-shell-btn px-2 py-1 text-xs">
-              Search
-            </button>
-            <button type="button" onClick={() => setAdminSection('channels')} className="mc-shell-btn px-2 py-1 text-xs">
-              Channels
-            </button>
-            <button type="button" onClick={() => setAdminSection('agents')} className="mc-shell-btn px-2 py-1 text-xs">
-              Agents
-            </button>
-            <button type="button" onClick={() => setAdminSection('integrations')} className="mc-shell-btn px-2 py-1 text-xs">
-              Integrations
-            </button>
-            <button type="button" onClick={() => setAdminSection('plugins')} className="mc-shell-btn px-2 py-1 text-xs">
-              Plugins
-            </button>
-            <button type="button" onClick={() => setAdminSection('voice')} className="mc-shell-btn px-2 py-1 text-xs">
-              Voice / TTS
-            </button>
-            <button type="button" onClick={() => setAdminSection('taskMaster')} className="mc-shell-btn px-2 py-1 text-xs">
-              Task Master
-            </button>
-            <button type="button" onClick={() => setAdminSection('docs')} className="mc-shell-btn px-2 py-1 text-xs">
-              Docs
-            </button>
-            <button type="button" onClick={() => setAdminSection('enterprise')} className="mc-shell-btn px-2 py-1 text-xs">
-              Openclaw
-            </button>
-            {adminSection === 'enterprise' && ENTERPRISE_ADMIN_URL && (
-              <a
-                href={ENTERPRISE_ADMIN_URL}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="mc-shell-btn px-2 py-1 text-xs"
-              >
-                Open in new tab
-              </a>
-            )}
           </div>
         </div>
       );
@@ -5063,16 +5091,6 @@ export default function App() {
             >
               Plugin admin
             </button>
-            {ENTERPRISE_ADMIN_URL && (
-            <a
-              href={ENTERPRISE_ADMIN_URL}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="mc-shell-btn px-2 py-1 text-xs"
-            >
-              Crew Admin
-            </a>
-            )}
           </div>
         </div>
       );
@@ -5308,7 +5326,8 @@ export default function App() {
   };
 
   const renderShellTopRows = () => (
-    <div className="entity-top-row flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4">
+    <>
+      <div className="entity-top-row flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 lg:px-4">
         <div className="flex min-w-[320px] flex-1 items-center gap-2">
           {sidebarTab !== 'chat' && (
             <button
@@ -5323,16 +5342,20 @@ export default function App() {
             <span>⚡ Entity</span>
 
           </div>
-          {(['files', 'agents', 'tasks', 'services', 'chat', 'admin'] as const).map((tab) => (
+          {navigationGroups.map((group) => (
             <button
-              key={tab}
+              key={group.id}
               type="button"
-              onClick={() => handleSidebarTabChange(tab)}
-	              className={`mc-shell-btn entity-top-tab px-2 py-1 text-xs capitalize ${
-                sidebarTab === tab ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
+              onClick={() => {
+                const targetTab = group.tabs.find((tab) => tab.id === sidebarTab)?.id ?? group.tabs[0]?.id;
+                if (targetTab) handleSidebarTabChange(targetTab);
+              }}
+              aria-current={resolveWorkspaceGroup(sidebarTab) === group.id ? 'page' : undefined}
+	              className={`mc-shell-btn entity-top-tab px-3 py-1 text-xs ${
+                resolveWorkspaceGroup(sidebarTab) === group.id ? 'mc-shell-btn-active text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
               }`}
             >
-              {tab}
+              {group.label}
             </button>
           ))}
         </div>
@@ -5395,6 +5418,29 @@ export default function App() {
           </span>
         </div>
       </div>
+      {activeNavigationGroup && activeNavigationGroup.tabs.length > 1 ? (
+        <nav
+          className="flex items-center gap-1 border-b border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-1.5 lg:px-4"
+          aria-label={`${activeNavigationGroup.label} views`}
+        >
+          {activeNavigationGroup.tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => handleSidebarTabChange(tab.id)}
+              aria-current={sidebarTab === tab.id ? 'page' : undefined}
+              className={`border-b-2 px-3 py-1 text-xs font-medium transition-colors ${
+                sidebarTab === tab.id
+                  ? 'border-[var(--accent)] text-[var(--text-primary)]'
+                  : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+    </>
   );
 
   const openExpandedSidebarTab = (tab: WorkspaceTab) => {
@@ -5463,21 +5509,11 @@ export default function App() {
     if (sidebarTab === 'admin') {
       const miniItems: Array<{ key: AdminSection; icon: string; label: string }> = [
         { key: 'general', icon: '🧩', label: 'General settings' },
-        { key: 'profile', icon: '👤', label: 'User profile' },
-        { key: 'accessControl', icon: '🔐', label: 'Access control' },
-        { key: 'businessOnboarding', icon: '🏢', label: 'Business onboarding' },
+        { key: 'navigation', icon: '◫', label: 'Workspace modules' },
+        { key: 'accessControl', icon: '🔐', label: 'Users & Access' },
         { key: 'missionControl', icon: '📋', label: 'Mission Control' },
-        { key: 'engineering', icon: '🛠️', label: 'Engineering' },
-        { key: 'workplanes', icon: '🧾', label: 'Workplanes' },
-        { key: 'strategicRoadmap', icon: '🗺️', label: 'Strategic roadmap' },
-        { key: 'scopedSearch', icon: '🔎', label: 'Scoped search' },
-        { key: 'channels', icon: '📣', label: 'Channels' },
-        { key: 'integrations', icon: '🔌', label: 'Integrations' },
-        { key: 'plugins', icon: '🧠', label: 'Plugins' },
-        { key: 'voice', icon: '🎙️', label: 'Voice / TTS' },
-        { key: 'taskMaster', icon: '🤖', label: 'Task Master' },
         { key: 'docs', icon: '📄', label: 'Docs' },
-        { key: 'enterprise', icon: '🧭', label: 'Openclaw' },
+        { key: 'integrations', icon: '🔌', label: 'Integrations' },
       ];
       return (
         <div className="flex flex-col items-center gap-2">
@@ -5801,7 +5837,7 @@ export default function App() {
           />
         </Suspense>
       )}
-      {sidebarTab !== 'admin' && (
+      {workspaceModuleVisibility.terminal && sidebarTab !== 'admin' && (
         <LazyBottomTerminalPanel
           isOpen={activityPanelOpen}
           onToggleOpen={() => setActivityPanelOpen((prev) => !prev)}
@@ -6083,6 +6119,7 @@ export default function App() {
         <Suspense fallback={<LazySurfaceFallback label="Loading mobile workspace" />}>
           <MobileView
             mobileTab={mobileTab}
+            visibleMobileTabs={visibleMobileTabs}
             workspaceTab={workspaceTab}
             onlineAgents={onlineAgents}
             agents={agents}

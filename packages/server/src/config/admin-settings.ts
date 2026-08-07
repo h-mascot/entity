@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const ADMIN_SETTINGS_KEYS = {
+  navigation: 'admin.navigation',
   accessControl: 'admin.accessControl',
   businessOnboarding: 'admin.businessOnboarding',
   engineering: 'admin.engineering',
@@ -21,6 +22,15 @@ export const AccessControlSettingsSchema = z.object({
     (value) => (typeof value === 'string' && !value.trim() ? null : value),
     z.string().min(1).nullable(),
   ).default(null),
+});
+
+export const NavigationSettingsSchema = z.object({
+  files: z.boolean(),
+  tasks: z.boolean(),
+  agents: z.boolean(),
+  services: z.boolean(),
+  chat: z.boolean(),
+  terminal: z.boolean(),
 });
 
 export const BusinessOnboardingSettingsSchema = z.object({
@@ -72,6 +82,7 @@ export const ChannelsSettingsSchema = z.object({
 });
 
 export const ADMIN_SETTINGS_SCHEMAS = {
+  [ADMIN_SETTINGS_KEYS.navigation]: NavigationSettingsSchema,
   [ADMIN_SETTINGS_KEYS.accessControl]: AccessControlSettingsSchema,
   [ADMIN_SETTINGS_KEYS.businessOnboarding]: BusinessOnboardingSettingsSchema,
   [ADMIN_SETTINGS_KEYS.engineering]: EngineeringSettingsSchema,
@@ -82,6 +93,14 @@ export const ADMIN_SETTINGS_SCHEMAS = {
 } as const;
 
 export const ADMIN_SETTINGS_DEFAULTS = {
+  [ADMIN_SETTINGS_KEYS.navigation]: {
+    files: true,
+    tasks: true,
+    agents: true,
+    services: true,
+    chat: true,
+    terminal: true,
+  },
   [ADMIN_SETTINGS_KEYS.accessControl]: {
     loginRequiredDefault: false,
     defaultOrgId: 'default-org',
@@ -121,6 +140,7 @@ export const ADMIN_SETTINGS_DEFAULTS = {
   },
 } as const;
 
+export type NavigationSettings = z.infer<typeof NavigationSettingsSchema>;
 export type AccessControlSettings = z.infer<typeof AccessControlSettingsSchema>;
 export type BusinessOnboardingSettings = z.infer<typeof BusinessOnboardingSettingsSchema>;
 export type EngineeringSettings = z.infer<typeof EngineeringSettingsSchema>;
