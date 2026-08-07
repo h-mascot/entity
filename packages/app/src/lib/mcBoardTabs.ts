@@ -8,6 +8,21 @@ export const BUILTIN_MC_BOARD_TABS = [
 export type BuiltInMCBoardTab = (typeof BUILTIN_MC_BOARD_TABS)[number];
 export type MCBoardTab = BuiltInMCBoardTab | string;
 
+export interface TaskModulePluginLike {
+  id: string;
+}
+
+const TASK_EXECUTION_PLUGIN_IDS = new Set(['geordi-swarm']);
+
+/**
+ * Execution-only task plugins are capabilities inside task detail, not peers in
+ * customizable board navigation. Filtering them here also prevents a stale
+ * persisted plugin id from restoring the legacy standalone view.
+ */
+export function selectTaskBoardNavigationPlugins<T extends TaskModulePluginLike>(plugins: readonly T[]): T[] {
+  return plugins.filter((plugin) => !TASK_EXECUTION_PLUGIN_IDS.has(plugin.id));
+}
+
 const MC_BOARD_TAB_LABELS: Record<BuiltInMCBoardTab, string> = {
   kanban: 'Kanban',
   engineering: 'Engineering',

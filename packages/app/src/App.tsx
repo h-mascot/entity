@@ -82,6 +82,7 @@ import { emitDocHubTelemetry } from './lib/docHubTelemetry';
 import {
   isBuiltInMCBoardTab,
   normalizeStoredMCBoardTab,
+  selectTaskBoardNavigationPlugins,
   type MCBoardTab,
 } from './lib/mcBoardTabs';
 import {
@@ -2057,11 +2058,13 @@ export default function App() {
   const rightPaneCachedAgeLabel = rightPaneCacheMeta.cached ? formatElapsedMs(rightPaneCacheMeta.cacheAgeMs) : null;
   const taskModulePlugins = useMemo(
     () =>
-      plugins.filter(
-        (plugin) =>
-          plugin.enabled &&
-          plugin.mountPoint.type === 'module-sub-view' &&
-          plugin.mountPoint.module === 'tasks',
+      selectTaskBoardNavigationPlugins(
+        plugins.filter(
+          (plugin) =>
+            plugin.enabled &&
+            plugin.mountPoint.type === 'module-sub-view' &&
+            plugin.mountPoint.module === 'tasks',
+        ),
       ),
     [plugins],
   );
