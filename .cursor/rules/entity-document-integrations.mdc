@@ -1,0 +1,33 @@
+---
+description: Entity document integrations T-001..T-040 build and proof rules
+globs:
+  - "docs/loom/entity-document-integrations/**"
+  - "packages/server/src/document-providers/**"
+  - "packages/server/src/routes/document-integrations*"
+  - "packages/app/src/components/document-integrations/**"
+alwaysApply: false
+---
+
+# Entity Document Integrations — Cursor Rules
+
+Before taking a T-001..T-040 issue, read:
+
+- `docs/loom/entity-document-integrations/BUILD-CONTEXT.md`
+- `docs/loom/entity-document-integrations/phase2-canonical-prd.md`
+- `docs/loom/entity-document-integrations/AGENTS.md`
+- the live Linear parent and child issue
+
+Use the child issue's exact paths and evidence destination. Keep the change small enough to review and add focused tests for success plus a negative/degraded/security path.
+
+Binding constraints:
+
+- Use `/api/document-integrations` by default; do not silently extend the editor's `/api/documents` namespace.
+- Use `document_integration_events`; never redefine `document_events`.
+- Keep document providers out of the inference-oriented `packages/server/src/provider-registry/` directory.
+- Treat capabilities as runtime evidence, not provider-name assumptions. Unknown mutation or embedding fails closed.
+- Use the canonical receipt writer and audited Phase 2 flag framework.
+- Never include raw credentials, tenant secrets, document contents, or operator-specific absolute paths in code, tests, fixtures, receipts, screenshots, or Linear.
+
+Before marking an implementation issue complete, run the relevant focused tests, the canonical repo gates in `BUILD-CONTEXT.md`, browser proof for user-facing work, and required Codex/Thermo-nuclear reviews. Write the reviewed SHA and results to the issue's evidence directory.
+
+Gate 8 is binding: do not merge to main or promote production until T-040 records Henry's explicit approval or the documented automatic-deployer mitigation.
