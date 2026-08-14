@@ -8,8 +8,11 @@ import { asyncHandler } from "../middleware/async-handler";
 import { orderTaskProjectIdsWithPrimary } from "../task-projects";
 import {
   ensureObjectPermission,
+  readExplicitRequestOrg,
+  readRequestPrincipal,
   requireRequestOrg,
   sendPermissionDenied,
+  type RequestOrgBinding,
 } from "../request-permissions";
 import { createHandoffRepository, type HandoffMode } from "../../../db/src/handoffs";
 import {
@@ -21,6 +24,7 @@ import {
   authorizeTaskOperation,
   authorizeTaskOrg,
   filterTasksForRequest,
+  getCustomerPrincipal,
   resolveAuthorizedOrg,
 } from "../principals/request-context";
 
@@ -1618,6 +1622,26 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     return { ok: true };
   }
 
+  function resolveHandoffRequestBinding(
+    req: Request,
+    res: Response,
+    task: TaskRecord,
+  ): RequestOrgBinding | null {
+    if (getCustomerPrincipal(req) || readExplicitRequestOrg(req)) {
+      return requireRequestOrg(req, res, principalRepo);
+    }
+
+    const taskOrgId = typeof task.org_id === "string" ? task.org_id.trim() : "";
+    if (!taskOrgId) {
+      return requireRequestOrg(req, res, principalRepo);
+    }
+
+    return {
+      orgId: taskOrgId,
+      principal: readRequestPrincipal(req, taskOrgId, principalRepo),
+    };
+  }
+
   app.get(`${tasksBase}/:id/handoffs`, asyncHandler(async (req, res) => {
     const id = parseTaskId(req.params.id);
     if (!id) return res.status(400).json({ error: "invalid task id" });
@@ -1631,10 +1655,10 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
     }
 
-    const binding = requireRequestOrg(req, res);
-    if (!binding) return undefined;
     const task = await taskSyncLayer.getTask(id);
     if (!task) return res.status(404).json({ error: "task not found" });
+    const binding = resolveHandoffRequestBinding(req, res, task);
+    if (!binding) return undefined;
     if (!ensureObjectPermission(res, binding, { object_type: "task", object_id: id, org_id: task.org_id, team_id: task.team_id }, "read")) {
       return undefined;
     }
@@ -1672,10 +1696,10 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
     }
 
-    const binding = requireRequestOrg(req, res);
-    if (!binding) return undefined;
     const task = await taskSyncLayer.getTask(id);
     if (!task) return res.status(404).json({ error: "task not found" });
+    const binding = resolveHandoffRequestBinding(req, res, task);
+    if (!binding) return undefined;
     if (!ensureObjectPermission(res, binding, { object_type: "task", object_id: id, org_id: task.org_id, team_id: task.team_id }, "write")) {
       return undefined;
     }
@@ -1724,10 +1748,10 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       return res.status(503).json({ error: "cloud handoffs are not available", code: "cloud_handoffs_unavailable" });
     }
 
-    const binding = requireRequestOrg(req, res);
-    if (!binding) return undefined;
     const task = await taskSyncLayer.getTask(id);
     if (!task) return res.status(404).json({ error: "task not found" });
+    const binding = resolveHandoffRequestBinding(req, res, task);
+    if (!binding) return undefined;
     if (!ensureObjectPermission(res, binding, { object_type: "task", object_id: id, org_id: task.org_id, team_id: task.team_id }, "write")) {
       return undefined;
     }
