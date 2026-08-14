@@ -1682,8 +1682,8 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     }
     const history = [
       ...handoffs.map((handoff: Record<string, unknown>) => ({ ...handoff, rollback_capable: true })),
-      ...incoming.map((handoff: Record<string, unknown>) => ({ ...handoff, rollback_capable: false })),
-      ...outgoing.map((handoff: Record<string, unknown>) => ({ ...handoff, rollback_capable: false })),
+      ...incoming.map((handoff: unknown) => ({ ...(handoff as Record<string, unknown>), rollback_capable: false })),
+      ...outgoing.map((handoff: unknown) => ({ ...(handoff as Record<string, unknown>), rollback_capable: false })),
     ];
     return res.json({ handoffs, incoming, outgoing, history });
   }));
