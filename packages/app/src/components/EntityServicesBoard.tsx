@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
+import { getServiceRegistryStatus, type ServiceRegistryState } from './entityServicesState';
 import type { PluginUIEntry } from '../stores/pluginStore';
 
 type ServiceStatus = 'operational' | 'degraded' | 'offline' | 'unknown';
@@ -57,6 +58,9 @@ interface ServiceRegistryPayload {
   summary: Record<ServiceStatus, number>;
   checkedAt: string;
   services: ServiceRegistryEntry[];
+  state?: ServiceRegistryState;
+  partial?: boolean;
+  refreshError?: string;
 }
 
 interface EntityServicesBoardProps {
@@ -274,6 +278,7 @@ export default function EntityServicesBoard({ plugin, apiBase = '' }: EntityServ
   }, [apiBase, plugin]);
 
   const services = payload?.services ?? [];
+  const registryStatus = getServiceRegistryStatus(payload?.state, payload?.partial, payload?.refreshError);
   const filteredServices = useMemo(() => {
     const visible = services.filter((service) => {
       const visibility = getVisibility(service);
@@ -365,7 +370,7 @@ export default function EntityServicesBoard({ plugin, apiBase = '' }: EntityServ
               </button>
             </div>
             <span className="mc-shell-pill px-3 py-1 text-xs text-[var(--text-secondary)]">
-              {loading ? 'Loading…' : refreshing ? 'Refreshing…' : `Checked ${formatCheckedAt(payload?.checkedAt)}`}
+              {loading ? 'Loading…' : refreshing ? 'Refreshing…' : registryStatus.label}
             </span>
             <button
               type="button"
@@ -400,6 +405,17 @@ export default function EntityServicesBoard({ plugin, apiBase = '' }: EntityServ
       {error ? (
         <div className="rounded-xl border border-[var(--error)]/40 bg-[var(--surface-error)] px-4 py-3 text-sm text-[var(--error)]">
           {error}
+        </div>
+      ) : null}
+
+      {!error && registryStatus.message ? (
+        <div
+          className={registryStatus.tone === 'error'
+            ? 'rounded-xl border border-[var(--error)]/40 bg-[var(--surface-error)] px-4 py-3 text-sm text-[var(--error)]'
+            : 'rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200'}
+          role={registryStatus.tone === 'error' ? 'alert' : 'status'}
+        >
+          <span className="font-medium">{registryStatus.label}.</span> {registryStatus.message}
         </div>
       ) : null}
 

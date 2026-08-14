@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from 'node:buffer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileSourceRecord } from '../../../db/src/file-sources';
 
@@ -420,6 +421,35 @@ describe('FileIndexRunner deterministic incident skips', () => {
         (payload as { path?: string }).path === oversizedPath
     );
     expect(oversizeErrors).toHaveLength(0);
+  });
+
+  it('skips files larger than Node can decode into a string before read/index', async () => {
+    const oversizedPath = 'logs/oversized-output.log';
+    const unsafeTextSize = bufferConstants.MAX_STRING_LENGTH + 1;
+    const fixtures = new Map<string, FixtureNode[]>([['', [node(oversizedPath, false, unsafeTextSize)]]]);
+    const metadataByPath = new Map<string, FixtureMetadata>([
+      [oversizedPath, metadata(oversizedPath, 'file', unsafeTextSize)],
+    ]);
+    const bookAdapter = createAdapter(fixtures, metadataByPath, new Set([oversizedPath]));
+    const spockAdapter = createAdapter(new Map([['', []]]), new Map(), new Set());
+
+    createFileSourceAdapterMock.mockImplementation((source: FileSourceRecord) => (
+      source.id === 'book' ? bookAdapter.adapter : spockAdapter.adapter
+    ));
+
+    const { FileIndexRunner } = await import('./index-runner');
+    const runner = new FileIndexRunner({ maxConcurrentSources: 1, excludes: [] });
+
+    await runner.runOnce();
+
+    expect(bookAdapter.stat).toHaveBeenCalledWith(oversizedPath);
+    expect(bookAdapter.read).not.toHaveBeenCalledWith(oversizedPath);
+    expect(upsertRecordMock).not.toHaveBeenCalledWith(expect.objectContaining({ path: oversizedPath }));
+    expect(emitFsAuditMock).toHaveBeenCalledWith('index.path.skipped', expect.objectContaining({
+      sourceId: 'book',
+      path: oversizedPath,
+      reason: 'oversize',
+    }));
   });
 
   it('removes stale index rows when a path is excluded before classification', async () => {
