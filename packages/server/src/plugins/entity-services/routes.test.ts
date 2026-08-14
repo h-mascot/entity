@@ -516,6 +516,40 @@ describe('entity-services routes', () => {
     expect(forced).toMatchObject({ state: 'refreshing', partial: true, services: readyPayload.services });
   });
 
+  it('projects a fresh cached registry as refreshing while a forced refresh is in flight', async () => {
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 721099 },
+    });
+    const context = {
+      plugin: entityServices,
+      registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+    } as any;
+    const readyPayload = await buildServicesRegistry(
+      context,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+      'http://force-poll.local',
+    );
+    await getCachedServicesRegistry(context, 'http://force-poll.local', async () => readyPayload);
+    await Promise.resolve();
+    await Promise.resolve();
+    const neverSettles = vi.fn(() => new Promise<typeof readyPayload>(() => undefined));
+    await getCachedServicesRegistry(
+      context,
+      'http://force-poll.local',
+      neverSettles as any,
+      { forceRefresh: true },
+    );
+
+    const polled = await getCachedServicesRegistry(
+      context,
+      'http://force-poll.local',
+      neverSettles as any,
+    );
+
+    expect(neverSettles).toHaveBeenCalledTimes(1);
+    expect(polled).toMatchObject({ state: 'refreshing', partial: true, services: readyPayload.services });
+  });
+
   it('rate-limits sequential forced refreshes to one per registry TTL', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-14T03:30:00.000Z'));

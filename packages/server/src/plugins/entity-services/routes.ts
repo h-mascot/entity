@@ -1006,7 +1006,9 @@ export async function getCachedServicesRegistry(
   const forceRefreshAllowed = options.forceRefresh === true
     && now - previousForcedRefreshAt >= SERVICE_REGISTRY_CACHE_TTL_MS;
 
-  if (!forceRefreshAllowed && (isFreshCache(cached, now) || isRecentErrorCache(cached, now))) {
+  if (!forceRefreshAllowed
+      && !refreshesInFlight.has(key)
+      && (isFreshCache(cached, now) || isRecentErrorCache(cached, now))) {
     return cached!.payload;
   }
 
