@@ -1,0 +1,42 @@
+import { describe, expect, it, vi } from 'vitest';
+import { readResponseTextBounded, SourceReadLimitError } from './bounded-read';
+
+describe('bounded remote reads', () => {
+  it('uses one bounded allocation rather than retaining attacker-controlled chunk arrays', async () => {
+    let emitted = 0;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (emitted >= 10_000) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(Uint8Array.of(0x61));
+        emitted += 1;
+      },
+    }));
+    const concat = vi.spyOn(Buffer, 'concat');
+    try {
+      const result = await readResponseTextBounded(response, { maxBytes: 10_000 });
+      expect(result.size).toBe(10_000);
+      expect(result.content).toBe('a'.repeat(10_000));
+      expect(concat).not.toHaveBeenCalled();
+    } finally {
+      concat.mockRestore();
+    }
+  });
+
+  it('cancels a declared oversized response body before rejecting', async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {},
+      cancel,
+    });
+    const response = new Response(stream, {
+      headers: { 'content-length': '5' },
+    });
+
+    await expect(readResponseTextBounded(response, { maxBytes: 4 }))
+      .rejects.toBeInstanceOf(SourceReadLimitError);
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+});

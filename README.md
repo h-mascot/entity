@@ -229,6 +229,11 @@ Scan the QR code with [Expo Go](https://expo.dev/go) on your phone. See `package
 
 ---
 
+## Runtime safety configuration
+
+- `ENTITY_FS_AUDIT_MAX_FILE_BYTES` may lower the filesystem index limit, but cannot raise it above the 16 MiB hard ceiling. Local and remote reads enforce the effective byte ceiling at adapter I/O, including sources that omit file-size metadata. Oversized files are removed from the searchable index without being fully buffered; the source file itself is never modified.
+- `ENTITY_BASE_URL` is the trusted canonical runtime origin used by Services discovery and links. Deployments populate it from the lane's configured HTTP host; request `Host` headers never select discovery targets or cache identities. Manual refresh bypasses freshness at most once per cache key every 15 seconds.
+
 ## Configuration
 
 Entity is local-first. Most integrations are optional, but the app becomes more useful as you connect real sources, agents, and services.

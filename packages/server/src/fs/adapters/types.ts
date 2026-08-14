@@ -39,6 +39,10 @@ export interface SourcePathMetadata {
   entityVisibilityPolicyJson?: string | null;
 }
 
+export interface SourceReadOptions {
+  maxBytes?: number;
+}
+
 export interface SourceFileReadResult {
   content: string;
   contentType: string;
@@ -60,7 +64,7 @@ export interface FileSourceAdapter {
   capabilities(): SourceCapability;
   list(path: string): Promise<SourceNode[]>;
   stat?(path: string): Promise<SourcePathMetadata>;
-  read(path: string): Promise<SourceFileReadResult>;
+  read(path: string, options?: SourceReadOptions): Promise<SourceFileReadResult>;
   readRaw?(path: string): Promise<SourceFileRawResult>;
   write(path: string, content: string): Promise<{ updatedAt?: string }>;
   writeExclusive?(path: string, content: string): Promise<{ updatedAt?: string }>;

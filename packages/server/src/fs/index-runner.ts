@@ -5,11 +5,13 @@ import { createFileSourceAdapter } from './adapters/registry';
 import { emitFsAudit } from './security';
 import { recordFsOperation } from './metrics';
 import { isMissingPathError } from './errors';
+import { SourceReadLimitError } from './adapters/bounded-read';
 import type { FileSourceAdapter, SourceNode, SourcePathMetadata } from './adapters/types';
 
 const MAX_SOURCE_DEPTH = 8;
 const MAX_DIRECTORIES_PER_SOURCE = 5000;
-const DEFAULT_MAX_FILE_BYTES = 16 * 1024 * 1024;
+const HARD_MAX_FILE_BYTES = 16 * 1024 * 1024;
+const DEFAULT_MAX_FILE_BYTES = HARD_MAX_FILE_BYTES;
 const DEFAULT_EXCLUDES = ['state-snapshots/**'];
 
 const IGNORED_DIRECTORIES = new Set([
@@ -55,7 +57,7 @@ function readMaxFileBytes(): number {
     return DEFAULT_MAX_FILE_BYTES;
   }
 
-  return Math.floor(parsed);
+  return Math.min(Math.floor(parsed), HARD_MAX_FILE_BYTES);
 }
 
 function readAuditExcludes(): string[] {
@@ -175,7 +177,10 @@ export class FileIndexRunner {
   constructor(options: IndexRunnerOptions = {}) {
     this.maxConcurrentSources = Math.max(1, options.maxConcurrentSources ?? 2);
     this.maxFilesPerSource = Math.max(10, options.maxFilesPerSource ?? 10000);
-    this.maxFileBytes = Math.max(1, options.maxFileBytes ?? readMaxFileBytes());
+    const configuredMaxFileBytes = options.maxFileBytes ?? readMaxFileBytes();
+    this.maxFileBytes = Number.isFinite(configuredMaxFileBytes)
+      ? Math.min(HARD_MAX_FILE_BYTES, Math.max(1, Math.floor(configuredMaxFileBytes)))
+      : DEFAULT_MAX_FILE_BYTES;
     this.excludeMatchers = createExcludeMatchers(options.excludes ?? readAuditExcludes());
   }
 
@@ -392,7 +397,7 @@ export class FileIndexRunner {
           filesScanned += 1;
 
           try {
-            const file = await adapter.read(filePath);
+            const file = await adapter.read(filePath, { maxBytes: this.maxFileBytes });
             const classification = classifyFile(filePath, file.content);
             const indexable = extractIndexableFileContent(filePath, file.content);
 
@@ -419,6 +424,12 @@ export class FileIndexRunner {
 
             filesIndexed += 1;
           } catch (err) {
+            if (err instanceof SourceReadLimitError) {
+              this.rememberDeterministicSkip(source.id, filePath, 'oversize', metadata, {
+                maxFileBytes: err.maxBytes,
+              });
+              continue;
+            }
             if (isMissingPathError(err)) {
               this.indexRepo.deleteBySourcePathPrefix(source.id, filePath);
               continue;

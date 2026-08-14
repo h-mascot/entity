@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import dotenv from "dotenv";
+import { serializeRuntimeEnv } from "./entity-runtime-env.mjs";
 
 const scriptsDirectory = dirname(fileURLToPath(import.meta.url));
 const script = join(scriptsDirectory, "entity-release-info.mjs");
@@ -279,6 +281,37 @@ test("deploy writes release metadata after runtime environment files are install
   assert.notEqual(metadataWritten, -1);
   assert.ok(metadataWritten > runtimeEnvironmentInstalled);
   assert.ok(metadataWritten < restartBoundary);
+});
+
+test("runtime environment serialization round-trips through dotenv", () => {
+  const env = {
+    EDGE_TTS_COMMAND: "say apostrophe' quote\" back\\slash",
+    EDGE_TTS_VOICE: "unicode-é and spaces",
+    OPENAI_TTS_MODEL: "line1\nline2",
+    OPENAI_TTS_VOICE: "literal\\nsequence",
+    EDGE_TTS_VOICE: "trailing-backslash\\",
+  };
+  const serialized = serializeRuntimeEnv({
+    runtimeBaseUrl: "http://sandbox.entity:3007",
+    env,
+  });
+  const parsed = dotenv.parse(serialized);
+
+  assert.equal(parsed.ENTITY_BASE_URL, "http://sandbox.entity:3007");
+  for (const [key, value] of Object.entries(env)) assert.equal(parsed[key], value);
+});
+
+test("runtime environment serialization rejects a non-origin base URL", () => {
+  assert.throws(
+    () => serializeRuntimeEnv({ runtimeBaseUrl: "http://sandbox.entity/path", env: {} }),
+    /canonical http\(s\) origin/,
+  );
+});
+
+test("deploy persists the trusted lane base URL into the runtime environment", () => {
+  const source = readFileSync(deployScript, "utf8");
+
+  assert.match(source, /node "\$\{SCRIPT_DIR\}\/scripts\/entity-runtime-env\.mjs" "\$\{RUNTIME_ENV_TMP\}" "\$\{PROD_BASE_URL\}"/);
 });
 
 test("deploy removes the temporary runtime environment file on early failure", () => {
