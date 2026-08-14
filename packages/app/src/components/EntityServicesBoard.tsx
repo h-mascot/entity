@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
 import { getServiceRegistryStatus, type ServiceRegistryState } from './entityServicesState';
+import { refreshServiceRegistryUntilSettled } from './entityServicesRefresh';
 import type { PluginUIEntry } from '../stores/pluginStore';
 
 type ServiceStatus = 'operational' | 'degraded' | 'offline' | 'unknown';
@@ -377,9 +378,11 @@ export default function EntityServicesBoard({ plugin, apiBase = '' }: EntityServ
               type="button"
               onClick={() => {
                 setRefreshing(true);
-                void requestJsonWithFallback<ServiceRegistryPayload>({
-                  urls: buildRegistryUrls(plugin, apiBase, true),
-                  fallbackError: 'Unable to load services registry.',
+                void refreshServiceRegistryUntilSettled({
+                  request: (forceRefresh) => requestJsonWithFallback<ServiceRegistryPayload>({
+                    urls: buildRegistryUrls(plugin, apiBase, forceRefresh),
+                    fallbackError: 'Unable to load services registry.',
+                  }),
                 })
                   .then((data) => {
                     setPayload(data);
