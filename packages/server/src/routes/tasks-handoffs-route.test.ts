@@ -283,10 +283,16 @@ describe('production task handoff route composition (THE-933)', () => {
       const baseUrl = `http://127.0.0.1:${address.port}`;
       const listed = await fetch(`${baseUrl}/api/tasks/${nonDefaultOrgTaskId}/handoffs?mode=local`);
       expect(listed.status).toBe(200);
-      const listedBody = await listed.json() as { handoffs: Array<{ id: string; note: string; org_id: string }> };
+      const listedBody = await listed.json() as {
+        handoffs: Array<{ id: string; note: string; org_id: string }>;
+        history: Array<{ id: string; rollback_capable: boolean; reason?: string }>;
+      };
       expect(listedBody.handoffs).toEqual([
         expect.objectContaining({ note: 'existing history', org_id: OTHER_ORG }),
       ]);
+      expect(listedBody.history).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: listedBody.handoffs[0]!.id, rollback_capable: true }),
+      ]));
 
       const rolledBack = await fetch(
         `${baseUrl}/api/tasks/${nonDefaultOrgTaskId}/handoffs/${listedBody.handoffs[0]!.id}/rollback?mode=local`,
