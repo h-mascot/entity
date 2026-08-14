@@ -258,6 +258,49 @@ describe('entity-services routes', () => {
     expect(enterprise?.link.url).toBe('http://100.104.229.62:3002');
   });
 
+  it('returns a non-empty cold-start registry before full discovery settles', async () => {
+    const entityServices = createLoadedPlugin({
+      settings: {
+        ...createLoadedPlugin().settings,
+        requestTimeoutMs: 987654,
+        discoverGatewayServices: false,
+        discoverMacServices: false,
+      },
+    });
+    const handlers: Record<string, (req: any, res: any) => Promise<any>> = {};
+    registerPluginRoutes(
+      { get: (route: string, handler: any) => { handlers[`GET ${route}`] = handler; } } as any,
+      {
+        plugin: entityServices,
+        registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+      } as any,
+    );
+
+    let resolveDiscovery!: (value: Response) => void;
+    const deferredDiscovery = new Promise<Response>((resolve) => { resolveDiscovery = resolve; });
+    const neverSettles = vi.fn(() => deferredDiscovery);
+    vi.stubGlobal('fetch', neverSettles);
+    const response = createResponse();
+    try {
+      const handlerPromise = handlers['GET /registry'](
+        { protocol: 'http', get: (name: string) => name === 'host' ? 'cold-start.local' : undefined },
+        response,
+      );
+      const completed = await Promise.race([
+        handlerPromise.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+      ]);
+      expect(completed).toBe(true);
+      expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+        services: expect.arrayContaining([expect.objectContaining({ serviceType: 'internal-plugin' })]),
+      }));
+      resolveDiscovery(new Response('ok', { status: 200 }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('registers registry endpoints', async () => {
     const entityServices = createLoadedPlugin();
     const handlers: Record<string, (req: any, res: any) => Promise<any>> = {};

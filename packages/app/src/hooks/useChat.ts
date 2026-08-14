@@ -5,11 +5,11 @@ import {
   createChannel,
   createThread,
   deleteChannel,
-  ensureDefaultChatSetup,
   getMessageById,
   getThreadByParentMessage,
   listChannelsByCategory,
   listChatSnapshot,
+  loadInitialChatSnapshot,
   listMessagesByChannel,
   listMessagesByThread,
   listThreadsByChannel,
@@ -233,8 +233,7 @@ export const useChat = create<ChatStoreState>((set, get) => ({
     set({ loading: true, error: null });
 
     try {
-      await ensureDefaultChatSetup();
-      const snapshot = await listChatSnapshot();
+      const snapshot = await loadInitialChatSnapshot();
 
       const categories = [...snapshot.categories].sort(categorySort);
       const channels = [...snapshot.channels].sort(channelSort);
