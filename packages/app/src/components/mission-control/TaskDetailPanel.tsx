@@ -58,7 +58,7 @@ import {
 const TaskChatContextPanel = lazy(() => import('./TaskChatContextPanel'));
 
 const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
-type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks';
+type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'handoffs';
 
 const COLUMN_LABELS: Record<TaskColumn, string> = {
   backlog: 'Backlog',
@@ -3399,6 +3399,7 @@ export default function TaskDetailPanel({
               { icon: '▣', label: 'Logs', tab: 'logs' as const, count: task?.activity.filter(isTechnicalActivity).length ?? 0 },
               { icon: '◌', label: 'Comments', tab: 'comments' as const, count: comments.length },
               { icon: '☷', label: 'Subtasks', tab: 'subtasks' as const, count: subtasks.length },
+              { icon: '⇢', label: 'Handoffs', tab: 'handoffs' as const, count: 0 },
             ].map(({ icon, label, tab, count }) => (
               <button
                 key={label}
@@ -3440,7 +3441,6 @@ export default function TaskDetailPanel({
                 </div>
               ) : null}
 
-	              <TaskHandoffSection taskId={taskId} apiBase={apiBase} />
 	              <section style={{ order: 1 }} className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-3">
 	                <div className="mb-1.5 flex items-center justify-between gap-3">
 	                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
@@ -4736,6 +4736,8 @@ export default function TaskDetailPanel({
                       </div>
                     )}
                   </div>
+                ) : detailTab === 'handoffs' ? (
+                  <TaskHandoffSection taskId={taskId} apiBase={apiBase} />
                 ) : null}
               </section>
             </div>
