@@ -48,6 +48,8 @@ export interface ServiceRegistryEntry {
   meta: Record<string, unknown>;
 }
 
+export type ServiceRegistryState = 'refreshing' | 'ready' | 'error';
+
 export interface ServiceRegistryPayload {
   plugin: {
     id: string;
@@ -59,6 +61,9 @@ export interface ServiceRegistryPayload {
   summary: Record<ServiceStatus, number>;
   checkedAt: string;
   services: ServiceRegistryEntry[];
+  state: ServiceRegistryState;
+  partial: boolean;
+  refreshError?: string;
 }
 
 interface InternalPluginDefinition {
@@ -121,10 +126,26 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 1000;
 const SERVICE_REGISTRY_CACHE_TTL_MS = 15_000;
 const SERVICE_REGISTRY_CACHE_STALE_MS = 5 * 60_000;
 const SERVICE_PROBE_CONCURRENCY = 16;
+const MAX_REGISTRY_CACHE_KEYS = 16;
 const SSH_TARGET_PATTERN = /^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])$/;
 
-let cachedRegistry: { key: string; payload: ServiceRegistryPayload; createdAt: number } | null = null;
-let refreshInFlight: Promise<ServiceRegistryPayload> | null = null;
+interface RegistryCacheEntry {
+  payload: ServiceRegistryPayload;
+  createdAt: number;
+}
+
+const registryCache = new Map<string, RegistryCacheEntry>();
+const refreshesInFlight = new Map<string, Promise<ServiceRegistryPayload>>();
+
+function setRegistryCache(key: string, entry: RegistryCacheEntry): void {
+  registryCache.delete(key);
+  registryCache.set(key, entry);
+  while (registryCache.size > MAX_REGISTRY_CACHE_KEYS) {
+    const oldestKey = registryCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    registryCache.delete(oldestKey);
+  }
+}
 
 interface ListenerProbeSnapshot {
   title?: string;
@@ -485,12 +506,12 @@ function createCacheKey(plugin: LoadedPlugin, runtimeBaseUrl: string): string {
   });
 }
 
-function isFreshCache(key: string, now: number): boolean {
-  return Boolean(cachedRegistry && cachedRegistry.key === key && now - cachedRegistry.createdAt < SERVICE_REGISTRY_CACHE_TTL_MS);
+function isFreshCache(entry: RegistryCacheEntry | undefined, now: number): boolean {
+  return Boolean(entry && entry.payload.state === 'ready' && now - entry.createdAt < SERVICE_REGISTRY_CACHE_TTL_MS);
 }
 
-function isUsableStaleCache(key: string, now: number): boolean {
-  return Boolean(cachedRegistry && cachedRegistry.key === key && now - cachedRegistry.createdAt < SERVICE_REGISTRY_CACHE_STALE_MS);
+function isUsableStaleCache(entry: RegistryCacheEntry | undefined, now: number): boolean {
+  return Boolean(entry && now - entry.createdAt < SERVICE_REGISTRY_CACHE_STALE_MS);
 }
 
 async function probeListenerIdentity(url: string, timeoutMs: number, fetchImpl: FetchLike): Promise<ListenerProbeSnapshot> {
@@ -919,6 +940,8 @@ export async function buildServicesRegistry(
     summary,
     checkedAt: new Date().toISOString(),
     services: classifiedServices,
+    state: 'ready',
+    partial: false,
   };
 }
 
@@ -946,40 +969,71 @@ function buildServicesRegistrySkeleton(
     summary,
     checkedAt: new Date().toISOString(),
     services,
+    state: 'refreshing',
+    partial: true,
   };
 }
 
-async function getCachedServicesRegistry(context: PluginRouteContext, runtimeBaseUrl: string): Promise<ServiceRegistryPayload> {
+export async function getCachedServicesRegistry(
+  context: PluginRouteContext,
+  runtimeBaseUrl: string,
+  buildRegistry: typeof buildServicesRegistry = buildServicesRegistry,
+): Promise<ServiceRegistryPayload> {
   const currentPlugin = context.registry.get(context.plugin.id) ?? context.plugin;
   const key = createCacheKey(currentPlugin, normalizeRuntimeBaseUrl(runtimeBaseUrl));
   const now = Date.now();
+  const cached = registryCache.get(key);
 
-  if (isFreshCache(key, now) && cachedRegistry) {
-    return cachedRegistry.payload;
+  if (isFreshCache(cached, now)) {
+    return cached!.payload;
   }
 
   const skeleton = buildServicesRegistrySkeleton(context, runtimeBaseUrl);
-  if (!refreshInFlight) {
-    refreshInFlight = buildServicesRegistry(context, fetch, runtimeBaseUrl)
+  if (!refreshesInFlight.has(key) && refreshesInFlight.size >= MAX_REGISTRY_CACHE_KEYS && isUsableStaleCache(cached, now)) {
+    return cached!.payload;
+  }
+  if (!refreshesInFlight.has(key) && refreshesInFlight.size >= MAX_REGISTRY_CACHE_KEYS) {
+    return {
+      ...skeleton,
+      state: 'error',
+      refreshError: 'Services discovery is at capacity; retry shortly.',
+    };
+  }
+  if (!refreshesInFlight.has(key)) {
+    const refresh = buildRegistry(context, fetch, runtimeBaseUrl)
       .then((payload) => {
-        cachedRegistry = { key, payload, createdAt: Date.now() };
+        setRegistryCache(key, { payload, createdAt: Date.now() });
         return payload;
       })
-      .catch(() => skeleton)
+      .catch((error: unknown) => {
+        const previous = registryCache.get(key)?.payload ?? skeleton;
+        const failed: ServiceRegistryPayload = {
+          ...previous,
+          state: 'error',
+          refreshError: error instanceof Error ? error.message : String(error),
+        };
+        setRegistryCache(key, {
+          payload: failed,
+          createdAt: Date.now() - SERVICE_REGISTRY_CACHE_TTL_MS - 1,
+        });
+        return failed;
+      })
       .finally(() => {
-        refreshInFlight = null;
+        if (refreshesInFlight.get(key) === refresh) {
+          refreshesInFlight.delete(key);
+        }
       });
+    refreshesInFlight.set(key, refresh);
   }
 
-  if (isUsableStaleCache(key, now) && cachedRegistry) {
-    return cachedRegistry.payload;
+  if (isUsableStaleCache(cached, now)) {
+    return cached!.payload;
   }
 
-  cachedRegistry = {
-    key,
+  setRegistryCache(key, {
     payload: skeleton,
     createdAt: now - SERVICE_REGISTRY_CACHE_TTL_MS - 1,
-  };
+  });
   return skeleton;
 }
 

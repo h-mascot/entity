@@ -54,7 +54,7 @@ Docs settings are separate because document serving and TTS behavior are handled
 
 Entity supports plugin slots in the UI, and the Admin view hosts a plugin admin panel. This is how the app can render extension-owned subviews or top-level surfaces without hardcoding every integration into the main shell.
 
-Services are another extension seam. The source includes a services page and an entity-services board, plus config in `entity.config.example.yaml` showing an `entity-services` plugin block with discovery flags and service lists.
+Services are another extension seam. The source includes a services page and an entity-services board, plus config in `entity.config.example.yaml` showing an `entity-services` plugin block with discovery flags and service lists. The board now surfaces a fast internal snapshot while host discovery finishes, and the helper in `packages/app/src/components/entityServicesState.ts` maps that backend state into Discovery in progress, Discovery failed, or Discovery complete labels so operators can tell partial discovery from a finished registry refresh.
 
 ## Agent registry and Task Master settings
 

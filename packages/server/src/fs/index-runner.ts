@@ -9,7 +9,7 @@ import type { FileSourceAdapter, SourceNode, SourcePathMetadata } from './adapte
 
 const MAX_SOURCE_DEPTH = 8;
 const MAX_DIRECTORIES_PER_SOURCE = 5000;
-const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_MAX_FILE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_EXCLUDES = ['state-snapshots/**'];
 
 const IGNORED_DIRECTORIES = new Set([

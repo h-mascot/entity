@@ -99,7 +99,7 @@ Important distinctions:
 
 ## Cross-domain flows
 
-[Files and documents](../features/files-and-documents.md) use file-source and collaboration repositories, then link outputs back to tasks. [Agents](../features/agents-and-collaboration.md) consume registry, activity, metrics, and task data. [Execution and proof](../platform/execution-and-proof.md) references tasks but maintains separate Swarm tables and completion evidence. [Configuration](../platform/configuration-and-plugins.md) seeds agents, file sources, and plugin defaults into runtime persistence.
+[Files and documents](../features/files-and-documents.md) use file-source and collaboration repositories, then link outputs back to tasks. The file index runner now strips HTML wrappers and decodes entities before it derives titles and previews, so generated HTML presentation files stay searchable as human-readable content rather than markup blobs. [Agents](../features/agents-and-collaboration.md) consume registry, activity, metrics, and task data. [Execution and proof](../platform/execution-and-proof.md) references tasks but maintains separate Swarm tables and completion evidence. [Configuration](../platform/configuration-and-plugins.md) seeds agents, file sources, and plugin defaults into runtime persistence.
 
 ## Change guidance
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedPlugin } from '../types';
-import { buildServicesRegistry, buildSshExecArgs, registerPluginRoutes, validateSshTarget } from './routes';
+import { buildServicesRegistry, buildSshExecArgs, getCachedServicesRegistry, registerPluginRoutes, validateSshTarget } from './routes';
 
 function createLoadedPlugin(overrides: Partial<LoadedPlugin> = {}): LoadedPlugin {
   return {
@@ -292,12 +292,111 @@ describe('entity-services routes', () => {
       ]);
       expect(completed).toBe(true);
       expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+        state: 'refreshing',
+        partial: true,
         services: expect.arrayContaining([expect.objectContaining({ serviceType: 'internal-plugin' })]),
       }));
       resolveDiscovery(new Response('ok', { status: 200 }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const completedResponse = createResponse();
+      await handlers['GET /registry'](
+        { protocol: 'http', get: (name: string) => name === 'host' ? 'cold-start.local' : undefined },
+        completedResponse,
+      );
+      expect(completedResponse.json).toHaveBeenCalledWith(expect.objectContaining({
+        state: 'ready',
+        partial: false,
+      }));
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('reports a background discovery failure instead of silently presenting a fresh skeleton', async () => {
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 876543 },
+    });
+    const context = {
+      plugin: entityServices,
+      registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+    } as any;
+    const failingBuild = vi.fn(async () => { throw new Error('discovery exploded'); });
+
+    const initial = await getCachedServicesRegistry(context, 'http://failure.local', failingBuild as any);
+    expect(initial).toEqual(expect.objectContaining({ state: 'refreshing', partial: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const failed = await getCachedServicesRegistry(context, 'http://failure.local', failingBuild as any);
+    expect(failed).toEqual(expect.objectContaining({
+      state: 'error',
+      partial: true,
+      refreshError: expect.stringContaining('discovery exploded'),
+    }));
+  });
+
+  it('starts independent background refreshes for distinct registry cache keys', async () => {
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 765432 },
+    });
+    const handlers: Record<string, (req: any, res: any) => Promise<any>> = {};
+    registerPluginRoutes(
+      { get: (route: string, handler: any) => { handlers[`GET ${route}`] = handler; } } as any,
+      {
+        plugin: entityServices,
+        registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+      } as any,
+    );
+    const neverSettles = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal('fetch', neverSettles);
+    try {
+      await handlers['GET /registry'](
+        { protocol: 'http', get: (name: string) => name === 'host' ? 'key-a.local' : undefined },
+        createResponse(),
+      );
+      const callsAfterFirstKey = neverSettles.mock.calls.length;
+      await handlers['GET /registry'](
+        { protocol: 'http', get: (name: string) => name === 'host' ? 'key-b.local' : undefined },
+        createResponse(),
+      );
+      expect(neverSettles.mock.calls.length).toBeGreaterThan(callsAfterFirstKey);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('preserves a usable stale registry when refresh capacity is exhausted', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-14T03:00:00.000Z'));
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 654321 },
+    });
+    const context = {
+      plugin: entityServices,
+      registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+    } as any;
+    const readyPayload = await buildServicesRegistry(
+      context,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+      'http://stale.local',
+    );
+
+    try {
+      await getCachedServicesRegistry(context, 'http://stale.local', async () => readyPayload);
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(16_000);
+
+      const neverBuilds = vi.fn(() => new Promise<typeof readyPayload>(() => undefined));
+      for (let index = 0; index < 16; index += 1) {
+        await getCachedServicesRegistry(context, `http://busy-${index}.local`, neverBuilds as any);
+      }
+
+      const stale = await getCachedServicesRegistry(context, 'http://stale.local', neverBuilds as any);
+      expect(stale.state).toBe('ready');
+      expect(stale.services).toEqual(readyPayload.services);
+    } finally {
+      vi.useRealTimers();
     }
   });
 
