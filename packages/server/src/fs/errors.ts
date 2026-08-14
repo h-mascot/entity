@@ -14,3 +14,10 @@ export function isMissingPathError(error: unknown): boolean {
     /(?:^|\D)404(?:\D|$)/.test(normalized)
   );
 }
+
+export class SourceTextUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SourceTextUnsupportedError';
+  }
+}

@@ -28,6 +28,34 @@ describe('bounded remote reads', () => {
     }
   });
 
+  it('does not invoke an unbounded buffer fallback when the response has no body', async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(DEFAULT_SOURCE_READ_LIMIT_BYTES + 1));
+    const response = {
+      headers: new Headers(),
+      body: null,
+      arrayBuffer,
+    } as unknown as Response;
+
+    await expect(readResponseTextBounded(response)).resolves.toEqual({ content: '', size: 0 });
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it('accepts a sub-cap response whose body is larger than its declared length', async () => {
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Buffer.from('actual'));
+        controller.close();
+      },
+    }), {
+      headers: { 'content-length': '1' },
+    });
+
+    await expect(readResponseTextBounded(response)).resolves.toEqual({
+      content: 'actual',
+      size: 6,
+    });
+  });
+
   it('applies the 16 MiB ceiling when remote callers omit read options', async () => {
     const cancel = vi.fn();
     const response = new Response(new ReadableStream<Uint8Array>({ pull() {}, cancel }), {
@@ -35,6 +63,22 @@ describe('bounded remote reads', () => {
     });
 
     await expect(readResponseTextBounded(response)).rejects.toBeInstanceOf(SourceReadLimitError);
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the hard-limit error when streamed-overflow cancellation fails', async () => {
+    const cancel = vi.fn(() => {
+      throw new Error('cancel failed');
+    });
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.of(0x61, 0x62));
+      },
+      cancel,
+    }));
+
+    await expect(readResponseTextBounded(response, { maxBytes: 1 }))
+      .rejects.toBeInstanceOf(SourceReadLimitError);
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 

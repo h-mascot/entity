@@ -4,6 +4,7 @@ import path from "path";
 import type { Express, Request, Response } from "express";
 import type { ActivityType } from "../../../db/src";
 import type { FileSourceRecord, FileSourceRepository } from "../../../db/src/file-sources";
+import { readLocalFileBounded } from "../fs/adapters/bounded-read";
 import { createFileSourceAdapter } from "../fs/adapters/registry";
 import { assertSourceEnabled, assertWriteTargetRealpathContained, normalizeSourceRelativePath, resolvePathThroughNearestExistingAncestor } from "../fs/security";
 import { detectContentType, normalizeContentType } from "../file-types";
@@ -337,6 +338,10 @@ export function registerLegacyFileRoutes(
       return 404;
     }
 
+    if (normalized.startsWith("source file exceeds the configured read limit of ")) {
+      return 413;
+    }
+
     if (
       normalized.includes("outside workspace") ||
       normalized.includes("inside the workspace") ||
@@ -405,7 +410,7 @@ export function registerLegacyFileRoutes(
 
   async function readRawLocalFile(filePath: string): Promise<RawFilePayload> {
     const [content, stats] = await Promise.all([
-      fs.promises.readFile(filePath),
+      readLocalFileBounded(filePath),
       fs.promises.stat(filePath),
     ]);
 
@@ -535,7 +540,7 @@ export function registerLegacyFileRoutes(
     try {
       const resolvedFilePath = await resolveWorkspaceReadPath(filePath, WORKSPACE);
       const [contentBuffer, stats] = await Promise.all([
-        fs.promises.readFile(resolvedFilePath),
+        readLocalFileBounded(resolvedFilePath),
         fs.promises.stat(resolvedFilePath),
       ]);
 

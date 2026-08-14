@@ -1,7 +1,8 @@
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
+import { SourceTextUnsupportedError } from '../errors';
 import { assertAllowedRemoteUrl, normalizeSourceRelativePath } from '../security';
-import { readResponseTextBounded } from './bounded-read';
+import { readResponseBufferBounded, readResponseTextBounded } from './bounded-read';
 import type { FileSourceAdapter, SourceCapability, SourceNode, SourceFileRawResult, SourceReadOptions } from './types';
 
 function normalizeBaseUrl(value: string): string {
@@ -85,7 +86,8 @@ export class HttpMarkdownFileSourceAdapter implements FileSourceAdapter {
 
     const contentTypeHeader = response.headers.get('content-type')?.toLowerCase() ?? '';
     if (!isAllowedTextDocument(targetUrl, contentTypeHeader)) {
-      throw new Error('Remote resource is not an allowed text document.');
+      await response.body?.cancel().catch(() => undefined);
+      throw new SourceTextUnsupportedError('Remote resource is not an allowed text document.');
     }
 
     const { content, size } = await readResponseTextBounded(response, options);
@@ -105,7 +107,7 @@ export class HttpMarkdownFileSourceAdapter implements FileSourceAdapter {
     throw new Error('HTTP markdown source is read-only.');
   }
 
-  async readRaw(relativePath: string): Promise<SourceFileRawResult> {
+  async readRaw(relativePath: string, options?: SourceReadOptions): Promise<SourceFileRawResult> {
     const normalized = normalizeSourceRelativePath(relativePath);
 
     const targetUrl = normalized ? joinUrl(this.baseUrl, normalized) : this.baseUrl;
@@ -116,8 +118,7 @@ export class HttpMarkdownFileSourceAdapter implements FileSourceAdapter {
       throw new Error(`Unable to read remote resource (${response.status}).`);
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    const content = Buffer.from(arrayBuffer);
+    const content = await readResponseBufferBounded(response, options);
     const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() || 'application/octet-stream';
 
     return {

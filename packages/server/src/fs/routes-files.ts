@@ -4,7 +4,8 @@ import { isTextualContentType } from '../file-types';
 import { createFileSourceAdapter } from './adapters/registry';
 import { assertSourceEnabled, emitFsAudit, normalizeSourceRelativePath } from './security';
 import { recordFsOperation } from './metrics';
-import { isMissingPathError } from './errors';
+import { isMissingPathError, SourceTextUnsupportedError } from './errors';
+import { SourceReadLimitError } from './adapters/bounded-read';
 
 export interface FileRouteDeps {
   sourceRepo?: FileSourceRepository;
@@ -29,6 +30,10 @@ function mapSourceError(message: string, res: Response): Response {
 
   if (message === 'Source is disabled.') {
     return res.status(403).json({ error: message });
+  }
+
+  if (message.startsWith('Source file exceeds the configured read limit of ')) {
+    return res.status(413).json({ error: message });
   }
 
   if (message.includes('read-only')) {
@@ -142,7 +147,8 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
       try {
         file = await adapter.read(normalizedPath);
       } catch (readErr) {
-        if (typeof (adapter as { readRaw?: unknown }).readRaw === 'function') {
+        if (readErr instanceof SourceReadLimitError) throw readErr;
+        if (readErr instanceof SourceTextUnsupportedError && typeof (adapter as { readRaw?: unknown }).readRaw === 'function') {
           const raw = await adapter.readRaw!(normalizedPath);
           file = {
             content: '',

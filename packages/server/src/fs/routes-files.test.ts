@@ -125,6 +125,42 @@ describe('file routes', () => {
     }
   });
 
+  it('does not fall through to an unbounded raw read when a local file exceeds the hard ceiling', async () => {
+    const workspaceRoot = await makeTempRoot();
+    const oversizedPath = path.join(workspaceRoot, 'oversized.bin');
+    await fs.promises.writeFile(oversizedPath, 'x');
+    await fs.promises.truncate(oversizedPath, (16 * 1024 * 1024) + 1);
+
+    const record = source({ id: 'workspace', base_path: workspaceRoot });
+    const repo: FileSourceRepository = {
+      listSources: vi.fn(() => [record]),
+      getSource: vi.fn((id: string) => id === record.id ? record : undefined),
+      createSource: vi.fn(() => record),
+      updateSource: vi.fn(() => record),
+      setEnabled: vi.fn(() => record),
+      deleteSource: vi.fn(() => false),
+    };
+    const { registerFileRoutes } = await import('./routes-files');
+    const app = express();
+    const router = Router();
+    registerFileRoutes(router, { sourceRepo: repo });
+    app.use('/api/fs', router);
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/fs/file?sourceId=workspace&path=oversized.bin`);
+      expect(response.status).toBe(413);
+      await expect(response.json()).resolves.toEqual({
+        error: 'Source file exceeds the configured read limit of 16777216 bytes.',
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it('allows writes for allowlisted local sources and keeps non-allowlisted or non-local sources read-only', async () => {
     const workspaceRoot = await makeTempRoot();
     const outsideRoot = await makeTempRoot();

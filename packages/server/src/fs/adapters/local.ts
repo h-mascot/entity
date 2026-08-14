@@ -212,7 +212,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     };
   }
 
-  async readRaw(relativePath: string): Promise<{ content: Buffer; contentType: string; updatedAt?: string; size: number }> {
+  async readRaw(relativePath: string, options?: SourceReadOptions): Promise<{ content: Buffer; contentType: string; updatedAt?: string; size: number }> {
     const basePath = this.source.base_path?.trim();
     if (!basePath) {
       throw new Error('Local source basePath is not configured.');
@@ -230,7 +230,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
       throw new Error('Target path is not a file.');
     }
 
-    const content = await fs.promises.readFile(absolutePath);
+    const content = await readLocalFileBounded(absolutePath, options);
     const detected = detectContentType({ filePath: absolutePath, content });
     return {
       content,
