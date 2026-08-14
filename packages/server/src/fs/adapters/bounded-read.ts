@@ -14,11 +14,12 @@ export class SourceReadLimitError extends Error {
   }
 }
 
-function normalizedLimit(options: SourceReadOptions | undefined): number | undefined {
+function normalizedLimit(options: SourceReadOptions | undefined): number {
   const value = options?.maxBytes;
-  if (value === undefined) return undefined;
-  if (!Number.isFinite(value) || value < 1) return DEFAULT_SOURCE_READ_LIMIT_BYTES;
-  return Math.floor(value);
+  if (value === undefined || !Number.isFinite(value) || value < 1) {
+    return DEFAULT_SOURCE_READ_LIMIT_BYTES;
+  }
+  return Math.min(Math.floor(value), DEFAULT_SOURCE_READ_LIMIT_BYTES);
 }
 
 export async function readResponseTextBounded(
@@ -26,11 +27,6 @@ export async function readResponseTextBounded(
   options?: SourceReadOptions,
 ): Promise<{ content: string; size: number }> {
   const maxBytes = normalizedLimit(options);
-  if (maxBytes === undefined) {
-    const content = await response.text();
-    return { content, size: Buffer.byteLength(content, 'utf8') };
-  }
-
   const declaredLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     await response.body?.cancel().catch(() => undefined);
@@ -71,8 +67,6 @@ export async function readLocalFileBounded(
   options?: SourceReadOptions,
 ): Promise<Buffer> {
   const maxBytes = normalizedLimit(options);
-  if (maxBytes === undefined) return fs.promises.readFile(absolutePath);
-
   const handle = await fs.promises.open(absolutePath, 'r');
   try {
     const buffer = Buffer.allocUnsafe(maxBytes + 1);
