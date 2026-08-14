@@ -65,7 +65,7 @@ export interface FileSourceAdapter {
   list(path: string): Promise<SourceNode[]>;
   stat?(path: string): Promise<SourcePathMetadata>;
   read(path: string, options?: SourceReadOptions): Promise<SourceFileReadResult>;
-  readRaw?(path: string): Promise<SourceFileRawResult>;
+  readRaw?(path: string, options?: SourceReadOptions): Promise<SourceFileRawResult>;
   write(path: string, content: string): Promise<{ updatedAt?: string }>;
   writeExclusive?(path: string, content: string): Promise<{ updatedAt?: string }>;
   mkdir(path: string): Promise<void>;

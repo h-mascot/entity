@@ -285,7 +285,7 @@ test("deploy writes release metadata after runtime environment files are install
 
 test("runtime environment serialization round-trips through dotenv", () => {
   const env = {
-    EDGE_TTS_COMMAND: "say apostrophe' quote\" back\\slash",
+    EDGE_TTS_COMMAND: "apostrophe' quote\" back\\slash #hash $dollar",
     KOKORO_TTS_DEFAULT_VOICE: "unicode-é and spaces",
     OPENAI_TTS_MODEL: "line1\nline2",
     OPENAI_TTS_VOICE: "literal\\nsequence",

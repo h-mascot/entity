@@ -201,6 +201,23 @@ describe("legacy file routes", () => {
     });
   });
 
+  it("rejects oversized direct workspace reads at the shared hard ceiling", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const oversizedPath = path.join(workspaceRoot, "oversized.bin");
+    await fs.promises.writeFile(oversizedPath, "x");
+    await fs.promises.truncate(oversizedPath, (16 * 1024 * 1024) + 1);
+
+    await withLegacyFileServer(workspaceRoot, async (baseUrl) => {
+      for (const endpoint of ["/api/file/raw", "/api/file"]) {
+        const response = await fetch(`${baseUrl}${endpoint}?path=oversized.bin`);
+        expect(response.status).toBe(413);
+        await expect(response.json()).resolves.toEqual({
+          error: "Source file exceeds the configured read limit of 16777216 bytes.",
+        });
+      }
+    });
+  });
+
   it("serves byte ranges for raw media files", async () => {
     const workspaceRoot = await makeTempRoot();
     const content = Buffer.from("0123456789abcdefghijklmnopqrstuvwxyz");

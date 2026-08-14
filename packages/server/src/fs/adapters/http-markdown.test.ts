@@ -27,20 +27,13 @@ const PNG_MAGIC = Buffer.from([
 ]);
 
 function mockResponse(body: Buffer | string, contentType: string, status = 200): Response {
-  const headers = new Map<string, string>();
-  headers.set('content-type', contentType);
-  return {
-    ok: status >= 200 && status < 300,
+  const responseBody = typeof body === 'string'
+    ? body
+    : body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer;
+  return new Response(responseBody, {
     status,
-    headers: {
-      get: (name: string) => headers.get(name.toLowerCase()) ?? null,
-    },
-    text: async () => (typeof body === 'string' ? body : body.toString('utf-8')),
-    arrayBuffer: async () =>
-      typeof body === 'string'
-        ? new TextEncoder().encode(body).buffer
-        : body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
-  } as unknown as Response;
+    headers: { 'content-type': contentType },
+  });
 }
 
 describe('HttpMarkdownFileSourceAdapter', () => {
@@ -70,6 +63,23 @@ describe('HttpMarkdownFileSourceAdapter', () => {
       expect(result.content).toBeInstanceOf(Buffer);
       expect(result.content.length).toBe(PNG_MAGIC.length);
       expect(result.size).toBe(PNG_MAGIC.length);
+    });
+
+    it('rejects oversized raw responses before buffering when options are omitted', async () => {
+      const adapter = new HttpMarkdownFileSourceAdapter(
+        makeSource({ base_url: 'http://example.test' }),
+      );
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response('x', {
+        status: 200,
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-length': String((16 * 1024 * 1024) + 1),
+        },
+      }));
+
+      await expect(adapter.readRaw!('oversized.bin')).rejects.toThrow(
+        'Source file exceeds the configured read limit of 16777216 bytes.',
+      );
     });
 
     it('returns content type from response header even for unknown extensions', async () => {

@@ -22,26 +22,27 @@ function normalizedLimit(options: SourceReadOptions | undefined): number {
   return Math.min(Math.floor(value), DEFAULT_SOURCE_READ_LIMIT_BYTES);
 }
 
-export async function readResponseTextBounded(
+export async function readResponseBufferBounded(
   response: Response,
   options?: SourceReadOptions,
-): Promise<{ content: string; size: number }> {
+): Promise<Buffer> {
   const maxBytes = normalizedLimit(options);
-  const declaredLength = Number(response.headers.get('content-length'));
+  const declaredLengthHeader = response.headers.get('content-length');
+  const declaredLength = declaredLengthHeader === null ? Number.NaN : Number(declaredLengthHeader);
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     await response.body?.cancel().catch(() => undefined);
     throw new SourceReadLimitError(maxBytes);
   }
 
   if (!response.body) {
-    const content = await response.text();
-    const size = Buffer.byteLength(content, 'utf8');
-    if (size > maxBytes) throw new SourceReadLimitError(maxBytes);
-    return { content, size };
+    return Buffer.alloc(0);
   }
 
   const reader = response.body.getReader();
-  const buffer = Buffer.allocUnsafe(maxBytes);
+  const capacity = Number.isFinite(declaredLength) && declaredLength >= 0
+    ? Math.min(declaredLength, maxBytes)
+    : maxBytes;
+  let buffer = Buffer.allocUnsafe(capacity);
   let total = 0;
   try {
     while (true) {
@@ -49,8 +50,13 @@ export async function readResponseTextBounded(
       if (done) break;
       if (!value) continue;
       if (value.byteLength > maxBytes - total) {
-        await reader.cancel();
+        await reader.cancel().catch(() => undefined);
         throw new SourceReadLimitError(maxBytes);
+      }
+      if (value.byteLength > buffer.length - total) {
+        const expanded = Buffer.allocUnsafe(maxBytes);
+        buffer.copy(expanded, 0, 0, total);
+        buffer = expanded;
       }
       buffer.set(value, total);
       total += value.byteLength;
@@ -59,7 +65,15 @@ export async function readResponseTextBounded(
     reader.releaseLock();
   }
 
-  return { content: buffer.subarray(0, total).toString('utf8'), size: total };
+  return Buffer.from(buffer.subarray(0, total));
+}
+
+export async function readResponseTextBounded(
+  response: Response,
+  options?: SourceReadOptions,
+): Promise<{ content: string; size: number }> {
+  const content = await readResponseBufferBounded(response, options);
+  return { content: content.toString('utf8'), size: content.length };
 }
 
 export async function readLocalFileBounded(

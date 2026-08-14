@@ -50,6 +50,7 @@ function quoteDotenv(value) {
   if (value.includes('\0')) throw new Error('Runtime environment values cannot contain NUL bytes.');
   const candidates = [
     `'${value}'`,
+    `\`${value}\``,
     `"${value.replaceAll('\r', '\\r').replaceAll('\n', '\\n')}"`,
     value,
   ];
