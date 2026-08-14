@@ -69,6 +69,8 @@ That collaboration layer is what makes the Files surface more than a file browse
 
 `packages/server/src/routes/documents.ts` adds the document-specific API surface. That route is where document sessions, blocks, presence, snapshots, events, and share-token authorization are handled.
 
+The file indexer now strips HTML wrappers, decodes entities, and stores readable titles and previews for generated wiki pages, so the presentation tree remains searchable as text instead of raw markup. That behavior lives in `packages/server/src/fs/index-runner.ts` and is covered by indexing tests for generated HTML content.
+
 The access model is explicit:
 
 - public documents are readable without a share token;
