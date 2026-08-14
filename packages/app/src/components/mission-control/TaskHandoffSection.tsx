@@ -168,13 +168,15 @@ export default function TaskHandoffSection({ taskId, apiBase }: { taskId: number
                 {h.source_principal_id || '—'} → {h.target_principal_id}
                 {h.note ? <span className="text-[var(--text-muted)]"> · {h.note}</span> : null}
               </span>
-              <button
-                type="button"
-                onClick={() => rollback(h.id)}
-                className="text-[10px] text-[var(--text-muted)] hover:underline"
-              >
-                rollback
-              </button>
+              {h.rollback_capable ? (
+                <button
+                  type="button"
+                  onClick={() => rollback(h.id)}
+                  className="text-[10px] text-[var(--text-muted)] hover:underline"
+                >
+                  rollback
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>

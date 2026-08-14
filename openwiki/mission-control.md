@@ -68,9 +68,9 @@ This flow is backed by `packages/server/src/routes/task-review-gates.ts` and the
 
 ## Handoffs and rollback
 
-Mission Control now includes a task-handoff workflow on the same task record that powers assignment and review. The task detail panel surfaces that workflow in the dedicated `Handoffs` section, where `TaskHandoffSection` lets users switch between local and cloud modes, submit a target principal, optionally include a cloud context id and note, inspect local history, and roll back individual handoffs. The section loads history on mount and re-fetches after create or rollback so the visible list stays in sync with the server.
+Mission Control now includes a task-handoff workflow on the same task record that powers assignment and review. The task detail panel surfaces that workflow in the dedicated `Handoffs` section, where `TaskHandoffSection` lets users switch between local and cloud modes, submit a target principal, optionally include a cloud context id and note, inspect handoff history, and roll back individual handoffs. The client now merges the task API's `handoffs` array with Curacel `incoming` and `outgoing` records through `mergeHandoffHistory`, deduplicates overlapping rows, and marks only the direct `handoffs` entries as rollback-capable. The section loads history on mount and re-fetches after create or rollback so the visible list stays in sync with the server.
 
-`packages/server/src/routes/tasks.ts` exposes `GET /api/tasks/:id/handoffs` for local history, `POST /api/tasks/:id/handoff` for creating a handoff, and `POST /api/tasks/:id/handoffs/:handoffId/rollback` for rolling it back.
+`packages/server/src/routes/tasks.ts` exposes `GET /api/tasks/:id/handoffs` for local history, `POST /api/tasks/:id/handoff` for creating a handoff, and `POST /api/tasks/:id/handoffs/:handoffId/rollback` for rolling it back. That read endpoint now returns `{ handoffs, incoming, outgoing }`, with Curacel arrays added when the task has an org-scoped Curacel repository entry.
 
 The implemented flow is intentionally conservative:
 
@@ -80,7 +80,7 @@ The implemented flow is intentionally conservative:
 - rollback is scoped to the task, mode, and cloud id so a handoff id cannot be replayed from another task;
 - successful create and rollback operations broadcast `task:updated` so the board and detail panel refresh.
 
-The handoff repository lives in `packages/db/src/handoffs.ts`, and the principal authorization rules come from `packages/db/src/principals.ts`. The route-level coverage in `packages/server/src/routes/tasks-handoffs-route.test.ts` verifies the local-only path, scope checks, cloud fail-closed behavior, rollback scoping, and refresh broadcasts. The new `taskHandoffDiscoverability.test.ts` keeps the task detail panel wired to the first-class `handoffs` tab so the UI cannot silently lose the section.
+The handoff repository lives in `packages/db/src/handoffs.ts`, and the principal authorization rules come from `packages/db/src/principals.ts`. The route-level coverage in `packages/server/src/routes/tasks-handoffs-route.test.ts` verifies the local-only path, scope checks, cloud fail-closed behavior, rollback scoping, and refresh broadcasts. The `taskHandoffHistory.test.ts` unit coverage now proves the history merger accepts direct, incoming, and outgoing rows while deduplicating shared ids, and `TaskDetailPanel` keeps the `handoffs` tab wired to `TaskHandoffSection` so the UI cannot silently lose the section.
 
 ## Receipt-backed completion and proof
 

@@ -5,6 +5,7 @@ export interface HandoffRecord {
   target_principal_id: string;
   note: string;
   created_at: string;
+  rollback_capable: boolean;
 }
 
 export interface HandoffApiPayload {
@@ -15,12 +16,12 @@ export interface HandoffApiPayload {
 
 export function mergeHandoffHistory(payload: HandoffApiPayload | null | undefined): HandoffRecord[] {
   const rows = [
-    ...(payload?.handoffs ?? []),
-    ...(payload?.incoming ?? []),
-    ...(payload?.outgoing ?? []),
-  ] as Array<Record<string, unknown> & { id: string }>;
+    ...(payload?.handoffs ?? []).map((row) => ({ row, rollbackCapable: true })),
+    ...(payload?.incoming ?? []).map((row) => ({ row, rollbackCapable: false })),
+    ...(payload?.outgoing ?? []).map((row) => ({ row, rollbackCapable: false })),
+  ] as Array<{ row: Record<string, unknown> & { id: string }; rollbackCapable: boolean }>;
   const byId = new Map<string, HandoffRecord>();
-  for (const row of rows) {
+  for (const { row, rollbackCapable } of rows) {
     if (!row?.id || byId.has(row.id)) continue;
     byId.set(row.id, {
       id: row.id,
@@ -44,6 +45,7 @@ export function mergeHandoffHistory(payload: HandoffApiPayload | null | undefine
             ? row.reason
             : '',
       created_at: typeof row.created_at === 'string' ? row.created_at : '',
+      rollback_capable: rollbackCapable,
     });
   }
   return Array.from(byId.values()).sort((left, right) => right.created_at.localeCompare(left.created_at));
