@@ -117,6 +117,20 @@ describe('HttpMarkdownFileSourceAdapter', () => {
       );
     });
 
+    it('stops remote text reads once the configured byte ceiling is exceeded', async () => {
+      const adapter = new HttpMarkdownFileSourceAdapter(
+        makeSource({ base_url: 'http://example.test' }),
+      );
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response('12345', {
+        status: 200,
+        headers: { 'content-type': 'text/markdown' },
+      }));
+
+      await expect(adapter.read('notes.md', { maxBytes: 4 })).rejects.toThrow(
+        'Source file exceeds the configured read limit of 4 bytes.',
+      );
+    });
+
     it('still serves markdown files as text', async () => {
       const adapter = new HttpMarkdownFileSourceAdapter(
         makeSource({ base_url: 'http://example.test' }),

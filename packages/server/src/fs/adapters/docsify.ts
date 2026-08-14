@@ -1,7 +1,8 @@
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { assertAllowedRemoteUrl, normalizeSourceRelativePath } from '../security';
-import type { FileSourceAdapter, SourceCapability, SourceNode } from './types';
+import { DEFAULT_SOURCE_READ_LIMIT_BYTES, readResponseTextBounded } from './bounded-read';
+import type { FileSourceAdapter, SourceCapability, SourceNode, SourceReadOptions } from './types';
 
 interface MarkdownLink {
   label: string;
@@ -87,7 +88,9 @@ export class DocsifyFileSourceAdapter implements FileSourceAdapter {
       throw new Error(`Unable to list docsify source (${response.status}).`);
     }
 
-    const markdown = await response.text();
+    const { content: markdown } = await readResponseTextBounded(response, {
+      maxBytes: DEFAULT_SOURCE_READ_LIMIT_BYTES,
+    });
     const links = parseMarkdownLinks(markdown);
     return links.map((link) => {
       const parsed = classifyLink(link.href);
@@ -101,7 +104,7 @@ export class DocsifyFileSourceAdapter implements FileSourceAdapter {
     });
   }
 
-  async read(relativePath: string): Promise<{ content: string; contentType: string; updatedAt?: string }> {
+  async read(relativePath: string, options?: SourceReadOptions): Promise<{ content: string; contentType: string; updatedAt?: string; size?: number }> {
     const normalized = normalizeSourceRelativePath(relativePath);
     if (!normalized) {
       throw new Error('Path is required.');
@@ -117,10 +120,11 @@ export class DocsifyFileSourceAdapter implements FileSourceAdapter {
         continue;
       }
 
-      const content = await response.text();
+      const { content, size } = await readResponseTextBounded(response, options);
       return {
         content,
         contentType: 'text/markdown',
+        size,
       };
     }
 

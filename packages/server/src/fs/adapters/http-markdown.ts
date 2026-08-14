@@ -1,7 +1,8 @@
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { assertAllowedRemoteUrl, normalizeSourceRelativePath } from '../security';
-import type { FileSourceAdapter, SourceCapability, SourceNode, SourceFileRawResult } from './types';
+import { readResponseTextBounded } from './bounded-read';
+import type { FileSourceAdapter, SourceCapability, SourceNode, SourceFileRawResult, SourceReadOptions } from './types';
 
 function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, '');
@@ -71,7 +72,7 @@ export class HttpMarkdownFileSourceAdapter implements FileSourceAdapter {
     return [];
   }
 
-  async read(relativePath: string): Promise<{ content: string; contentType: string; updatedAt?: string }> {
+  async read(relativePath: string, options?: SourceReadOptions): Promise<{ content: string; contentType: string; updatedAt?: string; size?: number }> {
     const normalized = normalizeSourceRelativePath(relativePath);
 
     const targetUrl = normalized ? joinUrl(this.baseUrl, normalized) : this.baseUrl;
@@ -87,11 +88,12 @@ export class HttpMarkdownFileSourceAdapter implements FileSourceAdapter {
       throw new Error('Remote resource is not an allowed text document.');
     }
 
-    const content = await response.text();
+    const { content, size } = await readResponseTextBounded(response, options);
     return {
       content,
       contentType: 'text/markdown',
       updatedAt: response.headers.get('last-modified') || undefined,
+      size,
     };
   }
 

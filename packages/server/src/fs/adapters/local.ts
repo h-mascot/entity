@@ -4,7 +4,8 @@ import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { detectContentType } from '../../file-types';
 import { assertAllowedLocalSourceBasePath, isBasePathAllowlisted } from '../source-root-guard';
 import { assertRealpathContained, assertWriteTargetRealpathContained, normalizeSourceRelativePath, resolveLocalPath } from '../security';
-import type { FileSourceAdapter, SourceCapability, SourceNode, SourcePathMetadata } from './types';
+import { readLocalFileBounded, SourceReadLimitError } from './bounded-read';
+import type { FileSourceAdapter, SourceCapability, SourceNode, SourcePathMetadata, SourceReadOptions } from './types';
 
 function toIsoTimestamp(value: Date): string {
   return value.toISOString();
@@ -179,7 +180,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     };
   }
 
-  async read(relativePath: string): Promise<{ content: string; contentType: string; updatedAt?: string; size?: number; isBinary?: boolean }> {
+  async read(relativePath: string, options?: SourceReadOptions): Promise<{ content: string; contentType: string; updatedAt?: string; size?: number; isBinary?: boolean }> {
     const basePath = this.source.base_path?.trim();
     if (!basePath) {
       throw new Error('Local source basePath is not configured.');
@@ -197,7 +198,10 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
       throw new Error('Target path is not a file.');
     }
 
-    const buffer = await fs.promises.readFile(absolutePath);
+    if (options?.maxBytes !== undefined && stats.size > options.maxBytes) {
+      throw new SourceReadLimitError(options.maxBytes);
+    }
+    const buffer = await readLocalFileBounded(absolutePath, options);
     const detected = detectContentType({ filePath: absolutePath, content: buffer });
     return {
       content: detected.isBinary ? '' : buffer.toString('utf-8'),

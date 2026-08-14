@@ -356,7 +356,7 @@ describe('FileIndexRunner deterministic incident skips', () => {
     }
 
     expect(bookAdapter.stat).not.toHaveBeenCalledWith('state-snapshots/20260611-181830-pre-update/state.db');
-    expect(bookAdapter.read).toHaveBeenCalledWith('notes/unreadable.md');
+    expect(bookAdapter.read).toHaveBeenCalledWith('notes/unreadable.md', { maxBytes: 16 * 1024 * 1024 });
     expect(emitFsAuditMock).toHaveBeenCalledWith('index.file.error', {
       sourceId: 'book',
       path: 'notes/unreadable.md',
@@ -450,6 +450,82 @@ describe('FileIndexRunner deterministic incident skips', () => {
       path: oversizedPath,
       reason: 'oversize',
     }));
+  });
+
+  it('passes the hard byte ceiling into reads when source metadata omits size', async () => {
+    const unknownPath = 'remote/unknown-size.md';
+    const fixtures = new Map<string, FixtureNode[]>([['', [node(unknownPath, false)]]]);
+    const metadataByPath = new Map<string, FixtureMetadata>([
+      [unknownPath, metadata(unknownPath, 'file')],
+    ]);
+    const bookAdapter = createAdapter(fixtures, metadataByPath, new Set());
+    const spockAdapter = createAdapter(new Map([['', []]]), new Map(), new Set());
+    createFileSourceAdapterMock.mockImplementation((record: FileSourceRecord) => (
+      record.id === 'book' ? bookAdapter.adapter : spockAdapter.adapter
+    ));
+
+    const { FileIndexRunner } = await import('./index-runner');
+    await new FileIndexRunner({ maxConcurrentSources: 1, excludes: [] }).runOnce();
+
+    expect(bookAdapter.read).toHaveBeenCalledWith(unknownPath, { maxBytes: 16 * 1024 * 1024 });
+  });
+
+  it('enforces the 16 MiB hard ceiling at the exact boundary', async () => {
+    const belowPath = 'notes/below-limit.md';
+    const exactPath = 'notes/exact-limit.md';
+    const abovePath = 'notes/above-limit.md';
+    const limit = 16 * 1024 * 1024;
+    const fixtures = new Map<string, FixtureNode[]>([['', [
+      node(belowPath, false, limit - 1),
+      node(exactPath, false, limit),
+      node(abovePath, false, limit + 1),
+    ]]]);
+    const metadataByPath = new Map<string, FixtureMetadata>([
+      [belowPath, metadata(belowPath, 'file', limit - 1)],
+      [exactPath, metadata(exactPath, 'file', limit)],
+      [abovePath, metadata(abovePath, 'file', limit + 1)],
+    ]);
+    const bookAdapter = createAdapter(fixtures, metadataByPath, new Set([abovePath]));
+    const spockAdapter = createAdapter(new Map([['', []]]), new Map(), new Set());
+    createFileSourceAdapterMock.mockImplementation((source: FileSourceRecord) => (
+      source.id === 'book' ? bookAdapter.adapter : spockAdapter.adapter
+    ));
+
+    const { FileIndexRunner } = await import('./index-runner');
+    await new FileIndexRunner({ maxConcurrentSources: 1, excludes: [] }).runOnce();
+
+    expect(bookAdapter.read).toHaveBeenCalledWith(belowPath, { maxBytes: limit });
+    expect(bookAdapter.read).toHaveBeenCalledWith(exactPath, { maxBytes: limit });
+    expect(bookAdapter.read.mock.calls.map(([path]) => path)).not.toContain(abovePath);
+  });
+
+  it.each([
+    ['constructor', { maxFileBytes: bufferConstants.MAX_STRING_LENGTH + 100 }],
+    ['non-finite constructor', { maxFileBytes: Number.NaN }],
+    ['environment', undefined],
+  ])('does not let an unsafe %s override bypass the hard file ceiling', async (source, options) => {
+    const oversizedPath = `logs/${source}-override.log`;
+    const oversizedBytes = 16 * 1024 * 1024 + 1;
+    const fixtures = new Map<string, FixtureNode[]>([['', [node(oversizedPath, false, oversizedBytes)]]]);
+    const metadataByPath = new Map<string, FixtureMetadata>([
+      [oversizedPath, metadata(oversizedPath, 'file', oversizedBytes)],
+    ]);
+    const bookAdapter = createAdapter(fixtures, metadataByPath, new Set([oversizedPath]));
+    const spockAdapter = createAdapter(new Map([['', []]]), new Map(), new Set());
+    createFileSourceAdapterMock.mockImplementation((record: FileSourceRecord) => (
+      record.id === 'book' ? bookAdapter.adapter : spockAdapter.adapter
+    ));
+    if (source === 'environment') {
+      vi.stubEnv('ENTITY_FS_AUDIT_MAX_FILE_BYTES', String(bufferConstants.MAX_STRING_LENGTH + 100));
+    }
+
+    try {
+      const { FileIndexRunner } = await import('./index-runner');
+      await new FileIndexRunner({ maxConcurrentSources: 1, excludes: [], ...options }).runOnce();
+      expect(bookAdapter.read).not.toHaveBeenCalledWith(oversizedPath);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('removes stale index rows when a path is excluded before classification', async () => {

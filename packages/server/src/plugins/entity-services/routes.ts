@@ -136,6 +136,23 @@ interface RegistryCacheEntry {
 
 const registryCache = new Map<string, RegistryCacheEntry>();
 const refreshesInFlight = new Map<string, Promise<ServiceRegistryPayload>>();
+const lastForcedRefreshAt = new Map<string, number>();
+
+function recordForcedRefresh(key: string, timestamp: number): void {
+  lastForcedRefreshAt.delete(key);
+  lastForcedRefreshAt.set(key, timestamp);
+  while (lastForcedRefreshAt.size > MAX_REGISTRY_CACHE_KEYS) {
+    const oldestKey = lastForcedRefreshAt.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    lastForcedRefreshAt.delete(oldestKey);
+  }
+}
+
+export function resetServicesRegistryStateForTests(): void {
+  registryCache.clear();
+  refreshesInFlight.clear();
+  lastForcedRefreshAt.clear();
+}
 
 function setRegistryCache(key: string, entry: RegistryCacheEntry): void {
   registryCache.delete(key);
@@ -280,14 +297,11 @@ function preferRuntimeTailnetUrl(configuredUrl: string, runtimeBaseUrl: string, 
   return normalizeBaseUrl(`${protocol}//${runtimeHost}${selectedPort ? `:${selectedPort}` : ''}`);
 }
 
-function deriveRuntimeOrigin(req: { protocol?: string; get?: (name: string) => string | undefined }): string {
-  const host = req.get?.('host');
-  if (!host) {
-    return normalizeRuntimeBaseUrl();
-  }
-  const forwardedProto = req.get?.('x-forwarded-proto')?.split(',')[0]?.trim();
-  const protocol = forwardedProto || req.protocol || 'http';
-  return normalizeRuntimeBaseUrl(`${protocol}://${host}`);
+function deriveRuntimeOrigin(plugin: LoadedPlugin): string {
+  const configured = process.env.ENTITY_BASE_URL
+    || process.env.PUBLIC_ENTITY_BASE_URL
+    || readStringSetting(plugin.settings, 'entityBaseUrl', '');
+  return normalizeBaseUrl(configured);
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -508,6 +522,10 @@ function createCacheKey(plugin: LoadedPlugin, runtimeBaseUrl: string): string {
 
 function isFreshCache(entry: RegistryCacheEntry | undefined, now: number): boolean {
   return Boolean(entry && entry.payload.state === 'ready' && now - entry.createdAt < SERVICE_REGISTRY_CACHE_TTL_MS);
+}
+
+function isRecentErrorCache(entry: RegistryCacheEntry | undefined, now: number): boolean {
+  return Boolean(entry && entry.payload.state === 'error' && now - entry.createdAt < SERVICE_REGISTRY_CACHE_TTL_MS);
 }
 
 function isUsableStaleCache(entry: RegistryCacheEntry | undefined, now: number): boolean {
@@ -978,13 +996,19 @@ export async function getCachedServicesRegistry(
   context: PluginRouteContext,
   runtimeBaseUrl: string,
   buildRegistry: typeof buildServicesRegistry = buildServicesRegistry,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<ServiceRegistryPayload> {
   const currentPlugin = context.registry.get(context.plugin.id) ?? context.plugin;
   const key = createCacheKey(currentPlugin, normalizeRuntimeBaseUrl(runtimeBaseUrl));
   const now = Date.now();
   const cached = registryCache.get(key);
+  const previousForcedRefreshAt = lastForcedRefreshAt.get(key) ?? Number.NEGATIVE_INFINITY;
+  const forceRefreshAllowed = options.forceRefresh === true
+    && now - previousForcedRefreshAt >= SERVICE_REGISTRY_CACHE_TTL_MS;
 
-  if (isFreshCache(cached, now)) {
+  if (!forceRefreshAllowed
+      && !refreshesInFlight.has(key)
+      && (isFreshCache(cached, now) || isRecentErrorCache(cached, now))) {
     return cached!.payload;
   }
 
@@ -1000,6 +1024,7 @@ export async function getCachedServicesRegistry(
     };
   }
   if (!refreshesInFlight.has(key)) {
+    if (forceRefreshAllowed) recordForcedRefresh(key, now);
     const refresh = buildRegistry(context, fetch, runtimeBaseUrl)
       .then((payload) => {
         setRegistryCache(key, { payload, createdAt: Date.now() });
@@ -1014,7 +1039,7 @@ export async function getCachedServicesRegistry(
         };
         setRegistryCache(key, {
           payload: failed,
-          createdAt: Date.now() - SERVICE_REGISTRY_CACHE_TTL_MS - 1,
+          createdAt: Date.now(),
         });
         return failed;
       })
@@ -1027,19 +1052,32 @@ export async function getCachedServicesRegistry(
   }
 
   if (isUsableStaleCache(cached, now)) {
-    return cached!.payload;
+    const payload = cached!.payload;
+    if (refreshesInFlight.has(key) && payload.services.length > 0) {
+      return {
+        ...payload,
+        state: 'refreshing',
+        partial: true,
+        refreshError: undefined,
+      };
+    }
+    return payload;
   }
 
-  setRegistryCache(key, {
-    payload: skeleton,
-    createdAt: now - SERVICE_REGISTRY_CACHE_TTL_MS - 1,
-  });
   return skeleton;
 }
 
 export function registerPluginRoutes(router: Router, context: PluginRouteContext): void {
   const handler = async (req: Request, res: Response) => {
-    return res.json(await getCachedServicesRegistry(context, deriveRuntimeOrigin(req)));
+    const currentPlugin = context.registry.get(context.plugin.id) ?? context.plugin;
+    const refresh = req.query?.refresh;
+    const forceRefresh = refresh === '1' || refresh === 'true';
+    return res.json(await getCachedServicesRegistry(
+      context,
+      deriveRuntimeOrigin(currentPlugin),
+      buildServicesRegistry,
+      { forceRefresh },
+    ));
   };
 
   router.get('/', handler);

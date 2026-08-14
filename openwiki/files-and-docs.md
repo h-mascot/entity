@@ -69,7 +69,7 @@ That collaboration layer is what makes the Files surface more than a file browse
 
 `packages/server/src/routes/documents.ts` adds the document-specific API surface. That route is where document sessions, blocks, presence, snapshots, events, and share-token authorization are handled.
 
-The file indexer now strips HTML wrappers, decodes entities, and stores readable titles and previews for generated wiki pages, so the presentation tree remains searchable as text instead of raw markup. That behavior lives in `packages/server/src/fs/index-runner.ts` and is covered by indexing tests for generated HTML content.
+A shared bounded-read helper in `packages/server/src/fs/adapters/bounded-read.ts` now enforces a 16 MiB ceiling for file-source reads and remote text reads. `packages/server/src/fs/adapters/local.ts`, `packages/server/src/fs/adapters/http-markdown.ts`, and `packages/server/src/fs/adapters/docsify.ts` all call that helper so oversized content is rejected consistently instead of being buffered or concatenated blindly. The same ceiling also protects the file indexer in `packages/server/src/fs/index-runner.ts`, which now skips oversized sources before read/index work, emits deterministic skip events only once for unchanged metadata, and treats `SourceReadLimitError` as a bounded-path signal rather than a generic failure. The index runner’s tests now cover the hard 16 MiB ceiling, the exact boundary, and the no-repeat skip behavior. That same read ceiling also matches the file-browsing boundary described in [Configuration, Admin, Plugins, and Services](platform/configuration-and-plugins.md), so source browsing, indexing, and the admin-configured file-source experience stay aligned.
 
 The access model is explicit:
 

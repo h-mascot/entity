@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
 import { getServiceRegistryStatus, type ServiceRegistryState } from './entityServicesState';
+import { refreshServiceRegistryUntilSettled } from './entityServicesRefresh';
 import type { PluginUIEntry } from '../stores/pluginStore';
 
 type ServiceStatus = 'operational' | 'degraded' | 'offline' | 'unknown';
@@ -119,10 +120,11 @@ function formatLatency(value: number | undefined): string {
   return `${Math.round(value)} ms`;
 }
 
-function buildRegistryUrls(plugin: PluginUIEntry, apiBase: string): string[] {
+function buildRegistryUrls(plugin: PluginUIEntry, apiBase: string, forceRefresh = false): string[] {
   const routeBase = plugin.routes[0]?.basePath?.trim() || '/api/entity-services';
   const normalized = routeBase.startsWith('/api/') ? routeBase.slice(4) : routeBase;
-  return buildApiCandidates(`${normalized}/registry`, apiBase);
+  const urls = buildApiCandidates(`${normalized}/registry`, apiBase);
+  return forceRefresh ? urls.map((url) => `${url}${url.includes('?') ? '&' : '?'}refresh=1`) : urls;
 }
 
 function readMetaString(meta: Record<string, unknown>, key: string, fallback = '—'): string {
@@ -376,9 +378,11 @@ export default function EntityServicesBoard({ plugin, apiBase = '' }: EntityServ
               type="button"
               onClick={() => {
                 setRefreshing(true);
-                void requestJsonWithFallback<ServiceRegistryPayload>({
-                  urls: buildRegistryUrls(plugin, apiBase),
-                  fallbackError: 'Unable to load services registry.',
+                void refreshServiceRegistryUntilSettled({
+                  request: (forceRefresh) => requestJsonWithFallback<ServiceRegistryPayload>({
+                    urls: buildRegistryUrls(plugin, apiBase, forceRefresh),
+                    fallbackError: 'Unable to load services registry.',
+                  }),
                 })
                   .then((data) => {
                     setPayload(data);
