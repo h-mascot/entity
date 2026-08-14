@@ -27,6 +27,7 @@ export default function TaskHandoffSection({ taskId, apiBase }: { taskId: number
   const [status, setStatus] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
+    setLoading(true);
     const params = new URLSearchParams({ mode });
     requestJsonWithFallback<{ handoffs?: HandoffRecord[] }>({
       urls: buildApiCandidates(`/tasks/${taskId}/handoffs?${params.toString()}`, apiBase),
@@ -101,8 +102,11 @@ export default function TaskHandoffSection({ taskId, apiBase }: { taskId: number
   );
 
   return (
-    <section className="rounded-lg border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-3" data-testid="task-handoff-section">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Hand off task</div>
+    <section className="rounded-lg" data-testid="task-handoff-section" aria-labelledby="task-handoff-title">
+      <div className="mb-4">
+        <h4 id="task-handoff-title" className="text-sm font-semibold text-[var(--text-primary)]">Handoffs</h4>
+        <p className="mt-1 text-xs text-[var(--text-muted)]">Review handoff history or transfer this task to another principal.</p>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <select
@@ -156,7 +160,11 @@ export default function TaskHandoffSection({ taskId, apiBase }: { taskId: number
         </div>
       ) : null}
 
-      {handoffs.length > 0 ? (
+      {loading && handoffs.length === 0 ? (
+        <div className="mt-3 rounded-lg border border-dashed border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-4 text-xs text-[var(--text-muted)]" role="status">
+          Loading handoff history…
+        </div>
+      ) : handoffs.length > 0 ? (
         <ul className="mt-3 space-y-1">
           {handoffs.map((h) => (
             <li key={h.id} className="flex items-center justify-between gap-2 text-xs text-[var(--text-secondary)]">
@@ -174,6 +182,10 @@ export default function TaskHandoffSection({ taskId, apiBase }: { taskId: number
             </li>
           ))}
         </ul>
+      ) : !error ? (
+        <div className="mt-3 rounded-lg border border-dashed border-[var(--border-primary)] bg-[var(--bg-primary)] px-3 py-4 text-xs text-[var(--text-muted)]">
+          No local handoffs yet.
+        </div>
       ) : null}
     </section>
   );

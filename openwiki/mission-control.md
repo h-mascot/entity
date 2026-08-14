@@ -7,7 +7,7 @@ tags: [entity, mission-control, tasks, review, handoff, receipts, activity]
 
 # Mission Control
 
-Mission Control is the primary execution surface for the workspace. In the UI it appears as the task board plus task detail panel; on the server it is backed by task routes, review-gate routes, handoff routes, and the task sync layer. Customizable Mission Control board navigation now filters out the `geordi-swarm` plugin so execution-only Swarm controls do not reappear as a standalone board tab, while the task-detail `Run with agents` action and the `/swarm/*` execution routes remain available inside Mission Control. Task handoffs are also part of this surface: the server now exposes local handoff history, handoff creation, and rollback through `packages/server/src/routes/tasks.ts`, and the board/detail UI refreshes when those mutations broadcast updates.
+Mission Control is the primary execution surface for the workspace. In the UI it appears as the task board plus task detail panel; on the server it is backed by task routes, review-gate routes, handoff routes, and the task sync layer. Customizable Mission Control board navigation now filters out the `geordi-swarm` plugin so execution-only Swarm controls do not reappear as a standalone board tab, while the task-detail `Run with agents` action and the `/swarm/*` execution routes remain available inside Mission Control. Task handoffs are also part of this surface: the task detail panel now renders a dedicated `Handoffs` section via `TaskHandoffSection`, and the server exposes local handoff history, handoff creation, and rollback through `packages/server/src/routes/tasks.ts`, with board/detail UI refreshes when those mutations broadcast updates.
 
 The important source seams are:
 
@@ -68,7 +68,9 @@ This flow is backed by `packages/server/src/routes/task-review-gates.ts` and the
 
 ## Handoffs and rollback
 
-Mission Control now includes a task-handoff workflow on the same task record that powers assignment and review. `packages/server/src/routes/tasks.ts` exposes `GET /api/tasks/:id/handoffs` for local history, `POST /api/tasks/:id/handoff` for creating a handoff, and `POST /api/tasks/:id/handoffs/:handoffId/rollback` for rolling it back.
+Mission Control now includes a task-handoff workflow on the same task record that powers assignment and review. The task detail panel surfaces that workflow in the dedicated `Handoffs` section, where `TaskHandoffSection` lets users switch between local and cloud modes, submit a target principal, optionally include a cloud context id and note, inspect local history, and roll back individual handoffs.
+
+`packages/server/src/routes/tasks.ts` exposes `GET /api/tasks/:id/handoffs` for local history, `POST /api/tasks/:id/handoff` for creating a handoff, and `POST /api/tasks/:id/handoffs/:handoffId/rollback` for rolling it back.
 
 The implemented flow is intentionally conservative:
 
@@ -78,7 +80,7 @@ The implemented flow is intentionally conservative:
 - rollback is scoped to the task, mode, and cloud id so a handoff id cannot be replayed from another task;
 - successful create and rollback operations broadcast `task:updated` so the board and detail panel refresh.
 
-The handoff repository lives in `packages/db/src/handoffs.ts`, and the principal authorization rules come from `packages/db/src/principals.ts`. The route-level coverage in `packages/server/src/routes/tasks-handoffs-route.test.ts` verifies the local-only path, scope checks, cloud fail-closed behavior, rollback scoping, and refresh broadcasts.
+The handoff repository lives in `packages/db/src/handoffs.ts`, and the principal authorization rules come from `packages/db/src/principals.ts`. The route-level coverage in `packages/server/src/routes/tasks-handoffs-route.test.ts` verifies the local-only path, scope checks, cloud fail-closed behavior, rollback scoping, and refresh broadcasts. The new `taskHandoffDiscoverability.test.ts` keeps the task detail panel wired to the first-class `handoffs` tab so the UI cannot silently lose the section.
 
 ## Receipt-backed completion and proof
 
