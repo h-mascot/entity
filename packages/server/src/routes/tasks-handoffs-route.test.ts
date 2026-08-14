@@ -9,6 +9,7 @@ import os from 'os';
 import path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { registerTaskRoutes } from './tasks';
+import { createTaskHandoffRouter } from './task-handoffs';
 import { createTaskRepository, type TaskRecord } from '../../../db/src';
 import { createPrincipalRepository } from '../../../db/src/principals';
 import { createHandoffRepository } from '../../../db/src/handoffs';
@@ -23,7 +24,9 @@ const OTHER_TEAM = 'other-team';
 
 let taskId = 0;
 let otherTaskId = 0;
+let nonDefaultOrgTaskId = 0;
 let principalRepo: ReturnType<typeof createPrincipalRepository>;
+let handoffRepo: ReturnType<typeof createHandoffRepository>;
 
 beforeAll(() => {
   process.env.ENTITY_TASK_DB_PATH = tmpDbPath;
@@ -32,6 +35,20 @@ beforeAll(() => {
   taskId = created.id;
   const other = repo.createTask({ name: 'other-task', org_id: ORG, team_id: TEAM });
   otherTaskId = other.id;
+  const nonDefaultOrgTask = repo.createTask({ name: 'non-default-org-task', org_id: OTHER_ORG, team_id: OTHER_TEAM });
+  nonDefaultOrgTaskId = nonDefaultOrgTask.id;
+
+  handoffRepo = createHandoffRepository();
+  handoffRepo.create({
+    taskId: nonDefaultOrgTaskId,
+    mode: 'local',
+    sourcePrincipalId: 'ada',
+    targetPrincipalId: 'zora',
+    orgId: OTHER_ORG,
+    teamId: OTHER_TEAM,
+    note: 'existing history',
+    createdByPrincipalId: 'ada',
+  });
 
   principalRepo = createPrincipalRepository();
   // Active target, correctly scoped (contributor on default-org/default-team).
@@ -78,6 +95,7 @@ describe('task handoff routes (THE-933)', () => {
       logActivity: () => {},
       getTaskActorFromRequest: () => 'test-actor',
       principalRepository: principalRepo,
+      handoffRepository: handoffRepo,
       broadcast: (message: { type: string; taskId?: number; task?: TaskRecord }) => {
         broadcasts.push(message);
       },
@@ -219,6 +237,75 @@ describe('task handoff routes (THE-933)', () => {
     expect(payload.handoff.note).toMatch(/rollback/i);
     expect(payload.task.owner_principal_id).toBeTruthy();
     expect(broadcasts.some((b) => b.type === 'task:updated' && b.taskId === taskId)).toBe(true);
+  });
+});
+
+describe('production task handoff route composition (THE-933)', () => {
+  it('lists a non-default-org task history for a trusted request without an explicit org', async () => {
+    const app = express();
+    app.use(express.json());
+    const repo = createTaskRepository();
+    const routeDeps = {
+      taskSyncLayer: {
+        getTask: async (id: number) => repo.getTask(id),
+        listTasks: async () => repo.listTasks(),
+        listSubtasks: async () => [],
+        getActiveAdapter: () => undefined,
+      },
+      parseTaskId: (value: unknown) => {
+        const n = Number(value);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      },
+      logActivity: () => {},
+      getTaskActorFromRequest: () => 'test-actor',
+      principalRepository: principalRepo,
+      handoffRepository: handoffRepo,
+      broadcast: () => {},
+    };
+
+    // Match index.ts: the canonical task routes are registered before the
+    // later Curacel router, at both legacy and /api paths.
+    registerTaskRoutes(app, '', routeDeps);
+    registerTaskRoutes(app, '/api', routeDeps);
+    const legacyHandoffRouter = createTaskHandoffRouter({
+      handoffRepo: {} as any,
+      taskStore: { getTask: async (id: number) => repo.getTask(id) },
+    });
+    app.use('/tasks', legacyHandoffRouter);
+    app.use('/api/tasks', legacyHandoffRouter);
+
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server failed to bind');
+
+    try {
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const listed = await fetch(`${baseUrl}/api/tasks/${nonDefaultOrgTaskId}/handoffs?mode=local`);
+      expect(listed.status).toBe(200);
+      const listedBody = await listed.json() as { handoffs: Array<{ id: string; note: string; org_id: string }> };
+      expect(listedBody.handoffs).toEqual([
+        expect.objectContaining({ note: 'existing history', org_id: OTHER_ORG }),
+      ]);
+
+      const rolledBack = await fetch(
+        `${baseUrl}/api/tasks/${nonDefaultOrgTaskId}/handoffs/${listedBody.handoffs[0]!.id}/rollback?mode=local`,
+        { method: 'POST' },
+      );
+      expect(rolledBack.status).toBe(200);
+
+      const created = await fetch(`${baseUrl}/api/tasks/${nonDefaultOrgTaskId}/handoff`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ targetPrincipalId: 'spock', note: 'new handoff' }),
+      });
+      expect(created.status).toBe(201);
+      expect(await created.json()).toMatchObject({
+        handoff: { target_principal_id: 'spock', org_id: OTHER_ORG },
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 });
 
