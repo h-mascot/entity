@@ -922,6 +922,33 @@ export async function buildServicesRegistry(
   };
 }
 
+function buildServicesRegistrySkeleton(
+  context: Pick<PluginRouteContext, 'plugin' | 'registry'>,
+  runtimeBaseUrl: string,
+): ServiceRegistryPayload {
+  const currentPlugin = context.registry.get(context.plugin.id) ?? context.plugin;
+  const definitions = buildServiceDefinitions(currentPlugin.settings, normalizeRuntimeBaseUrl(runtimeBaseUrl));
+  const services = applyFamilyCounts(
+    definitions
+      .filter((definition): definition is InternalPluginDefinition => definition.kind === 'internal-plugin')
+      .map((definition) => toInternalRegistryEntry(definition, context.registry.get(definition.pluginId))),
+  );
+  const summary = createSummary();
+  for (const service of services) summary[service.status] += 1;
+  return {
+    plugin: {
+      id: currentPlugin.id,
+      name: currentPlugin.name,
+      enabled: currentPlugin.enabled,
+      kind: currentPlugin.kind,
+      settings: currentPlugin.settings,
+    },
+    summary,
+    checkedAt: new Date().toISOString(),
+    services,
+  };
+}
+
 async function getCachedServicesRegistry(context: PluginRouteContext, runtimeBaseUrl: string): Promise<ServiceRegistryPayload> {
   const currentPlugin = context.registry.get(context.plugin.id) ?? context.plugin;
   const key = createCacheKey(currentPlugin, normalizeRuntimeBaseUrl(runtimeBaseUrl));
@@ -931,12 +958,14 @@ async function getCachedServicesRegistry(context: PluginRouteContext, runtimeBas
     return cachedRegistry.payload;
   }
 
+  const skeleton = buildServicesRegistrySkeleton(context, runtimeBaseUrl);
   if (!refreshInFlight) {
     refreshInFlight = buildServicesRegistry(context, fetch, runtimeBaseUrl)
       .then((payload) => {
         cachedRegistry = { key, payload, createdAt: Date.now() };
         return payload;
       })
+      .catch(() => skeleton)
       .finally(() => {
         refreshInFlight = null;
       });
@@ -946,7 +975,12 @@ async function getCachedServicesRegistry(context: PluginRouteContext, runtimeBas
     return cachedRegistry.payload;
   }
 
-  return refreshInFlight;
+  cachedRegistry = {
+    key,
+    payload: skeleton,
+    createdAt: now - SERVICE_REGISTRY_CACHE_TTL_MS - 1,
+  };
+  return skeleton;
 }
 
 export function registerPluginRoutes(router: Router, context: PluginRouteContext): void {

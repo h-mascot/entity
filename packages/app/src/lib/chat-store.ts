@@ -149,6 +149,17 @@ export async function ensureDefaultChatSetup(): Promise<ChatSnapshot> {
   return requestJson<ChatSnapshot>('/api/chat/setup', { method: 'POST' });
 }
 
+export async function loadInitialChatSnapshot(
+  setup: () => Promise<ChatSnapshot> = ensureDefaultChatSetup,
+  list: () => Promise<ChatSnapshot> = listChatSnapshot,
+): Promise<ChatSnapshot> {
+  try {
+    return await setup();
+  } catch {
+    return list();
+  }
+}
+
 export async function getMessageById(id: string): Promise<ChatMessage | undefined> {
   const cached = messageCache.get(id);
   if (cached) return cached;

@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback } from '../../lib/http';
-
-interface HandoffRecord {
-  id: string;
-  mode: string;
-  source_principal_id: string;
-  target_principal_id: string;
-  note: string;
-  created_at: string;
-}
+import {
+  mergeHandoffHistory,
+  type HandoffApiPayload,
+  type HandoffRecord,
+} from './taskHandoffHistory';
 
 /**
  * THE-933 — Task handoff action + history with generic copy.
@@ -29,12 +25,12 @@ export default function TaskHandoffSection({ taskId, apiBase }: { taskId: number
   const refresh = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams({ mode });
-    requestJsonWithFallback<{ handoffs?: HandoffRecord[] }>({
+    requestJsonWithFallback<HandoffApiPayload>({
       urls: buildApiCandidates(`/tasks/${taskId}/handoffs?${params.toString()}`, apiBase),
       fallbackError: 'Unable to load handoff history.',
     })
       .then((data) => {
-        setHandoffs(data?.handoffs ?? []);
+        setHandoffs(mergeHandoffHistory(data));
         setError(null);
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Unable to load handoff history.'))
@@ -172,13 +168,15 @@ export default function TaskHandoffSection({ taskId, apiBase }: { taskId: number
                 {h.source_principal_id || '—'} → {h.target_principal_id}
                 {h.note ? <span className="text-[var(--text-muted)]"> · {h.note}</span> : null}
               </span>
-              <button
-                type="button"
-                onClick={() => rollback(h.id)}
-                className="text-[10px] text-[var(--text-muted)] hover:underline"
-              >
-                rollback
-              </button>
+              {h.rollback_capable ? (
+                <button
+                  type="button"
+                  onClick={() => rollback(h.id)}
+                  className="text-[10px] text-[var(--text-muted)] hover:underline"
+                >
+                  rollback
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
