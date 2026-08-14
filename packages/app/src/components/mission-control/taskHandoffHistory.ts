@@ -12,14 +12,17 @@ export interface HandoffApiPayload {
   handoffs?: Array<Partial<HandoffRecord> & { id: string }>;
   incoming?: Array<Record<string, unknown> & { id: string }>;
   outgoing?: Array<Record<string, unknown> & { id: string }>;
+  history?: Array<Record<string, unknown> & { id: string }>;
 }
 
 export function mergeHandoffHistory(payload: HandoffApiPayload | null | undefined): HandoffRecord[] {
-  const rows = [
-    ...(payload?.handoffs ?? []).map((row) => ({ row, rollbackCapable: true })),
-    ...(payload?.incoming ?? []).map((row) => ({ row, rollbackCapable: false })),
-    ...(payload?.outgoing ?? []).map((row) => ({ row, rollbackCapable: false })),
-  ] as Array<{ row: Record<string, unknown> & { id: string }; rollbackCapable: boolean }>;
+  const rows = payload?.history
+    ? payload.history.map((row) => ({ row, rollbackCapable: row.rollback_capable === true }))
+    : [
+        ...(payload?.handoffs ?? []).map((row) => ({ row, rollbackCapable: true })),
+        ...(payload?.incoming ?? []).map((row) => ({ row, rollbackCapable: false })),
+        ...(payload?.outgoing ?? []).map((row) => ({ row, rollbackCapable: false })),
+      ] as Array<{ row: Record<string, unknown> & { id: string }; rollbackCapable: boolean }>;
   const byId = new Map<string, HandoffRecord>();
   for (const { row, rollbackCapable } of rows) {
     if (!row?.id || byId.has(row.id)) continue;

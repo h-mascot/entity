@@ -1680,7 +1680,12 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
       incoming = curacel.incoming;
       outgoing = curacel.outgoing;
     }
-    return res.json({ handoffs, incoming, outgoing });
+    const history = [
+      ...handoffs.map((handoff: Record<string, unknown>) => ({ ...handoff, rollback_capable: true })),
+      ...incoming.map((handoff: unknown) => ({ ...(handoff as Record<string, unknown>), rollback_capable: false })),
+      ...outgoing.map((handoff: unknown) => ({ ...(handoff as Record<string, unknown>), rollback_capable: false })),
+    ];
+    return res.json({ handoffs, incoming, outgoing, history });
   }));
 
   app.post(`${tasksBase}/:id/handoff`, asyncHandler(async (req, res) => {
