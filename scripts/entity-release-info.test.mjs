@@ -286,7 +286,7 @@ test("deploy writes release metadata after runtime environment files are install
 test("runtime environment serialization round-trips through dotenv", () => {
   const env = {
     EDGE_TTS_COMMAND: "say apostrophe' quote\" back\\slash",
-    EDGE_TTS_VOICE: "unicode-é and spaces",
+    KOKORO_TTS_DEFAULT_VOICE: "unicode-é and spaces",
     OPENAI_TTS_MODEL: "line1\nline2",
     OPENAI_TTS_VOICE: "literal\\nsequence",
     EDGE_TTS_VOICE: "trailing-backslash\\",
@@ -299,6 +299,15 @@ test("runtime environment serialization round-trips through dotenv", () => {
 
   assert.equal(parsed.ENTITY_BASE_URL, "http://sandbox.entity:3007");
   for (const [key, value] of Object.entries(env)) assert.equal(parsed[key], value);
+});
+
+test("explicit deploy lane origin overrides an ambient Entity base URL", () => {
+  const parsed = dotenv.parse(serializeRuntimeEnv({
+    runtimeBaseUrl: "http://sandbox.entity:3007",
+    env: { ENTITY_BASE_URL: "https://stale.example" },
+  }));
+
+  assert.equal(parsed.ENTITY_BASE_URL, "http://sandbox.entity:3007");
 });
 
 test("runtime environment serialization rejects a non-origin base URL", () => {
