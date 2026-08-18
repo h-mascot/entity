@@ -36,7 +36,7 @@ Those sources are enabled by default in the example config and bound to the samp
 
 ## How document serving works
 
-`packages/server/src/routes/docs.ts` builds an allow-list of roots from workspace and docs fallback paths, then resolves requested document paths against those roots. That means the docs viewer is intentionally constrained: the server does not serve arbitrary filesystem paths, only files under configured roots and allowed extensions.
+`packages/server/src/routes/docs.ts` builds an allow-list of roots from workspace and docs fallback paths, then resolves requested document paths against those roots. That means the docs viewer is intentionally constrained: the server does not serve arbitrary filesystem paths, only files under configured roots and allowed extensions. The same read boundary is shared with `packages/server/src/fs/adapters/bounded-read.ts`, which keeps local reads, HTTP markdown reads, and docsify-adjacent reads on the same 16 MiB ceiling so the UI and indexing path fail the same way for oversized content.
 
 ```mermaid
 flowchart TD
@@ -57,6 +57,7 @@ The key security idea is that the server, not the browser, decides what files ca
 ## Degraded or compatibility states
 
 - The docs route contains legacy roots for older layouts, so the app can still read some historical paths during migration.
+- The `entity-wiki` file source in `entity.config.example.yaml` now points at `./openwiki-html`, and the generated HTML tree is what the docs indexing pipeline reads after stripping markup and entities for previews.
 - The UI contains lazy-loading fallbacks, which means the file experience can render skeleton states while bundles load.
 - The file browsing model is source-driven, so an empty or misconfigured source list produces a reduced workspace rather than a hard crash.
 
