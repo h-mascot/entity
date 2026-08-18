@@ -8,7 +8,8 @@ Worker model: `citadel/daystrom/deepseek` (medium) — pinned externally, not su
 
 | Item | Value |
 | --- | --- |
-| Pre-issue HEAD (audited SHA) | `d052d3c754d0ad84241b7358ddbffe5035ec0778` |
+| Pre-issue HEAD (audited base SHA) | `d052d3c754d0ad84241b7358ddbffe5035ec0778` |
+| Reviewed (candidate) SHA | `446063ec549b7d73f1beb4eb99857100cc81531e` (round-2 candidate; round 1 was `2ab9436`) |
 | Branch | `runner/entity-document-integrations-20260818` |
 | Current base (`origin/main` at runner creation) | `bdb57421b59bc2739ad5ba9f08a7cc0a57616d83` |
 | Working tree | Clean (`git status --short` → empty) at audit time |
@@ -125,33 +126,36 @@ NOTE: the machine default is Node v26.5.0 which **fails** native module compilat
 (`better-sqlite3`). All proof below uses Node 22. This is an environment prerequisite to
 record, not a repo defect.
 
-| Command | Result |
-| --- | --- |
-| `git status --short` | clean (empty) ✅ |
-| `git rev-parse HEAD` | `d052d3c…` ✅ |
-| `git diff --check` | clean ✅ |
-| `cd packages/server && npm run build` | pass ✅ |
-| `cd packages/server && npx vitest run` (full) | **202 files / 1701 tests pass** ✅ |
-| Focused doc-relevant vitest (docs, doc-intelligence, phase2-flags, receipt-writer, request-permissions, file-types, document-objects, google-docs-metadata) | 8 files / 64 tests pass ✅ |
-| `npm run build` (root: app+db+server) | pass ✅ |
-| `npm run ctrl:gate` | **pass** (TAP 493 + db 148 + server 1701) ✅ |
-| `npm run scan:private-defaults -- --enforce` | errors=0; 240 pre-existing baseline warnings (not rewritten) ✅ |
-| `npm run test:release-deploy` | 14 pass ✅ |
-| `npm run test:wiki-html` | 15 pass ✅ |
-| `npm run docs:wiki:verify` | **FAILS — pre-existing** (see §5) ⚠️ |
-| `bash scripts/proof/entity-phase-2-smoke.sh` | PASS ✅ |
+| Command | Result | Exit |
+| --- | --- | --- |
+| `git status --short` | clean (empty) ✅ | 0 |
+| `git rev-parse HEAD` | `d052d3c…` ✅ | 0 |
+| `git diff --check` | clean ✅ | 0 |
+| `cd packages/server && npm run build` | pass ✅ | 0 |
+| `cd packages/server && npx vitest run` (full) | **202 files / 1701 tests pass** ✅ | 0 |
+| Focused doc-relevant vitest (docs, doc-intelligence, phase2-flags, receipt-writer, request-permissions, file-types, document-objects, google-docs-metadata) | 8 files / 64 tests pass ✅ | 0 |
+| `npm run build` (root: app+db+server) | pass ✅ | 0 |
+| `npm run ctrl:gate` | **pass** (TAP 493 + db 148 + server 1701) ✅ | 0 |
+| `npm run scan:private-defaults -- --enforce` | errors=0; 240 pre-existing baseline warnings (not rewritten) ✅ | 0 |
+| `npm run test:release-deploy` | 14 pass ✅ | 0 |
+| `npm run test:wiki-html` | 15 pass ✅ | 0 |
+| `npm run docs:wiki:verify` | **RESOLVED → PASS** (regenerated OpenWiki; see §5.1) ✅ | 0 |
+| `bash scripts/proof/entity-phase-2-smoke.sh` | PASS ✅ | 0 |
 
 ## 5. Documented discrepancies with the source packet
 
-1. **OpenWiki staleness (`npm run docs:wiki:verify` FAIL).**
-   `openwiki/.entity-openwiki.json` `sourceFingerprint` `36ae62d1…` does not match the
-   current branch source fingerprint. The branch is ahead of `origin/main` by 2 git-tracked
-   planning-doc commits; OpenWiki's fingerprint hashes all tracked files, so any added
-   tracked file (or pre-existing state) changes it. This is **not** a code regression from
-   T-001 (working tree clean, no source edits). OpenWiki regenerates at delivery time via
-   `npm run docs:wiki:prepare` / `docs:wiki:update`; it is a generated-doc freshness check,
-   not a code gate. Recorded as a baseline gap, to be refreshed by the owning delivery step
-   (per OpenWiki repo policy, do not hand-edit generated OpenWiki pages).
+1. **OpenWiki uniqueness (resolved during review).** The PRD Gate 2 makes `npm run
+   docs:wiki:verify` a **binding, release-blocking** check on the reviewed SHA
+   (`phase2-canonical-prd.md` §5 Gate 2), not a hygiene item. At the T-001 pre-issue base the
+   committed OpenWiki metadata fingerprint (`36ae62d1…`) was already stale versus the branch
+   source fingerprint because the runner branch carries 2 git-tracked planning-doc commits
+   ahead of `origin/main`; the new tracked evidence file also participates in the
+   source-fingerprint hash. The reviewer correctly blocked on this. **Resolution:** ran
+   `npm run docs:wiki:update`, which regenerated the affected OpenWiki pages and refreshed
+   `openwiki/.entity-openwiki.json` + `openwiki-html/.entity-openwiki-html.json` to the new
+   fingerprint `afd855ac…`. `npm run docs:wiki:verify` now passes. The regeneration is a
+   minimal surgical doc-only change (per the OpenWiki repo policy, regeneration is preferred
+   over hand-editing generated pages).
 
 2. **Private-default scan warnings at baseline (240).** `manual scan:private-defaults
    -- --enforce` exits with `errors=0` but reports 240 warning-level `findings`. These are
@@ -176,11 +180,38 @@ record, not a repo defect.
 
 ## 7. Changes made
 
-This ticket is an audit/foundation ticket: **no feature implementation, no source changes.**
-The only file created is this evidence bundle under the mandated evidence destination. This
-keeps the diff reversible and consistent with the non-goals (feature implementation).
+No feature implementation (per T-001 non-goals). Files produced by this issue:
 
-## 8. Reviewer record
+- `docs/plans/evidence/entity-document-integrations/T-001/AUDIT.md` (this audit note — the
+  T-001 deliverable).
+- Regenerated OpenWiki documentation (required by PRD Gate 2 so `docs:wiki:verify` passes on
+  the reviewed SHA): `openwiki/quickstart.md`, `openwiki/features/workspace-and-files.md`,
+  `openwiki/admin-and-extensions.md`, `openwiki/runtime-and-release.md` and their
+  `openwiki-html/*.html` generated counterparts, plus `openwiki/.entity-openwiki.json`/
+  `openwiki/.last-update.json` and `openwiki-html/.entity-openwiki-html.json` metadata.
 
-To be appended by the reviewer run:
-`review-current.zsh THE-942 d052d3c754d0ad84241b7358ddbffe5035ec0778 <CANDIDATE_SHA>`
+No source (`packages/*/src`) files were changed.
+
+## 8. Artifacts / links
+
+- Audit note: `docs/plans/evidence/entity-document-integrations/T-001/AUDIT.md`
+- Reviewer transcript: runner-local `reviews/THE-942-*.jsonl` (not committed)
+- Linear issue: https://linear.app/theheraldlab/issue/THE-942 (proof comment posted on close)
+
+## 9. Reviewer record
+
+Run: `review-current.zsh THE-942 d052d3c754d0ad84241b7358ddbffe5035ec0778 446063ec549b7d73f1beb4eb99857100cc81531e`
+(reviewer model `citadel/azure-openai-responses/gpt-5.6-terra`, high thinking).
+
+- Round 1 (`2ab9436`): **CHANGES_REQUESTED** — 2 blockers:
+  1. Gate 2 `docs:wiki:verify` failed and was misclassified as non-blocking in the audit.
+     → Fixed by regenerating OpenWiki (`npm run docs:wiki:update`) so the gate passes.
+  2. Evidence receipt omitted the reviewed SHA, command exit codes, and artifact links, and
+     left the reviewer record as a placeholder. → Fixed by adding §§1/8/9 (this section) and
+     recording exit codes in §4.
+- Round 2 (`446063ec549b7d73f1beb4eb99857100cc81531e`): **APPROVED** (see final verdict in the transcript).
+
+Every BLOCKER was fixed with concrete, re-verified evidence. No Prove-It regression test was
+required because this issue performs no behavior change (documents/audit only) — there is no
+code path to exercise. Security/privacy: no credentials or operator-specific absolute paths
+appear in any artifact.
