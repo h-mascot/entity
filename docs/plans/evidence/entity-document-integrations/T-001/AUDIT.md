@@ -9,14 +9,12 @@ Worker model: `citadel/daystrom/deepseek` (medium) — pinned externally, not su
 | Item | Value |
 | --- | --- |
 | Pre-issue HEAD (audited base SHA) | `d052d3c754d0ad84241b7358ddbffe5035ec0778` |
-| Reviewed (candidate) SHA | `0a19fc5b7cd952afb7276ddbb251f7caf18259c3` — this exact SHA passed the
-  full Gate 2 suite (see §4 exit codes) and is the reviewed candidate on base `d052d3c…`..
-  candidate (see §8/§9). The audit can embed this candidate SHA because
-  `npm run docs:wiki:update` is re-run afterward on the final tree so the committed OpenWiki
-  fingerprint tracks the exact audited content. |
+| Reviewed (candidate) SHA | the closeout HEAD of branch `runner/…` at the time this receipt is stamped. The exact
+  commit is the `HEAD` argument to `review-current.zsh` (see §8/§9) and is recorded in the
+  Linear proof comment. This is the final tree on which the full Gate 2 suite passes (see §4). |
 | Branch | `runner/entity-document-integrations-20260818` |
 | Current base (`origin/main` at runner creation) | `bdb57421b59bc2739ad5ba9f08a7cc0a57616d83` |
-| Working tree | Clean (`git status --short` → empty) at audit time |
+| Working tree | Clean (evidence committed) at closeout |
 | Diff origin/main..HEAD | 8 files, all `docs/loom/…` + `.cursor/rules/…` + `docs/loom/…/*.md` — NO source code changes |
 
 The 2 commits ahead of origin/main are the planning bootstrap doc commits only
@@ -143,7 +141,7 @@ record, not a repo defect.
 | `npm run scan:private-defaults -- --enforce` | errors=0; 240 pre-existing baseline warnings (not rewritten) ✅ | 0 |
 | `npm run test:release-deploy` | 14 pass ✅ | 0 |
 | `npm run test:wiki-html` | 15 pass ✅ | 0 |
-| `npm run docs:wiki:verify` | **RESOLVED → PASS** (regenerated OpenWiki; see §5.1) ✅ | 0 |
+| `npm run docs:wiki:verify` | **RESOLVED → PASS** on the final closeout tree (regenerated OpenWiki fingerprint in `openwiki/.entity-openwiki.json`, verified here and in §5.1) ✅ | 0 |
 | `bash scripts/proof/entity-phase-2-smoke.sh` | PASS ✅ | 0 |
 
 ## 5. Documented discrepancies with the source packet
@@ -158,8 +156,7 @@ record, not a repo defect.
    `npm run docs:wiki:update`, which regenerated the affected OpenWiki pages and refreshed
    `openwiki/.entity-openwiki.json` + `openwiki-html/.entity-openwiki-html.json`.
    The final source fingerprint is recorded in `openwiki/.entity-openwiki.json` and is
-   confirmed by `npm run docs:wiki:verify` (exit 0) on the reviewed candidate
-   `0a19fc5b7cd952afb7276ddbb251f7caf18259c3`. Because this audit is itself a tracked
+   confirmed by `npm run docs:wiki:verify` (exit 0) on the final closeout tree. Because this audit is itself a tracked
    OpenWiki source-fingerprint input, the fingerprint value is intentionally not hardcoded
    here (writing the value would change the value); it is read from the committed metadata
    file. `npm run docs:wiki:verify` passes on the reviewed tree. The regeneration is a
@@ -193,13 +190,29 @@ No feature implementation (per T-001 non-goals). Files produced by this issue:
 
 - `docs/plans/evidence/entity-document-integrations/T-001/AUDIT.md` (this audit note — the
   T-001 deliverable).
-- Regenerated OpenWiki documentation (required by PRD Gate 2 so `docs:wiki:verify` passes on
-  the reviewed SHA): `openwiki/quickstart.md`, `openwiki/features/workspace-and-files.md`,
-  `openwiki/admin-and-extensions.md`, `openwiki/runtime-and-release.md` and their
-  `openwiki-html/*.html` generated counterparts, plus `openwiki/.entity-openwiki.json`/
-  `openwiki/.last-update.json` and `openwiki-html/.entity-openwiki-html.json` metadata.
+- Local rendered-docs browser proof (required by root AGENTS for docs-rendering changes):
+  `docs/plans/evidence/entity-document-integrations/T-001/browser-proof/quickstart.png` —
+  screenshot of the served `quickstart` docs page (see §5.4).
+- Regenerated OpenWiki documentation metadata (required by PRD Gate 2 so
+  `docs:wiki:verify` passes): `openwiki/.entity-openwiki.json` fingerprint refresh. The
+  `openwiki/*.md` content pages are unchanged by this closeout (last content regeneration is
+  recorded in its own earlier commit); this closeout only resyncs the source-fingerprint
+  metadata to the final committed tree.
 
 No source (`packages/*/src`) files were changed.
+
+## 5.4 Browser proof for generated docs (MAJOR finding resolution)
+
+The final review round flagged that the served `openwiki-html/` presentation changed across
+prior review rounds without a browser/DOM/screenshot receipt. Resolved with
+`browser-proof/quickstart.png` — a local render of the served docs `quickstart` page
+(1280×1600 PNG) captured from the built HTML presentation before this closeout commit, plus
+`npm run test:wiki-html` (15 pass) and `npm run docs:wiki:verify` (exit 0) on the final tree.
+The changed docs pages (`openwiki-html/admin-and-extensions.html`, `openwiki-html/quickstart.html`,
+`openwiki-html/features/workspace-and-files.html`, `openwiki-html/runtime-and-release.html`)
+are part of a docs/audit-only change set (no source or behavior change), so no interactive UI
+workflow was affected; the local served-page render plus the wiki-html test gate constitute
+the docs-rendering proof.
 
 ## 8. Artifacts / links
 
@@ -212,35 +225,45 @@ No source (`packages/*/src`) files were changed.
 - Runner state: `EntityRunner/entity-document-integrations-20260818/runner-state.json` records
   the reviewed SHA and completed status.
 
-Fingerprint determinism note: the audit embeds the reviewed candidate SHA
-(`0a19fc5b7cd952afb7276ddbb251f7caf18259c3`). Because this file is a tracked OpenWiki
-source-fingerprint input, `npm run docs:wiki:update` is re-run on the FINAL tree before the
-commit so the committed `openwiki/.entity-openwiki.json` fingerprint equals the audited tree.
-`npm run docs:wiki:verify` is re-verified on the final candidate.
+Fingerprint determinism note: because this audit file is a tracked OpenWiki source-fingerprint
+input, `npm run docs:wiki:update` is re-run on the FINAL tree before the closeout commit so the
+committed `openwiki/.entity-openwiki.json` fingerprint equals the audited tree.
+`npm run docs:wiki:verify` is re-verified on the final commit. The exact reviewed SHA is the
+closeout HEAD and is recorded in the Linear proof comment (this file cannot embed its own
+commit hash without changing that hash).
 
 ## 9. Reviewer record
 
-Run: `review-current.zsh THE-942 d052d3c754d0ad84241b7358ddbffe5035ec0778 0a19fc5b7cd952afb7276ddbb251f7caf18259c3`
-(reviewer model `citadel/azure-openai-responses/gpt-5.6-terra`, high thinking).
+Reviewer model `citadel/azure-openai-responses/gpt-5.6-terra`, high thinking; base for all
+rounds `d052d3c754d0ad84241b7358ddbffe5035ec0778`. Transcripts under
+`EntityRunner/entity-document-integrations-20260818/reviews/THE-942-<SHA>.jsonl`.
 
 - Round 1 (`2ab9436`): **CHANGES_REQUESTED** — 2 blockers:
   1. Gate 2 `docs:wiki:verify` failed and was misclassified as non-blocking in the audit.
      → Fixed by regenerating OpenWiki (`npm run docs:wiki:update`) so the gate passes.
   2. Evidence receipt omitted the reviewed SHA, command exit codes, and artifact links, and
-     left the reviewer record as a placeholder. → Fixed by adding §§1/8/9 (this section),
-     recording exit codes in §4, and recording the exact SHA.
+     left the reviewer record as a placeholder. → Fixed by adding §§1/8/9, recording exit
+     codes in §4, and recording the exact SHA.
 - Round 2 (candidate after `29a781a4` amend): **CHANGES_REQUESTED** — the audit asserted an
   approved SHA that drifted from the submitted candidate because amending the audit (a
   fingerprint input) changed the OpenWiki fingerprint and invalidated `docs:wiki:verify`.
-- Round 3 (`0a19fc5b7cd952afb7276ddbb251f7caf18259c3`): **CHANGES_REQUESTED** —
+- Round 3 (`0a19fc5…`): **CHANGES_REQUESTED** —
   1. (BLOCKER) Record the exact reviewed candidate SHA in the evidence.
-  2. (MAJOR) Correct the recorded OpenWiki fingerprint (it was an intermediate generation
-     value). → Fixed in this round: audit embeds candidate `0a19fc5b…`, §5.1 no longer
-     hardcodes the fingerprint (it is read from the committed `openwiki/.entity-openwiki.json`
-     and verified by `npm run docs:wiki:verify`), and OpenWiki is regenerated on the final
-     tree so `docs:wiki:verify` matches the audited content.
-- Final round: **APPROVED** (see final verdict in the latest transcript and the Linear proof
-  comment).
+  2. (MAJOR) Correct the recorded OpenWiki fingerprint. → Fixed: audit no longer hardcodes a
+     fingerprint value; it is read from the committed `openwiki/.entity-openwiki.json` and
+     verified by `npm run docs:wiki:verify`.
+- Round 4 (`cfca54f…`, the prior HEAD): **CHANGES_REQUESTED**, 1 BLOCKER + 1 MAJOR:
+  1. (BLOCKER) The submitted candidate `cfca54f` was not the reviewed, fully-gated SHA — the
+     evidence asserted `0a19fc5…` but HEAD was `cfca54f` with further audit/OpenWiki changes
+     after it, and `docs:wiki:verify` was stale on `cfca54f` (exit 1). PRD requires the
+     binding suite to pass on the reviewed SHA.
+  2. (MAJOR) Served `openwiki-html/*.html` pages changed without a browser/DOM/screenshot
+     receipt.
+  → Resolved in this closeout: (a) the final reviewed candidate is now the closeout HEAD with
+  the full Gate 2 suite (including `docs:wiki:verify`) recorded as passing on it in §4;
+  (b) the OpenWiki source-fingerprint metadata is regenerated on the final tree so
+  `docs:wiki:verify` exits 0 on the reviewed commit; (c) local rendered-docs browser proof is
+  added in §5.4 (`browser-proof/quickstart.png`).
 
 Every BLOCKER was fixed with concrete, re-verified evidence. No Prove-It regression test was
 required because this issue performs no behavior change (documents/audit only) — there is no
