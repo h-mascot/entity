@@ -54,12 +54,12 @@ and T-006 implements the resolver algorithm (both consume this ADR and `types.ts
 
 ## 4. Automated proof — capability resolver test plan
 
-Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (11 tests).
+Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (12 tests).
 
 ```sh
 cd packages/server && nvm use 22 && npx vitest run src/document-providers/capability-resolver.test.ts
 #  Test Files  1 passed (1)
-#  Tests       11 passed (11)
+#  Tests       12 passed (12)
 ```
 
 Covered cases:
@@ -70,7 +70,25 @@ Covered cases:
 - **Degraded:** a `degraded` connection suppresses an otherwise-supported mutation; writes
   are enabled only on `supported`.
 - **Read-like:** usable when `supported`/`degraded`, fails closed on `unknown`.
+- **R-002 regression (unsupported read-like):** `unsupported` read-like and `human_edit`
+  capabilities are non-actionable (introduced by reviewer round 1, see §7a).
 - Capability report resolves every vocabulary member.
+
+### 7a. Reviewer round 1 — finding and RED-first fix
+
+Reviewer (`terraform` run 1) returned `CHANGES_REQUESTED` with one P1:
+`capabilityAllowsAction` treated `unsupported` read-like capabilities as actionable
+(returned `cap.state !== 'unknown'`), contradicting R-002's requirement that unsupported
+capabilities produce a typed unsupported-capability response.
+
+Fix (RED-first):
+1. Added a failing regression test asserting `unsupported` for `read`, `preview`,
+   `thumbnail`, `open_external`, `human_edit`, `version_history`, `change_tracking`,
+   `permission_read`, `export` is non-actionable — **fails before fix**
+   (`AssertionError: expected true to be false`).
+2. Changed `capabilityAllowsAction` so read-like capabilities are usable only when
+   `supported` or `degraded`; `unsupported` and `unknown` are never actionable.
+3. Focused suite now 12/12 green; full server suite 1713/1713 green under Node 22.
 
 ## 5. Negative / security proof
 
