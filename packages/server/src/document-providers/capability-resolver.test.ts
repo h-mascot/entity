@@ -141,6 +141,28 @@ describe('capability state semantics (R-002)', () => {
     expect(capabilityAllowsAction(cap('human_edit', 'unsupported'))).toBe(false);
     expect(capabilityAllowsAction(cap('human_edit', 'supported'))).toBe(true);
   });
+
+  it('exhaustive fail-closed matrix: every supported-required capability across every non-supported state (incl. embed_editor)', () => {
+    // Table-drive every capability in REQUIRES_SUPPORTED_CAPABILITIES (writes + embedding +
+    // human_edit) through EVERY non-`supported` state. Each must be non-actionable; only
+    // `supported` is actionable. This closes the P2 gap where `embed_editor` degraded/
+    // unsupported were not directly asserted.
+    const required: CapabilityType[] = [
+      'create',
+      'human_edit',
+      'agent_text_mutation',
+      'agent_range_mutation',
+      'agent_slide_mutation',
+      'permission_write',
+      'embed_editor',
+    ];
+    for (const name of required) {
+      for (const state of ['unsupported', 'degraded', 'unknown'] as const) {
+        expect(capabilityAllowsAction(cap(name, state))).toBe(false);
+      }
+      expect(capabilityAllowsAction(cap(name, 'supported'))).toBe(true);
+    }
+  });
 });
 
 describe('capability report covers the full vocabulary (R-002 / D-003)', () => {

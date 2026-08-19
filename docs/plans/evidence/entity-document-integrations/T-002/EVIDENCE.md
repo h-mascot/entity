@@ -54,12 +54,12 @@ and T-006 implements the resolver algorithm (both consume this ADR and `types.ts
 
 ## 4. Automated proof — capability resolver test plan
 
-Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (14 tests).
+Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (15 tests).
 
 ```sh
 cd packages/server && nvm use 22 && npx vitest run src/document-providers/capability-resolver.test.ts
 #  Test Files  1 passed (1)
-#  Tests       14 passed (14)
+#  Tests       15 passed (15)
 ```
 
 Covered cases:
@@ -159,6 +159,18 @@ Fix: introduced `REQUIRES_SUPPORTED_CAPABILITIES` (write/embedding set + `human_
 a regression case asserting degraded/unknown/unsupported `human_edit` is non-actionable and
 `supported` is actionable, and updated the ADR's degraded/unknown + local example. Focused
 suite now 14 tests.
+
+### 8c. Review rounds 4 (test-completeness) — exhaustive fail-closed matrix
+
+Additional pinned Terra reviews surfaced a P2 test coverage gap: `embed_editor` degraded/
+unsupported were not directly asserted in the fail-closed action matrix. The implementation
+already fails closed correctly (`embed_editor` is in `REQUIRES_SUPPORTED_CAPABILITIES`), so
+this was a coverage-only fix. Added an exhaustive table-driven matrix driving **every**
+member of `REQUIRES_SUPPORTED_CAPABILITIES` (`create`, `human_edit`, all three agent
+mutations, `permission_write`, `embed_editor`) through **every** non-`supported` state
+(`unsupported`/`degraded`/`unknown`) asserting non-actionable, and `supported` actionable.
+Focused suite now 15 tests. Every later round's finding was a concrete correctness or
+test-gap issue fixed with regression proof — no self-referential bookkeeping loop.
 
 ### Open questions
 
