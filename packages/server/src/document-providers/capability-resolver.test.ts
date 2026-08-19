@@ -20,6 +20,7 @@ import {
   type CapabilityReport,
   type CapabilityType,
   capabilityAllowsAction,
+  capabilityAllowsActionForKey,
   isWriteCapability,
   providerKindEnablesWrite,
   type ResolvedCapability,
@@ -173,6 +174,20 @@ describe('capability report covers the full vocabulary (R-002 / D-003)', () => {
     for (const name of VOCABULARY) {
       expect(report[name].name).toBe(name);
       expect(report[name].state).toBe('supported');
+      expect(capabilityAllowsActionForKey(report, name)).toBe(true);
     }
+  });
+
+  it('P1 regression: a write lookup whose value name does not match its key fails closed', () => {
+    // THE-943/R-002 fail-closed invariant: a caller must never enable a write by reading a
+    // report key whose value is a mismatched (e.g. degraded read) capability. Defense-in-depth
+    // rejects the mismatch even when the report originates from untyped adapter data.
+    const mismatched = Object.fromEntries(
+      VOCABULARY.map((name) => [name, cap(name, 'supported')]),
+    ) as unknown as CapabilityReport;
+    // Simulate untyped/tampered data: the value under `create` claims to be a degraded `read`.
+    (mismatched as Record<string, ResolvedCapability>).create = cap('read', 'degraded');
+    expect(capabilityAllowsActionForKey(mismatched, 'create')).toBe(false);
+    expect(capabilityAllowsActionForKey(mismatched, 'read')).toBe(true); // key matches value name
   });
 });

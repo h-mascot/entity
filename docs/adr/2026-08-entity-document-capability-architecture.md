@@ -145,6 +145,12 @@ resolved capability report is the only authority. The shared surface exposes a t
 `providerKindEnablesWrite` guard that returns `false` as a permanent sentinel so future
 callers cannot "convince" themselves a provider name is write-authoritative.
 
+To keep the report itself sound, `CapabilityReport` is dependently typed — each key binds its
+value's `name` (`{ [K in CapabilityType]: ResolvedCapability & { name: K } }`) — so a caller
+cannot construct `report.create` whose value claims a different capability. A runtime guard,
+`capabilityAllowsActionForKey(report, key)`, rejects any mismatch from untyped adapter data,
+so a write lookup can never fall through as a degraded read and become actionable.
+
 ### 7. Reversibility through the audited feature-flag framework
 
 Capability negotiation is staged and reversible through the audited Phase 2 flag host at

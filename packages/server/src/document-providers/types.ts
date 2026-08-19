@@ -59,7 +59,26 @@ export interface ResolvedCapability {
 }
 
 /** Complete negotiated capability set for one provider destination/connection context. */
-export type CapabilityReport = Record<CapabilityType, ResolvedCapability>;
+export type CapabilityReport = {
+  [K in CapabilityType]: ResolvedCapability & { name: K };
+};
+
+/**
+ * Resolve actionability for a capability key from a report.
+ *
+ * Defense-in-depth on top of the dependent `CapabilityReport` type: if a report is built from
+ * untrusted/untyped adapter data (bypassing the compile-time binding), this rejects any value
+ * whose `name` does not equal the requested key. A caller can therefore never enable a write
+ * by looking up `report.create` and having a mismatched read-like value fall through as a
+ * degraded actionable capability (THE-943 / R-002 fail-closed invariant).
+ */
+export function capabilityAllowsActionForKey(report: CapabilityReport, key: CapabilityType): boolean {
+  const resolved: ResolvedCapability = report[key];
+  if (resolved.name !== key) {
+    return false;
+  }
+  return capabilityAllowsAction(resolved);
+}
 
 /** R-002 minimum vocabulary as an ordered, complete list (compile-time guarded by CapabilityReport). */
 export const CAPABILITY_NAMES: readonly CapabilityType[] = [
