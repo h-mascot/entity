@@ -29,6 +29,7 @@ import {
 } from './types';
 import { resolveCapabilities, type CapabilityResolutionInput } from './capability-resolver';
 import { createFakeDocumentProviderAdapter } from './fake-adapter';
+import { UnsupportedAdapterMutationError, type DocumentProviderAdapter } from './types';
 import type { DocumentAuthState } from '../../../db/src/document-integrations';
 
 const VOCABULARY: readonly CapabilityType[] = [
@@ -329,7 +330,7 @@ describe('Capability Resolver (T-006 precedence fold)', () => {
         expectedRevision: created.descriptor.current_revision ?? '',
         mutation: { kind: 'text', text: 'x' },
       }),
-    ).rejects.toBeInstanceOf(Error);
+    ).rejects.toBeInstanceOf(UnsupportedAdapterMutationError);
   });
 
   it('destination denied fails closed for create + every write lane; unknown is even more conservative', async () => {
@@ -410,5 +411,163 @@ describe('Capability Resolver (T-006 precedence fold)', () => {
         }
       }
     }
+  });
+
+  it('F3a: a closed mutation gate vetoes ALL six fail-closed lanes (exhaustive)', async () => {
+    // THE-947 r1 F3a: previously only `agent_text_mutation` was explicitly asserted for the
+    // `mutationGateOpen:false` runtime fold. Every FAIL_CLOSED_CAPABILITIES lane must be vetoed.
+    const six: CapabilityType[] = [
+      'create',
+      'agent_text_mutation',
+      'agent_range_mutation',
+      'agent_slide_mutation',
+      'permission_write',
+      'embed_editor',
+    ];
+    // The mutually exclusive classes must be exhaustive of the fail-closed set.
+    expect([...FAIL_CLOSED_CAPABILITIES].sort()).toEqual([...six].sort());
+    const gate = await resolveCapabilities(baseInput({ runtime: { mutationGateOpen: false } }));
+    for (const name of six) {
+      expect(gate[name].state).toBe('unsupported');
+      expect(gate[name].source).toBe('runtime');
+      expect(capabilityAllowsActionForKey(gate, name)).toBe(false);
+    }
+  });
+
+  it('F3a: healthy:false demotes every supported lane to degraded and keeps every write lane fail-closed (exhaustive)', async () => {
+    // THE-947 r1 F3a: complete the `healthy:false` coverage across every capability. Fold
+    // semantics: the runtime emitters `degraded` for ALL lanes, so a lane whose adapter
+    // baseline is `supported` resolves to `degraded` (source runtime, read-like still
+    // actionable); a lane the adapter honestly reports as `unsupported` stays `unsupported`
+    // (worse severity wins — never promoted). Every write/embed/human_edit lane is
+    // non-actionable under an unhealthy runtime, exhaustively.
+    const unhealthy = await resolveCapabilities(baseInput({ runtime: { healthy: false } }));
+    const baselineReport = await adapterBaseline(baseInput());
+    for (const name of CAPABILITY_NAMES) {
+      if (baselineReport[name].state === 'unsupported') {
+        // A worse baseline state wins; runtime cannot resurrect it.
+        expect(unhealthy[name].state).toBe('unsupported');
+        expect(capabilityAllowsActionForKey(unhealthy, name)).toBe(false);
+      } else {
+        // Supported read-like lanes degrade but stay actionable; write/embed/human_edit fail closed.
+        expect(unhealthy[name].state).toBe('degraded');
+        expect(unhealthy[name].source).toBe('runtime');
+        expect(capabilityAllowsActionForKey(unhealthy, name)).toBe(
+          !REQUIRES_SUPPORTED_CAPABILITIES.has(name),
+        );
+      }
+    }
+    // Spot-sanity: the fake's agent_text_mutation and read lanes are both supported at baseline,
+    // so both demote to degraded; mutation fails closed while read stays actionable.
+    expect(unhealthy['agent_text_mutation'].state).toBe('degraded');
+    expect(capabilityAllowsActionForKey(unhealthy, 'agent_text_mutation')).toBe(false);
+    expect(unhealthy['read'].state).toBe('degraded');
+    expect(capabilityAllowsActionForKey(unhealthy, 'read')).toBe(true);
+  });
+
+  it('F3a: open mutation gate + healthy runtime leave the adapter baseline intact', async () => {
+    const open = await resolveCapabilities(baseInput({ runtime: { healthy: true, mutationGateOpen: true } }));
+    expect(open['agent_text_mutation'].state).toBe('supported');
+    expect(open['read'].state).toBe('supported');
+    expect(capabilityAllowsActionForKey(open, 'agent_text_mutation')).toBe(true);
+  });
+
+  it('F2 RED: a malformed/partial baseline report resolves to typed unknown, never throws', async () => {
+    // THE-947 r1 F2: a baseline report from an adapter that omits capability entries (or holds
+    // nulls) must fold as fail-closed `unknown` — it must NEVER throw TypeError on a missing
+    // `.state`. The resolveCapabilities baseline fold must default missing entries to `unknown`.
+    const malformedAdapter: DocumentProviderAdapter = {
+      provider: 'google_workspace',
+      async resolveCapabilities(): Promise<CapabilityReport> {
+        // A partial/hostile report: only `read` is present; every other entry is missing.
+        return {
+          read: { name: 'read', state: 'supported', source: 'adapter' },
+        } as unknown as CapabilityReport;
+      },
+      async discover() {
+        return { items: [], truncated: false };
+      },
+      async getMetadata() {
+        return null;
+      },
+      async create() {
+        throw new Error('unsupported');
+      },
+      async read() {
+        return { descriptor: {} as never, contentPlaceholder: '' };
+      },
+      async mutate() {
+        throw new Error('unsupported');
+      },
+      async getOpenTarget() {
+        return { provider: 'google_workspace', artifact_type: 'document', url: null };
+      },
+      async reconcileChanges() {
+        return { reconciled: [], dropped: [] };
+      },
+    };
+    const report = await resolveCapabilities(baseInput({ adapter: malformedAdapter }));
+    // A missing capability entry is treated as `unknown` (fail closed), not a TypeError.
+    expect(report['agent_text_mutation'].state).toBe('unknown');
+    expect(capabilityAllowsActionForKey(report, 'agent_text_mutation')).toBe(false);
+    expect(report['create'].state).toBe('unknown');
+    expect(capabilityAllowsActionForKey(report, 'create')).toBe(false);
+    // The present read entry is honored.
+    expect(report['read'].state).toBe('supported');
+  });
+
+  it('F2 RED: malformed baseline hostile `null` entries follow the same fail-closed default', async () => {
+    const nullAdapter: DocumentProviderAdapter = {
+      provider: 'microsoft_365',
+      async resolveCapabilities(): Promise<CapabilityReport> {
+        return {
+          read: { name: 'read', state: 'supported', source: 'adapter' },
+          create: null as unknown as ResolvedCapability,
+        } as unknown as CapabilityReport;
+      },
+      async discover() {
+        return { items: [], truncated: false };
+      },
+      async getMetadata() {
+        return null;
+      },
+      async create() {
+        throw new Error('unsupported');
+      },
+      async read() {
+        return { descriptor: {} as never, contentPlaceholder: '' };
+      },
+      async mutate() {
+        throw new Error('unsupported');
+      },
+      async getOpenTarget() {
+        return { provider: 'microsoft_365', artifact_type: 'document', url: null };
+      },
+      async reconcileChanges() {
+        return { reconciled: [], dropped: [] };
+      },
+    };
+    const report = await resolveCapabilities(baseInput({ adapter: nullAdapter }));
+    expect(report['create'].state).toBe('unknown');
+    expect(capabilityAllowsActionForKey(report, 'create')).toBe(false);
+  });
+
+  it('F3c: unknown-connection mutation is rejected with the typed unsupported error (not generic Error)', async () => {
+    // THE-947 r1 F3c: tighten the end-to-end unknown-connection rejection from a generic Error
+    // to the typed UnsupportedAdapterMutationError so the fail-closed path is explicit.
+    const adapter = createFakeDocumentProviderAdapter();
+    const created = await adapter.create({
+      artifact_type: 'document',
+      title: 'F3c Doc',
+      idempotencyKey: 'idem:f3c',
+    });
+    (adapter as { setConnectionState(s: DocumentAuthState): void }).setConnectionState('unknown');
+    await expect(
+      adapter.mutate({
+        external_id: created.descriptor.external_id,
+        expectedRevision: created.descriptor.current_revision ?? '',
+        mutation: { kind: 'text', text: 'x' },
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedAdapterMutationError);
   });
 });

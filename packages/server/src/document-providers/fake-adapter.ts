@@ -174,9 +174,17 @@ export function createFakeDocumentProviderAdapter(
       let state = base[name];
       let source: ResolvedCapability['source'] = 'adapter';
       if (degradationActive && (WRITE_LANES.includes(name) || name === 'human_edit')) {
-        // A degraded/unauthorized runtime can only SUPPRESS a write lane, never paper over it.
-        state = degradationActive && state === 'supported' ? 'degraded' : state;
-        source = 'connection';
+        // (F5, THE-947 r1) A degraded/unauthorized/unknown connection can only SUPPRESS a write
+        // lane, never paper over it — and the labeling now matches the Capability Resolver's
+        // `connectionEvidence`: an `unknown` connection folds the lane to `unknown`
+        // (fail-closed), while degraded/unauthorized fold a supported lane to `degraded`.
+        // `source:'connection'` is tagged only when the fold actually changed the lane.
+        const connectionIsUnknown =
+          connectionState === 'unknown' || ctx.connectionState === 'unknown';
+        if (state === 'supported') {
+          state = connectionIsUnknown ? 'unknown' : 'degraded';
+          source = 'connection';
+        }
       }
       return [name, { name, state, source }] as const;
     });
