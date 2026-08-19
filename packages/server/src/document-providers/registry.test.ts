@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -6,6 +9,10 @@ import {
   type DocumentProvider,
 } from '../../../db/src/document-integrations';
 import type { DocumentRegistry, RegistryWriteInput } from './registry';
+import {
+  DocumentRegistryIsolationError,
+  DocumentRegistryValidationError,
+} from './registry';
 
 /**
  * T-004 — Implement Document Registry.
@@ -388,5 +395,120 @@ describe('T-004 document registry — review round 1 fixes (F1–F4)', () => {
     const identityless = baseInput({ external_id: '' });
     expect(() => registry.register(identityless, 'workspace-a')).toThrow(/external_id.*required|identity.*external_id|validation/i);
     expect(() => registry.rediscover(identityless, 'workspace-a')).toThrow(/external_id.*required|identity.*external_id|validation/i);
+  });
+});
+
+describe('T-004 document registry — review round 2 fixes (B1/B2/M2)', () => {
+  it('B1: create with a null/empty external_id FAILS CLOSED and mints zero rows (prove-it)', async () => {
+    const { registry, db } = await openRegistry();
+    for (const externalId of [null, '']) {
+      const input = baseInput({ external_id: externalId as string | null });
+      // Same fail-closed lane as register/rediscover (F4), now enforced on create.
+      expect(() => registry.create(input, 'workspace-a')).toThrow(DocumentRegistryValidationError);
+    }
+    // Nothing minted — fail-closed means zero rows, never a pile of exclusive-identity records.
+    expect(countRows(db, () => true)).toBe(0);
+  });
+
+  it('B1: repeated identity-less create calls each fail closed — zero rows minted, nothing to converge (prove-it)', async () => {
+    const { registry, db } = await openRegistry();
+    const identityless = baseInput({ external_id: null });
+    for (let i = 0; i < 10; i += 1) {
+      expect(() => registry.create(identityless, 'workspace-a')).toThrow(DocumentRegistryValidationError);
+    }
+    // The unique identity index excludes NULL external_id, so without the B1 guard every one of
+    // those 10 calls would have minted a DISTINCT canonical record — now it mints nothing.
+    expect(countRows(db, () => true)).toBe(0);
+  });
+
+  it('B2: minting methods return a record owned by the caller workspace (post-delegation assertion held)', async () => {
+    const { registry } = await openRegistry();
+    const byCreate = registry.create(baseInput({ external_id: 'b2-create' }), 'workspace-a');
+    expect(byCreate.workspace_id).toBe('workspace-a');
+    const byRegister = registry.register(baseInput({ external_id: 'b2-register' }), 'workspace-a');
+    expect(byRegister.record.workspace_id).toBe('workspace-a');
+    const byRediscover = registry.rediscover(baseInput({ external_id: 'b2-rediscover' }), 'workspace-a');
+    expect(byRediscover.record.workspace_id).toBe('workspace-a');
+  });
+
+  it('B2: cross-workspace registration is atomic — a competing writer cannot interleave a stale pre-check with a write (two-connection probe)', async () => {
+    // better-sqlite3 is synchronous and single-connection, so this is a transaction-level probe:
+    // a SECOND connection on a file-backed DB simulates a competing process. Asserting the atomic
+    // invariant: while workspace A holds an uncommitted BEGIN IMMEDIATE write, workspace B's
+    // registration cannot run a stale pre-check + separate write — its check-and-write is ONE
+    // IMMEDIATE transaction that must block on A's lock instead.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't004-b2-'));
+    const file = path.join(dir, 'shared.db');
+    const dbA = new Database(file);
+    const dbB = new Database(file);
+    dbA.pragma('busy_timeout = 5000');
+    dbB.pragma('busy_timeout = 300'); // bounded so a contended write fails fast, never hangs
+    const closeDbs = () => {
+      dbA.close();
+      dbB.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    };
+    try {
+      const { createDocumentRegistry } = await import('./registry');
+      const { createDocumentIntegrationsRepository } = await import(
+        '../../../db/src/document-integrations'
+      );
+      const repoA = createDocumentIntegrationsRepository(dbA);
+      repoA.ensureSchema();
+      const repoB = createDocumentIntegrationsRepository(dbB);
+      repoB.ensureSchema();
+      const registryA = createDocumentRegistry(dbA);
+      const registryB = createDocumentRegistry(dbB);
+
+      const sameIdentity = baseInput({ title: 'shared identity (atomic)' });
+
+      // Workspace A registers the shared identity inside its own BEGIN IMMEDIATE transaction and
+      // does not commit. Because B's register wraps check+write in its own IMMEDIATE transaction
+      // (transaction.immediate), B's FIRST statement contends for the write lock and fails fast
+      // with `database is locked` instead of observing a stale "no row" then writing later.
+      dbA.transaction(() => {
+        registryA.register(sameIdentity, 'workspace-a'); // INSERT — uncommitted while A holds the lock
+        expect(() => registryB.register(sameIdentity, 'workspace-b')).toThrow(/database is locked|locked/i);
+      }).immediate();
+
+      // A's registration committed. B's retry must now FAIL CLOSED (isolation) — never take the
+      // delegated UPDATE path and mutate A's record.
+      expect(() => registryB.register(sameIdentity, 'workspace-b')).toThrow(
+        DocumentRegistryIsolationError,
+      );
+      const aRow = dbA.prepare('SELECT * FROM document_objects WHERE external_id = ?').get('goog-doc-sample-1') as
+        | DocumentObjectRecord
+        | undefined;
+      expect(aRow).toBeTruthy();
+      expect(aRow?.workspace_id).toBe('workspace-a');
+      expect(aRow?.title).toBe('shared identity (atomic)');
+    } finally {
+      closeDbs();
+    }
+  });
+
+  it('M2: register/rediscover without explicit indexed_at leaves the stored value unchanged; explicit still applies', async () => {
+    const { registry, db } = await openRegistry();
+    const created = registry.register(
+      baseInput({ indexed_at: '2026-01-01T00:00:00.000Z', external_id: 'm2-preserve' }),
+      'workspace-a',
+    );
+    expect(created.record.indexed_at).toBe('2026-01-01T00:00:00.000Z');
+
+    // A rediscovery that OMITS index state must NOT stamp "now" (R-029): leave the index stale.
+    const rediscovered = registry.rediscover(
+      { ...baseInput({ external_id: 'm2-preserve' }), indexed_at: undefined },
+      'workspace-a',
+    );
+    expect(rediscovered.created).toBe(false);
+    expect(rediscovered.record.indexed_at).toBe('2026-01-01T00:00:00.000Z');
+
+    // An explicit indexed_at on rediscovery still applies.
+    const explicit = registry.rediscover(
+      baseInput({ external_id: 'm2-preserve', indexed_at: '2026-03-01T00:00:00.000Z' }),
+      'workspace-a',
+    );
+    expect(explicit.record.indexed_at).toBe('2026-03-01T00:00:00.000Z');
+    expect(countRows(db, (r) => r.external_id === 'm2-preserve')).toBe(1);
   });
 });

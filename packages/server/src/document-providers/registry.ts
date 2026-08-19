@@ -21,9 +21,19 @@
  * cross-workspace registration/rediscovery FAILS CLOSED (throws DocumentRegistryIsolationError)
  * instead of reading or mutating the other workspace's record.
  *
+ * Atomicity: the cross-workspace pre-check and the delegated write are not two independent
+ * statements. Every register/rediscover/create runs its isolation pre-check and its write inside
+ * ONE `BEGIN IMMEDIATE` transaction (better-sqlite3 `transaction.immediate`), and a post-write
+ * workspace assertion re-verifies the returned record is owned by the caller workspace before the
+ * outcome is returned. A concurrent process can therefore never commit a row between our check and
+ * our write, and the delegated registration can never silently cross the workspace boundary —
+ * both fail closed.
+ *
  * Concurrency: better-sqlite3 is synchronous and single-connection, so the duplicate/
  * concurrent-style registration coverage in the test suite is SERIALIZED back-to-back
- * convergence, not OS-thread interleaving — named honestly in registry.test.ts.
+ * convergence, not OS-thread interleaving — named honestly in registry.test.ts. The atomicity of
+ * the check-and-write pair is additionally probed with a second connection on a file-backed DB in
+ * the isolation suite.
  *
  * Reversibility: this registry is a pure composition layer over the additive T-003 schema with
  * no competing table/namespace. The unified tables are reversible via
@@ -84,6 +94,11 @@ export interface DocumentRegistry {
    * Strict create. Adds a NEW canonical record scoped to `workspaceId`. Throws loudly if the
    * provider identity already maps to any existing record (including one owned by another
    * workspace — the identity is globally owned). Delegates to the T-003 strict-create primitive.
+   * Identity-less create (null/empty `external_id`) FAILS CLOSED (DocumentRegistryValidationError)
+   * exactly like register/rediscover: the unique identity index excludes NULL identities, so a
+   * repeated identity-less create would mint unbounded canonical records that no lookup or
+   * rediscovery could ever resolve (T-004 review B1 / F4) — local artifacts must supply the
+   * durable managed file identity as `external_id` (PRD §11.1).
    */
   create(input: RegistryWriteInput, workspaceId: string): DocumentObjectRecord;
   /**
@@ -126,6 +141,9 @@ export interface DocumentRegistry {
    * already maps to a record in `workspaceId`, UPDATE it (created=false) rather than duplicating
    * (R-001 acceptance "Rediscovery does not duplicate."); cross-workspace FAILS CLOSED; otherwise
    * create (created=true). Named distinctly so provider-sync callers express intent.
+   * NOTE (T-004 M1): rediscovery does NOT sync `destination_id`. The T-003 rediscovery UPDATE
+   * intentionally omits `destination_id` from its column list, so a moved artifact keeps its stale
+   * destination through `rediscover()` — destination changes must go through `update()`.
    */
   rediscover(input: RegistryWriteInput, workspaceId: string): RegistryRegistration;
 }
@@ -137,22 +155,56 @@ function toDbInput(input: RegistryWriteInput, workspaceId: string): CreateDocume
 export function createDocumentRegistry(db: Database.Database): DocumentRegistry {
   const repo = createDocumentIntegrationsRepository(db);
 
-  function registerOrUpdate(input: RegistryWriteInput, workspaceId: string): RegistryRegistration {
-    const externalId = input.external_id ?? null;
-    // R-001 idempotency requires a durable provider identity (PRD §11.1: local artifacts supply
-    // the durable managed file identity as `external_id`). FAIL CLOSED on null/empty so the exact
-    // caller mistake that would silently mint duplicate canonical records is rejected loudly
-    // (T-004 review F4) — never a silent random-UUID duplicate.
+  /**
+   * Fail-closed identity guard shared by every minting path (register/rediscover/create).
+   * R-001 idempotency requires a durable provider identity: the global unique identity index
+   * (`WHERE external_id IS NOT NULL`) explicitly excludes NULL identities, so a null/empty
+   * `external_id` would mint duplicate canonical records that no find/register/rediscover could
+   * ever resolve (T-004 review F4, and review B1 for the create lane).
+   */
+  function assertExternalIdentity(
+    externalId: string | null | undefined,
+    op: string,
+  ): asserts externalId is string {
     if (!externalId) {
       throw new DocumentRegistryValidationError(
-        `register/rediscover requires a non-empty external_id: local artifacts must supply the ` +
-          `durable managed file identity as external_id (PRD §11.1); identity-less registration ` +
-          `would mint duplicate canonical records`,
+        `${op} requires a non-empty external_id: local artifacts must supply the durable managed ` +
+          `file identity as external_id (PRD §11.1); identity-less registration would mint ` +
+          `duplicate canonical records that the unique identity index excludes and no lookup or ` +
+          `rediscovery could ever resolve`,
       );
     }
-    if (externalId) {
-      // T-003's identity lookup is workspace-blind; resolve it here and enforce isolation
-      // BEFORE delegating, so a cross-workspace match can never be read or mutated.
+  }
+
+  /**
+   * Defense-in-depth post-delegation check (T-004 review B2). The workspace is set by the registry
+   * itself via toDbInput, so this can only trip on a future bug; if the delegated write ever
+   * returned a record owned by a different workspace, FAIL CLOSED (with the transaction rolled
+   * back) rather than surfacing a cross-workspace record.
+   */
+  function assertOwnedWorkspace(record: DocumentObjectRecord, workspaceId: string): void {
+    if (record.workspace_id !== workspaceId) {
+      throw new DocumentRegistryIsolationError(
+        `isolated registration returned a canonical record owned by a different workspace; ` +
+          `refusing to cross the workspace boundary`,
+      );
+    }
+  }
+
+  function registerOrUpdate(input: RegistryWriteInput, workspaceId: string): RegistryRegistration {
+    const externalId = input.external_id ?? null;
+    // R-001 idempotency requires a durable provider identity (PRD §11.1). FAIL CLOSED on
+    // null/empty so the exact caller mistake that would silently mint duplicate canonical
+    // records is rejected loudly (T-004 review F4) — never a silent random-UUID duplicate.
+    assertExternalIdentity(externalId, 'register/rediscover');
+    // Atomicity (T-004 review B2): the isolation pre-check and the delegated write MUST run in one
+    // BEGIN IMMEDIATE transaction, so a competing process can never commit a row between our check
+    // and our write. Without it, a workspace-B pre-check that observes no row, followed by a
+    // workspace-A insert, would leave B's delegated registerDocumentObject on the UPDATE path
+    // mutating A's record. tx.immediate() = BEGIN IMMEDIATE.
+    const tx = db.transaction((): RegistryRegistration => {
+      // T-003's identity lookup is workspace-blind; resolve it here and enforce isolation BEFORE
+      // delegating, so a cross-workspace match can never be read or mutated.
       const existing = repo.findDocumentByProviderIdentity(
         input.provider_connection_id ?? null,
         externalId,
@@ -163,19 +215,32 @@ export function createDocumentRegistry(db: Database.Database): DocumentRegistry 
             `workspace; refusing cross-workspace registration`,
         );
       }
-    }
-    // Same-workspace match → rediscovery update (created=false); no match → create (created=true).
-    // Both behaviors are owned by the T-003 registration primitive, so identity logic is not
-    // duplicated here.
-    const result = repo.registerDocumentObject(toDbInput(input, workspaceId));
-    return { record: result.record, created: result.created };
+      // Same-workspace match → rediscovery update (created=false); no match → create (created=true).
+      // Both behaviors are owned by the T-003 registration primitive, so identity logic is not
+      // duplicated here.
+      const result = repo.registerDocumentObject(toDbInput(input, workspaceId));
+      // Re-verify the delegated write landed on a record the caller workspace owns.
+      assertOwnedWorkspace(result.record, workspaceId);
+      return { record: result.record, created: result.created };
+    });
+    return tx.immediate();
   }
 
   return {
     create(input, workspaceId) {
-      // Strict create rejects any existing identity, including a cross-workspace owner, via the
-      // T-003 primitive's loud "provider identity already exists" error — correct isolation.
-      return repo.createDocumentObject(toDbInput(input, workspaceId));
+      // Strict create mints a NEW canonical record. The unique identity index excludes NULL
+      // identities, and no find/register/rediscover can ever resolve an identity-less record, so
+      // fail closed on null/empty external_id exactly like register/rediscover — a repeated
+      // identity-less create would otherwise mint unbounded canonical records (T-004 review B1).
+      assertExternalIdentity(input.external_id ?? null, 'create');
+      const tx = db.transaction((): DocumentObjectRecord => {
+        // Strict create rejects any existing identity, including a cross-workspace owner, via the
+        // T-003 primitive's loud "provider identity already exists" error — correct isolation.
+        const record = repo.createDocumentObject(toDbInput(input, workspaceId));
+        assertOwnedWorkspace(record, workspaceId);
+        return record;
+      });
+      return tx.immediate();
     },
     register(input, workspaceId) {
       return registerOrUpdate(input, workspaceId);

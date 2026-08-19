@@ -628,7 +628,7 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
           provider_modified_at = COALESCE(@provider_modified_at, provider_modified_at),
           preview_state = COALESCE(@preview_state, preview_state),
           conflict_state = COALESCE(@conflict_state, conflict_state),
-          indexed_at = COALESCE(@indexed_at, @now),
+          indexed_at = COALESCE(@indexed_at, indexed_at),
           updated_at = @now
         WHERE id = @id
       `).run({
