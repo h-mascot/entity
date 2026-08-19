@@ -132,11 +132,28 @@ No change outside these named paths was made (worktree diff at §10).
     `'required'` gates on human confirmation. OQ-003 exact default is open downstream
     (null/auto_approve/not_required = no confirmation demanded).
 
+**Destination-record gating (THE-948 r1 F1).** `resolveCreateAllowance(policies, destinations, scope)`
+now CONSULTS the destination records via `destinationsServingScope` (the production caller it was
+written for): every approved destination ID must resolve to a destination record that (a) exists,
+(b) has `enabled === true`, and (c) serves the request scope exactly (workspace/tenant/provider/
+connection/artifact type — `destinationServesScope`, fail closed on any mismatch/missing). An
+explicit destination that is unapprovable — absent from the policy's approved set OR lacking an
+enabled, scope-serving record — makes `resolveCreateAllowance` throw the typed
+`UnapprovedDestinationError` (THE-948 r1 F5b: the exported error now has a genuine library caller).
+Disabling a destination record therefore genuinely blocks creation, and a record that mismatches
+the workspace/tenant/provider/connection/artifact type never authorizes a write. Destination-record
+`write_mode` / `confirmation_policy` (PRD §11.6) remain UNMODELED this round (carried to T-008;
+policy-level modes remain authoritative) — see §8a.
+
 **Resolver integration.** The decision functions yield a `DestinationAllowance` / `PolicyAllowance`
 that are consumed directly by the T-006 Capability Resolver's destination/policy folds. The
-`write-policy.test.ts` proves end-to-end that defeating the policy makes the resolver's `create`
-(and every write/embed lane) non-actionable — closing the T-006 pass-through boundary where
-destination/policy were minimal allowances owned by this round's real model.
+`write-policy.test.ts` proves end-to-end that defeating the policy/destination decision makes the
+resolver's `create` (and every write/embed lane) non-actionable. The T-006 pass-through boundary is
+closed for the *destination allowance* only to the extent this round's real model feeds it: a
+`denied` destination hard-vetoes every `FAIL_CLOSED_CAPABILITIES` lane in the resolver (proven by
+feeding `resolveDestinationAllowance`'s pure `'denied'` into `resolveCapabilities`); a
+missing/disabled/mismatched destination record now throws inside `resolveCreateAllowance`, so such
+a create never reaches the resolver as an allowance at all.
 
 ## 4. Automated proof — allowed/denied destination tests
 
@@ -193,6 +210,32 @@ The RED failures prove the F2 carry-forward gap (a malformed/partial adapter bas
 ```sh
 cd packages/server && nvm use 22 && npx vitest run src/document-providers/write-policy.test.ts src/document-providers/capability-resolver.test.ts src/phase2-flags.test.ts
 #   → Test Files 3 passed (3) | Tests 60 passed (60)                     [exit 0]
+```
+
+### 5a. GLM 5.3 r1 findings RED → GREEN proof (F1, F2)
+
+RED was established by adding failing tests on the unmodified reviewed HEAD `fc0cd38` **before**
+the F1/F2 fixes. New tests asserting the DESIRED behavior were added; on HEAD they fail because
+the current code exhibits the buggy behavior, then pass after the fix.
+
+```sh
+cd packages/server && nvm use 22 && npx vitest run src/document-providers/write-policy.test.ts
+#   — RED on fc0cd38 (4 new tests fail) —
+#     × RED F1: an approved destination whose record is disabled does not authorize the create
+#     × RED F1: an approved destination whose record mismatches the workspace does not authorize the create
+#     × RED F1: an approved destination whose record mismatches the artifact type does not authorize the create
+#     × exact policy governs even when the wildcard precedes it in the array
+#   Test Files 1 failed (1) | Tests 4 failed | 24 passed (28)            [exit 1]
+```
+
+F1 RED: an approved ID whose destination record is `enabled:false` (or workspace/artifact-type
+mismatch) still yielded `policy:'allowed'` today because `_destinations` was ignored. F2 RED: a
+`'*'` policy preceding an exact policy wrongly governed the exact request.
+
+```sh
+cd packages/server && nvm use 22 && npx vitest run src/document-providers/write-policy.test.ts
+#   — GREEN after F1 + F2 fixes (existing tests updated to the corrected behavior) —
+#   Test Files 1 passed (1) | Tests 33 passed (33)                       [exit 0]
 ```
 
 ## 6. Per-acceptance negative proof (fail closed)
@@ -255,6 +298,28 @@ rewritten (new commit on top of `9ffd549` only).
 | **F3c** | `capability-resolver.test.ts` | Tightened the end-to-end unknown-connection admission-lane rejection from `rejects.toBeInstanceOf(Error)` to `rejects.toBeInstanceOf(UnsupportedAdapterMutationError)` (in the existing `:332` spot and a new dedicated `F3c` test) so the fail-closed path is the explicit typed error. |
 | **F5** | `fake-adapter.ts` | `buildReport` connection-fold labeling now matches the resolver: an `unknown` connection folds write/human_edit lanes to `unknown` (not `degraded`), degraded/unauthorized fold a supported lane to `degraded`, and `source:'connection'` is tagged only when the fold actually changed the lane (cosmetic — resolver stays authoritative). |
 
+## 8a. GLM 5.3 review round 1 findings disposition (THE-948 r1 → r2, new commit on top of `fc0cd38`)
+
+The independent GLM 5.3 round-1 review (verdict CHANGES_REQUESTED) found one blocking
+architecture/correctness gap (F1), one blocking correctness/test gap (F2), and several minor
+findings (F3–F5). Disposition:
+
+| Finding | Severity | Disposition |
+| --- | --- | --- |
+| **F1** — dead `_destinations`; destination records not in the authorization decision | Medium (blocking) | **Fixed.** `resolveDestinationAllowance` now takes the destination records and `resolveCreateAllowance` consults them via `destinationsServingScope` (the production caller it was written for), requiring every authorizing destination ID to resolve to an existing, `enabled`, scope-serving record. RED→GREEN proven in §5a. |
+| **F2** — `findGoverningPolicy` first-match-wins, no exact-over-wildcard specificity | Medium (blocking) | **Fixed.** Encoded deterministic precedence: exact `artifactType` match governs over `'*'` regardless of array order; ties within a specificity class stay first-match-wins; wildcard governs only when no exact policy exists. Rule documented in the function's doc comment. RED→GREEN proven in §5a. |
+| **F3** — carry-forward `reasonCode = layer.reasonCode` change untested | Low | **Fixed.** Added focused `reasonCode` tests in `capability-resolver.test.ts`: a tied-severity higher-precedence layer with no code clears a stale code; a layer carrying a code sets it; a non-winning layer's code is preserved when it remains the winner. |
+| **F4** — vacuous tests (`write-policy.test.ts:101–105` tautology; `:118–121` duplicate) | Low | **Fixed.** Removed the tautological containment loop (the `WriteMode` union enforces the mode set at compile time — stated in the test) and removed the exact-duplicate block. |
+| **F5a** — `resolveMutationAllowance` missing-policy throw path untested | Low | **Fixed.** Added a focused test asserting the mutation path throws `MissingDestinationPolicyError` (including a different-artifact-type no-govern case). |
+| **F5b** — `UnapprovedDestinationError` exported but never thrown by library code | Low | **Fixed — thrown.** `resolveCreateAllowance` now throws `UnapprovedDestinationError` (typed, consistent with the taxonomy) for any explicit unapprovable destination. The export is no longer dead. |
+| **F5c** — `defaultDestinationId` data-only in the decision path (record-only) | Low (record-only) | **Recorded.** Remains data-only (consistent with R-007 explicit-destination letter). No change — disclosed here. |
+| **F5d** — wholly-null baseline report guard not covered (record-only) | Low (record-only) | **Recorded.** The disclosed threat model is entry-level (per-entry omissions/nulls), not wholly-null reports. No code change. |
+
+Design questions carried to T-008 (not modeled this round, per ticket): destination-record
+`write_mode` / `confirmation_policy` (PRD §11.6) are intentional gaps — policy-level
+`writeMode` / `confirmationPolicy` remain authoritative; the exact OQ-003 default stays open.
+T-008 route wiring will use the now-deterministic `findGoverningPolicy` precedence.
+
 ## 9. Rule-outs
 
 - **PRD (`phase2-canonical-prd.md`) — READ-ONLY this round.** T-007 lists it as a named path, but
@@ -283,16 +348,25 @@ rewritten (new commit on top of `9ffd549` only).
 
 ## 10. Verification commands (Node 22 — v22.22.2)
 
+Round 1 (reviewed HEAD `fc0cd38`, as recorded by the reviewer and this worker):
 ```sh
-# Focused (ticket §1)
+# Focused (ticket §1) — GLM 5.3 r1 reviewed gate
 cd packages/server && nvm use 22 && npx vitest run src/document-providers/write-policy.test.ts \
   src/document-providers/capability-resolver.test.ts src/phase2-flags.test.ts   # 60/60 exit 0
 # Full (ticket §2)
 cd packages/server && nvm use 22 && npm run build                                 # tsc strict exit 0
 cd packages/server && nvm use 22 && npx vitest run                                # 207 files / 1807 tests exit 0
-# Gate + hygiene
-cd /path/to/repo && npm run ctrl:gate                                              # [ctrl] gate passed ✅ exit 0
 git diff --check                                                                    # clean (exit 0)
+```
+
+Round 2 (r1-fix review, this file at final HEAD) — commands actually run:
+```sh
+cd packages/server && nvm use 22 && npx vitest run src/document-providers/write-policy.test.ts \
+  src/document-providers/capability-resolver.test.ts src/phase2-flags.test.ts   # 70/70 exit 0
+cd packages/server && nvm use 22 && npm run build                                 # tsc strict exit 0
+cd packages/server && nvm use 22 && npx vitest run                                # 207 files / 1817 tests exit 0
+git diff --check                                                                    # clean (exit 0)
+git status --short                                                                  # only scoped paths (clean after commit)
 ```
 
 Note on `npm run ctrl:gate`: the ctrl-gate runner does not itself select a Node runtime, so under
@@ -304,15 +378,9 @@ requirement stated at the top of this ticket and in BUILD-CONTEXT.
 ## 11. Worktree / diff hygiene
 
 ```sh
-git status --short   # only intended paths:
-#   M  packages/server/src/document-providers/capability-resolver.test.ts
-#   M  packages/server/src/document-providers/capability-resolver.ts
-#   M  packages/server/src/document-providers/fake-adapter.ts
-#   M  packages/server/src/phase2-flags.test.ts
-#   ?? packages/server/src/document-providers/destinations.ts
-#   ?? packages/server/src/document-providers/write-policy.test.ts
-#   ?? packages/server/src/document-providers/write-policy.ts
+git status --short   # only scoped paths, clean after commit (worktree clean)
 git diff --check     # clean (exit 0)
 ```
 
-Final commit: `FINAL_SHA` recorded in the commit message / final answer.
+Final commit: `FINAL_SHA` recorded in the commit message / final answer (GLM 5.3 r2 fix commit on
+top of `fc0cd38`).

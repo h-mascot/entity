@@ -40,9 +40,9 @@ import {
   findGoverningPolicy,
   requiresConfirmation,
   resolveCreateAllowance,
+  resolveDestinationAllowance,
   resolveMutationAllowance,
   resolvedWriteMode,
-  type WriteMode,
 } from './write-policy';
 import { resolveCapabilities, type DestinationAllowance, type PolicyAllowance } from './capability-resolver';
 import { capabilityAllowsActionForKey, type CapabilityType } from './types';
@@ -79,6 +79,23 @@ function basePolicy(overrides: Partial<WritePolicy> = {}): WritePolicy {
   });
 }
 
+/** A destination record that serves the base scope and is enabled. */
+function baseDestination(overrides: Partial<DocumentDestination> = {}): DocumentDestination {
+  return {
+    id: 'dest_allowed',
+    workspaceId: 'ws_A',
+    tenantId: 'tenant_A',
+    connectionId: 'conn_1',
+    provider: 'google_workspace',
+    artifactTypes: new Set(['document']),
+    destinationKind: 'folder',
+    externalId: 'folder-1',
+    displayName: 'Folder 1',
+    enabled: true,
+    ...overrides,
+  };
+}
+
 /** Assert a resolved report leaves the given lane non-actionable. */
 async function assertLaneBlocked(
   destination: DestinationAllowance,
@@ -98,12 +115,10 @@ async function assertLaneBlocked(
 }
 
 describe('write policy: write modes and default-after-migration (R-003)', () => {
-  it('minimum write modes are disabled, create_only, create_and_update', () => {
-    const modes: WriteMode[] = ['disabled', 'create_only', 'create_and_update'];
-    for (const m of modes) {
-      expect(['disabled', 'create_only', 'create_and_update']).toContain(m);
-    }
-  });
+  // F4 (THE-948 r1): the `WriteMode` union type enforces the minimum mode set at compile time;
+  // a tautological containment loop proved nothing, so it was removed in favor of that
+  // compile-time guarantee. The runtime behavior of each mode is asserted below and in the
+  // mutation-lane tests.
 
   it('default after migration is disabled unless an existing explicit write authorization is proven', () => {
     // No explicit authorization => effective mode is disabled, even if a value was written.
@@ -114,28 +129,25 @@ describe('write policy: write modes and default-after-migration (R-003)', () => 
     expect(resolvedWriteMode(proven)).toBe('create_only');
     expect(resolvedWriteMode(basePolicy())).toBe('create_and_update');
   });
-
-  it('needs an explicit write authorization for create_and_update', () => {
-    expect(resolvedWriteMode(basePolicy({ writeMode: 'create_and_update', writeAuthorizationProven: true }))).toBe(
-      'create_and_update',
-    );
-  });
 });
 
 describe('write policy: unapproved destination rejected (R-003 acceptance 1)', () => {
-  it('a workspace cannot create into a destination absent from the approved set (policy veto)', async () => {
+  it('a workspace cannot create into a destination absent from the approved set (hard-fails typed)', () => {
     const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
+    const dests = [baseDestination()];
     const scope = baseScope({ destinationId: 'dest_unapproved' });
-    const decision = resolveCreateAllowance([policy], [], scope);
-    expect(decision.policy).toBe('denied');
-    expect(decision.destination).toBe('denied');
-    // Integrated proof: feeding the decision into the resolver blocks create.
-    await assertLaneBlocked(decision.destination, decision.policy, 'create');
+    // A caller that demands a specific unapproved destination is hard-failed with the typed
+    // UnapprovedDestinationError (THE-948 r1 F5b) — the library now throws it, not hand-built.
+    expect(() => resolveCreateAllowance([policy], dests, scope)).toThrow(UnapprovedDestinationError);
+    // The denied allowance is still observable through the pure allowance function, which the
+    // resolver-integration test feeds into resolveCapabilities.
+    expect(resolveDestinationAllowance(scope, policy.allowedDestinationIds, dests)).toBe('denied');
   });
 
   it('the approved (default) destination is allowed and create is actionable', async () => {
     const policy = basePolicy();
-    const decision = resolveCreateAllowance([policy], [], baseScope());
+    const dests = [baseDestination()];
+    const decision = resolveCreateAllowance([policy], dests, baseScope());
     expect(decision.policy).toBe('allowed');
     expect(decision.destination).toBe('allowed');
     expect(defaultDestinationId(policy)).toBe('dest_allowed');
@@ -150,16 +162,22 @@ describe('write policy: unapproved destination rejected (R-003 acceptance 1)', (
     expect(capabilityAllowsActionForKey(report, 'create')).toBe(true);
   });
 
-  it('explicitly raising an UnapprovedDestinationError is surfaced as a typed error', () => {
-    // The service hard-fails a caller that demands a *specific* unapproved destination.
+  it('UnapprovedDestinationError is thrown by the library for an unapproved explicit destination', () => {
+    // The service hard-fails a caller that demands a *specific* unapproved destination. The
+    // typed error is thrown by resolveCreateAllowance itself (THE-948 r1 F5b), not hand-built.
     const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
+    const dests = [baseDestination()];
     const scope = baseScope({ destinationId: 'dest_unapproved' });
-    expect(() => {
-      const decision = resolveCreateAllowance([policy], [], scope);
-      if (decision.destination === 'denied') {
-        throw new UnapprovedDestinationError(scope.workspaceId, scope.destinationId ?? '');
+    try {
+      resolveCreateAllowance([policy], dests, scope);
+      throw new Error('expected UnapprovedDestinationError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(UnapprovedDestinationError);
+      if (err instanceof UnapprovedDestinationError) {
+        expect(err.workspaceId).toBe('ws_A');
+        expect(err.destinationId).toBe('dest_unapproved');
       }
-    }).toThrow(UnapprovedDestinationError);
+    }
   });
 });
 
@@ -173,7 +191,7 @@ describe('write policy: read-only connection is not write-promotable (R-003 acce
       writeAuthorizationProven: false,
     });
     const scope = baseScope();
-    const decision = resolveCreateAllowance([policy], [], scope);
+    const decision = resolveCreateAllowance([policy], [baseDestination()], scope);
     expect(resolvedWriteMode(policy)).toBe('disabled');
     expect(decision.policy).toBe('denied');
     // Defense-in-depth: even if some caller fabricates a broad-scope runtime flag, the policy
@@ -214,12 +232,32 @@ describe('write policy: missing destination policy blocks creation (R-003 accept
     expect(findGoverningPolicy([policy], scope)).toBeNull();
     expect(() => resolveCreateAllowance([policy], [], scope)).toThrow(MissingDestinationPolicyError);
   });
+
+  it('a missing governing policy blocks the mutation/update lane too (F5a)', () => {
+    // Only the create path was tested before; the mutation path must throw the same typed error.
+    const scope = baseScope();
+    expect(() => resolveMutationAllowance([], scope)).toThrow(MissingDestinationPolicyError);
+    try {
+      resolveMutationAllowance([], scope);
+      throw new Error('expected MissingDestinationPolicyError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MissingDestinationPolicyError);
+      if (err instanceof MissingDestinationPolicyError) {
+        expect(err.workspaceId).toBe('ws_A');
+      }
+    }
+    // A policy for a different artifact type likewise does not govern the mutation request.
+    const policy = basePolicy({ artifactType: 'spreadsheet' });
+    expect(() => resolveMutationAllowance([policy], baseScope({ artifactType: 'document' }))).toThrow(
+      MissingDestinationPolicyError,
+    );
+  });
 });
 
 describe('write policy: mutation lanes respect write mode (create_only vs create_and_update)', () => {
   it('create_only blocks the update/mutation lane but allows create', () => {
     const policy = basePolicy({ writeMode: 'create_only' });
-    const create = resolveCreateAllowance([policy], [], baseScope());
+    const create = resolveCreateAllowance([policy], [baseDestination()], baseScope());
     expect(create.policy).toBe('allowed');
     const mutate = resolveMutationAllowance([policy], baseScope());
     expect(mutate.policy).toBe('denied');
@@ -227,13 +265,13 @@ describe('write policy: mutation lanes respect write mode (create_only vs create
 
   it('create_and_update allows both create and update lanes', () => {
     const policy = basePolicy({ writeMode: 'create_and_update' });
-    expect(resolveCreateAllowance([policy], [], baseScope()).policy).toBe('allowed');
+    expect(resolveCreateAllowance([policy], [baseDestination()], baseScope()).policy).toBe('allowed');
     expect(resolveMutationAllowance([policy], baseScope()).policy).toBe('allowed');
   });
 
   it('disabled blocks every write lane', () => {
     const policy = basePolicy({ writeMode: 'disabled', writeAuthorizationProven: true });
-    expect(resolveCreateAllowance([policy], [], baseScope()).policy).toBe('denied');
+    expect(resolveCreateAllowance([policy], [baseDestination()], baseScope()).policy).toBe('denied');
     expect(resolveMutationAllowance([policy], baseScope()).policy).toBe('denied');
   });
 });
@@ -289,7 +327,7 @@ describe('write policy: disabled preserves existing records (R-003 acceptance 4)
     // Disable: only flips `enabled`; the policy record stays in the store (nothing deleted).
     const disabled = basePolicy({ enabled: false });
     const scope = baseScope();
-    const decision = resolveCreateAllowance([disabled], [], scope);
+    const decision = resolveCreateAllowance([disabled], [baseDestination()], scope);
     expect(decision.policy).toBe('denied');
     expect(servicePolicies).toHaveLength(before); // policy store untouched
     // Existing documented destinations/references remain resolvable after the flip.
@@ -325,17 +363,19 @@ describe('write policy: destination allowance integrates with the resolver lanes
     // gating in T-007 must stay mutation/create-lane only (not extend to human_edit), matching
     // that fold input. A denied destination therefore blocks every write/embed lane but leaves
     // the read-only and human_edit lanes to their policy-level state.
-    const decision = resolveCreateAllowance(
-      [basePolicy({ allowedDestinationIds: new Set(['dest_other']) })],
-      [],
-      baseScope({ destinationId: 'dest_unapproved' }),
-    );
-    expect(decision.destination).toBe('denied');
+    // (THE-948 r1 F1/F5b): resolveCreateAllowance now HARD-FAILS an unapproved explicit
+    // destination, so the denied allowance is obtained from the pure resolveDestinationAllowance
+    // predicate and fed into the resolver to prove the lane-blocking integration.)
+    const policy = basePolicy({ allowedDestinationIds: new Set(['dest_other']) });
+    const dests = [baseDestination()];
+    const scope = baseScope({ destinationId: 'dest_unapproved' });
+    const destination = resolveDestinationAllowance(scope, policy.allowedDestinationIds, dests);
+    expect(destination).toBe('denied');
     const report = await resolveCapabilities({
       adapter: createFakeDocumentProviderAdapter(),
       artifactType: 'document',
       connection: 'authorized',
-      destination: decision.destination,
+      destination,
       policy: 'allowed', // policy itself permits writes; destination veto blocks them
       runtime: {},
     });
@@ -348,5 +388,63 @@ describe('write policy: destination allowance integrates with the resolver lanes
     // alone must not be what removes human_edit support (it stays supported in this fold).
     expect(report['human_edit'].state).toBe('unsupported'); // fake baseline honest: unsupported
     expect(capabilityAllowsActionForKey(report, 'human_edit')).toBe(false);
+  });
+});
+
+describe('write policy: destination records gate creation (THE-948 r1 F1)', () => {
+  // RED on current HEAD: an approved ID whose destination record is disabled, or whose record
+  // mismatches the scope, must NOT authorize the create. The policy allowed set alone is not
+  // sufficient — the destination record itself must be enabled and serve the request scope.
+  it('RED F1: an approved destination whose record is disabled does not authorize the create', () => {
+    const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
+    const dests = [baseDestination({ enabled: false })];
+    // explicit destination, approved by policy set, but the record is disabled => blocked.
+    expect(() => resolveCreateAllowance([policy], dests, baseScope())).toThrow(UnapprovedDestinationError);
+  });
+
+  it('RED F1: an approved destination whose record mismatches the workspace does not authorize the create', () => {
+    const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
+    const dests = [baseDestination({ workspaceId: 'ws_OTHER' })];
+    expect(() => resolveCreateAllowance([policy], dests, baseScope())).toThrow(UnapprovedDestinationError);
+  });
+
+  it('RED F1: an approved destination whose record mismatches the artifact type does not authorize the create', () => {
+    const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
+    const dests = [baseDestination({ artifactTypes: new Set(['spreadsheet']) })];
+    expect(() => resolveCreateAllowance([policy], dests, baseScope())).toThrow(UnapprovedDestinationError);
+  });
+
+  it('RED F1: an approved destination whose record serves the scope authorizes the create', () => {
+    const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
+    const dests = [baseDestination()];
+    const decision = resolveCreateAllowance([policy], dests, baseScope());
+    expect(decision.destination).toBe('allowed');
+    expect(decision.policy).toBe('allowed');
+  });
+});
+
+describe('write policy: exact artifact type governs over wildcard (THE-948 r1 F2)', () => {
+  const exact = basePolicy({ artifactType: 'document' });
+  const wild = basePolicy({ artifactType: '*' });
+
+  it('exact policy governs even when the wildcard precedes it in the array', () => {
+    // RED: with first-match-wins, the leading '*' policy wrongly governs the exact request.
+    expect(findGoverningPolicy([wild, exact], baseScope())).toBe(exact);
+  });
+
+  it('exact policy governs when it precedes the wildcard too (order-independent), ties first-match', () => {
+    expect(findGoverningPolicy([exact, wild], baseScope())).toBe(exact);
+  });
+
+  it('wildcard governs only when no exact policy exists (first wildcard wins among wildcards)', () => {
+    expect(findGoverningPolicy([wild], baseScope())).toBe(wild);
+    // two wildcards: first-match-wins within the wildcard class.
+    const wild2 = basePolicy({ artifactType: '*', workspaceId: 'ws_A' });
+    expect(findGoverningPolicy([wild2, wild], baseScope())).toBe(wild2);
+  });
+
+  it('an exact policy for a *different* type never governs the request', () => {
+    const otherExact = basePolicy({ artifactType: 'spreadsheet' });
+    expect(findGoverningPolicy([otherExact, wild], baseScope())).toBe(wild);
   });
 });

@@ -38,7 +38,11 @@
 
 import type { DocumentArtifactType, DocumentProvider } from '../../../db/src/document-integrations';
 import { type DestinationAllowance, type PolicyAllowance } from './capability-resolver';
-import { type DestinationApprovalScope, type DocumentDestination } from './destinations';
+import {
+  type DestinationApprovalScope,
+  type DocumentDestination,
+  destinationsServingScope,
+} from './destinations';
 
 /** R-003 minimum write modes. Default after migration is `disabled` unless proven otherwise. */
 export type WriteMode = 'disabled' | 'create_only' | 'create_and_update';
@@ -148,41 +152,42 @@ export function resolvedWriteMode(policy: WritePolicy): WriteMode {
  * Workspace + tenant + provider + connection all must equal exactly; artifact type may be an
  * exact match or a `'*'` wildcard. A policy from another workspace/tenant never matches
  * (T-007 isolation). Returns null on no match (callers fail closed with a typed error).
+ *
+ * Precedence (THE-948 r1 F2): an exact `artifactType` match governs over a `'*'` wildcard,
+ * regardless of array order. Within the same specificity class, the first matching policy in
+ * the array wins. A wildcard governs only when no exact policy exists for the scope.
  */
 export function findGoverningPolicy(
   policies: readonly WritePolicy[],
   scope: WriteRequestScope,
 ): WritePolicy | null {
-  for (const policy of policies) {
-    if (policy.workspaceId !== scope.workspaceId) {
-      continue;
-    }
-    if (policy.tenantId !== scope.tenantId) {
-      continue;
-    }
-    if (policy.provider !== scope.provider) {
-      continue;
-    }
-    if (policy.connectionId !== scope.connectionId) {
-      continue;
-    }
-    if (policy.artifactType !== '*' && policy.artifactType !== scope.artifactType) {
-      continue;
-    }
-    return policy;
+  const matchesScope = (policy: WritePolicy): boolean =>
+    policy.workspaceId === scope.workspaceId &&
+    policy.tenantId === scope.tenantId &&
+    policy.provider === scope.provider &&
+    policy.connectionId === scope.connectionId &&
+    (policy.artifactType === '*' || policy.artifactType === scope.artifactType);
+
+  // Exact artifact-type match always governs over a wildcard (most specific wins, any order).
+  const exact = policies.find((p) => matchesScope(p) && p.artifactType === scope.artifactType);
+  if (exact) {
+    return exact;
   }
-  return null;
+  // First-match-wins within the wildcard class, only when no exact policy exists.
+  return policies.find((p) => matchesScope(p) && p.artifactType === '*') ?? null;
 }
 
 /**
- * Destination allowance for a request: `allowed` only for an explicitly approved destination;
- * `denied` for a destination outside the approved set; `unknown` when there is no approved set
- * or no explicit destination requested (fail closed — the resolver never lets an unknown
- * destination enable a write).
+ * Destination allowance for a request: `allowed` only for an explicitly approved destination
+ * whose record ALSO exists, is `enabled`, and serves the request scope exactly (THE-948 r1 F1);
+ * `denied` for a destination outside the approved set or whose record is missing/disabled/
+ * scope-mismatched; `unknown` when there is no approved set or no explicit destination requested
+ * (fail closed — the resolver never lets an unknown destination enable a write).
  */
 export function resolveDestinationAllowance(
   scope: WriteRequestScope,
   allowedDestinationIds: ReadonlySet<string>,
+  destinations: readonly DocumentDestination[],
 ): DestinationAllowance {
   if (allowedDestinationIds.size === 0) {
     // No approved destination => unknown, never an implicit allowance.
@@ -192,7 +197,16 @@ export function resolveDestinationAllowance(
     // No explicit destination chosen; do not guess an arbitrary location (fail closed).
     return 'unknown';
   }
-  return allowedDestinationIds.has(scope.destinationId) ? 'allowed' : 'denied';
+  if (!allowedDestinationIds.has(scope.destinationId)) {
+    return 'denied';
+  }
+  // The approved ID must also resolve to an enabled destination record serving this exact
+  // scope; otherwise disabling the record (or a scope mismatch) never blocks creation.
+  const serving = destinationsServingScope(destinations, scope);
+  if (!serving.some((d) => d.id === scope.destinationId)) {
+    return 'denied';
+  }
+  return 'allowed';
 }
 
 /** A fully resolved create decision for one request. */
@@ -209,29 +223,49 @@ export interface CreateDecision {
  * Resolve whether a create into `scope.destinationId` is authorized.
  *
  * Throws `MissingDestinationPolicyError` (a TYPED configuration error) when no governing policy
- * exists — a missing policy NEVER silently allows creation (acceptance 3). Otherwise the create
- * is authorized ONLY when the effective write mode permits creation (`create_only` /
- * `create_and_update`) AND the requested destination is approved; an unapproved destination or
- * a disabled/read-only connection yields `policy: 'denied'` (acceptances 1 and 2).
+ * exists — a missing policy NEVER silently allows creation (acceptance 3). Throws
+ * `UnapprovedDestinationError` (a TYPED configuration error) when the caller demands a specific
+ * explicit destination that is NOT approvable — either absent from the policy's approved set, or
+ * whose destination record is missing/`enabled:false`/serves a different scope (THE-948 r1 F1,
+ * acceptances 1 and the destination-record integration). Otherwise the create is authorized ONLY
+ * when the effective write mode permits creation (`create_only` / `create_and_update`) AND the
+ * requested destination is approved with an enabled, scope-serving record; a disabled/read-only
+ * connection yields `policy: 'denied'` (acceptance 2).
  */
 export function resolveCreateAllowance(
   policies: readonly WritePolicy[],
-  _destinations: readonly DocumentDestination[],
+  destinations: readonly DocumentDestination[],
   scope: WriteRequestScope,
 ): CreateDecision {
   const policy = findGoverningPolicy(policies, scope);
   if (!policy) {
     throw new MissingDestinationPolicyError(scope);
   }
+  if (scope.destinationId != null) {
+    // A caller that demands a specific destination is hard-failed unless it is approvable:
+    // approved by the policy set AND backed by an enabled, scope-serving destination record.
+    const dest = resolveDestinationAllowance(scope, policy.allowedDestinationIds, destinations);
+    if (dest !== 'allowed') {
+      throw new UnapprovedDestinationError(scope.workspaceId, scope.destinationId);
+    }
+    const mode = resolvedWriteMode(policy);
+    const createModePermits = mode === 'create_only' || mode === 'create_and_update';
+    return {
+      policyFound: true,
+      writeMode: mode,
+      destination: 'allowed',
+      policy: createModePermits ? 'allowed' : 'denied',
+      defaultDestinationId: defaultDestinationId(policy),
+    };
+  }
+  // No explicit destination chosen: fail closed (never guess a location). The policy/mode still
+  // resolve so the caller sees the effective write mode, but the create allowance is denied.
   const mode = resolvedWriteMode(policy);
-  const destination = resolveDestinationAllowance(scope, policy.allowedDestinationIds);
-  const destinationApproved = destination === 'allowed';
-  const createModePermits = mode === 'create_only' || mode === 'create_and_update';
   return {
     policyFound: true,
     writeMode: mode,
-    destination,
-    policy: createModePermits && destinationApproved ? 'allowed' : 'denied',
+    destination: 'unknown',
+    policy: 'denied',
     defaultDestinationId: defaultDestinationId(policy),
   };
 }
