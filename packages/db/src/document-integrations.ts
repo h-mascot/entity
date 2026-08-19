@@ -108,16 +108,18 @@ export interface CreateDocumentObjectInput {
 
 /**
  * T-004: fields that may be updated on an existing canonical document record via the
- * by-id update primitive. `undefined` means "not provided — keep the stored value" (COALESCE),
- * matching the state-preserving rediscovery semantics T-003 established in review round 1 (F2).
- * Identity (id / workspace_id / provider / artifact_type) and created_at are intentionally
- * immutable here. Persists no credentials / raw tokens / document contents.
+ * by-id update primitive. `undefined` means "not provided — keep the stored value"
+ * (COALESCE / provided-guard), matching the state-preserving rediscovery semantics T-003
+ * established in review round 1 (F2); explicit `null` CLEARS a nullable field (the two update
+ * paths in this module agree on null-clear). Identity (id / workspace_id / provider /
+ * artifact_type / provider_connection_id / external_id) and created_at are intentionally
+ * immutable here — the identity tuple is the R-001 uniqueness key and must never be rewired
+ * through a metadata update (T-004 review F1). Persists no credentials / raw tokens / document
+ * contents.
  */
 export interface UpdateDocumentObjectFields {
   title?: string;
-  provider_connection_id?: string | null;
   destination_id?: string | null;
-  external_id?: string | null;
   provider_url?: string | null;
   owner_summary?: string | null;
   tenant_external_id?: string | null;
@@ -672,54 +674,74 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     id: string,
     fields: UpdateDocumentObjectFields,
   ): DocumentObjectRecord | undefined {
+    // Identity (id / workspace_id / provider / artifact_type / provider_connection_id /
+    // external_id) and created_at are immutable via update. The identity tuple is the R-001
+    // uniqueness key; rewiring it would silently fork the canonical record or hit the unique
+    // identity index. This guard turns any such attempt (reachable only through an unsafe cast
+    // since the patch type excludes identity) into a TYPED rejection rather than a silent
+    // success or a raw UNIQUE constraint error (T-004 review F1). We use a `CASE WHEN ... THEN`
+    // declared-guard for every nullable field so explicit null CLEARS the stored value while
+    // `undefined` (not provided) preserves it — the two update paths agree on null-clear (F2).
+    const guarded = fields as UpdateDocumentObjectFields & {
+      external_id?: unknown;
+      provider_connection_id?: unknown;
+    };
+    if (guarded.external_id !== undefined || guarded.provider_connection_id !== undefined) {
+      throw new Error(
+        'document provider identity fields (provider_connection_id / external_id) are immutable ' +
+          'and cannot be changed via update',
+      );
+    }
     const now = nowIso();
-    // Identity (id / workspace_id / provider / artifact_type) and created_at are immutable.
-    // Every mutable column uses COALESCE: `undefined` in the patch means "not provided — keep the
-    // stored value" so a partial metadata re-sync never clobbers prior state (consistent with the
-    // rediscovery UPDATE in registerDocumentObject, T-003 review round 1 F2). If the caller mutates
-    // an identity field to a colliding value, the unique identity index surfaces it loudly.
+    const provided = (v: unknown): number => (v === undefined ? 0 : 1);
     const result = db
       .prepare(`
         UPDATE document_objects SET
           title = COALESCE(@title, title),
-          provider_connection_id = COALESCE(@provider_connection_id, provider_connection_id),
-          destination_id = COALESCE(@destination_id, destination_id),
-          external_id = COALESCE(@external_id, external_id),
-          provider_url = COALESCE(@provider_url, provider_url),
-          owner_summary = COALESCE(@owner_summary, owner_summary),
-          tenant_external_id = COALESCE(@tenant_external_id, tenant_external_id),
-          permissions_summary_json = COALESCE(@permissions_summary_json, permissions_summary_json),
-          sensitivity_label = COALESCE(@sensitivity_label, sensitivity_label),
+          destination_id = CASE WHEN @destination_id_provided THEN @destination_id ELSE destination_id END,
+          provider_url = CASE WHEN @provider_url_provided THEN @provider_url ELSE provider_url END,
+          owner_summary = CASE WHEN @owner_summary_provided THEN @owner_summary ELSE owner_summary END,
+          tenant_external_id = CASE WHEN @tenant_external_id_provided THEN @tenant_external_id ELSE tenant_external_id END,
+          permissions_summary_json = CASE WHEN @permissions_summary_json_provided THEN @permissions_summary_json ELSE permissions_summary_json END,
+          sensitivity_label = CASE WHEN @sensitivity_label_provided THEN @sensitivity_label ELSE sensitivity_label END,
           auth_state = COALESCE(@auth_state, auth_state),
           readiness_state = COALESCE(@readiness_state, readiness_state),
-          degraded_reason_code = COALESCE(@degraded_reason_code, degraded_reason_code),
-          current_revision = COALESCE(@current_revision, current_revision),
-          provider_modified_at = COALESCE(@provider_modified_at, provider_modified_at),
+          degraded_reason_code = CASE WHEN @degraded_reason_code_provided THEN @degraded_reason_code ELSE degraded_reason_code END,
+          current_revision = CASE WHEN @current_revision_provided THEN @current_revision ELSE current_revision END,
+          provider_modified_at = CASE WHEN @provider_modified_at_provided THEN @provider_modified_at ELSE provider_modified_at END,
           preview_state = COALESCE(@preview_state, preview_state),
           conflict_state = COALESCE(@conflict_state, conflict_state),
-          indexed_at = COALESCE(@indexed_at, @now),
+          indexed_at = CASE WHEN @indexed_at_provided THEN @indexed_at ELSE indexed_at END,
           updated_at = @now
         WHERE id = @id
       `)
       .run({
         id,
         title: fields.title ?? null,
-        provider_connection_id: fields.provider_connection_id === undefined ? null : fields.provider_connection_id,
-        destination_id: fields.destination_id === undefined ? null : fields.destination_id,
-        external_id: fields.external_id === undefined ? null : fields.external_id,
+        destination_id: fields.destination_id ?? null,
+        destination_id_provided: provided(fields.destination_id),
         provider_url: fields.provider_url ?? null,
+        provider_url_provided: provided(fields.provider_url),
         owner_summary: fields.owner_summary ?? null,
+        owner_summary_provided: provided(fields.owner_summary),
         tenant_external_id: fields.tenant_external_id ?? null,
+        tenant_external_id_provided: provided(fields.tenant_external_id),
         permissions_summary_json: fields.permissions_summary_json ?? null,
+        permissions_summary_json_provided: provided(fields.permissions_summary_json),
         sensitivity_label: fields.sensitivity_label ?? null,
+        sensitivity_label_provided: provided(fields.sensitivity_label),
         auth_state: fields.auth_state ?? null,
         readiness_state: fields.readiness_state ?? null,
         degraded_reason_code: fields.degraded_reason_code ?? null,
+        degraded_reason_code_provided: provided(fields.degraded_reason_code),
         current_revision: fields.current_revision ?? null,
+        current_revision_provided: provided(fields.current_revision),
         provider_modified_at: fields.provider_modified_at ?? null,
+        provider_modified_at_provided: provided(fields.provider_modified_at),
         preview_state: fields.preview_state ?? null,
         conflict_state: fields.conflict_state ?? null,
         indexed_at: fields.indexed_at ?? null,
+        indexed_at_provided: provided(fields.indexed_at),
         now,
       });
     if (result.changes === 0) {

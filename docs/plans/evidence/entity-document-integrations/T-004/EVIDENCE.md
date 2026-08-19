@@ -200,27 +200,29 @@ T-004 document registry — duplicate/concurrent-style registration convergence 
 
 ```sh
 cd packages/server && nvm use 22 && npm run build            # PASS (tsc, strict)   exit 0
-cd packages/server && nvm use 22 && npx vitest run           # 205 files, 1741 tests exit 0
-cd packages/db     && nvm use 22 && npx vitest run           # 22 files, 177 tests  exit 0
+cd packages/server && nvm use 22 && npx vitest run           # 205 files, 1746 tests exit 0
+cd packages/db     && nvm use 22 && npx vitest run           # 22 files, 184 tests  exit 0
 cd packages/db     && nvm use 22 && npx tsc --noEmit         # PASS (strict)        exit 0
-cd packages/server && nvm use 22 && npx vitest run src/document-providers/registry.test.ts  # 17/17 exit 0
-cd packages/db     && nvm use 22 && npx vitest run src/document-integrations.test.ts        # 29/29 exit 0
+cd packages/server && nvm use 22 && npx vitest run src/document-providers/registry.test.ts  # 22/22 exit 0
+cd packages/db     && nvm use 22 && npx vitest run src/document-integrations.test.ts        # 36/36 exit 0
 git diff --check                                             # clean                exit 0
 npm run ctrl:gate                                            # gate
 ```
 
-Focused command exit codes after the final implementation:
+Focused command exit codes after the final implementation (review round 1 HEAD; server type-check
+uses `tsc --noEmit` so the strict check runs without emitting into `packages/*/dist`, keeping the
+worktree clean):
 
 ```sh
-cd packages/server && npx vitest run src/document-providers/registry.test.ts   # exit 0 (17/17)
-cd packages/db     && npx vitest run src/document-integrations.test.ts         # exit 0 (29/29)
-cd packages/server && npm run build                                            # exit 0
-cd packages/db     && npx tsc --noEmit                                         # exit 0
+cd packages/server && npx vitest run src/document-providers/registry.test.ts   # exit 0 (22/22)
+cd packages/db     && npx vitest run src/document-integrations.test.ts         # exit 0 (36/36)
+cd packages/server && npx tsc --noEmit -p tsconfig.json                       # exit 0 (strict)
+cd packages/db     && npx tsc --noEmit -p tsconfig.json                       # exit 0 (strict)
 ```
 
-Server suite delta vs T-003 base (204 files / 1719 tests): +1 file / +17 registry tests → 205
-files / 1736 tests beyond the T-003 delta; the reported 1741 includes the T-003 review-round
-fixes landed before this ticket. No pre-existing test regressed.
+Server suite delta vs T-003 base: T-004 adds the registry suite (now 22 tests incl. the round-1
+fixes) plus the T-003 review-round fixes landed before this ticket; full server suite 1746 tests,
+full db suite 184 tests. No pre-existing test regressed.
 
 ## 9. Worktree / diff hygiene
 
@@ -265,7 +267,95 @@ pre-T-003 semantics still drops only the additive unified tables
 (`reverseDocumentIntegrationsMigration`) and preserves old application semantics (R-036), with no
 legacy data recovery required.
 
-## 12. Unresolved risks / open items
+## 12. Review round 1 (GLM 5.3) findings — F1–F6 disposition
+
+Independent reviewer verdict `CHANGES_REQUESTED` (round 1 of 3). All findings reproduced
+empirically by the reviewer; each fixed failing-test-first on the reviewed HEAD `ca1e4e8`, then
+GREEN at final HEAD.
+
+### F1 — `update()` permitted identity rewiring (Blocker)
+**Disposition: FIXED.** Narrowed `UpdateDocumentObjectFields` (db) to exclude the identity tuple
+(`provider_connection_id`, `external_id`) — the patch type no longer advertises them, so
+`DocumentRegistryUpdatePatch` (derived) can never rewire identity at compile time. Added a runtime
+guard in `updateDocumentObject` that rejects any identity-supplying update (reachable only via an
+unsafe cast) with a TYPED rejection, so a colliding rewire never surfaces as a raw
+`UNIQUE constraint failed` SqliteError (no collision can even reach SQL). Registry `update` doc
+comment updated.
+- **RED (HEAD `ca1e4e8`)** — `registry.test.ts` "F1: update can never rewire the provider
+  identity…" and `document-integrations.test.ts` F1 rewire tests (silent rewire / raw SqliteError)
+  → **5 + 6 of the new tests failed**; specifically the identity rewire behaviour was unfixed.
+- **GREEN** — identity rewire is rejected with `identity/immutable`, and rediscovery of the
+  original identity still converges to the SAME canonical record (no divergence, no duplicate).
+  Tests: `registry.test.ts` F1 (1), `document-integrations.test.ts` F1 (2).
+
+### F2 — `null` could never clear nullable fields (Blocker)
+**Disposition: FIXED.** Rewrote the by-id `updateDocumentObject` UPDATE to a declared-guard model:
+for every nullable field, `CASE WHEN @<col>_provided THEN @<col> ELSE <col> END` — explicit `null`
+now CLEARS the stored value, `undefined` (omitted) PRESERVES it. The generic by-id path now agrees
+with the T-003 rediscovery path (which assigns `degraded_reason_code = @degraded_reason_code`
+directly) on null-clear semantics; an assertion bridges the two paths.
+- **RED (HEAD)** — "F2: explicit null clears…" tests failed (a ready document could not shed its
+  stale `degraded_reason_code`).
+- **GREEN** — `degraded_reason_code`, `destination_id`, `provider_url`, `owner_summary`,
+  `sensitivity_label`, `tenant_external_id`, `indexed_at` all clear on `null` and preserve on
+  `undefined`. Tests: `registry.test.ts` F2 (1), `document-integrations.test.ts` F2 (3).
+
+### F3 — `indexed_at` silently stamped now on every update (Major)
+**Disposition: FIXED (new generic by-id path only; T-003 rediscovery path untouched per ticket).**
+Changed `updateDocumentObject` from `indexed_at = COALESCE(@indexed_at, @now)` to
+`indexed_at = CASE WHEN @indexed_at_provided THEN @indexed_at ELSE indexed_at END` — a title-only
+patch now leaves `indexed_at` unchanged; an explicit `indexed_at` (or `null`, per F2) still
+applies. The T-003 rediscovery UPDATE (`:629`) is intentionally NOT modified (that expression
+pre-exists at base and is out of scope this ticket).
+- **RED (HEAD)** — "F3: a title-only patch preserves indexed_at…" failed (title-only patch rewrote
+  `indexed_at` to now).
+- **GREEN** — `indexed_at` unchanged on title-only patch; explicit value still applies. Tests:
+  `registry.test.ts` F3 (1), `document-integrations.test.ts` F3 (1).
+
+### F4 — identity-less register/rediscover minted duplicates (Major)
+**Disposition: FIXED — fail closed.** `register`/`rediscover` now throw a typed
+`DocumentRegistryValidationError` when `external_id` is null/empty (PRD §11.1: local artifacts must
+supply the durable managed file identity as `external_id`), instead of silently creating a
+random-UUID duplicate. Chose fail-closed rather than inventing a synthetic identity scheme (no new
+product semantic introduced). Interface doc comment "Idempotent registration" aligned with the
+actual guarantee (idempotency requires a durable non-empty identity).
+- **RED (HEAD)** — "F4: register with a null/empty external_id FAILS CLOSED…" failed (silently
+  minted rows, `created: true` ×2).
+- **GREEN** — identity-less register/rediscover throw; zero rows minted. Tests:
+  `registry.test.ts` F4 (2).
+
+### F5 — colocated db coverage for `updateDocumentObject` (Minor)
+**Disposition: FIXED.** Added colocated `T-004 — updateDocumentObject (by-id update primitive)`
+tests in `document-integrations.test.ts` covering: `changes === 0 → undefined` (unknown id), the
+provided/omitted/null binding matrix (F2), identity-collision typed rejection (F1), and
+`indexed_at` preserve/apply/clear (F3).
+
+### F6 — test quality: tautology + fixture-shaped privacy test (Minor)
+**Disposition: FIXED.** Replaced the tautology `expect(last?.record.id).toBe(last?.record.id)`
+with an assertion that the final record id equals the FIRST registration's canonical id. Rewrote
+the static-shape privacy test to introspect the REAL exported `RegistryWriteInput` type via a
+compile-time `@ts-expect-error` guard (if a credential field were added to the type, the assignment
+becomes legal and the unused `@ts-expect-error` fails the strict tsc gate).
+
+### Verification commands for this round (Node 22)
+
+```sh
+# RED proofs captured on unmodified reviewed HEAD ca1e4e8 (new tests added first):
+cd packages/server && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run src/document-providers/registry.test.ts
+#   → 5 failed (F1, F2, F3, F4×2) | 17 passed  [exit 1]
+cd packages/db     && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run src/document-integrations.test.ts
+#   → 6 failed (F1×2, F2×3, F3×1) | 30 passed (36)  [exit 1]
+# GREEN after fixes, final HEAD:
+cd packages/server && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run src/document-providers/registry.test.ts   # 22/22 exit 0
+cd packages/db     && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run src/document-integrations.test.ts         # 36/36 exit 0
+cd packages/server && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run                                          # 205 files / 1746 tests exit 0
+cd packages/db     && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run                                           # 22 files / 184 tests  exit 0
+cd packages/server && $HOME/.nvm/versions/node/v22.22.2/bin/npx tsc --noEmit -p tsconfig.json                       # exit 0 (strict)
+cd packages/db     && $HOME/.nvm/versions/node/v22.22.2/bin/npx tsc --noEmit -p tsconfig.json                       # exit 0 (strict)
+git diff --check                                                                                                    # clean
+```
+
+## 13. Unresolved risks / open items
 
 - **Authority-pin drift** (`83cacbc…` vs in-tree `c82e82d8…`): pending Henry's decision; handled by
   treating the in-tree PRD as read-only authority and not touching it.
@@ -273,12 +363,12 @@ legacy data recovery required.
   Genuine multi-process / multi-connection interleaving at the registry boundary is not exercised
   here; the single-connection + unique-index design makes interleaved duplicates impossible at the
   storage layer, and a future multi-connection test can extend this suite.
-- **`update` allows identity-field mutation** (`external_id` / `provider_connection_id` in the
-  patch): the unique identity index surfaces a collision loudly if a caller sets them to a
-  conflicting value; T-004 does not otherwise gate identity rewiring, which is a provider-sync
-  concern for later tickets.
+- **(F7—review INFO, not blocking)** the isolation error and strict-create "already exists" error
+  give workspace-B callers a cross-workspace existence oracle for probed identity tuples; no
+  secrets leak and no HTTP surface exists yet — T-008 route wiring should review this
+  differentiation (per reviewer).
 
-## 13. Delivery
+## 14. Delivery
 
 Scoped to the runner branch only; no merge to `main` (Gate 8) and no production promotion. Final
 reviewed SHA is recorded in the final-answer line and subsequently in the external review receipt +

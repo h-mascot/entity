@@ -950,6 +950,213 @@ describe('T-003 schema-audit report and NULL-identity persistence details', () =
   });
 });
 
+describe('T-004 — updateDocumentObject (by-id update primitive) — review round 1 fixes', () => {
+  const base = {
+    workspace_id: 'workspace-1',
+    provider: 'google_workspace' as const,
+    artifact_type: 'document' as const,
+    title: 'Doc',
+    auth_state: 'authorized' as const,
+    readiness_state: 'ready' as const,
+    provider_connection_id: 'conn-g1',
+    external_id: 'googdoc-UPD',
+    provider_url: 'https://example.test/d/UPD',
+    degraded_reason_code: 'quota_exceeded',
+    destination_id: 'dest-1',
+    owner_summary: 'owner:a',
+    sensitivity_label: 'internal',
+    tenant_external_id: 'tenant-1',
+    indexed_at: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('F5: changes === 0 (unknown id) returns undefined, never a record', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    expect(repo.updateDocumentObject('does-not-exist', { title: 'x' })).toBeUndefined();
+  });
+
+  it('F1: updateDocumentObject refuses to rewire the provider identity (typed rejection, cause-preserving) so rediscovery of the original identity still converges', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const first = repo.registerDocumentObject({ ...base });
+    const id = first.record.id;
+
+    // Attempt to rewire the provider identity via a deliberately-unsafe cast (the identity
+    // fields are immutably excluded from the update patch type; this exercises the runtime
+    // guard that real callers cannot reach — F1 / review finding). Must be a TYPED rejection,
+    // not a silent success and never a raw UNIQUE SqliteError.
+    const rewire = { external_id: 'googdoc-REWIRED' } as unknown as Parameters<
+      typeof repo.updateDocumentObject
+    >[1];
+    let err: unknown;
+    try {
+      repo.updateDocumentObject(id, rewire);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/identity|immutable/i);
+    expect((err as Error).message).not.toMatch(/UNIQUE constraint/i);
+
+    // After the rejected rewire attempt the original identity must STILL rediscover to the
+    // SAME canonical record — no divergence, no duplicate (R-001 / F1 regression).
+    const rediscovered = repo.registerDocumentObject({ ...base, title: 'Rediscovered' });
+    expect(rediscovered.created).toBe(false);
+    expect(rediscovered.record.id).toBe(id);
+    expect(rediscovered.record.external_id).toBe('googdoc-UPD');
+  });
+
+  it('F1: a colliding rewire of provider_connection_id is also a typed rejection (never a raw SqliteError)', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    repo.registerDocumentObject({ ...base });
+    // A second record owns a distinct identity; pointing record 1 at another record's identity
+    // tuple would violate the unique identity index. It must fail closed with the same typed
+    // rejection — never surface as a raw UNIQUE SqliteError.
+    const other = repo.registerDocumentObject({
+      ...base,
+      external_id: 'googdoc-UPD-2',
+      provider_connection_id: 'conn-g2',
+    });
+
+    const rewire = {
+      provider_connection_id: 'conn-g1',
+      external_id: 'googdoc-UPD',
+    } as unknown as Parameters<typeof repo.updateDocumentObject>[1];
+    let err: unknown;
+    try {
+      repo.updateDocumentObject(other.record.id, rewire);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/identity|immutable/i);
+    expect((err as Error).message).not.toMatch(/UNIQUE constraint/i);
+  });
+
+  it('F2: explicit null clears a nullable field while undefined preserves it (degraded_reason_code + destination_id)', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const { record } = repo.registerDocumentObject({ ...base });
+    expect(record.degraded_reason_code).toBe('quota_exceeded');
+    expect(record.destination_id).toBe('dest-1');
+
+    // A ready document shedding its stale degraded reason + clearing destination.
+    const cleared = repo.updateDocumentObject(record.id, {
+      readiness_state: 'ready',
+      degraded_reason_code: null,
+      destination_id: null,
+    });
+    expect(cleared?.degraded_reason_code).toBeNull();
+    expect(cleared?.destination_id).toBeNull();
+
+    // Undefined (omitted) preserves — never clears.
+    const preserved = repo.updateDocumentObject(record.id, { title: 'Renamed' });
+    expect(preserved?.indexed_at).toBe('2026-01-01T00:00:00.000Z');
+    expect(preserved?.provider_url).toBe('https://example.test/d/UPD');
+    expect(preserved?.owner_summary).toBe('owner:a');
+    expect(preserved?.sensitivity_label).toBe('internal');
+
+    // Explicit null on still-null columns is idempotent (no error).
+    const again = repo.updateDocumentObject(record.id, { degraded_reason_code: null });
+    expect(again?.degraded_reason_code).toBeNull();
+  });
+
+  it('F2: the generic by-id update path now agrees with the T-003 rediscovery path on null-clear semantics for degraded_reason_code', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    // T-003 rediscovery path sets degraded_reason_code = @degraded_reason_code directly,
+    // so a re-sync that OMITS it clears it (null). The by-id path must behave identically —
+    // the two update paths must agree on null-clear semantics (F2).
+    const { degraded_reason_code: _ignored, ...syncWithoutDegraded } = base;
+    const viaRediscovery = repo.registerDocumentObject({ ...base });
+    expect(viaRediscovery.record.degraded_reason_code).toBe('quota_exceeded');
+    // Rediscovery re-sync that OMITS degraded_reason_code clears it via the direct assignment.
+    const resynced = repo.registerDocumentObject({ ...syncWithoutDegraded, title: 're-sync' });
+    expect(resynced.created).toBe(false);
+    expect(resynced.record.degraded_reason_code).toBeNull();
+
+    const viaUpdate = repo.registerDocumentObject({ ...base, external_id: 'googdoc-UPD-AGREE' });
+    const cleared = repo.updateDocumentObject(viaUpdate.record.id, {
+      readiness_state: 'ready',
+      degraded_reason_code: null,
+    });
+    expect(cleared?.degraded_reason_code).toBeNull();
+    // Both paths yield the same null-clear result.
+    expect(cleared?.degraded_reason_code).toBe(resynced.record.degraded_reason_code);
+  });
+
+  it('F3: a title-only patch preserves indexed_at (no silent re-index stamp); explicit indexed_at still applies', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const { record } = repo.registerDocumentObject({ ...base });
+    expect(record.indexed_at).toBe('2026-01-01T00:00:00.000Z');
+
+    // Title-only metadata patch must NOT rewrite indexed_at to "now" (R-029).
+    const patched = repo.updateDocumentObject(record.id, { title: 'Renamed' });
+    expect(patched?.indexed_at).toBe('2026-01-01T00:00:00.000Z');
+
+    // Explicit indexed_at still applies.
+    const explicit = repo.updateDocumentObject(record.id, { indexed_at: '2026-03-01T00:00:00.000Z' });
+    expect(explicit?.indexed_at).toBe('2026-03-01T00:00:00.000Z');
+
+    // Explicit null clears indexed_at (nullable — consistent with F2 null-clear).
+    const cleared = repo.updateDocumentObject(record.id, { indexed_at: null });
+    expect(cleared?.indexed_at).toBeNull();
+  });
+
+  it('F2: undefined preserves each nullable field while explicit null clears each one', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const { record } = repo.registerDocumentObject({
+      ...base,
+      provider_url: 'url-1',
+      owner_summary: 'owner:1',
+      sensitivity_label: 'internal',
+      tenant_external_id: 'tenant-1',
+    });
+
+    // Undefined → preserve every nullable field.
+    const preserved = repo.updateDocumentObject(record.id, { title: 'T' });
+    expect(preserved?.provider_url).toBe('url-1');
+    expect(preserved?.owner_summary).toBe('owner:1');
+    expect(preserved?.sensitivity_label).toBe('internal');
+    expect(preserved?.tenant_external_id).toBe('tenant-1');
+
+    // Explicit null → clear every nullable field.
+    const cleared = repo.updateDocumentObject(record.id, {
+      provider_url: null,
+      owner_summary: null,
+      sensitivity_label: null,
+      tenant_external_id: null,
+    });
+    expect(cleared?.provider_url).toBeNull();
+    expect(cleared?.owner_summary).toBeNull();
+    expect(cleared?.sensitivity_label).toBeNull();
+    expect(cleared?.tenant_external_id).toBeNull();
+  });
+});
+
 describe('T-003 / PRD 11.4 declared-table-name collision check (repeatable)', () => {
   // Ensures no future module under packages/db/src or packages/server/src claims one of
   // the unified table names. This makes the one-time manual scan (previously only in
