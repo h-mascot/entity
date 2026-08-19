@@ -5,7 +5,7 @@ import {
   type DocumentObjectRecord,
   type DocumentProvider,
 } from '../../../db/src/document-integrations';
-import type { RegistryWriteInput } from './registry';
+import type { DocumentRegistry, RegistryWriteInput } from './registry';
 
 /**
  * T-004 — Implement Document Registry.
@@ -271,6 +271,7 @@ describe('T-004 document registry — duplicate/concurrent-style registration co
 
   it('alternating register/rediscover attempts converge to one canonical record', async () => {
     const { registry, db } = await openRegistry();
+    const first = registry.register(baseInput({ title: 'T0' }), 'workspace-a');
     let last: import('./registry').RegistryRegistration | undefined;
     for (let i = 0; i < 20; i += 1) {
       last =
@@ -279,7 +280,9 @@ describe('T-004 document registry — duplicate/concurrent-style registration co
           : registry.rediscover(baseInput({ title: `T${i}` }), 'workspace-a');
     }
     expect(countRows(db, () => true)).toBe(1);
-    expect(last?.record.id).toBe(last?.record.id);
+    // Every attempt must resolve to the SAME canonical id as the first registration
+    // (the single canonical record) — not a tautology on `last` itself (F6).
+    expect(last?.record.id).toBe(first.record.id);
     // The final title reflects the last write, still on the single canonical id.
     expect(registry.get(last!.record.id, 'workspace-a')?.title).toMatch(/^T19$/);
   });
@@ -300,11 +303,90 @@ describe('T-004 document registry — security / privacy surface', () => {
     }
   });
 
-  it('credentials passed nowhere — registry write inputs have no credential field (static shape)', () => {
-    const input = baseInput();
-    expect('accessToken' in input).toBe(false);
-    expect('clientSecret' in input).toBe(false);
-    expect('refreshToken' in input).toBe(false);
-    expect(Object.keys(input).every((k) => !/token|secret|credential|password/i.test(k))).toBe(true);
+  it('credentials passed nowhere — RegistryWriteInput exposes no credential field (static shape, compile-time)', () => {
+    // The privacy guard must introspect the REAL exported write-input type, not a local
+    // fixture (F6). If a credential field were ever added to RegistryWriteInput, this
+    // assignment would become legal and the @ts-expect-error below would be flagged unused
+    // by the strict tsc build gate — a genuine regression that can actually fail.
+    // @ts-expect-error RegistryWriteInput must not expose a credential/secret field.
+    const withSecret: RegistryWriteInput = { ...baseInput(), clientSecret: 'x' };
+    expect(withSecret).toBeDefined();
+  });
+});
+
+describe('T-004 document registry — review round 1 fixes (F1–F4)', () => {
+  it('F1: update can never rewire the provider identity; rediscovery of the original identity still converges', async () => {
+    const { registry } = await openRegistry();
+    const created = registry.register(baseInput(), 'workspace-a');
+    const id = created.record.id;
+
+    // A deliberately-unsafe cast (identity fields are excluded from the update patch type;
+    // this exercises the registry/db runtime guard that well-typed callers cannot reach).
+    const rewire = { external_id: 'googdoc-REWIRE' } as unknown as Parameters<DocumentRegistry['update']>[2];
+    expect(() => registry.update(id, 'workspace-a', rewire)).toThrow(/identity|immutable/i);
+
+    // After the rejected rewire, rediscovery of the original identity must return the SAME
+    // canonical record (no divergence, no duplicate) — R-001 / F1 regression.
+    const redescovered = registry.rediscover(baseInput({ title: 'Renamed' }), 'workspace-a');
+    expect(redescovered.created).toBe(false);
+    expect(redescovered.record.id).toBe(id);
+  });
+
+  it('F2: explicit null clears a nullable field through the registry update surface; undefined preserves', async () => {
+    const { registry } = await openRegistry();
+    const created = registry.register(
+      baseInput({ readiness_state: 'degraded', degraded_reason_code: 'quota_exceeded' }),
+      'workspace-a',
+    );
+    expect(created.record.degraded_reason_code).toBe('quota_exceeded');
+
+    // A ready document shedding its stale degraded reason must actually clear it.
+    const updated = registry.update(created.record.id, 'workspace-a', {
+      readiness_state: 'ready',
+      degraded_reason_code: null,
+    });
+    expect(updated?.readiness_state).toBe('ready');
+    expect(updated?.degraded_reason_code).toBeNull();
+
+    // Undefined (omitted) preserves the cleared result — never resurrects it.
+    const preserved = registry.update(created.record.id, 'workspace-a', { title: 'x' });
+    expect(preserved?.degraded_reason_code).toBeNull();
+  });
+
+  it('F3: a title-only registry update leaves indexed_at unchanged; explicit indexed_at still applies', async () => {
+    const { registry } = await openRegistry();
+    const created = registry.register(
+      baseInput({ indexed_at: '2026-01-01T00:00:00.000Z' }),
+      'workspace-a',
+    );
+    expect(created.record.indexed_at).toBe('2026-01-01T00:00:00.000Z');
+
+    // Title-only patch must NOT silently stamp "now" on indexed_at (R-029).
+    const patched = registry.update(created.record.id, 'workspace-a', { title: 'Renamed' });
+    expect(patched?.indexed_at).toBe('2026-01-01T00:00:00.000Z');
+
+    // Explicit indexed_at still applies.
+    const explicit = registry.update(created.record.id, 'workspace-a', {
+      indexed_at: '2026-03-01T00:00:00.000Z',
+    });
+    expect(explicit?.indexed_at).toBe('2026-03-01T00:00:00.000Z');
+  });
+
+  it('F4: register with a null/empty external_id FAILS CLOSED instead of silently minting duplicates', async () => {
+    const { registry, db } = await openRegistry();
+    const identityless = baseInput({ external_id: null });
+
+    for (const method of ['register', 'rediscover'] as const) {
+      expect(() => registry[method](identityless, 'workspace-a')).toThrow(/external_id.*required|identity.*external_id|validation/i);
+    }
+    // Nothing was minted — fail-closed means zero rows, not two divergent canonical records.
+    expect(countRows(db, () => true)).toBe(0);
+  });
+
+  it('F4: register with an empty-string external_id also fails closed', async () => {
+    const { registry } = await openRegistry();
+    const identityless = baseInput({ external_id: '' });
+    expect(() => registry.register(identityless, 'workspace-a')).toThrow(/external_id.*required|identity.*external_id|validation/i);
+    expect(() => registry.rediscover(identityless, 'workspace-a')).toThrow(/external_id.*required|identity.*external_id|validation/i);
   });
 });

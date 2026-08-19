@@ -54,6 +54,14 @@ export type RegistryWriteInput = Omit<CreateDocumentObjectInput, 'workspace_id'>
 /** Namespace-scoped metadata update for an existing canonical record. */
 export type DocumentRegistryUpdatePatch = UpdateDocumentObjectFields;
 
+/** Fail-closed error for an invalid registry write (e.g. missing provider external identity). */
+export class DocumentRegistryValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DocumentRegistryValidationError';
+  }
+}
+
 export interface RegistryRegistration {
   record: DocumentObjectRecord;
   created: boolean;
@@ -83,6 +91,10 @@ export interface DocumentRegistry {
    * `workspaceId`. If the identity already maps to a record in the SAME workspace, updates it
    * (created=false); if it maps to a DIFFERENT workspace, FAILS CLOSED; otherwise creates
    * (created=true). Delegates to the T-003 registration primitive after the isolation check.
+   * Idempotency REQUIRES a durable provider identity: register with a null/empty `external_id`
+   * FAILS CLOSED (DocumentRegistryValidationError) rather than silently minting a duplicate
+   * canonical record — local artifacts must supply the durable managed file identity as
+   * `external_id` (PRD §11.1).
    */
   register(input: RegistryWriteInput, workspaceId: string): RegistryRegistration;
   /**
@@ -99,7 +111,10 @@ export interface DocumentRegistry {
   ): DocumentObjectRecord | undefined;
   /**
    * Update an existing canonical record by Entity id, scoped to `workspaceId`. No-op (undefined)
-   * if the id is unknown or belongs to another workspace. Field-omitting patches preserve state.
+   * if the id is unknown or belongs to another workspace. Field-omitting patches preserve state
+   * (and, for nullable fields, explicit `null` clears). The provider identity tuple
+   * (provider_connection_id / external_id) is immutable through update — it is excluded from the
+   * patch type, so identity can never be rewired (T-004 review F1).
    */
   update(
     documentId: string,
@@ -124,6 +139,17 @@ export function createDocumentRegistry(db: Database.Database): DocumentRegistry 
 
   function registerOrUpdate(input: RegistryWriteInput, workspaceId: string): RegistryRegistration {
     const externalId = input.external_id ?? null;
+    // R-001 idempotency requires a durable provider identity (PRD §11.1: local artifacts supply
+    // the durable managed file identity as `external_id`). FAIL CLOSED on null/empty so the exact
+    // caller mistake that would silently mint duplicate canonical records is rejected loudly
+    // (T-004 review F4) — never a silent random-UUID duplicate.
+    if (!externalId) {
+      throw new DocumentRegistryValidationError(
+        `register/rediscover requires a non-empty external_id: local artifacts must supply the ` +
+          `durable managed file identity as external_id (PRD §11.1); identity-less registration ` +
+          `would mint duplicate canonical records`,
+      );
+    }
     if (externalId) {
       // T-003's identity lookup is workspace-blind; resolve it here and enforce isolation
       // BEFORE delegating, so a cross-workspace match can never be read or mutated.
