@@ -72,6 +72,27 @@ export function applyDocumentIntegrationsMigration(
   db: Database.Database = getEntityDatabase(),
 ): DocumentIntegrationsMigrationReport {
   const repo = createDocumentIntegrationsRepository(db);
+  // Surface the collision verdict loudly (including which table collided) rather than
+  // swallowing it into a bare message, so operators and tests can act on the cause.
+  const verdict = detectDocumentIntegrationsCollisions(db);
+  if (!verdict.ok) {
+    return {
+      success: false,
+      applied: false,
+      tablesEnsured: [],
+      collisionCheck: { ok: false, table: verdict.table, detail: verdict.detail },
+      additiveOnly: true,
+      destructiveChanges: false,
+      featureFlagHost: 'phase2-flags.ts',
+      rollback: {
+        command: 'reverseDocumentIntegrationsMigration',
+        dropsOnly: [...EXPECTED_UNIFIED_TABLES],
+        preservesLegacyData: true,
+        semanticNote:
+          'Legacy document data is never touched, so the pre-T-003 application keeps its original semantics if rolled back.',
+      },
+    };
+  }
   let audit: SchemaAuditReport;
   try {
     audit = repo.ensureSchema();
