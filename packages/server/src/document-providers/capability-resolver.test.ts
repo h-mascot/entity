@@ -114,6 +114,16 @@ describe('capability state semantics (R-002)', () => {
     expect(capabilityAllowsAction(cap('read', 'unknown'))).toBe(false);
     expect(capabilityAllowsAction(cap('preview', 'supported'))).toBe(true);
   });
+
+  it('R-002 regression: unsupported read-like and human-editing capabilities are non-actionable', () => {
+    // R-002: "Unsupported capabilities result in a typed unsupported-capability response."
+    // An unsupported read-like capability must never be exposed as actionable.
+    for (const name of ['read', 'preview', 'thumbnail', 'open_external', 'human_edit',
+      'version_history', 'change_tracking', 'permission_read', 'export'] as const) {
+      expect(capabilityAllowsAction(cap(name, 'unsupported'))).toBe(false);
+    }
+    expect(capabilityAllowsAction(cap('human_edit', 'unsupported'))).toBe(false);
+  });
 });
 
 describe('capability report covers the full vocabulary (R-002 / D-003)', () => {

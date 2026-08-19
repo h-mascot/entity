@@ -91,7 +91,9 @@ Security invariant: **writes fail closed on unknown.**
   "supported"`. A `degraded` connection suppresses the action even for an adapter that
   reports support; `unsupported` and `unknown` never enable it.
 - A degraded *read-like* capability (`read`, `preview`, `thumbnail`, `export`, …) remains
-  usable in degraded mode but fails closed on `unknown`.
+  usable in degraded mode but fails closed both on `unknown` and on `unsupported` (an
+  unsupported capability must surface a typed unsupported-capability, non-actionable
+  result, per R-002).
 - `unknown` mutation or embedding is never actioned. T-006's resolver and every mutation
   route enforce this in code; this ADR fixes the semantic.
 

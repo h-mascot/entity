@@ -109,11 +109,14 @@ export const FAIL_CLOSED_CAPABILITIES: ReadonlySet<CapabilityType> = new Set<Cap
  * back to the generic unknown-fails-closed rule.
  */
 export function capabilityAllowsAction(cap: ResolvedCapability): boolean {
+  // Write/embedding capabilities fail closed: only `supported` may enable them.
   if (FAIL_CLOSED_CAPABILITIES.has(cap.name)) {
     return cap.state === 'supported';
   }
-  // Read-like capabilities are blocked on unknown but usable when degraded.
-  return cap.state !== 'unknown';
+  // Read-like capabilities: usable when supported or degraded, but an `unsupported`
+  // capability must surface a typed unsupported-capability (non-actionable) result, and
+  // `unknown` always fails closed (R-002).
+  return cap.state === 'supported' || cap.state === 'degraded';
 }
 
 /** Whether a capability may drive a mutation/write/embedding side effect at runtime. */
