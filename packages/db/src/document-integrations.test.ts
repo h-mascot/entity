@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -6,9 +8,9 @@ import { afterEach, describe, expect, it } from 'vitest';
  * T-003 — Define and migrate unified document persistence.
  *
  * Covers the additive unified schema (document_objects, document_associations,
- * document_versions, document_integration_events), provider-identity uniqueness
- * (R-001), version/activity requirements, and the required empty + populated
- * migration fixtures with an R-036 rollback path.
+ * document_versions, document_integration_events, document_operations), provider-identity uniqueness
+ * (R-001), version/activity requirements, the R-026 operation-scoped idempotency store, and the
+ * required empty + populated migration fixtures with an R-036 rollback path.
  *
  * Source of truth: docs/loom/entity-document-integrations/phase2-canonical-prd.md
  * - R-001 "Canonical document object" (section 11.1-11.4)
@@ -68,7 +70,7 @@ function seedLegacyGoogleFixture(db: Database.Database): void {
 }
 
 describe('T-003 unified document persistence schema', () => {
-  it('defines the four additive unified tables with exactly the R-001/11 columns', async () => {
+  it('defines the additive unified tables with exactly the R-001/11 columns', async () => {
     const db = trackDb(openFreshDb());
     const { createDocumentIntegrationsRepository } = await import('./document-integrations');
     const repo = createDocumentIntegrationsRepository(db);
@@ -140,6 +142,165 @@ describe('T-003 unified document persistence schema', () => {
       .prepare('SELECT COUNT(*) AS c FROM document_objects')
       .get() as { c: number };
     expect(count.c).toBe(2);
+  });
+
+  it('R-001 NULL-connection identity: re-registering a NULL-connection artifact updates, never duplicates, and is findable', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const base = {
+      workspace_id: 'workspace-1',
+      provider: 'local_office' as const,
+      artifact_type: 'document' as const,
+      title: 'Local artifact',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+    };
+
+    // Connection-less registration (local artifact before connection resolution).
+    const first = repo.registerDocumentObject({ ...base, provider_connection_id: null, external_id: 'one-123' });
+    expect(first.created).toBe(true);
+
+    // Rediscovery: the same (NULL, 'one-123') tuple must update, not create a duplicate.
+    const second = repo.registerDocumentObject({
+      ...base,
+      title: 'Local artifact (updated)',
+      provider_connection_id: null,
+      external_id: 'one-123',
+    });
+    expect(second.created).toBe(false);
+    expect(second.record.id).toBe(first.record.id);
+    expect(second.record.title).toBe('Local artifact (updated)');
+
+    // NULL-safe lookup must succeed.
+    const byIdentity = repo.findDocumentByProviderIdentity(null, 'one-123');
+    expect(byIdentity?.id).toBe(first.record.id);
+
+    const count = db
+      .prepare('SELECT COUNT(*) AS c FROM document_objects WHERE external_id = ?')
+      .get('one-123') as { c: number };
+    expect(count.c).toBe(1);
+
+    // The unique index must also block a direct duplicate insert of a NULL-connection row.
+    expect(() =>
+      repo.createDocumentObject({
+        ...base,
+        provider_connection_id: null,
+        external_id: 'one-123',
+      }),
+    ).toThrow(/provider identity|unique|constraint|already exists/i);
+  });
+
+  it('R-001 rediscovery preserves preview_state and conflict_state when a metadata re-sync omits them', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const { record } = repo.registerDocumentObject({
+      workspace_id: 'workspace-1',
+      provider: 'google_workspace' as const,
+      artifact_type: 'document' as const,
+      title: 'Doc',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-g1',
+      external_id: 'googdoc-STATE',
+      provider_url: 'https://example.test/d/STATE',
+      preview_state: 'ready',
+      conflict_state: 'detected',
+    });
+    expect(record.preview_state).toBe('ready');
+    expect(record.conflict_state).toBe('detected');
+
+    // A plain metadata re-sync omitting preview/conflict must NOT erase them.
+    const second = repo.registerDocumentObject({
+      workspace_id: 'workspace-1',
+      provider: 'google_workspace' as const,
+      artifact_type: 'document' as const,
+      title: 'Doc (metadata sync)',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-g1',
+      external_id: 'googdoc-STATE',
+      current_revision: 'rev-2',
+    });
+    expect(second.created).toBe(false);
+    expect(second.record.preview_state).toBe('ready');
+    expect(second.record.conflict_state).toBe('detected');
+  });
+
+  it('R-001 stable URL: provider_url is unchanged across a metadata-changing re-register', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    repo.registerDocumentObject({
+      workspace_id: 'workspace-1',
+      provider: 'google_workspace' as const,
+      artifact_type: 'document' as const,
+      title: 'Doc',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-g1',
+      external_id: 'googdoc-STABLE',
+      provider_url: 'https://example.test/d/STABLE',
+      current_revision: 'rev-1',
+    });
+
+    // Re-sync changes title/revision but omits provider_url — URL must stay stable.
+    const second = repo.registerDocumentObject({
+      workspace_id: 'workspace-1',
+      provider: 'google_workspace' as const,
+      artifact_type: 'document' as const,
+      title: 'Doc (renamed)',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-g1',
+      external_id: 'googdoc-STABLE',
+      current_revision: 'rev-2',
+    });
+    expect(second.created).toBe(false);
+    expect(second.record.provider_url).toBe('https://example.test/d/STABLE');
+  });
+
+  it('R-001 duplicate-import concurrency: two concurrent registers of the same identity converge on one row', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const base = {
+      workspace_id: 'workspace-1',
+      provider: 'microsoft_365' as const,
+      artifact_type: 'spreadsheet' as const,
+      title: 'Sheet',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-m1',
+      external_id: 'onedrive-CONCUR',
+    };
+
+    const results = await Promise.all([
+      Promise.resolve().then(() => repo.registerDocumentObject({ ...base })),
+      Promise.resolve().then(() => repo.registerDocumentObject({ ...base })),
+    ]);
+
+    const createdFlags = results.map((r) => r.created);
+    // At most one row is created for the shared identity; the other updates it.
+    const createdCount = createdFlags.filter(Boolean).length;
+    expect(createdCount).toBeLessThanOrEqual(1);
+
+    const ids = new Set(results.map((r) => r.record.id));
+    expect(ids.size).toBe(1);
+
+    const count = db
+      .prepare('SELECT COUNT(*) AS c FROM document_objects WHERE external_id = ?')
+      .get('onedrive-CONCUR') as { c: number };
+    expect(count.c).toBe(1);
   });
 
   it('rejects an explicit create that duplicates a provider identity with a loud error', async () => {
@@ -344,6 +505,7 @@ describe('T-003 / R-036 migration fixtures (empty + populated) and rollback', ()
       'document_associations',
       'document_versions',
       'document_integration_events',
+      'document_operations',
     ]);
     expect(report.collision).toEqual({ ok: true });
     expect(report.destructiveChanges).toBe(false);
@@ -429,7 +591,7 @@ describe('T-003 / R-036 migration fixtures (empty + populated) and rollback', ()
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
       .all() as Array<{ name: string }>;
     const names = remaining.map((n) => n.name);
-    for (const unified of ['document_objects', 'document_associations', 'document_versions', 'document_integration_events']) {
+    for (const unified of ['document_objects', 'document_associations', 'document_versions', 'document_integration_events', 'document_operations']) {
       expect(names).not.toContain(unified);
     }
     expect(names).toContain('external_document_refs');
@@ -448,7 +610,7 @@ describe('T-003 / R-036 migration fixtures (empty + populated) and rollback', ()
     repo.ensureSchema();
 
     const rows = db
-      .prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name IN ('document_objects','document_associations','document_versions','document_integration_events')")
+      .prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name IN ('document_objects','document_associations','document_versions','document_integration_events','document_operations')")
       .all() as Array<{ name: string; sql: string }>;
     for (const row of rows) {
       const lower = row.sql.toLowerCase();
@@ -501,5 +663,347 @@ describe('T-003 helper edge cases', () => {
         observed_at: '2026-08-01T00:00:00.000Z',
       }),
     ).toThrow(/foreign key|constraint/i);
+  });
+});
+
+describe('T-003 operation-scoped creation idempotency (R-026)', () => {
+  it('persists an operation record keyed on (workspace_id, idempotency_key) with the required fields', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const op = repo.upsertDocumentOperation({
+      workspace_id: 'workspace-1',
+      idempotency_key: 'idem-create-abc',
+      provider: 'google_workspace',
+      artifact_type: 'document',
+      destination_id: 'dest-1',
+      operation_status: 'requested',
+    });
+
+    expect(op.workspace_id).toBe('workspace-1');
+    expect(op.idempotency_key).toBe('idem-create-abc');
+    expect(op.provider).toBe('google_workspace');
+    expect(op.artifact_type).toBe('document');
+    expect(op.destination_id).toBe('dest-1');
+    expect(op.operation_status).toBe('requested');
+    expect(op.provider_external_id).toBeNull();
+    expect(op.document_id).toBeNull();
+
+    const found = repo.findDocumentOperation('workspace-1', 'idem-create-abc');
+    expect(found?.id).toBe(op.id);
+  });
+
+  it('resolves by (workspace_id, idempotency_key) without an Entity document id (before persistence)', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    // R-026: the store is resolvable before any document record exists.
+    const op = repo.upsertDocumentOperation({
+      workspace_id: 'workspace-1',
+      idempotency_key: 'idem-create-xyz',
+      provider: 'microsoft_365',
+      artifact_type: 'spreadsheet',
+      operation_status: 'in_progress',
+    });
+    expect(op.document_id).toBeNull();
+    expect(repo.findDocumentOperation('workspace-1', 'idem-create-xyz')).toBeTruthy();
+    // Same key in a different workspace is a distinct operation.
+    expect(repo.findDocumentOperation('workspace-2', 'idem-create-xyz')).toBeUndefined();
+  });
+
+  it('late-fills provider_external_id and document_id once known (upsert + complete paths, idempotent)', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    // Upsert with the late-filled provider external id already known.
+    const op = repo.upsertDocumentOperation({
+      workspace_id: 'workspace-1',
+      idempotency_key: 'idem-create-789',
+      provider: 'local_office',
+      artifact_type: 'document',
+      operation_status: 'created',
+      provider_external_id: 'managed-file-COMPLETE',
+      document_id: 'doc_COMPLETE',
+    });
+    expect(op.provider_external_id).toBe('managed-file-COMPLETE');
+    expect(op.document_id).toBe('doc_COMPLETE');
+
+    // Re-running the same key updates status without clobbering the filled results.
+    const rerun = repo.upsertDocumentOperation({
+      workspace_id: 'workspace-1',
+      idempotency_key: 'idem-create-789',
+      provider: 'local_office',
+      artifact_type: 'document',
+      operation_status: 'reconciled',
+    });
+    expect(rerun.operation_status).toBe('reconciled');
+    expect(rerun.provider_external_id).toBe('managed-file-COMPLETE');
+    expect(rerun.document_id).toBe('doc_COMPLETE');
+
+    // Standalone late-fill update path against a stored row missing the results.
+    repo.upsertDocumentOperation({
+      workspace_id: 'workspace-1',
+      idempotency_key: 'idem-create-LATEFILL',
+      provider: 'google_workspace',
+      artifact_type: 'document',
+      operation_status: 'requested',
+    });
+    const completed = repo.completeDocumentOperation('workspace-1', 'idem-create-LATEFILL', {
+      operation_status: 'created',
+      provider_external_id: 'googdoc-LATEFILL',
+      document_id: 'doc_LATEFILL',
+    });
+    expect(completed?.provider_external_id).toBe('googdoc-LATEFILL');
+    expect(completed?.document_id).toBe('doc_LATEFILL');
+    expect(completed?.operation_status).toBe('created');
+
+    // Late-fill of unknown key returns undefined.
+    expect(repo.completeDocumentOperation('workspace-1', 'missing-key', { operation_status: 'created' })).toBeUndefined();
+  });
+});
+
+describe('T-003 schema-audit report and NULL-identity persistence details', () => {
+  it('rediscovery refreshes Entity indexed_time while preserving it when explicitly supplied', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const { record, created } = repo.registerDocumentObject({
+      workspace_id: 'workspace-1',
+      provider: 'google_workspace' as const,
+      artifact_type: 'document' as const,
+      title: 'Doc',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-g1',
+      external_id: 'googdoc-INDEXED',
+      indexed_at: '2026-01-01T00:00:00.000Z',
+    });
+    expect(created).toBe(true);
+    expect(record.indexed_at).toBe('2026-01-01T00:00:00.000Z');
+
+    // A rediscovery (metadata re-sync) without an explicit indexed_at refreshes it to now.
+    const refreshed = repo.registerDocumentObject({
+      workspace_id: 'workspace-1',
+      provider: 'google_workspace' as const,
+      artifact_type: 'document' as const,
+      title: 'Doc (re-synced)',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-g1',
+      external_id: 'googdoc-INDEXED',
+    });
+    expect(refreshed.created).toBe(false);
+    expect(refreshed.record.indexed_at).not.toBe('2026-01-01T00:00:00.000Z');
+    expect(refreshed.record.indexed_at).not.toBeNull();
+
+    // An explicit indexed_at on rediscovery wins over the refresh-to-now.
+    const explicitRefresh = repo.registerDocumentObject({
+      workspace_id: 'workspace-1',
+      provider: 'google_workspace' as const,
+      artifact_type: 'document' as const,
+      title: 'Doc (re-indexed)',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-g1',
+      external_id: 'googdoc-INDEXED',
+      indexed_at: '2026-02-01T00:00:00.000Z',
+    });
+    expect(explicitRefresh.record.indexed_at).toBe('2026-02-01T00:00:00.000Z');
+  });
+
+  it('createDocumentObject preserves the underlying cause on provider-identity collisions', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    repo.registerDocumentObject({
+      workspace_id: 'workspace-1',
+      provider: 'microsoft_365' as const,
+      artifact_type: 'document' as const,
+      title: 'Doc',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-m1',
+      external_id: 'onedrive-CAUSE',
+    });
+
+    try {
+      repo.createDocumentObject({
+        workspace_id: 'workspace-1',
+        provider: 'microsoft_365' as const,
+        artifact_type: 'document' as const,
+        title: 'Duplicate',
+        auth_state: 'authorized' as const,
+        readiness_state: 'ready' as const,
+        provider_connection_id: 'conn-m1',
+        external_id: 'onedrive-CAUSE',
+      });
+      expect.unreachable('expected a provider-identity collision');
+    } catch (err) {
+      const e = err as Error & { cause?: unknown };
+      expect(e.message).toMatch(/provider identity already exists/i);
+      // The original SQLite UNIQUE failure must be preserved as the cause (F7).
+      expect((e.cause as Error | undefined)?.message).toMatch(/unique constraint|constraint failed/i);
+    }
+  });
+
+  it('does NOT rewrite a caller-supplied duplicate id PK collision as a provider-identity collision', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    repo.createDocumentObject({
+      id: 'my-fixed-id',
+      workspace_id: 'workspace-1',
+      provider: 'google_workspace' as const,
+      artifact_type: 'document' as const,
+      title: 'Doc',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: 'conn-g1',
+      external_id: 'googdoc-A',
+    });
+
+    try {
+      repo.createDocumentObject({
+        id: 'my-fixed-id', // genuine id (PK) collision, NOT a provider-identity collision
+        workspace_id: 'workspace-1',
+        provider: 'google_workspace' as const,
+        artifact_type: 'document' as const,
+        title: 'Doc 2',
+        auth_state: 'authorized' as const,
+        readiness_state: 'ready' as const,
+        provider_connection_id: 'conn-g2',
+        external_id: 'googdoc-B',
+      });
+      expect.unreachable('expected a PK collision');
+    } catch (err) {
+      const e = err as Error & { cause?: unknown };
+      // Must NOT be mislabeled as a provider-identity collision (F7).
+      expect(e.message).not.toMatch(/provider identity already exists/i);
+      expect((e.cause as Error | undefined)?.message).toMatch(/unique constraint|constraint failed/i);
+    }
+  });
+
+  it('tablesEnsured reflects exactly the tables actually created this apply (idempotent re-run creates none)', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+
+    const first = repo.ensureSchema();
+    expect(first.tablesEnsured).toHaveLength(5);
+
+    // Second apply on the now-established DB: every unified table is already present
+    // with a compatible schema, so none are newly created.
+    const second = repo.ensureSchema();
+    expect(second.tablesEnsured).toEqual([]);
+    expect(second.collision.ok).toBe(true);
+  });
+
+  it('NULL-connection identity uniqueness survives a fresh repository over the same database', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository, documentObjectIdForIdentity } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+
+    const first = repo.registerDocumentObject({
+      workspace_id: 'workspace-1',
+      provider: 'local_office' as const,
+      artifact_type: 'document' as const,
+      title: 'Local Doc',
+      auth_state: 'authorized' as const,
+      readiness_state: 'ready' as const,
+      provider_connection_id: null,
+      external_id: 'managed-file-PERSIST',
+    });
+    // The deterministic id is wired into the record (F5).
+    expect(first.record.id).toBe(documentObjectIdForIdentity(null, 'managed-file-PERSIST'));
+
+    // A brand-new repository over the same DB redis covers the identity (SQL-level, not
+    // in-memory stack state) and the unique index blocks a direct duplicate.
+    const repo2 = createDocumentIntegrationsRepository(db);
+    const found = repo2.findDocumentByProviderIdentity(null, 'managed-file-PERSIST');
+    expect(found?.id).toBe(first.record.id);
+
+    expect(() =>
+      repo2.createDocumentObject({
+        workspace_id: 'workspace-1',
+        provider: 'local_office' as const,
+        artifact_type: 'document' as const,
+        title: 'Duplicate',
+        auth_state: 'authorized' as const,
+        readiness_state: 'ready' as const,
+        provider_connection_id: null,
+        external_id: 'managed-file-PERSIST',
+      }),
+    ).toThrow(/provider identity|unique|constraint|already exists/i);
+  });
+});
+
+describe('T-003 / PRD 11.4 declared-table-name collision check (repeatable)', () => {
+  // Ensures no future module under packages/db/src or packages/server/src claims one of
+  // the unified table names. This makes the one-time manual scan (previously only in
+  // EVIDENCE) a repeatable CI-checkable test (F6 / PRD 11.4).
+  it('no other local module declares a unified table name', () => {
+    const repoRoot = fs.existsSync(path.join(process.cwd(), '..', '..', 'package.json'))
+      ? path.resolve(process.cwd(), '..', '..')
+      : path.resolve(__dirname, '..', '..', '..', '..');
+    const dirs = [
+      path.join(repoRoot, 'packages', 'db', 'src'),
+      path.join(repoRoot, 'packages', 'server', 'src'),
+    ];
+    const unifiedTableNameRegex = /CREATE TABLE(?: IF NOT EXISTS)?\s+([a-z_][a-z0-9_]*)/gi;
+
+    const claimed = new Map<string, string[]>();
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (
+          entry.isFile() &&
+          entry.name.endsWith('.ts') &&
+          !entry.name.endsWith('.test.ts') &&
+          !entry.name.endsWith('.spec.ts')
+        ) {
+          const src = fs.readFileSync(full, 'utf8');
+          for (const m of src.matchAll(unifiedTableNameRegex)) {
+            const table = m[1];
+            if (table.startsWith('document_')) {
+              if (!claimed.has(table)) claimed.set(table, []);
+              claimed.get(table)!.push(path.relative(repoRoot, full));
+            }
+          }
+        }
+      }
+    };
+    for (const dir of dirs) walk(dir);
+
+    // document-integrations.ts is the sole owner of the four original unified tables and
+    // the new operation store.
+    for (const unified of [
+      'document_objects',
+      'document_associations',
+      'document_versions',
+      'document_integration_events',
+      'document_operations',
+    ]) {
+      const files = (claimed.get(unified) ?? []).filter(
+        (f) => !f.endsWith('packages/db/src/document-integrations.ts'),
+      );
+      expect(files).toEqual([]);
+    }
+    // Sanity: the scan actually sees our own declarations.
+    expect((claimed.get('document_objects') ?? []).length).toBeGreaterThanOrEqual(1);
   });
 });
