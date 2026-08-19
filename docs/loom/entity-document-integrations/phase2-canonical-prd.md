@@ -3276,7 +3276,7 @@ security negative tests pass;
 
 browser/Electron tests pass for enabled surfaces.
 
-OpenWiki freshness is a release-blocking CI check, not documentation hygiene. Any task that changes packages/*/src must run npm run docs:wiki:update and commit the regenerated pages, or docs:wiki:verify fails the CTRL Gate. T-035 owns this for the feature as a whole; each provider-lane task owns it for its own diff.
+OpenWiki freshness remains a release-blocking CI check, but generation is batched at the end of this feature queue. T-001 through T-037 must not regenerate or commit generated OpenWiki solely to keep an intermediate branch fresh. T-038 owns one final `npm run docs:wiki:update`, commit of the generated pages, `npm run test:wiki-html`, and `npm run docs:wiki:verify` immediately before exact-SHA CI and sandbox shipping. CI and `ship:sandbox` remain blocking, so stale documentation cannot ship.
 
 ### Gate 3 — Independent review
 
