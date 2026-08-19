@@ -70,6 +70,7 @@ import {
   assertAdapterActionSupported,
   mutationCapability,
 } from './types';
+import { FAIL_CLOSED_CAPABILITIES } from './types';
 import {
   type DocumentArtifactType,
   type DocumentAuthState,
@@ -105,15 +106,12 @@ interface StoredArtifact {
   revisionSeq: number;
 }
 
-/** R-002 write/embedding/human-edit lanes the fake baseline treats as writes (fail-closed set). */
-const WRITE_LANES: readonly CapabilityType[] = [
-  'create',
-  'agent_text_mutation',
-  'agent_range_mutation',
-  'agent_slide_mutation',
-  'permission_write',
-  'embed_editor',
-];
+/**
+ * R-002 write/embedding/human-edit lanes the fake baseline treats as writes (fail-closed set).
+ * THE-946 r1 F5: reuse the exported FAIL_CLOSED_CAPABILITIES rather than a hand-duplicated list,
+ * so the fake and the resolution model can never drift apart on what counts as a side effect.
+ */
+const WRITE_LANES: readonly CapabilityType[] = [...FAIL_CLOSED_CAPABILITIES];
 
 export function createFakeDocumentProviderAdapter(
   options: FakeDocumentProviderAdapterOptions = {},
@@ -141,15 +139,18 @@ export function createFakeDocumentProviderAdapter(
   }
 
   /**
-   * R-002 / D-003 capability report, honest about the fake's bounded baseline and any
-   * connection degradation. `source` is 'adapter' for baseline, 'connection' for the
-   * degradation fold-in (so the Capability Resolver precedence later stays coherent).
+   * R-002 fail-closed: a degraded, unauthorized, OR unknown authenticated connection suppresses
+   * a normally supported side-effecting lane. `unknown` is conservative (treated as impaired for
+   * write/embedding/human_edit) rather than optimistic. THE-946 r1 F2.
    */
   function buildReport(ctx: CapabilityContext): CapabilityReport {
     const degradationActive =
       connectionState === 'degraded' ||
+      connectionState === 'unauthorized' ||
+      connectionState === 'unknown' ||
       ctx.connectionState === 'degraded' ||
-      connectionState === 'unauthorized';
+      ctx.connectionState === 'unauthorized' ||
+      ctx.connectionState === 'unknown';
 
     const base: Record<CapabilityType, CapabilityState> = {
       create: capabilities.create ?? 'supported',
@@ -270,6 +271,9 @@ export function createFakeDocumentProviderAdapter(
 
     async read(input: ReadDocumentInput): Promise<ReadDocumentResult> {
       const record = requireArtifact(input.external_id);
+      // Read-lane honesty (THE-946 r1 F1): a read over an unsupported/unknown/absent capability
+      // fails closed instead of pretending content is available.
+      assertAdapterActionSupported(reportForArtifact(record.descriptor.artifact_type), 'read', `read ${input.external_id}`);
       if (input.expectedRevision != null && input.expectedRevision !== record.descriptor.current_revision) {
         throw new StaleRevisionError(input.expectedRevision, record.descriptor.current_revision ?? '');
       }
@@ -307,6 +311,8 @@ export function createFakeDocumentProviderAdapter(
 
     async getVersions(input: GetVersionsInput): Promise<GetVersionsResult> {
       const record = requireArtifact(input.external_id);
+      // Read-lane honesty (THE-946 r1 F1): version history is a read-like lane.
+      assertAdapterActionSupported(reportForArtifact(record.descriptor.artifact_type), 'version_history', `versions ${input.external_id}`);
       const versions = [{ revision: record.descriptor.current_revision ?? '', observed_at: record.descriptor.provider_modified_at }];
       const limit = input.limit ?? Number.POSITIVE_INFINITY;
       return { versions: versions.slice(0, limit) };
@@ -314,6 +320,8 @@ export function createFakeDocumentProviderAdapter(
 
     async getPreview(input: GetPreviewInput): Promise<GetPreviewResult> {
       const record = requireArtifact(input.external_id);
+      // Read-lane honesty (THE-946 r1 F1): preview is a read-like lane, never authoritative content.
+      assertAdapterActionSupported(reportForArtifact(record.descriptor.artifact_type), 'preview', `preview ${input.external_id}`);
       return {
         state: record.descriptor.preview_state,
         previewUrl: record.descriptor.preview_state === 'ready'
@@ -324,6 +332,8 @@ export function createFakeDocumentProviderAdapter(
 
     async getPermissions(input: GetPermissionsInput): Promise<GetPermissionsResult> {
       const record = requireArtifact(input.external_id);
+      // Read-lane honesty (THE-946 r1 F1): permission summary is a read-like lane.
+      assertAdapterActionSupported(reportForArtifact(record.descriptor.artifact_type), 'permission_read', `permissions ${input.external_id}`);
       // Permissions summary is leaf metadata only — never raw tokens/credentials (D-013).
       return { summary_json: JSON.stringify({ viewer: true, editor: false }) };
     },

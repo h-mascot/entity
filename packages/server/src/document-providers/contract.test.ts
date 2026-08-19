@@ -331,3 +331,111 @@ export function runAdapterContractSuite(
 
 // === Concrete instantiation: the deterministic fake adapter must pass the shared suite. ===
 runAdapterContractSuite('fake-adapter', () => createFakeDocumentProviderAdapter());
+
+/* ============================================================================
+ * THE-946 r1 F3/F4 — carry-forward probe tests (fake-side half).
+ *   - F3: R-026 create replay (`created:false`, same artifact); a DIRECT create-lane
+ *     fail-closed guard (not only the dead conditional at the shared :166 spot); read-lane
+ *     honesty assertions (read/getVersions/getPreview/getPermissions honor advertised state);
+ *     unknown/degraded negative probes.
+ *   - F4 (fake-side half only): every descriptor the fake returns carries
+ *     `provider === adapter.provider`.
+ * These are fake-specific, so they live OUTSIDE the provider-agnostic shared suite.
+ * ============================================================================ */
+describe('fake adapter carry-forward probes (THE-946 r1 F3/F4)', () => {
+  it('R-026: a replayed create idempotency key reconciles to the same artifact (created:false)', async () => {
+    const adapter = createFakeDocumentProviderAdapter();
+    const first = await adapter.create({ ...baseCreateInput(), idempotencyKey: 'idem:replay-026' });
+    const second = await adapter.create({ ...baseCreateInput(), idempotencyKey: 'idem:replay-026' });
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.descriptor.external_id).toBe(first.descriptor.external_id);
+    expect(second.descriptor.current_revision).toBe(first.descriptor.current_revision);
+    expect(second.descriptor.provider).toBe(adapter.provider);
+  });
+
+  it('DIRECT create-lane fail-closed guard: create rejects when the create lane is not supported', async () => {
+    // Adapter honest about not supporting create; the create action must fail closed loudly,
+    // independent of the shared-suite's conditional probe.
+    const readOnly = createFakeDocumentProviderAdapter({ capabilities: { create: 'unsupported' } });
+    await expect(readOnly.create(baseCreateInput())).rejects.toBeInstanceOf(
+      UnsupportedAdapterMutationError,
+    );
+  });
+
+  it('READ-LANE honesty: read/getVersions/getPreview/getPermissions fail closed when unsupported', async () => {
+    const adapter = createFakeDocumentProviderAdapter({
+      capabilities: {
+        read: 'unsupported',
+        version_history: 'unsupported',
+        preview: 'unsupported',
+        permission_read: 'unsupported',
+      },
+    });
+    const created = await adapter.create({ ...baseCreateInput(), idempotencyKey: 'idem:readlane' });
+    const ext = created.descriptor.external_id;
+    await expect(adapter.read({ external_id: ext })).rejects.toBeInstanceOf(
+      UnsupportedAdapterMutationError,
+    );
+    if (adapter.getVersions) {
+      await expect(adapter.getVersions({ external_id: ext })).rejects.toBeInstanceOf(
+        UnsupportedAdapterMutationError,
+      );
+    }
+    if (adapter.getPreview) {
+      await expect(adapter.getPreview({ external_id: ext })).rejects.toBeInstanceOf(
+        UnsupportedAdapterMutationError,
+      );
+    }
+    if (adapter.getPermissions) {
+      await expect(adapter.getPermissions({ external_id: ext })).rejects.toBeInstanceOf(
+        UnsupportedAdapterMutationError,
+      );
+    }
+  });
+
+  it('UNKNOWN connection is fail-closed for every mutation lane (R-002 negative probe)', async () => {
+    const adapter = createFakeDocumentProviderAdapter();
+    const created = await adapter.create({ ...baseCreateInput(), idempotencyKey: 'idem:unknown-lane' });
+    (adapter as { setConnectionState(s: DocumentAuthState): void }).setConnectionState('unknown');
+    await expect(
+      adapter.mutate({
+        external_id: created.descriptor.external_id,
+        expectedRevision: created.descriptor.current_revision ?? '',
+        mutation: { kind: 'text', text: 'x' },
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedAdapterMutationError);
+  });
+
+  it('DEGRADED connection is fail-closed for a CREATE lane (negative probe)', async () => {
+    const adapter = createFakeDocumentProviderAdapter();
+    (adapter as { setConnectionState(s: DocumentAuthState): void }).setConnectionState('degraded');
+    await expect(adapter.create(baseCreateInput())).rejects.toBeInstanceOf(
+      UnsupportedAdapterMutationError,
+    );
+  });
+
+  it('F4 (fake half): every descriptor returned by the fake carries provider === adapter.provider', async () => {
+    const adapter = createFakeDocumentProviderAdapter();
+    const a = await adapter.create({ ...baseCreateInput(), idempotencyKey: 'idem:f4-a', title: 'F4 A' });
+    const b = await adapter.create({
+      ...baseCreateInput(),
+      artifact_type: 'spreadsheet',
+      idempotencyKey: 'idem:f4-b',
+      title: 'F4 B',
+    });
+    for (const d of [a.descriptor, b.descriptor]) {
+      expect(d.provider).toBe(adapter.provider);
+    }
+    const discovered = (await adapter.discover({})).items;
+    for (const d of discovered) {
+      expect(d.provider).toBe(adapter.provider);
+    }
+    const read = await adapter.read({ external_id: a.descriptor.external_id });
+    expect(read.descriptor.provider).toBe(adapter.provider);
+    const recon = await adapter.reconcileChanges({ discovered });
+    for (const r of recon.reconciled) {
+      expect(r.provider).toBe(adapter.provider);
+    }
+  });
+});
