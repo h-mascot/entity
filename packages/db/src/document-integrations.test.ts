@@ -769,7 +769,7 @@ describe('T-003 operation-scoped creation idempotency (R-026)', () => {
 });
 
 describe('T-003 schema-audit report and NULL-identity persistence details', () => {
-  it('rediscovery refreshes Entity indexed_time while preserving it when explicitly supplied', async () => {
+  it('rediscovery preserves the stored indexed_at when omitted; explicit indexed_at still applies (R-029 / T-004 M2)', async () => {
     const db = trackDb(openFreshDb());
     const { createDocumentIntegrationsRepository } = await import('./document-integrations');
     const repo = createDocumentIntegrationsRepository(db);
@@ -789,8 +789,9 @@ describe('T-003 schema-audit report and NULL-identity persistence details', () =
     expect(created).toBe(true);
     expect(record.indexed_at).toBe('2026-01-01T00:00:00.000Z');
 
-    // A rediscovery (metadata re-sync) without an explicit indexed_at refreshes it to now.
-    const refreshed = repo.registerDocumentObject({
+    // A rediscovery (metadata re-sync) WITHOUT an explicit indexed_at must NOT stamp "now" —
+    // observing a new revision leaves the search index stale, not fresh (R-029 / T-004 M2).
+    const preserved = repo.registerDocumentObject({
       workspace_id: 'workspace-1',
       provider: 'google_workspace' as const,
       artifact_type: 'document' as const,
@@ -800,11 +801,10 @@ describe('T-003 schema-audit report and NULL-identity persistence details', () =
       provider_connection_id: 'conn-g1',
       external_id: 'googdoc-INDEXED',
     });
-    expect(refreshed.created).toBe(false);
-    expect(refreshed.record.indexed_at).not.toBe('2026-01-01T00:00:00.000Z');
-    expect(refreshed.record.indexed_at).not.toBeNull();
+    expect(preserved.created).toBe(false);
+    expect(preserved.record.indexed_at).toBe('2026-01-01T00:00:00.000Z');
 
-    // An explicit indexed_at on rediscovery wins over the refresh-to-now.
+    // An explicit indexed_at on rediscovery still applies over the stored value.
     const explicitRefresh = repo.registerDocumentObject({
       workspace_id: 'workspace-1',
       provider: 'google_workspace' as const,

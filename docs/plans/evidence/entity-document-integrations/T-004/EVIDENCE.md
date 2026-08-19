@@ -360,13 +360,103 @@ git diff --check                                                                
 - **Authority-pin drift** (`83cacbc…` vs in-tree `c82e82d8…`): pending Henry's decision; handled by
   treating the in-tree PRD as read-only authority and not touching it.
 - **Concurrent registration** is proven as SERIALIZED convergence (better-sqlite3 is synchronous).
-  Genuine multi-process / multi-connection interleaving at the registry boundary is not exercised
-  here; the single-connection + unique-index design makes interleaved duplicates impossible at the
+  As of review round 3, the registry ALSO atomicizes the isolation pre-check + write in one
+  `BEGIN IMMEDIATE` transaction and probes that atomic invariant with a second connection on a
+  file-backed DB (B2), so a competing process can no longer commit a row between the check and the
+  write. Genuine multi-process OS-thread interleaving of the full operation is not exercised here;
+  the single-connection + unique-index design makes interleaved duplicates impossible at the
   storage layer, and a future multi-connection test can extend this suite.
 - **(F7—review INFO, not blocking)** the isolation error and strict-create "already exists" error
   give workspace-B callers a cross-workspace existence oracle for probed identity tuples; no
   secrets leak and no HTTP surface exists yet — T-008 route wiring should review this
   differentiation (per reviewer).
+
+## 13b. Review round 2/3 (GLM 5.3) findings — B1/B2/M1/M2 disposition
+
+Reviewer: GLM 5.3, round 2 of 3 → **CHANGES_REQUESTED** on `feea089`. This is the final fix round
+(round 3 of 3). Line numbers cited below are the re-verified `feea089` numbers from the verdict.
+
+### B1 (Blocker) — `create()` bypassed the F4 identity-less fail-closed guard (duplicate-minting hazard)
+**Disposition: FIXED — fail-closed on the create lane.**
+`create()` (`registry.ts:175-178`) previously delegated straight to `repo.createDocumentObject`
+with NO `external_id` validation. The partial unique index (`WHERE external_id IS NOT NULL`)
+excludes NULL identities, so repeated identity-less `create()` calls minted unbounded canonical
+records that `findDocumentByProviderIdentity` can never resolve and `register`/`rediscover` can
+never converge — the exact R-001 divergence F4 closes, one lane over. `create()` now runs the same
+`assertExternalIdentity` fail-closed guard as register/rediscover, throwing a typed
+`DocumentRegistryValidationError` on null/empty `external_id` (chose fail-closed over a synthetic
+identity scheme; no new product semantics). The dead nested `if (externalId)` (`registry.ts:153`)
+was folded into the shared guard, and the `create` interface doc comment now states the identity
+requirement (durable managed file identity per PRD §11.1).
+- **RED (unmodified `feea089` source, new tests added first):** both B1 prove-it tests failed —
+  `AssertionError: expected function to throw an error, but it didn't` for identity-less `create()`
+  (it minted rows instead of failing closed).
+- **GREEN:** identity-less `create()` throws `DocumentRegistryValidationError`; repeated identity-
+  less create calls each fail closed and prove-it asserts zero rows minted. Tests:
+  `registry.test.ts` B1 (2).
+
+### B2 (Blocker) — cross-workspace isolation was a non-atomic two-statement TOCTOU
+**Disposition: FIXED — atomic + workspace-guarded + header corrected.**
+The isolation pre-check (`registry.ts:156-168`) and the delegated write (`registry.ts:170` →
+`document-integrations.ts:596-633`, whose UPDATE carries no workspace guard in the WHERE clause and
+overwrites title/auth_state/readiness_state/degraded_reason_code) now run inside ONE
+`BEGIN IMMEDIATE` transaction (`db.transaction(...).immediate()`) in the registry layer for
+create/register/rediscover, so a competing process (e.g. the separate-process db CLI or desktop
+package) can never commit a row between B's pre-check and B's write. A post-delegation defense-in-
+depth assertion `result.record.workspace_id === workspaceId` fails closed with a typed
+`DocumentRegistryIsolationError` (with the transaction rolled back) if the delegated write ever
+returns a foreign-workspace record. The module header claim (`registry.ts:26-30`) was corrected to
+state the now-accurate guarantee (atomic + asserted) instead of an unconditional prose claim. The
+single-process synchronous guarantee is intact (`BEGIN IMMEDIATE` is a strict superset of it).
+- **Prove-it:** two-connection file-backed probe — while workspace A holds an uncommitted
+  `BEGIN IMMEDIATE` write, workspace B's registration cannot slip a stale pre-check through; its
+  atomic first statement fails fast with `database is locked`, and after A commits, B's retry fails
+  closed with `DocumentRegistryIsolationError` leaving A's record untouched (owner-untouched
+  assertion). A second test exercises the post-delegation assertion: every minting method
+  (create/register/rediscover) returns a record owned by the caller workspace. Tests:
+  `registry.test.ts` B2 (2).
+
+### M1 (Minor) — rediscovery never syncs `destination_id`
+**Disposition: DOCUMENTED (column list unchanged per ticket).** The delegated rediscovery UPDATE
+(`document-integrations.ts:596-633`) omits `destination_id` from its column list; only the by-id
+primitive updates it (`:701`). Per the ticket ("do NOT change the T-003 rediscovery column list in
+this ticket"), the omission is now documented explicitly in the `rediscover()` docstring: it states
+that rediscovery does NOT sync `destination_id` and that destination changes require `update()`.
+
+### M2 (Minor) — rediscovery stamped `indexed_at = now` when omitted (R-029 contradiction)
+**Disposition: FIXED — index state preserved when omitted.**
+`document-integrations.ts:631` changed from `indexed_at = COALESCE(@indexed_at, @now)` to
+`indexed_at = COALESCE(@indexed_at, indexed_at)`: a register/rediscover that omits `indexed_at` now
+leaves the stored value unchanged (observing a new revision leaves the search index stale, matching
+R-029), while an explicit `indexed_at` still applies. This aligns the rediscovery path with the
+F3 semantics the by-id update path already established and makes the F3 fix two-sided. The prior db
+test asserting "refreshes to now" was corrected to assert preservation.
+- **RED (unmodified `feea089` source):** registry-level M2 failed —
+  `expected '2026-08-19T20:05:28.449Z' to be '2026-01-01T00:00:00.000Z'` (re-stamped now); the
+  db-layer M2 test likewise failed on the unmodified re-stamp.
+- **GREEN:** omitted `indexed_at` preserved, explicit still applies. Tests:
+  `registry.test.ts` M2 (1), `document-integrations.test.ts` M2 (1).
+
+### Verification commands for this round (Node 22 — v22.22.2, final HEAD)
+
+```sh
+# RED proofs captured on UNMODIFIED feea089 source (round-2/3 tests added to the test files first):
+cd packages/server && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run src/document-providers/registry.test.ts
+#   → 3 failed (B1×2, M2) | 24 passed (27)   [exit 1]
+#     B1: "expected function to throw an error, but it didn't" (identity-less create not fail-closed)
+#     M2: "expected '2026-08-19T20:05:28.449Z' to be '2026-01-01T00:00:00.000Z'" (re-stamp)
+cd packages/db     && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run src/document-integrations.test.ts
+#   → 1 failed (M2 re-stamp test) | 35 passed (36)   [exit 1]
+
+# GREEN after fixes, final HEAD:
+cd packages/server && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run src/document-providers/registry.test.ts   # 27/27 exit 0
+cd packages/db     && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run src/document-integrations.test.ts         # 36/36 exit 0
+cd packages/server && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run                                          # 205 files / 1751 tests exit 0
+cd packages/db     && $HOME/.nvm/versions/node/v22.22.2/bin/npx vitest run src                                        # 22 files / 184 tests exit 0
+cd packages/server && $HOME/.nvm/versions/node/v22.22.2/bin/npx tsc --noEmit -p tsconfig.json                       # exit 0 (strict)
+cd packages/db     && $HOME/.nvm/versions/node/v22.22.2/bin/npx tsc --noEmit -p tsconfig.json                       # exit 0 (strict)
+git diff --check                                                                                                    # clean
+```
 
 ## 14. Delivery
 
