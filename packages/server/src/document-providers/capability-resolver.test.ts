@@ -27,7 +27,7 @@ import {
   REQUIRES_SUPPORTED_CAPABILITIES,
   type ResolvedCapability,
 } from './types';
-import { resolveCapabilities, type CapabilityResolutionInput } from './capability-resolver';
+import { resolveCapabilities, foldCapabilityReport, type CapabilityResolutionInput } from './capability-resolver';
 import { createFakeDocumentProviderAdapter } from './fake-adapter';
 import { UnsupportedAdapterMutationError, type DocumentProviderAdapter } from './types';
 import type { DocumentAuthState } from '../../../db/src/document-integrations';
@@ -569,5 +569,49 @@ describe('Capability Resolver (T-006 precedence fold)', () => {
         mutation: { kind: 'text', text: 'x' },
       }),
     ).rejects.toBeInstanceOf(UnsupportedAdapterMutationError);
+  });
+});
+
+describe('Capability Resolver: reasonCode carry-forward (THE-948 r1 F3)', () => {
+  // THE-947 r1 F1 changed foldCapabilityReport so a winning layer that carries no `reasonCode`
+  // clears a stale one from an earlier (tied/lower) layer. THE-948 r1 F3 demands a focused test
+  // of that observable `reasonCode` behaviour. Evidence layers are built structurally (the
+  // internal EvidenceLayer type is not exported).
+  const layer = (
+    source: 'adapter' | 'connection' | 'destination' | 'runtime' | 'policy',
+    state: 'supported' | 'degraded' | 'unsupported' | 'unknown',
+    reasonCode?: string,
+  ) => ({ source, states: { create: state, agent_text_mutation: state }, ...(reasonCode ? { reasonCode } : {}) });
+
+  it('a tied-severity higher-precedence layer with no code clears a stale code', () => {
+    const report = foldCapabilityReport([
+      layer('destination', 'unsupported', 'destination_denied'),
+      layer('runtime', 'unsupported'), // tied severity, higher precedence, no reasonCode
+    ]);
+    expect(report.create.state).toBe('unsupported');
+    expect(report.create.source).toBe('runtime');
+    expect(report.create.reasonCode).toBeUndefined();
+  });
+
+  it('a layer carrying a code sets it on the resolved capability', () => {
+    const report = foldCapabilityReport([
+      layer('adapter', 'supported'),
+      layer('policy', 'unsupported', 'policy_denied'),
+    ]);
+    expect(report.create.state).toBe('unsupported');
+    expect(report.create.source).toBe('policy');
+    expect(report.create.reasonCode).toBe('policy_denied');
+  });
+
+  it('a lower-precedence layer never leaves its code on a non-winning (higher) layer', () => {
+    const report = foldCapabilityReport([
+      layer('destination', 'unsupported', 'destination_denied'),
+      layer('runtime', 'degraded'), // higher precedence but NOT a severity tie — runtime wins severity? no: degraded(1) < unsupported(2)
+    ]);
+    // unsupported wins severity; runtime's degraded does not override the worse state, so the
+    // destination layer's code stays because the destination layer is the winner.
+    expect(report.create.state).toBe('unsupported');
+    expect(report.create.source).toBe('destination');
+    expect(report.create.reasonCode).toBe('destination_denied');
   });
 });
