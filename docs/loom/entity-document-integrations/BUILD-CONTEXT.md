@@ -13,7 +13,7 @@ Inspected base: `origin/main` at `91d54e4cc92f6f7bf809c8c13c516c58ab6c481f`
 ## Authority order
 
 1. Henry's explicit instruction and a later explicit decision.
-2. `phase2-canonical-prd.md` — SHA-256 `83cacbc51a1eb15649d6e0a17759e2115a3c2185a93b7c4532001beee2527137`.
+2. `phase2-canonical-prd.md` — SHA-256 `c82e82d8379c420946735bf79265895cc3a00937d2d9f2ec95de60979e492470`.
 3. The assigned Linear parent and T-001..T-040 child issue.
 4. `SUPERSPEC-REFERENCE.md` and the controlling SuperSpec.
 5. Current repository evidence, `AGENTS.md`, `CONTEXT.md`, and `.project-gate.json`.
@@ -60,10 +60,10 @@ npm run build
 npm run ctrl:gate
 npm run scan:private-defaults -- --enforce
 npm run test:release-deploy
-npm run test:wiki-html
-npm run docs:wiki:verify
 bash scripts/proof/entity-phase-2-smoke.sh
 ```
+
+OpenWiki is explicitly excluded from per-child proof for T-001 through T-037. At T-038, run `npm run docs:wiki:update` once after all tracked feature/evidence changes, commit the generated output, then run `npm run test:wiki-html` and `npm run docs:wiki:verify` on the exact candidate SHA before CI and sandbox shipping.
 
 High-risk work also requires Codex autoreview and Thermo-nuclear review to APPROVED with zero blockers. Fix every blocker with a failing-test-first Prove-It regression test. UI work requires live browser/DOM/screenshot proof.
 
