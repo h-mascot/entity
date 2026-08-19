@@ -463,3 +463,35 @@ git diff --check                                                                
 Scoped to the runner branch only; no merge to `main` (Gate 8) and no production promotion. Final
 reviewed SHA is recorded in the final-answer line and subsequently in the external review receipt +
 Linear proof comment (a tracked commit cannot contain its own SHA).
+
+## 15. Correction notice (2026-08-19) — T-005 disclosure of GLM 5.3 r3 finding F-2
+
+This notice is appended by the T-005 worker (THE-946) to correct two statements in THIS evidence
+file that misdescribe `packages/db/src/document-integrations.test.ts` as "out of scope, untouched".
+History is not rewritten; only this appended notice plus the two corrected statements are recorded.
+
+### Correcting §2 ("Scope delivered (named paths)")
+
+The §2 table's `packages/db/src/document-integrations.ts` row correctly reports the new additive
+`updateDocumentObject(id, fields)` primitive, but the accompanying "No change outside these named
+paths" line does **not** disclose that its test companion `packages/db/src/document-integrations.test.ts`
+was modified by T-004. Correction: T-004 (base `0f1f6fd` → `a62d17d`) added **221 lines** to
+`packages/db/src/document-integrations.test.ts` — the failing-test-first regression tests for the
+new `updateDocumentObject` primitive and the review-round M2 `indexed_at` preserve behavior. Those
+tests are exercised throughout this evidence (§ Verification commands, review rounds) and are part of
+the T-004 delta; they were NOT "out of scope, untouched."
+
+### Correcting §10 ("Rule-outs / rule-ins")
+
+The §10 bullet:
+
+> `AGENTS.md`, `BUILD-CONTEXT.md`, `ISSUE-MAP.md`, `.cursor/rules/entity-document-integrations.mdc`,
+> `phase2-flags.ts`, `receipt-writer.ts`, `index.ts`, `document-integrations.test.ts` — out of
+> scope, untouched.
+
+is corrected as follows: `AGENTS.md`, `BUILD-CONTEXT.md`, `ISSUE-MAP.md`,
+`.cursor/rules/entity-document-integrations.mdc`, `phase2-flags.ts`, `receipt-writer.ts`,
+`index.ts` remain **out of scope, untouched**; **`packages/db/src/document-integrations.test.ts` was
+RULED IN** as the colocated test companion to the additive db primitive and was modified by T-004
+(and by the T-003 review-round fixes landed before this ticket). All other §10 statements are
+unchanged.
