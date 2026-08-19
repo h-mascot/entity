@@ -101,21 +101,33 @@ export const FAIL_CLOSED_CAPABILITIES: ReadonlySet<CapabilityType> = new Set<Cap
 ]);
 
 /**
- * R-002: "unknown must fail closed for mutation and embedding."
+ * Capabilities whose action must fail closed unless fully `supported`.
  *
- * For write/embedding capabilities only a `supported` state may enable the action. A
- * `degraded` connection suppresses the action even when the adapter reports support; an
- * `unsupported` or `unknown` state never enables it. States for non-write capabilities fall
- * back to the generic unknown-fails-closed rule.
+ * This is the union of the write/embedding set plus `human_edit`. R-019 requires that no
+ * local Edit action appear functional when the runtime cannot complete it (e.g. a missing or
+ * unhealthy local bridge reads `human_edit: degraded|unknown`), so `human_edit` is only
+ * actionable when `supported`. It remains distinct from the agent-write classification
+ * (`isWriteCapability`), which covers create/permission/mutation/embed only.
+ */
+export const REQUIRES_SUPPORTED_CAPABILITIES: ReadonlySet<CapabilityType> = new Set<CapabilityType>([
+  ...FAIL_CLOSED_CAPABILITIES,
+  'human_edit',
+]);
+
+/**
+ * R-002: "unknown must fail closed for mutation and embedding."
+ * R-019: no human Edit action appears functional when the runtime cannot complete it.
+ *
+ * For write/embedding/human-edit capabilities only a `supported` state may enable the action.
+ * A `degraded` connection suppresses the action even when the adapter reports support; an
+ * `unsupported` or `unknown` state never enables it. Read-like capabilities are usable when
+ * supported or degraded, but `unsupported` surfaces a typed unsupported-capability result and
+ * `unknown` never enables them.
  */
 export function capabilityAllowsAction(cap: ResolvedCapability): boolean {
-  // Write/embedding capabilities fail closed: only `supported` may enable them.
-  if (FAIL_CLOSED_CAPABILITIES.has(cap.name)) {
+  if (REQUIRES_SUPPORTED_CAPABILITIES.has(cap.name)) {
     return cap.state === 'supported';
   }
-  // Read-like capabilities: usable when supported or degraded, but an `unsupported`
-  // capability must surface a typed unsupported-capability (non-actionable) result, and
-  // `unknown` always fails closed (R-002).
   return cap.state === 'supported' || cap.state === 'degraded';
 }
 

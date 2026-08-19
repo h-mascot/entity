@@ -92,11 +92,11 @@ interface ResolvedCapability {
 
 Security invariant: **writes fail closed on unknown.**
 
-- For any capability that gates a write, permission mutation, or embedding side effect —
-  `create`, `agent_text_mutation`, `agent_range_mutation`, `agent_slide_mutation`,
-  `permission_write`, `embed_editor` — the action is enabled **only** when `state ===
-  "supported"`. A `degraded` connection suppresses the action even for an adapter that
-  reports support; `unsupported` and `unknown` never enable it.
+- For any capability that gates a write, permission mutation, human edit, or embedding side
+  effect — `create`, `human_edit`, `agent_text_mutation`, `agent_range_mutation`,
+  `agent_slide_mutation`, `permission_write`, `embed_editor` — the action is enabled
+  **only** when `state === "supported"`. A `degraded` connection suppresses the action even
+  for an adapter that reports support; `unsupported` and `unknown` never enable it.
 - A degraded *read-like* capability (`read`, `preview`, `thumbnail`, `export`, …) remains
   usable in degraded mode but fails closed both on `unknown` and on `unsupported` (an
   unsupported capability must surface a typed unsupported-capability, non-actionable
@@ -113,9 +113,10 @@ Examples:
   until then it resolves `unsupported` or `unknown` and fails closed.
 - **Local**: `human_edit` readiness is driven by the presence/health of the local bridge
   (T-026), *without* changing the canonical provider type `local_office`. A "missing local
-  bridge" state makes `human_edit` `degraded`/`unknown` while the provider kind stays
-  `local_office` — satisfying R-002's validation that a missing bridge changes local
-  `human_edit` readiness without changing the provider type.
+  bridge" state makes `human_edit` `degraded`/`unknown`, which is **non-actionable** — no
+  Edit action appears functional when the runtime cannot complete it (R-019) — while the
+  provider kind stays `local_office`, satisfying R-002's validation that a missing bridge
+  changes local `human_edit` readiness without changing the provider type.
 
 ### 5. Capability resolution precedence
 
