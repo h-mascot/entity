@@ -106,6 +106,33 @@ export interface CreateDocumentObjectInput {
   conflict_state?: DocumentConflictState;
 }
 
+/**
+ * T-004: fields that may be updated on an existing canonical document record via the
+ * by-id update primitive. `undefined` means "not provided — keep the stored value" (COALESCE),
+ * matching the state-preserving rediscovery semantics T-003 established in review round 1 (F2).
+ * Identity (id / workspace_id / provider / artifact_type) and created_at are intentionally
+ * immutable here. Persists no credentials / raw tokens / document contents.
+ */
+export interface UpdateDocumentObjectFields {
+  title?: string;
+  provider_connection_id?: string | null;
+  destination_id?: string | null;
+  external_id?: string | null;
+  provider_url?: string | null;
+  owner_summary?: string | null;
+  tenant_external_id?: string | null;
+  permissions_summary_json?: string | null;
+  sensitivity_label?: string | null;
+  auth_state?: DocumentAuthState;
+  readiness_state?: DocumentReadinessState;
+  degraded_reason_code?: string | null;
+  current_revision?: string | null;
+  provider_modified_at?: string | null;
+  indexed_at?: string | null;
+  preview_state?: DocumentPreviewState;
+  conflict_state?: DocumentConflictState;
+}
+
 export interface DocumentVersionRecord {
   id: string;
   document_id: string;
@@ -428,6 +455,8 @@ export interface DocumentIntegrationsRepository {
   /** Idempotent registration: dedupe on provider identity (R-001 rediscovery semantics). */
   registerDocumentObject(input: CreateDocumentObjectInput): RegistrationResult;
   getDocumentObject(id: string): DocumentObjectRecord | undefined;
+  /** T-004: update an existing document record by Entity id. `undefined` if not found. */
+  updateDocumentObject(id: string, fields: UpdateDocumentObjectFields): DocumentObjectRecord | undefined;
   findDocumentByProviderIdentity(
     providerConnectionId: string | null,
     externalId: string,
@@ -639,6 +668,66 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     return row;
   }
 
+  function updateDocumentObject(
+    id: string,
+    fields: UpdateDocumentObjectFields,
+  ): DocumentObjectRecord | undefined {
+    const now = nowIso();
+    // Identity (id / workspace_id / provider / artifact_type) and created_at are immutable.
+    // Every mutable column uses COALESCE: `undefined` in the patch means "not provided — keep the
+    // stored value" so a partial metadata re-sync never clobbers prior state (consistent with the
+    // rediscovery UPDATE in registerDocumentObject, T-003 review round 1 F2). If the caller mutates
+    // an identity field to a colliding value, the unique identity index surfaces it loudly.
+    const result = db
+      .prepare(`
+        UPDATE document_objects SET
+          title = COALESCE(@title, title),
+          provider_connection_id = COALESCE(@provider_connection_id, provider_connection_id),
+          destination_id = COALESCE(@destination_id, destination_id),
+          external_id = COALESCE(@external_id, external_id),
+          provider_url = COALESCE(@provider_url, provider_url),
+          owner_summary = COALESCE(@owner_summary, owner_summary),
+          tenant_external_id = COALESCE(@tenant_external_id, tenant_external_id),
+          permissions_summary_json = COALESCE(@permissions_summary_json, permissions_summary_json),
+          sensitivity_label = COALESCE(@sensitivity_label, sensitivity_label),
+          auth_state = COALESCE(@auth_state, auth_state),
+          readiness_state = COALESCE(@readiness_state, readiness_state),
+          degraded_reason_code = COALESCE(@degraded_reason_code, degraded_reason_code),
+          current_revision = COALESCE(@current_revision, current_revision),
+          provider_modified_at = COALESCE(@provider_modified_at, provider_modified_at),
+          preview_state = COALESCE(@preview_state, preview_state),
+          conflict_state = COALESCE(@conflict_state, conflict_state),
+          indexed_at = COALESCE(@indexed_at, @now),
+          updated_at = @now
+        WHERE id = @id
+      `)
+      .run({
+        id,
+        title: fields.title ?? null,
+        provider_connection_id: fields.provider_connection_id === undefined ? null : fields.provider_connection_id,
+        destination_id: fields.destination_id === undefined ? null : fields.destination_id,
+        external_id: fields.external_id === undefined ? null : fields.external_id,
+        provider_url: fields.provider_url ?? null,
+        owner_summary: fields.owner_summary ?? null,
+        tenant_external_id: fields.tenant_external_id ?? null,
+        permissions_summary_json: fields.permissions_summary_json ?? null,
+        sensitivity_label: fields.sensitivity_label ?? null,
+        auth_state: fields.auth_state ?? null,
+        readiness_state: fields.readiness_state ?? null,
+        degraded_reason_code: fields.degraded_reason_code ?? null,
+        current_revision: fields.current_revision ?? null,
+        provider_modified_at: fields.provider_modified_at ?? null,
+        preview_state: fields.preview_state ?? null,
+        conflict_state: fields.conflict_state ?? null,
+        indexed_at: fields.indexed_at ?? null,
+        now,
+      });
+    if (result.changes === 0) {
+      return undefined;
+    }
+    return getDocumentObject(id);
+  }
+
   function findDocumentByProviderIdentity(
     providerConnectionId: string | null,
     externalId: string,
@@ -831,6 +920,7 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     createDocumentObject,
     registerDocumentObject,
     getDocumentObject,
+    updateDocumentObject,
     findDocumentByProviderIdentity,
     associateDocument,
     recordDocumentVersion,
