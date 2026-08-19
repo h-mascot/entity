@@ -163,3 +163,299 @@ export function providerKindEnablesWrite(_kind: ProviderKind): boolean {
   // capabilities, not a provider name.
   return false;
 }
+
+/* =============================================================================
+ * T-005 — Provider adapter contract.
+ *
+ * Source of truth: docs/loom/entity-document-integrations/phase2-canonical-prd.md
+ *   - §10.2 "Proposed provider adapter contract": the method surface
+ *     (provider / resolveCapabilities / discover / getMetadata / create / read /
+ *     mutate / getVersions? / getPreview? / getPermissions? / getOpenTarget /
+ *     reconcileChanges), and "Not every adapter method implies every capability is
+ *     supported. Capability resolution remains authoritative."
+ *   - §19.2 "Provider contract tests": "Every adapter must run against the same
+ *     provider-neutral contract fixture" — register/discover, metadata, create/read/
+ *     mutate when supported, unsupported-mutation rejection, revision capture,
+ *     stale-write rejection, preview/permission normalization, open target, connection
+ *     degradation, idempotent reconciliation. "Unsupported capability is a valid
+ *     contract outcome. Lying about support is not."
+ *   - T-005: "Scope: interface plus deterministic fake.",
+ *     "Acceptance: shared contract tests can execute against fake.",
+ *     "Security: unsupported mutation fails closed."
+ *   - D-012 (revision preconditions) / R-024 (revision-aware mutation) / R-025 (standard
+ *     conflict response) — every mutation carries an expected revision and rejects stale.
+ *
+ * This contract COMPOSES — it does not re-define — the T-002 capability model
+ * (CapabilityType / CapabilityReport / capabilityAllowsAction / FAIL_CLOSED_CAPABILITIES),
+ * and it reuses the R-001 vocabulary (provider, artifact_type, auth/readiness/preview/
+ * conflict state) from the T-003 db layer. It introduces no competing capability namespace,
+ * no receipt store, no provider registry, and no event table.
+ *
+ * Every adapter-supplied record carries `provider` and `artifact_type` EXPLICITLY so the
+ * T-004 registry can later reject a cross-provider identity mismatch without any
+ * adapter-contract change (T-004 review r3 F-1 design constraint), and it never assumes
+ * provider identity is derivable from the connection alone (connless adapters exist).
+ * =============================================================================
+ */
+
+import {
+  type DocumentArtifactType,
+  type DocumentAuthState,
+  type DocumentConflictState,
+  type DocumentPreviewState,
+  type DocumentProvider,
+  type DocumentReadinessState,
+} from '../../../db/src/document-integrations';
+
+/**
+ * A single adapter-supplied artifact descriptor (R-001 surfaces). `provider` and
+ * `artifact_type` are required on every record so identity is never derived from the
+ * connection/registry context (connless adapters exist) and so the registry can enforce
+ * provider/artifact-type consistency at integration time.
+ */
+export interface ProviderArtifactDescriptor {
+  provider: DocumentProvider;
+  artifact_type: DocumentArtifactType;
+  /** Durable provider artifact identity — never null on records returned by an adapter. */
+  external_id: string;
+  /** May be null for connless adapters (e.g. local managed storage). */
+  provider_connection_id: string | null;
+  title: string;
+  provider_url: string | null;
+  auth_state: DocumentAuthState;
+  readiness_state: DocumentReadinessState;
+  current_revision: string | null;
+  provider_modified_at: string | null;
+  preview_state: DocumentPreviewState;
+  conflict_state: DocumentConflictState;
+}
+
+/** R-002 Capability Resolver context consumed by an adapter when negotiating capabilities. */
+export interface CapabilityContext {
+  provider: DocumentProvider;
+  artifact_type: DocumentArtifactType;
+  connectionState: DocumentAuthState;
+  destinationId: string | null;
+  /** Provider-neutral runtime evidence (bridge health, queue depth, etc.). */
+  runtime: Readonly<Record<string, unknown>>;
+  policy?: string | null;
+}
+
+export interface DiscoverDocumentsInput {
+  destinationId?: string | null;
+  limit?: number;
+}
+
+export interface DiscoverDocumentsResult {
+  items: ProviderArtifactDescriptor[];
+  truncated: boolean;
+}
+
+export interface GetDocumentMetadataInput {
+  external_id: string;
+  provider_connection_id?: string | null;
+}
+
+export interface CreateDocumentInput {
+  artifact_type: DocumentArtifactType;
+  title: string;
+  provider_url?: string | null;
+  /** R-026 idempotency key — persisted before the provider call; replayed creates reconcile. */
+  idempotencyKey: string;
+  /** Injected clock so the fake is deterministic; real adapters omit (provider time). */
+  now?: string;
+}
+
+export interface CreateDocumentResult {
+  descriptor: ProviderArtifactDescriptor;
+  /** false on an idempotent replay that reconciled to the already-created artifact (R-026). */
+  created: boolean;
+}
+
+export interface ReadDocumentInput {
+  external_id: string;
+  provider_connection_id?: string | null;
+  expectedRevision?: string | null;
+}
+
+export interface ReadDocumentResult {
+  descriptor: ProviderArtifactDescriptor;
+  /** Synthetic placeholder only — never real document contents (privacy D-013). */
+  contentPlaceholder: string;
+}
+
+/** Provider-neutral agent mutation lanes (R-023 agent document tools). */
+export type AdapterMutation =
+  | { kind: 'text'; text: string }
+  | { kind: 'range'; cell: string; value: string }
+  | { kind: 'slide'; slideId: string };
+
+/** Map a mutation lane to the T-002 write capability that gates it (R-002 / R-023). */
+export function mutationCapability(mutation: AdapterMutation): CapabilityType {
+  switch (mutation.kind) {
+    case 'text':
+      return 'agent_text_mutation';
+    case 'range':
+      return 'agent_range_mutation';
+    case 'slide':
+      return 'agent_slide_mutation';
+  }
+}
+
+export interface MutateDocumentInput {
+  external_id: string;
+  provider_connection_id?: string | null;
+  /** D-012 / R-024 revision precondition; a stale expected revision never silently overwrites. */
+  expectedRevision: string;
+  mutation: AdapterMutation;
+  idempotencyKey?: string;
+  now?: string;
+}
+
+export interface MutateDocumentResult {
+  descriptor: ProviderArtifactDescriptor;
+  priorRevision: string;
+  resultRevision: string;
+}
+
+export interface GetVersionsInput {
+  external_id: string;
+  provider_connection_id?: string | null;
+  limit?: number;
+}
+
+export interface ProviderVersionRef {
+  revision: string;
+  observed_at: string | null;
+}
+
+export interface GetVersionsResult {
+  versions: ProviderVersionRef[];
+}
+
+export interface GetPreviewInput {
+  external_id: string;
+  provider_connection_id?: string | null;
+}
+
+/** R-034 preview normalization — preview is readiness state, not authoritative content. */
+export interface GetPreviewResult {
+  state: DocumentPreviewState;
+  previewUrl: string | null;
+}
+
+export interface GetPermissionsInput {
+  external_id: string;
+  provider_connection_id?: string | null;
+}
+
+export interface GetPermissionsResult {
+  summary_json: string;
+}
+
+export interface OpenTargetInput {
+  external_id: string;
+  provider_connection_id?: string | null;
+}
+
+export interface OpenTargetResult {
+  provider: DocumentProvider;
+  artifact_type: DocumentArtifactType;
+  url: string | null;
+}
+
+export interface ReconcileChangesInput {
+  /** Freshly discovered artifacts (may include already-known external_ids — dedupe). */
+  discovered: ProviderArtifactDescriptor[];
+  destinationId?: string | null;
+}
+
+export interface ReconcileChangesResult {
+  reconciled: ProviderArtifactDescriptor[];
+  /** external_ids previously known but absent from this discovery pass. */
+  dropped: string[];
+}
+
+/**
+ * Typed fail-closed error raised when the adapter is asked to perform a mutation (or other
+ * side-effecting action) whose capability is not actionable in its currently advertised
+ * capability report. NEVER silently no-ops — an unsupported mutation is rejected loudly.
+ * Raised by both the shared contract helper and (defense-in-depth) the adapter's own write
+ * lane, so an adapter can never be talked into a write it did not advertise.
+ */
+export class UnsupportedAdapterMutationError extends Error {
+  readonly capability: CapabilityType;
+  constructor(capability: CapabilityType, message: string) {
+    super(message);
+    this.name = 'UnsupportedAdapterMutationError';
+    this.capability = capability;
+  }
+}
+
+/**
+ * Typed stale-revision conflict (D-012 / R-024 / R-025). A mutation whose expectedRevision
+ * does not match the provider's current revision is rejected; it is never retried blindly.
+ */
+export class StaleRevisionError extends Error {
+  readonly expectedRevision: string;
+  readonly currentRevision: string;
+  readonly retryable = true;
+  constructor(expectedRevision: string, currentRevision: string) {
+    super(
+      `STALE_REVISION: the document changed after this operation was prepared ` +
+        `(expectedRevision=${expectedRevision}, currentRevision=${currentRevision})`,
+    );
+    this.name = 'StaleRevisionError';
+    this.expectedRevision = expectedRevision;
+    this.currentRevision = currentRevision;
+  }
+}
+
+/** Typed error for an unknown artifact id (adapter read/metadata/mutate/reconcile target). */
+export class AdapterArtifactNotFoundError extends Error {
+  constructor(externalId: string) {
+    super(`adapter artifact not found: ${externalId}`);
+    this.name = 'AdapterArtifactNotFoundError';
+  }
+}
+
+/**
+ * Shared fail-closed guard for every adapter side-effecting action. Uses the T-002
+ * `capabilityAllowsActionForKey` semantics (which already fail closed on unknown/degraded/
+ * unsupported and on a report whose `name` mislabels a value), so a write capability that is
+ * not fully `supported` — or an untrusted/mislabeled report — throws
+ * `UnsupportedAdapterMutationError` instead of silently proceeding.
+ */
+export function assertAdapterActionSupported(
+  report: CapabilityReport,
+  capability: CapabilityType,
+  action: string,
+): void {
+  if (!capabilityAllowsActionForKey(report, capability)) {
+    throw new UnsupportedAdapterMutationError(
+      capability,
+      `${action} is not supported by this adapter's advertised capabilities ` +
+        `(capability=${capability}); failing closed instead of mutating`,
+    );
+  }
+}
+
+/**
+ * T-005 §10.2 provider adapter contract. Every provider adapter implements this surface.
+ * A method's presence does not imply the matching capability is supported — capability
+ * resolution (via `resolveCapabilities`) is authoritative (D-003 / R-002 / §10.2).
+ */
+export interface DocumentProviderAdapter {
+  readonly provider: DocumentProvider;
+  resolveCapabilities(context: CapabilityContext): Promise<CapabilityReport>;
+  discover(input: DiscoverDocumentsInput): Promise<DiscoverDocumentsResult>;
+  getMetadata(input: GetDocumentMetadataInput): Promise<ProviderArtifactDescriptor | null>;
+  create(input: CreateDocumentInput): Promise<CreateDocumentResult>;
+  read(input: ReadDocumentInput): Promise<ReadDocumentResult>;
+  mutate(input: MutateDocumentInput): Promise<MutateDocumentResult>;
+  getVersions?(input: GetVersionsInput): Promise<GetVersionsResult>;
+  getPreview?(input: GetPreviewInput): Promise<GetPreviewResult>;
+  getPermissions?(input: GetPermissionsInput): Promise<GetPermissionsResult>;
+  getOpenTarget(input: OpenTargetInput): Promise<OpenTargetResult>;
+  reconcileChanges(input: ReconcileChangesInput): Promise<ReconcileChangesResult>;
+}
