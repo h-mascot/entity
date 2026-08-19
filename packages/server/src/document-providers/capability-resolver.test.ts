@@ -131,6 +131,16 @@ describe('capability state semantics (R-002)', () => {
     }
     expect(capabilityAllowsAction(cap('human_edit', 'unsupported'))).toBe(false);
   });
+
+  it('R-019 regression: degraded/unknown local human_edit is non-actionable (no false-functional Edit)', () => {
+    // R-019: "No local Edit action appears functional when the runtime cannot complete it."
+    // A missing or unhealthy local bridge reads `human_edit: degraded|unknown`; it must not
+    // expose a functional Edit/Open-local action.
+    expect(capabilityAllowsAction(cap('human_edit', 'degraded'))).toBe(false);
+    expect(capabilityAllowsAction(cap('human_edit', 'unknown'))).toBe(false);
+    expect(capabilityAllowsAction(cap('human_edit', 'unsupported'))).toBe(false);
+    expect(capabilityAllowsAction(cap('human_edit', 'supported'))).toBe(true);
+  });
 });
 
 describe('capability report covers the full vocabulary (R-002 / D-003)', () => {

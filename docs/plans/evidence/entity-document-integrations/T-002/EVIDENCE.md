@@ -54,12 +54,12 @@ and T-006 implements the resolver algorithm (both consume this ADR and `types.ts
 
 ## 4. Automated proof — capability resolver test plan
 
-Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (13 tests).
+Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (14 tests).
 
 ```sh
 cd packages/server && nvm use 22 && npx vitest run src/document-providers/capability-resolver.test.ts
 #  Test Files  1 passed (1)
-#  Tests       13 passed (13)
+#  Tests       14 passed (14)
 ```
 
 Covered cases:
@@ -70,6 +70,9 @@ Covered cases:
 - **Degraded:** a `degraded` connection suppresses an otherwise-supported mutation; writes
   are enabled only on `supported`.
 - **Read-like:** usable when `supported`/`degraded`, fails closed on `unknown`.
+- **R-019 regression (degraded local human_edit):** `human_edit` is actionable only when
+  `supported`; `degraded`/`unknown`/`unsupported` are non-actionable so no false-functional
+  Edit appears when the local bridge is unavailable.
 - **R-002 regression (unsupported read-like):** `unsupported` read-like and `human_edit`
   capabilities are non-actionable (introduced by reviewer round 1, see §7a).
 - Capability report resolves every vocabulary member.
@@ -141,7 +144,21 @@ silently asserted; this issue does not modify the canonical PRD.
 Added a table-driven unknown-state regression test covering **every** member of the
 fail-closed write/embedding set — `create`, `agent_text_mutation`, `agent_range_mutation`,
 `agent_slide_mutation`, `permission_write`, `embed_editor` — so a future capability-set or
-guard refactor cannot silently enable an unproven write path. Focused suite now 13 tests.
+guard refactor cannot silently enable an unproven write path. Focused suite now 14 tests.
+
+### 8b. Review round 3 — R-019 fix (degraded local `human_edit` must be non-actionable)
+
+Reviewer round 3 flagged a P1: `capabilityAllowsAction` treated `human_edit` as actionable
+in `degraded` state, so a missing/unhealthy local bridge (`human_edit: degraded`) would
+surface a functional Edit/Open-local action, violating R-019 ("No local Edit action appears
+functional when the runtime cannot complete it").
+
+Fix: introduced `REQUIRES_SUPPORTED_CAPABILITIES` (write/embedding set + `human_edit`) and
+`capabilityAllowsAction` now returns `true` for those capabilities only when `supported`.
+`human_edit` stays distinct from the agent-write classification (`isWriteCapability`). Added
+a regression case asserting degraded/unknown/unsupported `human_edit` is non-actionable and
+`supported` is actionable, and updated the ADR's degraded/unknown + local example. Focused
+suite now 14 tests.
 
 ### Open questions
 
