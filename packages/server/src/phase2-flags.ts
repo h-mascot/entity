@@ -55,6 +55,18 @@ export const PHASE2_FLAG_DEFINITIONS = [
     stage: 'policy_controlled',
     description: 'Allow Task Master claim/routing automation where policy marks work as drivable.',
   },
+  {
+    key: 'capability_resolver_enforcement',
+    envVar: 'ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT',
+    defaultEnabled: true,
+    category: 'enforcement',
+    surface: 'document_capabilities',
+    stage: 'strict_for_truthful_actions',
+    description:
+      'Route API/UI document actions through the truthing Capability Resolver (T-006) so ' +
+      'provider+connection+destination+policy+runtime evidence, not provider name, decides ' +
+      'actionability. Disabling reverts to the prior behavior for the resolution rollout.',
+  },
 ] as const;
 
 export type Phase2FlagKey = typeof PHASE2_FLAG_DEFINITIONS[number]['key'];
@@ -86,6 +98,7 @@ export interface Phase2FlagDiagnostics {
     migration_enforcement: Phase2FlagKey;
     search_permission_strictness: Phase2FlagKey;
     taskmaster_automation: Phase2FlagKey;
+    capability_resolver: Phase2FlagKey;
   };
   legacy_compatibility: {
     old_tasks_remain_visible: true;
@@ -198,6 +211,7 @@ export function serializePhase2FlagDiagnostics(
       migration_enforcement: 'migration_enforcement',
       search_permission_strictness: 'search_permission_strictness',
       taskmaster_automation: 'taskmaster_automation',
+      capability_resolver: 'capability_resolver_enforcement',
     },
     legacy_compatibility: {
       old_tasks_remain_visible: true,

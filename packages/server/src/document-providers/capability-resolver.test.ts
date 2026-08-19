@@ -21,10 +21,15 @@ import {
   type CapabilityType,
   capabilityAllowsAction,
   capabilityAllowsActionForKey,
+  FAIL_CLOSED_CAPABILITIES,
   isWriteCapability,
   providerKindEnablesWrite,
+  REQUIRES_SUPPORTED_CAPABILITIES,
   type ResolvedCapability,
 } from './types';
+import { resolveCapabilities, type CapabilityResolutionInput } from './capability-resolver';
+import { createFakeDocumentProviderAdapter } from './fake-adapter';
+import type { DocumentAuthState } from '../../../db/src/document-integrations';
 
 const VOCABULARY: readonly CapabilityType[] = [
   'create',
@@ -216,5 +221,194 @@ describe('capability report covers the full vocabulary (R-002 / D-003)', () => {
     // Simulate untrusted data that holds null under the `create` key.
     (report as Record<string, unknown>)['create'] = null;
     expect(capabilityAllowsActionForKey(report, 'create')).toBe(false);
+  });
+});
+
+/* ============================================================================
+ * T-006 — Capability Resolver behaviour (automated proof).
+ *
+ * Source of truth: docs/loom/entity-document-integrations/phase2-canonical-prd.md
+ *   - T-006 "Goal/value: Make API/UI actions truthful.",
+ *     "Acceptance: provider + connection + destination + policy + runtime resolution works.",
+ *     "Not done until: unknown mutation is rejected."
+ *   - Capability Resolver component spec (§~line 2085): "Combines: provider baseline;
+ *     artifact type; authenticated connection; destination; policy; runtime; degraded state."
+ *   - R-002 "unknown must fail closed for mutation and embedding."
+ *   - PRD gate table R-002 => "Capability Resolver capability matrix tests".
+ *   - Capability ADR §5: resolution precedence `adapter < connection < destination <
+ *     runtime < policy`; a higher-precedence source can only DEMOTE a supported lane, never
+ *     promote an unsupported one; `unknown` fails closed for write/embedding.
+ *
+ * The resolver COMPOSES the T-002 capability model (REQUIRES_SUPPORTED_CAPABILITIES,
+ * FAIL_CLOSED_CAPABILITIES, capabilityAllowsActionForKey) and the T-005 adapter contract
+ * (DocumentProviderAdapter.resolveCapabilities) — it invents no second capability namespace.
+ * Destination/policy are MINIMAL pass-through allowances here; the real Destination Policy
+ * Service is owned by T-007 (documented boundary in T-006 EVIDENCE).
+ * ============================================================================ */
+
+/** Deterministic resolver input over the fake adapter, baseline = healthy everything. */
+function baseInput(overrides: Partial<CapabilityResolutionInput> = {}): CapabilityResolutionInput {
+  return {
+    adapter: createFakeDocumentProviderAdapter(),
+    artifactType: 'document',
+    connection: 'authorized',
+    destination: 'allowed',
+    policy: 'allowed',
+    runtime: {},
+    ...overrides,
+  };
+}
+
+/** Adapter baseline (healthy connection) for the same fake — the pre-fold starting point. */
+async function adapterBaseline(input: CapabilityResolutionInput): Promise<CapabilityReport> {
+  return input.adapter.resolveCapabilities({
+    provider: input.adapter.provider,
+    artifact_type: input.artifactType,
+    connectionState: 'authorized',
+    destinationId: null,
+    runtime: {},
+  });
+}
+
+describe('Capability Resolver (T-006 precedence fold)', () => {
+  it('acceptance: provider + connection + destination + policy + runtime resolution works', async () => {
+    const report = await resolveCapabilities(baseInput());
+    // Provider baseline + artifact type (via the T-005 adapter) drive the truthful baseline.
+    expect(report['agent_text_mutation'].state).toBe('supported');
+    expect(report['create'].state).toBe('supported');
+    // Artifact type is honored through the adapter baseline (baseline is artifact-aware).
+    const sheet = await resolveCapabilities(baseInput({ artifactType: 'spreadsheet' }));
+    expect(sheet['agent_text_mutation'].state).toBe('supported');
+  });
+
+  it('matrix: connection state folds every capability per R-002 classification', async () => {
+    for (const connection of ['authorized', 'degraded', 'unauthorized', 'unknown'] as const) {
+      const baseline = await adapterBaseline(baseInput());
+      const report = await resolveCapabilities(baseInput({ connection }));
+      for (const name of [...CAPABILITY_NAMES]) {
+        if (connection === 'authorized') {
+          // no demotion: the resolved report equals the honest adapter baseline
+          expect(report[name].state).toBe(baseline[name].state);
+        } else if (connection === 'unknown') {
+          // R-002: unknown fails closed for mutation AND reading — every lane is non-actionable
+          expect(report[name].state).toBe('unknown');
+          expect(capabilityAllowsActionForKey(report, name)).toBe(false);
+        } else {
+          // degraded / unauthorized: write+embed+human_edit fail closed, read-like degrade but stay actionable
+          if (REQUIRES_SUPPORTED_CAPABILITIES.has(name)) {
+            expect(report[name].state !== 'supported').toBe(true);
+            expect(capabilityAllowsActionForKey(report, name)).toBe(false);
+          } else {
+            expect(report[name].state).toBe('degraded');
+            expect(capabilityAllowsActionForKey(report, name)).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  it('not-done-until: unknown connection never resolves any mutation lane to supported', async () => {
+    const report = await resolveCapabilities(baseInput({ connection: 'unknown' }));
+    for (const name of [...FAIL_CLOSED_CAPABILITIES]) {
+      expect(report[name].state).toBe('unknown');
+      expect(capabilityAllowsActionForKey(report, name)).toBe(false);
+    }
+  });
+
+  it('unknown connection is rejected through the adapter lane as well (end-to-end fail closed)', async () => {
+    const adapter = createFakeDocumentProviderAdapter();
+    const created = await adapter.create({
+      artifact_type: 'document',
+      title: 'Unknown Connection Doc',
+      idempotencyKey: 'idem:resolver-unknown-lane',
+    });
+    (adapter as { setConnectionState(s: DocumentAuthState): void }).setConnectionState('unknown');
+    await expect(
+      adapter.mutate({
+        external_id: created.descriptor.external_id,
+        expectedRevision: created.descriptor.current_revision ?? '',
+        mutation: { kind: 'text', text: 'x' },
+      }),
+    ).rejects.toBeInstanceOf(Error);
+  });
+
+  it('destination denied fails closed for create + every write lane; unknown is even more conservative', async () => {
+    for (const destination of ['denied', 'unknown'] as const) {
+      const report = await resolveCapabilities(baseInput({ destination }));
+      for (const name of [...FAIL_CLOSED_CAPABILITIES]) {
+        const expected: ResolvedCapability['state'] = destination === 'denied' ? 'unsupported' : 'unknown';
+        expect(report[name].state).toBe(expected);
+        expect(capabilityAllowsActionForKey(report, name)).toBe(false);
+      }
+      // destination policy does not gate read-only lanes
+      expect(report['read'].state).toBe('supported');
+      expect(capabilityAllowsActionForKey(report, 'read')).toBe(true);
+    }
+  });
+
+  it('policy denied vetoes every REQUIRES_SUPPORTED lane even when the adapter supports it (highest authority)', async () => {
+    const report = await resolveCapabilities(baseInput({ policy: 'denied' }));
+    for (const name of [...REQUIRES_SUPPORTED_CAPABILITIES]) {
+      expect(report[name].state).toBe('unsupported');
+      expect(capabilityAllowsActionForKey(report, name)).toBe(false);
+    }
+  });
+
+  it('precedence: a failing connection demotes an optimistic adapter-supported lane and policy outranks all', async () => {
+    const degraded = await resolveCapabilities(baseInput({ connection: 'degraded' }));
+    expect(degraded['agent_text_mutation'].state).toBe('degraded');
+    expect(degraded['agent_text_mutation'].source).toBe('connection');
+    expect(capabilityAllowsActionForKey(degraded, 'agent_text_mutation')).toBe(false);
+
+    // Full context even worse: degraded connection AND policy denied => policy wins (source policy).
+    const vetoed = await resolveCapabilities(baseInput({ connection: 'degraded', policy: 'denied' }));
+    expect(vetoed['agent_text_mutation'].state).toBe('unsupported');
+    expect(vetoed['agent_text_mutation'].source).toBe('policy');
+  });
+
+  it('runtime evidence folds: unhealthy reaches all lanes; a closed mutation gate vetoes writes', async () => {
+    const unhealthy = await resolveCapabilities(baseInput({ runtime: { healthy: false } }));
+    expect(unhealthy['agent_text_mutation'].state).toBe('degraded');
+    expect(capabilityAllowsActionForKey(unhealthy, 'agent_text_mutation')).toBe(false);
+    expect(capabilityAllowsActionForKey(unhealthy, 'read')).toBe(true); // read-like degraded actionable
+
+    const gate = await resolveCapabilities(baseInput({ runtime: { mutationGateOpen: false } }));
+    expect(gate['agent_text_mutation'].state).toBe('unsupported');
+    expect(gate['agent_text_mutation'].source).toBe('runtime');
+    expect(capabilityAllowsActionForKey(gate, 'agent_text_mutation')).toBe(false);
+  });
+
+  it('fold never promotes: an adapter-unsupported lane stays unsupported regardless of downstream folds', async () => {
+    const report = await resolveCapabilities(baseInput({ destination: 'allowed', policy: 'allowed', runtime: {} }));
+    // Fake baseline is honestly unsupported for these lanes (T-005 "lying about support is not").
+    const lanes: CapabilityType[] = ['agent_range_mutation', 'agent_slide_mutation', 'permission_write', 'embed_editor'];
+    for (const name of lanes) {
+      expect(report[name].state).toBe('unsupported');
+      expect(capabilityAllowsActionForKey(report, name)).toBe(false);
+    }
+  });
+
+  it('partition-exhaustion: every capability obeys its REQUIRES_SUPPORTED classification across all fold states', async () => {
+    // 4 connection × 3 destination × 3 policy = 36 full-report rows × 15 capabilities.
+    for (const connection of ['authorized', 'degraded', 'unauthorized', 'unknown'] as const) {
+      for (const destination of ['allowed', 'denied', 'unknown'] as const) {
+        for (const policy of ['allowed', 'denied', 'unknown'] as const) {
+          const report = await resolveCapabilities(baseInput({ connection, destination, policy }));
+          for (const name of [...CAPABILITY_NAMES]) {
+            const state = report[name].state;
+            expect(report[name].name).toBe(name);
+            if (REQUIRES_SUPPORTED_CAPABILITIES.has(name)) {
+              // writes/embed/human_edit actionable ONLY when fully supported
+              expect(capabilityAllowsActionForKey(report, name)).toBe(state === 'supported');
+            } else {
+              // read-like actionable when supported or degraded; fail closed on unknown/unsupported
+              expect(capabilityAllowsActionForKey(report, name)).toBe(
+                state === 'supported' || state === 'degraded',
+              );
+            }
+          }
+        }
+      }
+    }
   });
 });
