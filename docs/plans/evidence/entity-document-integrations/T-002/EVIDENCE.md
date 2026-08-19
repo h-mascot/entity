@@ -54,12 +54,12 @@ and T-006 implements the resolver algorithm (both consume this ADR and `types.ts
 
 ## 4. Automated proof — capability resolver test plan
 
-Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (15 tests).
+Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (16 tests).
 
 ```sh
 cd packages/server && nvm use 22 && npx vitest run src/document-providers/capability-resolver.test.ts
 #  Test Files  1 passed (1)
-#  Tests       15 passed (15)
+#  Tests       16 passed (16)
 ```
 
 Covered cases:
@@ -171,6 +171,22 @@ mutations, `permission_write`, `embed_editor`) through **every** non-`supported`
 (`unsupported`/`degraded`/`unknown`) asserting non-actionable, and `supported` actionable.
 Focused suite now 15 tests. Every later round's finding was a concrete correctness or
 test-gap issue fixed with regression proof — no self-referential bookkeeping loop.
+
+### 8d. Review round 5 — report key/name binding (R-002 fail-closed type soundness)
+
+Round 5 flagged a P1: `CapabilityReport` was `Record<CapabilityType, ResolvedCapability>`,
+so a type-valid report could place a degraded `read` under the `create` key, and
+`capabilityAllowsAction(report.create)` would then return `true`, enabling a write path.
+
+Fix (RED-first): `CapabilityReport` is now dependently typed
+(`{ [K in CapabilityType]: ResolvedCapability & { name: K } }`), so each key binds its value's
+`name` at compile time, and a runtime guard `capabilityAllowsActionForKey(report, key)` rejects
+any mismatch from untyped adapter data. Added a regression test asserting that a `create`
+lookup whose value claims a degraded `read` fails closed. Focused suite now 16 tests. The
+remaining round-5 note (reviewed-SHA / Linear closeout proof not yet posted) is addressed at
+closeout — per the anti-loop policy a commit cannot contain its own SHA, so the final reviewed
+SHA is recorded in the external review receipt and the Linear proof comment, which this issue
+posts after APPROVED.
 
 ### Open questions
 
