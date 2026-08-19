@@ -177,9 +177,10 @@ export function foldCapabilityReport(layers: readonly EvidenceLayer[]): Capabili
         bestSeverity = sev;
         state = s;
         source = layer.source;
-        if (layer.reasonCode !== undefined) {
-          reasonCode = layer.reasonCode;
-        }
+        // F1 (THE-947 r1): assign unconditionally so a winning layer that carries no
+        // `reasonCode` clears a stale one from an earlier (tied/lower) layer, instead of
+        // inheriting a code that no longer applies to the resolved state.
+        reasonCode = layer.reasonCode;
       }
     }
     out[name] = { name, state, source, ...(reasonCode ? { reasonCode } : {}) };
@@ -211,7 +212,14 @@ export async function resolveCapabilities(input: CapabilityResolutionInput): Pro
   const baselineLayer: EvidenceLayer = {
     source: 'adapter',
     states: Object.fromEntries(
-      CAPABILITY_NAMES.map((name) => [name, baseline[name].state]),
+      // F2 (THE-947 r1): a malformed/partial baseline report that omits a capability entry (or
+      // holds a null value) must fold as fail-closed `unknown` — never throw `TypeError` on a
+      // missing `.state`. The adapter contract is honest, but defense-in-depth keeps resolution
+      // from crashing on a hostile/partial report; `unknown` fails closed downstream.
+      CAPABILITY_NAMES.map((name) => {
+        const resolved = (baseline as Partial<CapabilityReport>)[name];
+        return [name, (resolved?.state ?? 'unknown') as CapabilityState];
+      }),
     ) as Partial<Record<CapabilityType, CapabilityState>>,
   };
 
