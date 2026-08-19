@@ -73,14 +73,16 @@ export type CapabilityReport = {
  * degraded actionable capability (THE-943 / R-002 fail-closed invariant).
  */
 export function capabilityAllowsActionForKey(report: CapabilityReport, key: CapabilityType): boolean {
-  const resolved: ResolvedCapability = report[key];
-  if (resolved.name !== key) {
+  const resolved: ResolvedCapability | undefined = report[key];
+  if (!resolved || resolved.name !== key) {
+    // Fail closed: an untrusted/untyped report that is missing the requested key or holds
+    // `null`/an empty value there must never crash nor enable an action (THE-943 / R-002).
     return false;
   }
   return capabilityAllowsAction(resolved);
 }
 
-/** R-002 minimum vocabulary as an ordered, complete list (compile-time guarded by CapabilityReport). */
+/** R-002 minimum vocabulary as an ordered list. Completeness is enforced by the runtime test. */
 export const CAPABILITY_NAMES: readonly CapabilityType[] = [
   'create',
   'read',

@@ -91,7 +91,8 @@ Fix (RED-first):
    (`AssertionError: expected true to be false`).
 2. Changed `capabilityAllowsAction` so read-like capabilities are usable only when
    `supported` or `degraded`; `unsupported` and `unknown` are never actionable.
-3. Focused suite now 12/12 green; full server suite 1713/1713 green under Node 22.
+3. Focused suite now 12/12 green; full server suite green under Node 22 (authoritative
+   delivered-tree count: see §6).
 
 ## 5. Negative / security proof
 
@@ -108,7 +109,7 @@ Fix (RED-first):
 
 ```sh
 cd packages/server && npm run build                             # PASS (tsc, strict)
-cd packages/server && npx vitest run                            # 203 files, 1712 tests PASS
+cd packages/server && npx vitest run                            # 203 files, 1719 tests PASS
 npm run build                                                   # app + db + server build PASS
 npm run ctrl:gate                                               # todo 0, gate passed ✅
 npm run scan:private-defaults -- --enforce                      # exit 0
@@ -117,7 +118,11 @@ bash scripts/proof/entity-phase-2-smoke.sh                      # PASS
 git diff --check                                                # clean
 ```
 
-Every command exists at current HEAD and returned exit 0.
+Every command exists at current HEAD and returned exit 0. The full server suite is **1719/1719**
+across 203 files at this round's final HEAD (pre-fix round-6 count: 1717; the +2 are the
+malformed-shape missing-key and null-value regression tests added for F2). Earlier versions of
+this file claimed "1713/1713" (§7a) and "1712" (§6); both were stale/full-suite snapshots. The
+single authoritative full-suite count for the delivered tree is **1719/1719** above.
 
 ## 7. Manual proof — ADR review
 
@@ -188,7 +193,55 @@ closeout — per the anti-loop policy a commit cannot contain its own SHA, so th
 SHA is recorded in the external review receipt and the Linear proof comment, which this issue
 posts after APPROVED.
 
-### Open questions
+### 8e. Review round 6 (GLM 5.3) — missing/null report guard + evidence-consistency fixes
+
+Round 6 (GLM 5.3, migration round 1 of 3) returned `CHANGES_REQUESTED` with one P2
+correctness/security finding and several P3 evidence/comment tidiness findings.
+
+**F1 (P2): `capabilityAllowsActionForKey` crashed on malformed reports.** The runtime guard
+dereferenced `resolved.name` with no missing/null guard, so a report built from untyped adapter
+data that is missing the requested key, or holds `null` at it, threw `TypeError` instead of
+failing closed — reachable by design intent (the function's docstring declares the
+untrusted/untyped threat model).
+
+**F2 (P2): RED-first malformed-shape tests.** Added two regression tests simulating untrusted
+shapes via `as unknown as CapabilityReport`:
+1. Report object missing the requested key → expects `false`, not a throw.
+2. Report with `null` value at the requested key → expects `false`, not a throw.
+
+**RED→GREEN proof (F2):**
+```sh
+# Before the F1 code fix — both new tests FAIL on HEAD with TypeError:
+npx vitest run src/document-providers/capability-resolver.test.ts
+#   × malformed report: a missing requested key fails closed instead of throwing
+#     TypeError: Cannot read properties of undefined (reading 'name')   types.ts:77
+#   × malformed report: a null value at the requested key fails closed instead of throwing
+#     TypeError: Cannot read properties of null (reading 'name')        types.ts:77
+#   Tests  2 failed | 16 passed (18)
+
+# After `if (!resolved || resolved.name !== key) return false;` — all 18 pass:
+npx vitest run src/document-providers/capability-resolver.test.ts
+#   Test Files  1 passed (1)
+#   Tests       18 passed (18)
+```
+
+**F3 (P3):** Corrected the `CAPABILITY_NAMES` comment that claimed "compile-time guarded by
+CapabilityReport" — nothing ties array contents to the union at compile time. Now states that
+completeness is enforced by the runtime test.
+
+**F4 (P3):** The `accepts all four states` / `accepts all five resolution sources` tests
+only asserted `cap(...)` did not throw, which is vacuous under vitest/esbuild (no runtime
+typecheck). Rewrote both to preserve and assert `state`/`source`/`name` values so they are
+meaningful real assertions.
+
+**F5-ADR (P3):** Named operator commit `4e015c1` ("policy(loom): batch OpenWiki at final
+integration gate") as the cause of the authority-pin drift (`83cacbc…` → `c82e82d8…`) in the
+ADR's hash-discrepancy note. Pin reconciliation outside THE-943 named paths remains a
+manager/Henry decision and was not attempted.
+
+**F6 (P3):** Reduced §6 (and the stray §7a snapshot) to a single authoritative full-suite
+count of **1719/1719** (203 files) at this round's final HEAD (pre-fix count: 1717; +2 from the
+F2 regression tests). Focused suite now 18 tests.
 
 No new open question was resolved into a default. The Google write gate (D-005), Microsoft
 mutation proof (T-021/T-023), and local bridge (T-027) decisions remain open and are

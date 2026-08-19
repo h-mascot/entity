@@ -9,9 +9,12 @@ Canonical PRD SHA-256 (actual tracked file, matches BUILD-CONTEXT): `c82e82d8379
 > Hash discrepancy note: the live Linear THE-943 contract, `AGENTS.md`, and `ISSUE-MAP.md`
 > name SHA-256 `83cacbc5…` as the canonical-source hash, but the file actually tracked in
 > this worktree (and the hash named by `BUILD-CONTEXT.md`) is `c82e82d8…`. The `83cac…`
-> string is a stale reference. The implementation authority used here is the actual tracked
-> `phase2-canonical-prd.md`, verified below as `c82e82d8…`, whose T-002 section is represented
-> in this ADR.
+> string is a stale reference. The authority-pin drift (`83cacbc…` → `c82e82d8…`) was caused
+> by operator commit `4e015c1` ("policy(loom): batch OpenWiki at final integration gate"),
+> which updated `BUILD-CONTEXT.md` and `phase2-canonical-prd.md` in the same change. The
+> implementation authority used here is the actual tracked `phase2-canonical-prd.md`,
+> verified below as `c82e82d8…`, whose T-002 section is represented in this ADR. Pin
+> reconciliation outside THE-943 named paths is out of scope for this issue.
 
 ## Context
 

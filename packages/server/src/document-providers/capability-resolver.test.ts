@@ -65,15 +65,19 @@ describe('capability vocabulary (R-002)', () => {
 });
 
 describe('capability state semantics (R-002)', () => {
-  it('accepts all four states per capability', () => {
+  it('accepts all four states per capability with preserved state value', () => {
     for (const state of ['supported', 'unsupported', 'degraded', 'unknown'] as const) {
-      expect(() => cap('read', state)).not.toThrow();
+      const capability = cap('read', state);
+      expect(capability.name).toBe('read');
+      expect(capability.state).toBe(state);
     }
   });
 
-  it('accepts all five resolution sources', () => {
+  it('accepts all five resolution sources with preserved source value', () => {
     for (const source of ['adapter', 'connection', 'destination', 'runtime', 'policy'] as const) {
-      expect(() => cap('read', 'supported', source)).not.toThrow();
+      const capability = cap('read', 'supported', source);
+      expect(capability.name).toBe('read');
+      expect(capability.source).toBe(source);
     }
   });
 
@@ -189,5 +193,28 @@ describe('capability report covers the full vocabulary (R-002 / D-003)', () => {
     (mismatched as Record<string, ResolvedCapability>).create = cap('read', 'degraded');
     expect(capabilityAllowsActionForKey(mismatched, 'create')).toBe(false);
     expect(capabilityAllowsActionForKey(mismatched, 'read')).toBe(true); // key matches value name
+  });
+
+  it('malformed report: a missing requested key fails closed instead of throwing', () => {
+    // F2 / THE-943 fail-closed invariant: the docstring declares the untrusted/untyped threat
+    // model, so a report built from untyped adapter data that is missing the requested key must
+    // return `false`, never throw `TypeError` on `resolved.name`.
+    const report = Object.fromEntries(
+      VOCABULARY.map((name) => [name, cap(name, 'supported')]),
+    ) as unknown as CapabilityReport;
+    // Simulate untrusted data that dropped the `create` entry entirely.
+    delete (report as Record<string, ResolvedCapability>)['create'];
+    expect(capabilityAllowsActionForKey(report, 'create')).toBe(false);
+  });
+
+  it('malformed report: a null value at the requested key fails closed instead of throwing', () => {
+    // F2 / THE-943 fail-closed invariant: a report holding `null` at the requested key (from
+    // untrusted adapter data) must return `false`, never throw `TypeError` on `resolved.name`.
+    const report = Object.fromEntries(
+      VOCABULARY.map((name) => [name, cap(name, 'supported')]),
+    ) as unknown as CapabilityReport;
+    // Simulate untrusted data that holds null under the `create` key.
+    (report as Record<string, unknown>)['create'] = null;
+    expect(capabilityAllowsActionForKey(report, 'create')).toBe(false);
   });
 });
