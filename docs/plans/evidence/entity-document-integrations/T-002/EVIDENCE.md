@@ -23,7 +23,7 @@ Node-22-native commands were executed with `nvm use 22` (v22.22.2) as required b
 
 | Path | Delivered | Action |
 | --- | --- | --- |
-| `docs/loom/entity-document-integrations/phase2-canonical-prd.md` | Not modified | Source authority (read-only). SHA-256 verified `83cacbc51a1eb15649d6e0a17759e2115a3c2185a93b7c4532001beee2527137`. |
+| `docs/loom/entity-document-integrations/phase2-canonical-prd.md` | Not modified | Source authority (read-only). Verified on-disk SHA-256 `c82e82d8379c420946735bf79265895cc3a00937d2d9f2ec95de60979e492470` (matches BUILD-CONTEXT). Note: the live Linear/AGENTS/ISSUE-MAP name `83cac…` — stale reference; actual tracked file is `c82e82d8…` (see §8). |
 | `docs/adr/2026-08-entity-document-capability-architecture.md` | Added | Full capability architecture ADR (D-003 + R-002). |
 | `packages/server/src/document-providers/types.ts` | Added | Capability vocabulary + state/source types + fail-closed guards. |
 | `packages/server/src/document-providers/capability-resolver.test.ts` | Added | Sanctioned capability resolver test plan (automated proof). |
@@ -54,12 +54,12 @@ and T-006 implements the resolver algorithm (both consume this ADR and `types.ts
 
 ## 4. Automated proof — capability resolver test plan
 
-Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (12 tests).
+Focused test: `packages/server/src/document-providers/capability-resolver.test.ts` (13 tests).
 
 ```sh
 cd packages/server && nvm use 22 && npx vitest run src/document-providers/capability-resolver.test.ts
 #  Test Files  1 passed (1)
-#  Tests       12 passed (12)
+#  Tests       13 passed (13)
 ```
 
 Covered cases:
@@ -124,7 +124,26 @@ consequences → test expectations) that represents D-003 and R-002 in full and 
 Google, Microsoft, and local examples. Reviewed to APPROVED in the external review receipt
 (see §1 for the exact candidate SHA).
 
-## 8. Open questions
+## 8. Canonical-source hash resolution (review round 2, P1)
+
+The actual file `docs/loom/entity-document-integrations/phase2-canonical-prd.md` in this exact
+reviewed tree hashes to SHA-256
+`c82e82d8379c420946735bf79265895cc3a00937d2d9f2ec95de60979e492470`, which matches
+`BUILD-CONTEXT.md:16`. The live Linear THE-943 contract, `AGENTS.md:15`, and `ISSUE-MAP.md:3`
+name `83cacbc51a1eb15649d6e0a17759e2115a3c2185a93b7c4532001beee2527137` — a **stale
+reference** that does not match the tracked file. This T-002 deliverable is grounded on the
+actual tracked canonical PRD (`c82e82d8…`), whose T-002 section (`D-003`, `R-002`) is what
+the ADR, `types.ts`, and the resolver test plan represent. The discrepancy is documented, not
+silently asserted; this issue does not modify the canonical PRD.
+
+### 8a. Review round 2 — P2 resolution (unknown fails closed, all write capabilities)
+
+Added a table-driven unknown-state regression test covering **every** member of the
+fail-closed write/embedding set — `create`, `agent_text_mutation`, `agent_range_mutation`,
+`agent_slide_mutation`, `permission_write`, `embed_editor` — so a future capability-set or
+guard refactor cannot silently enable an unproven write path. Focused suite now 13 tests.
+
+### Open questions
 
 No new open question was resolved into a default. The Google write gate (D-005), Microsoft
 mutation proof (T-021/T-023), and local bridge (T-027) decisions remain open and are

@@ -76,6 +76,13 @@ describe('capability state semantics (R-002)', () => {
     }
   });
 
+  it('unknown fails closed for every write/embedding capability (R-002)', () => {
+    for (const name of ['create', 'agent_text_mutation', 'agent_range_mutation',
+      'agent_slide_mutation', 'permission_write', 'embed_editor'] as const) {
+      expect(capabilityAllowsAction(cap(name, 'unknown'))).toBe(false);
+    }
+  });
+
   it('unknown fails closed for mutation (agent_text_mutation)', () => {
     expect(capabilityAllowsAction(cap('agent_text_mutation', 'unknown'))).toBe(false);
   });

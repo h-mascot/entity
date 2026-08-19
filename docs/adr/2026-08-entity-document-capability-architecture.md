@@ -4,7 +4,14 @@ Status: Accepted
 Date: 2026-08
 Issue: THE-943 (LOOM-DOCS T-002)
 Canonical source: `docs/loom/entity-document-integrations/phase2-canonical-prd.md`
-Canonical PRD SHA-256: `83cacbc51a1eb15649d6e0a17759e2115a3c2185a93b7c4532001beee2527137`
+Canonical PRD SHA-256 (actual tracked file, matches BUILD-CONTEXT): `c82e82d8379c420946735bf79265895cc3a00937d2d9f2ec95de60979e492470`
+
+> Hash discrepancy note: the live Linear THE-943 contract, `AGENTS.md`, and `ISSUE-MAP.md`
+> name SHA-256 `83cacbc5…` as the canonical-source hash, but the file actually tracked in
+> this worktree (and the hash named by `BUILD-CONTEXT.md`) is `c82e82d8…`. The `83cac…`
+> string is a stale reference. The implementation authority used here is the actual tracked
+> `phase2-canonical-prd.md`, verified below as `c82e82d8…`, whose T-002 section is represented
+> in this ADR.
 
 ## Context
 
