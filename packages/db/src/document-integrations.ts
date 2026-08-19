@@ -52,6 +52,7 @@ export const DOCUMENT_INTEGRATION_TABLE_NAMES = [
   'document_associations',
   'document_versions',
   'document_integration_events',
+  'document_operations',
 ] as const;
 
 export interface DocumentObjectRecord {
@@ -174,6 +175,42 @@ export interface CreateDocumentIntegrationEventInput {
   sanitized_metadata_json?: string | null;
 }
 
+/**
+ * R-026 operation-scoped creation-idempotency record. Keyed on
+ * (workspace_id, idempotency_key) so it is resolvable BEFORE any document record
+ * exists (PRD R-026 storage requirement, phase2-canonical-prd.md:1529). Records the
+ * requested provider, artifact type, destination, operation status, the resulting
+ * provider external ID once known, and the resulting Entity document ID once persisted.
+ * Persists NO credentials / raw tokens / document contents.
+ */
+export interface DocumentOperationRecord {
+  id: string;
+  workspace_id: string;
+  idempotency_key: string;
+  provider: DocumentProvider;
+  artifact_type: DocumentArtifactType;
+  destination_id: string | null;
+  operation_status: string;
+  provider_external_id: string | null;
+  document_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpsertDocumentOperationInput {
+  id?: string;
+  workspace_id: string;
+  idempotency_key: string;
+  provider: DocumentProvider;
+  artifact_type: DocumentArtifactType;
+  destination_id?: string | null;
+  operation_status: string;
+  /** Late-filled once the provider call returns the external identity. */
+  provider_external_id?: string | null;
+  /** Late-filled once the resulting Entity document is persisted. */
+  document_id?: string | null;
+}
+
 /** Result of ensuring the additive unified schema exists. */
 export interface SchemaAuditReport {
   tablesEnsured: readonly string[];
@@ -238,11 +275,15 @@ CREATE TABLE IF NOT EXISTS document_objects (
   deleted_at TEXT
 );
 
--- R-001 uniqueness: (provider_connection_id, external_id) must be unique when
--- external_id is non-null. For local artifacts external_id is the durable managed
--- file identity, so the same index supplies equivalent uniqueness (PRD 11.1).
+-- R-001 uniqueness: (provider_connection_id, external_id) must be unique. SQLite
+-- unique indexes treat NULL as distinct from every value and from every other NULL,
+-- so a raw unique index would let two (NULL, external_id) rows coexist (the R-001
+-- duplicate-creation bug). We normalize a NULL connection id to a sentinel so
+-- connection-less identities participate in the same uniqueness domain; the same
+-- index supplies equivalent uniqueness for local artifacts whose external_id is the
+-- durable managed file identity (PRD 11.1).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_document_objects_provider_identity
-  ON document_objects(provider_connection_id, external_id)
+  ON document_objects(COALESCE(provider_connection_id, '__connless__'), external_id)
   WHERE external_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_document_objects_workspace ON document_objects(workspace_id);
@@ -293,6 +334,28 @@ CREATE TABLE IF NOT EXISTS document_integration_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_document_integration_events_document ON document_integration_events(document_id, created_at);
+
+-- R-026 operation-scoped creation-idempotency store. Keyed on (workspace_id,
+-- idempotency_key) so creation can be reconciled before any document record exists
+-- (phase2-canonical-prd.md:1529). Records the requested provider, artifact type,
+-- destination, operation status, resulting provider external id once known, and the
+-- resulting Entity document id once persisted. Persists no credentials.
+CREATE TABLE IF NOT EXISTS document_operations (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  provider TEXT NOT NULL
+    CHECK (provider IN ('google_workspace','microsoft_365','local_office')),
+  artifact_type TEXT NOT NULL
+    CHECK (artifact_type IN ('document','spreadsheet','presentation')),
+  destination_id TEXT,
+  operation_status TEXT NOT NULL,
+  provider_external_id TEXT,
+  document_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (workspace_id, idempotency_key)
+);
 `;
 
 /** Discriminated result of the pre-create schema collision guard. */
@@ -374,6 +437,15 @@ export interface DocumentIntegrationsRepository {
   listVersionRecords(documentId: string): DocumentVersionRecord[];
   appendEvent(input: CreateDocumentIntegrationEventInput): DocumentIntegrationEventRecord;
   listEvents(documentId: string): DocumentIntegrationEventRecord[];
+  /** R-026: create-or-complete an operation-scoped creation-idempotency record. */
+  upsertDocumentOperation(input: UpsertDocumentOperationInput): DocumentOperationRecord;
+  /** R-026 late-fill: record the resulting provider external id / Entity document id once known. */
+  completeDocumentOperation(
+    workspaceId: string,
+    idempotencyKey: string,
+    fields: { operation_status?: string; provider_external_id?: string | null; document_id?: string | null },
+  ): DocumentOperationRecord | undefined;
+  findDocumentOperation(workspaceId: string, idempotencyKey: string): DocumentOperationRecord | undefined;
 }
 
 /** The unified-table set guaranteed present after a successful migration. */
@@ -382,6 +454,7 @@ export const EXPECTED_UNIFIED_TABLES: readonly string[] = [
   'document_associations',
   'document_versions',
   'document_integration_events',
+  'document_operations',
 ];
 
 export function createDocumentIntegrationsRepository(db: Database.Database): DocumentIntegrationsRepository {
@@ -393,8 +466,13 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
       );
     }
     db.exec(DOCUMENT_INTEGRATIONS_SCHEMA_SQL);
+    // Report only the tables actually created now; tables that were already present
+    // with a compatible schema come from the collision detector, not this apply.
+    const newlyEnsured = EXPECTED_UNIFIED_TABLES.filter(
+      (name) => !verdict.namesAlreadyCompatible.includes(name),
+    );
     return {
-      tablesEnsured: [...EXPECTED_UNIFIED_TABLES],
+      tablesEnsured: newlyEnsured,
       collision: { ok: true },
       destructiveChanges: false,
     };
@@ -410,6 +488,7 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
       DROP TABLE IF EXISTS document_versions;
       DROP TABLE IF EXISTS document_associations;
       DROP TABLE IF EXISTS document_objects;
+      DROP TABLE IF EXISTS document_operations;
     `);
   }
 
@@ -460,13 +539,30 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (/unique constraint|constraint failed/i.test(message) && input.external_id) {
+      const isUnique = /unique constraint|constraint failed/i.test(message);
+      // A failure on the identity index, or a PK collision on a deterministic id that
+      // was derived from the provider identity, is a genuine provider-identity collision.
+      const identityDerivedId =
+        input.external_id &&
+        id === documentObjectIdForIdentity(input.provider_connection_id ?? null, input.external_id);
+      const identityIndexCollision = /uq_document_objects_provider_identity/i.test(message);
+      if (isUnique && input.external_id && (identityDerivedId || identityIndexCollision)) {
         // Loud failure instead of silently binding a second record to the same
         // provider identity (R-001 uniqueness + R-036 fail-loud-on-collision).
-        throw new Error(
+        // Attach the underlying SQLite error as `cause` instead of dropping it.
+        const rewritten = new Error(
           `document provider identity already exists: (provider_connection_id, external_id) ` +
             `= (${String(input.provider_connection_id ?? null)}, ${input.external_id})`,
         );
+        (rewritten as Error & { cause?: unknown }).cause = err;
+        throw rewritten;
+      }
+      // Any other failure (e.g. a caller-supplied duplicate id PK collision) is not a
+      // provider-identity collision — rethrow with the cause preserved, never rewritten.
+      if (err instanceof Error) {
+        const wrapped = new Error(`document object insert failed: ${message}`);
+        (wrapped as Error & { cause?: unknown }).cause = err;
+        throw wrapped;
       }
       throw err;
     }
@@ -501,6 +597,7 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
           provider_modified_at = COALESCE(@provider_modified_at, provider_modified_at),
           preview_state = COALESCE(@preview_state, preview_state),
           conflict_state = COALESCE(@conflict_state, conflict_state),
+          indexed_at = COALESCE(@indexed_at, @now),
           updated_at = @now
         WHERE id = @id
       `).run({
@@ -516,14 +613,23 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
         degraded_reason_code: input.degraded_reason_code ?? null,
         current_revision: input.current_revision ?? null,
         provider_modified_at: input.provider_modified_at ?? null,
-        preview_state: input.preview_state ?? 'not_requested',
-        conflict_state: input.conflict_state ?? 'none',
+        // Bind null (not a default) so the SQL COALESCE keeps the stored value when a
+        // metadata re-sync omits these fields (R-001: do not erase preview/conflict state).
+        preview_state: input.preview_state ?? null,
+        conflict_state: input.conflict_state ?? null,
+        indexed_at: input.indexed_at ?? null,
         now,
       });
       const record = getDocumentObject(existing.id);
       return { record: record as DocumentObjectRecord, created: false };
     }
-    return { record: createDocumentObject(input), created: true };
+    // R-001/F5: on create, derive a stable deterministic Entity document id from the
+    // provider identity so re-registration is idempotent across restarts and the PK
+    // enforces one canonical id (including NULL-connection identities).
+    const createInput: CreateDocumentObjectInput = externalId
+      ? { ...input, id: documentObjectIdForIdentity(connectionId, externalId) }
+      : input;
+    return { record: createDocumentObject(createInput), created: true };
   }
 
   function getDocumentObject(id: string): DocumentObjectRecord | undefined {
@@ -537,9 +643,15 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     providerConnectionId: string | null,
     externalId: string,
   ): DocumentObjectRecord | undefined {
+    // NULL-safe identity match: `= NULL` never matches in SQLite, so a connection-less
+    // (NULL provider_connection_id) identity must be matched with an explicit IS NULL.
     const row = db
-      .prepare('SELECT * FROM document_objects WHERE provider_connection_id = ? AND external_id = ?')
-      .get(providerConnectionId, externalId) as DocumentObjectRecord | undefined;
+      .prepare(
+        `SELECT * FROM document_objects
+         WHERE (provider_connection_id = ? OR (provider_connection_id IS NULL AND ? IS NULL))
+           AND external_id = ?`,
+      )
+      .get(providerConnectionId, providerConnectionId, externalId) as DocumentObjectRecord | undefined;
     return row;
   }
 
@@ -636,6 +748,83 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
       .all(documentId) as DocumentIntegrationEventRecord[];
   }
 
+  function findDocumentOperation(
+    workspaceId: string,
+    idempotencyKey: string,
+  ): DocumentOperationRecord | undefined {
+    return db
+      .prepare('SELECT * FROM document_operations WHERE workspace_id = ? AND idempotency_key = ?')
+      .get(workspaceId, idempotencyKey) as DocumentOperationRecord | undefined;
+  }
+
+  function upsertDocumentOperation(input: UpsertDocumentOperationInput): DocumentOperationRecord {
+    const now = nowIso();
+    db.prepare(`
+      INSERT INTO document_operations (
+        id, workspace_id, idempotency_key, provider, artifact_type, destination_id,
+        operation_status, provider_external_id, document_id, created_at, updated_at
+      ) VALUES (
+        @id, @workspace_id, @idempotency_key, @provider, @artifact_type, @destination_id,
+        @operation_status, @provider_external_id, @document_id, @created_at, @updated_at
+      )
+      ON CONFLICT(workspace_id, idempotency_key) DO UPDATE SET
+        provider = excluded.provider,
+        artifact_type = excluded.artifact_type,
+        destination_id = COALESCE(excluded.destination_id, document_operations.destination_id),
+        operation_status = excluded.operation_status,
+        provider_external_id = COALESCE(excluded.provider_external_id, document_operations.provider_external_id),
+        document_id = COALESCE(excluded.document_id, document_operations.document_id),
+        updated_at = excluded.updated_at
+    `).run({
+      id: input.id ?? randomUUID(),
+      workspace_id: input.workspace_id,
+      idempotency_key: input.idempotency_key,
+      provider: input.provider,
+      artifact_type: input.artifact_type,
+      destination_id: input.destination_id ?? null,
+      operation_status: input.operation_status,
+      provider_external_id: input.provider_external_id ?? null,
+      document_id: input.document_id ?? null,
+      created_at: now,
+      updated_at: now,
+    });
+    const record = findDocumentOperation(input.workspace_id, input.idempotency_key);
+    if (!record) {
+      throw new Error('document operation upsert failed');
+    }
+    return record;
+  }
+
+  function completeDocumentOperation(
+    workspaceId: string,
+    idempotencyKey: string,
+    fields: { operation_status?: string; provider_external_id?: string | null; document_id?: string | null },
+  ): DocumentOperationRecord | undefined {
+    // R-026 late-fill: record the resulting provider external id / Entity document id
+    // once known, without requiring an Entity document id to look the row up.
+    const result = db
+      .prepare(`
+        UPDATE document_operations SET
+          operation_status = COALESCE(@operation_status, operation_status),
+          provider_external_id = COALESCE(@provider_external_id, provider_external_id),
+          document_id = COALESCE(@document_id, document_id),
+          updated_at = @now
+        WHERE workspace_id = @workspace_id AND idempotency_key = @idempotency_key
+      `)
+      .run({
+        workspace_id: workspaceId,
+        idempotency_key: idempotencyKey,
+        operation_status: fields.operation_status ?? null,
+        provider_external_id: fields.provider_external_id ?? null,
+        document_id: fields.document_id ?? null,
+        now: nowIso(),
+      });
+    if (result.changes === 0) {
+      return undefined;
+    }
+    return findDocumentOperation(workspaceId, idempotencyKey);
+  }
+
   return {
     ensureSchema,
     reverseSchema,
@@ -648,5 +837,8 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     listVersionRecords,
     appendEvent,
     listEvents,
+    upsertDocumentOperation,
+    completeDocumentOperation,
+    findDocumentOperation,
   };
 }
