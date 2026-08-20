@@ -247,7 +247,7 @@ cd packages/server && npm run build && npx vitest run
 ```
 
 - `npm run build` (strict tsc): **exit 0**
-- `npx vitest run`: **209 test files passed, 1896 tests passed** (exit 0)
+- `npx vitest run`: **209 test files passed, 1904 tests passed** (exit 0) — corrected from the 1896 recorded at 2baf6a1 (that was the pre-r2 count, not re-run after the T-009 r2 review-round tests); finding ID **THE-950 r2 F1** (carry-forward, disclosed in T-010 EVIDENCE and final answer).
 
 ### GREEN — root control gate (task verification #3)
 
