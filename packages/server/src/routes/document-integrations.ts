@@ -20,12 +20,16 @@
  * module adds no event table, no receipt store, no competing provider registry, and no competing
  * API namespace.
  *
- * Revision requirement (T-008 acceptance "typed errors and revision requirement implemented"):
- * mutations REQUIRE `expectedRevision` + `idempotencyKey` and carry a typed `operation`. A stale
- * expected revision is surfaced as HTTP 409 STALE_REVISION with expected/current revision and
- * `retryable:true`, exactly the §12.3 conflict contract. Full revision-coordinator internals
- * (T-009) are out of scope; here the route requires, validates, and surfaces revision semantics
- * against the registry/adapter truth.
+ * Revision requirement (T-008 acceptance "typed errors and revision requirement implemented";
+ * hardened by THE-950/T-009 "Implement Revision Coordinator"): mutations REQUIRE
+ * `expectedRevision` + `idempotencyKey` and carry a typed `operation`. A stale expected revision
+ * is surfaced as HTTP 409 STALE_REVISION with expected/current revision (SANITIZED — no HTML
+ * injection surface, bounded, no secrets/credentials) and `retryable:true`, exactly the
+ * §12.3/R-025 conflict contract. Mutation preconditions and stale-write rejection are owned by the
+ * Revision Coordinator (packages/server/src/document-providers/revision-coordinator.ts, §10.1):
+ * before any adapter write it compares the expected revision against the authoritative provider
+ * current revision and FAILS CLOSED if the adapter cannot establish a safe current revision
+ * (R-024), so a provider with no concurrency evidence never writes optimistically.
  *
  * Typed errors throughout: machine-readable `code`s for stale revision, unknown/degraded
  * capability, missing/unapproved destination policy, workspace isolation — never a bare 500 for
@@ -68,6 +72,11 @@ import {
   resolveMutationAllowance,
 } from '../document-providers/write-policy';
 import type { DocumentDestination } from '../document-providers/destinations';
+import {
+  UnsafeMutationError,
+  preflightMutation,
+  staleRevisionBody,
+} from '../document-providers/revision-coordinator';
 import type {
   DocumentArtifactType,
   DocumentAuthState,
@@ -286,6 +295,12 @@ export function parseMutation(raw: unknown): AdapterMutation {
     case 'set_range':
     case 'range': {
       // Canonical §12.4: sheet/range/values. Legacy alias: cell/value.
+      // THE-949 r3 F1-LOW (carry-forward): a PRESENT but non-string `sheet` must be a typed
+      // INVALID_REQUEST (mirroring the anchor guard at the top of parseMutation), never silently
+      // coerced to '' and dropped.
+      if (raw.sheet !== undefined && typeof raw.sheet !== 'string') {
+        throw new DocumentApiError(400, 'INVALID_REQUEST', 'operation.sheet must be a string when present.');
+      }
       const sheet = typeof raw.sheet === 'string' ? raw.sheet : '';
       const range = typeof raw.range === 'string' ? raw.range : '';
       const cell = typeof raw.cell === 'string' ? raw.cell : '';
@@ -313,6 +328,15 @@ export function parseMutation(raw: unknown): AdapterMutation {
       // carries only a slideId, so a non-empty elementRef or text payload (structured slide
       // targeting / content) cannot be faithfully forwarded — reject it with a typed
       // CAPABILITY_UNSUPPORTED instead of silently dropping it (§12.5 no-silent-drop).
+      // THE-949 r3 F1-LOW (carry-forward): a PRESENT but non-string elementRef/text must be a
+      // typed INVALID_REQUEST (mirroring the anchor guard), never silently coerced to '' and
+      // dropped.
+      if (raw.elementRef !== undefined && typeof raw.elementRef !== 'string') {
+        throw new DocumentApiError(400, 'INVALID_REQUEST', 'operation.elementRef must be a string when present.');
+      }
+      if (raw.text !== undefined && typeof raw.text !== 'string') {
+        throw new DocumentApiError(400, 'INVALID_REQUEST', 'operation.text must be a string when present.');
+      }
       const elementRef = typeof raw.elementRef === 'string' ? raw.elementRef.trim() : '';
       const text = typeof raw.text === 'string' ? raw.text.trim() : '';
       if (elementRef || text) {
@@ -410,14 +434,16 @@ function sendDocumentApiError(res: Response, err: unknown): Response {
     return res.status(err.statusCode).json(body);
   }
   if (err instanceof StaleRevisionError) {
-    return res.status(409).json({
-      error: {
-        code: 'STALE_REVISION',
-        message: err.message,
-        expectedRevision: err.expectedRevision,
-        currentRevision: err.currentRevision,
-        retryable: err.retryable,
-      },
+    // R-025: provider-neutral 409 envelope with SANITIZED expected/current revisions (no
+    // credentials, no HTML injection surface) and the fixed conflict message. No blind retry.
+    return res.status(409).json({ error: staleRevisionBody(err) });
+  }
+  if (err instanceof UnsafeMutationError) {
+    // R-024 / T-009 fail-closed: the adapter cannot establish a safe current revision for this
+    // lane, so the lane degrades to a typed capability error instead of writing on unverifiable
+    // state. `capability` names the lane (a fixed vocabulary value, never a free-form token).
+    return res.status(403).json({
+      error: { code: 'CAPABILITY_UNSUPPORTED', message: err.message, capability: err.lane },
     });
   }
   if (err instanceof UnapprovedDestinationError) {
@@ -783,6 +809,20 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
       }
       let result: { priorRevision: string; resultRevision: string };
       try {
+        // §10.1 Revision Coordinator (THE-950/T-009): enforce the R-024 mutation precondition
+        // BEFORE the adapter write. It reads the authoritative provider current revision, fails
+        // closed if no safe current revision can be established (UnsafeMutationError -> typed
+        // CAPABILITY_UNSUPPORTED), and rejects a stale expected revision (StaleRevisionError ->
+        // 409) so no mutation is attempted on a stale expectation. The adapter's own mutate
+        // re-checks the revision atomically as defense in depth.
+        await preflightMutation({
+          adapter,
+          externalId: record.external_id ?? '',
+          providerConnectionId: record.provider_connection_id ?? null,
+          mutation,
+          expectedRevision,
+          documentId: record.id,
+        });
         const mutated = await adapter.mutate({
           external_id: record.external_id ?? '',
           provider_connection_id: record.provider_connection_id ?? null,
@@ -794,17 +834,9 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
         result = { priorRevision: mutated.priorRevision, resultRevision: mutated.resultRevision };
       } catch (err) {
         if (err instanceof StaleRevisionError) {
-          // §12.3 409 contract: expected/current + retryable.
-          return res.status(409).json({
-            error: {
-              code: 'STALE_REVISION',
-              message: err.message,
-              documentId: record.id,
-              expectedRevision: err.expectedRevision,
-              currentRevision: err.currentRevision,
-              retryable: true,
-            },
-          });
+          // R-025 §12.3 409 contract: code/message/documentId/expectedRevision/currentRevision/
+          // retryable, with SANITIZED expected/current revisions and the fixed conflict message.
+          return res.status(409).json({ error: staleRevisionBody(err, record.id) });
         }
         throw err;
       }

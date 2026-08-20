@@ -956,6 +956,182 @@ describe('T-008 provider-neutral document API — mutate (§12.3, revision requi
   });
 });
 
+describe('THE-950 (T-009) — Revision Coordinator at the route boundary (§12.3/R-024/R-025)', () => {
+  /**
+   * Deterministic no-token adapter: advertises the text lane but returns NO current revision from
+   * the authoritative metadata surface, so the Revision Coordinator must fail closed rather than
+   * write optimistically on unverifiable state (R-024).
+   */
+  function noTokenGoogleAdapter() {
+    const inner = createFakeDocumentProviderAdapter();
+    const wrapped: DocumentProviderAdapter = {
+      provider: 'google_workspace',
+      resolveCapabilities: (ctx) => inner.resolveCapabilities(ctx),
+      discover: (i) => inner.discover(i),
+      getMetadata: async (i) =>
+        inner.getMetadata(i).then((d) => (d ? { ...d, current_revision: null } : d)),
+      create: (i) => inner.create(i),
+      read: (i) => inner.read(i),
+      mutate: (i) => inner.mutate(i),
+      getOpenTarget: (i) => inner.getOpenTarget(i),
+      reconcileChanges: (i) => inner.reconcileChanges(i),
+    };
+    return { inner, wrapped };
+  }
+
+  it('STALE_REVISION 409 preserves the §12.3/R-025 envelope with SANITIZED expected/current revisions', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    // Advance the document to rev-2 so a later request prepared against rev-1 is genuinely stale.
+    const advance = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: 'rev-1', idempotencyKey: 'op_adv_c', operation: { kind: 'replace_text', content: 'a' } },
+    });
+    expect(advance.status).toBe(200);
+
+    // A hostile (untrusted) expected revision must be sanitized before inclusion in the response —
+    // no HTML injection surface, no unbounded/control characters, no credentials bleed.
+    const hostile = '<script>alert(1)</script>Bearer-abcdef';
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: hostile, idempotencyKey: 'op_hostile', operation: { kind: 'replace_text', content: 'x' } },
+    });
+    expect(res.status).toBe(409);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('STALE_REVISION');
+    expect(body.error.message).toBe('The document changed after this operation was prepared.');
+    expect(body.error.documentId).toBe(documentId);
+    expect(body.error.currentRevision).toBe('rev-2');
+    expect(body.error.retryable).toBe(true);
+    // expectedRevision is sanitized: HTML metacharacters stripped (no HTML injection surface),
+    // no control characters, and bounded length (an over-long/credential-like payload is truncated,
+    // never echoed in full).
+    expect(body.error.expectedRevision).not.toMatch(/[<>]/);
+    expect(body.error.expectedRevision).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(String(body.error.expectedRevision).length).toBeLessThanOrEqual(64);
+  });
+
+  it('409 STALE_REVISION contract requires NO automatic blind retry — a repeated stale request stays 409', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const mutateBody = {
+      expectedRevision: 'rev-1',
+      idempotencyKey: 'op_noretry',
+      operation: { kind: 'replace_text', content: 'x' },
+    };
+    // Advance first so rev-1 becomes stale.
+    await requestApp(ctx.app, { path: `/api/document-integrations/${documentId}/mutations`, method: 'POST', body: mutateBody });
+    // Same stale expectedRevision sent twice: the server never masks the conflict by auto-retrying.
+    const first = await requestApp(ctx.app, { path: `/api/document-integrations/${documentId}/mutations`, method: 'POST', body: mutateBody });
+    const second = await requestApp(ctx.app, { path: `/api/document-integrations/${documentId}/mutations`, method: 'POST', body: mutateBody });
+    expect(first.status).toBe(409);
+    expect(second.status).toBe(409);
+    expect((await bodyOf(first)).error.code).toBe('STALE_REVISION');
+    expect((await bodyOf(second)).error.code).toBe('STALE_REVISION');
+  });
+
+  it('an unsafe provider with NO concurrency evidence FAILS CLOSED (typed CAPABILITY_UNSUPPORTED, no write)', async () => {
+    const ctx = setup();
+    const { inner, wrapped } = noTokenGoogleAdapter();
+    ctx.adapters.set('google_workspace', wrapped);
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    // Create through the API using the wrapped adapter so the registry record + provider artifact
+    // both exist (the no-token adapter advertises the lane but exposes no revision token).
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: {
+        artifactType: 'document',
+        title: 'Q3',
+        provider: 'google_workspace',
+        destinationId: 'dest_1',
+        idempotencyKey: 'op_notoken_create',
+      },
+    });
+    expect(res.status).toBe(201);
+    const documentId = (await bodyOf(res)).documentId;
+
+    // The lane is advertised as supported, so the mutation is not a capability-absent case; the
+    // Revision Coordinator must still fail closed because no safe current revision can be
+    // established by this provider. Never a silent optimistic write.
+    const mutate = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: 'rev-1', idempotencyKey: 'op_notoken_mut', operation: { kind: 'replace_text', content: 'x' } },
+    });
+    expect(mutate.status).toBe(403);
+    expect((await bodyOf(mutate)).error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+});
+
+describe('THE-950 (T-009) — carry-forward: present-but-non-string fields are typed 400, never silently dropped (THE-949 r3 F1-LOW)', () => {
+  it('slide lane: present-but-non-string elementRef is a typed INVALID_REQUEST (400), not silently dropped', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_f1_ele',
+        operation: { kind: 'update_slide_text', slideRef: 'slide_4', elementRef: 42, text: 'x' },
+      },
+    });
+    expect(res.status).toBe(400);
+    expect((await bodyOf(res)).error.code).toBe('INVALID_REQUEST');
+  });
+
+  it('slide lane: present-but-non-string text is a typed INVALID_REQUEST (400), not silently dropped', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_f1_text',
+        operation: { kind: 'update_slide_text', slideRef: 'slide_4', text: { nope: true } },
+      },
+    });
+    expect(res.status).toBe(400);
+    expect((await bodyOf(res)).error.code).toBe('INVALID_REQUEST');
+  });
+
+  it('range lane: present-but-non-string sheet is a typed INVALID_REQUEST (400), not silently dropped', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_f1_sheet',
+        operation: { kind: 'set_range', sheet: ['Forecast'], range: 'B2', values: [[1]] },
+      },
+    });
+    expect(res.status).toBe(400);
+    expect((await bodyOf(res)).error.code).toBe('INVALID_REQUEST');
+  });
+});
+
 describe('T-008 provider-neutral document API — capabilities (§12.6, reason codes + fail closed)', () => {
   it('capabilities include reason codes and honor the T-006 fold', async () => {
     const ctx = setup();
