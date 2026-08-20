@@ -105,6 +105,8 @@ function basePolicy(overrides: Partial<WritePolicy> = {}): WritePolicy {
     writeMode: 'create_and_update',
     confirmationPolicy: null,
     writeAuthorizationProven: true,
+    // T-013 (R-005): base fixtures assume an explicit administrator write authorization.
+    adminWriteAuthorized: true,
     ...overrides,
   });
 }
@@ -931,28 +933,39 @@ describe('T-008 provider-neutral document API — mutate (§12.3, revision requi
     expect(body.error.code).toBe('INVALID_REQUEST');
   });
 
-  it('gap 2: capability-resolver disabled (rollback) still fails closed via the adapter (CAPABILITY_UNSUPPORTED)', async () => {
-    // Flag-off (rollback posture): the route skips its own T-006 pre-check, but the adapter's
-    // own fail-closed enforcement still rejects an unsupported lane.
+  it('T-013 (R-005 #1): audited deployment flag disabled DENIES a Google mutation (master write gate, 14.6 rollback)', async () => {
+    // Flag-off (rollback posture): the audited feature flag is the MASTER availability switch
+    // for Google writes (14.6: disabling restores read-only without schema rollback). A mutation
+    // under flag-off is denied at the route with typed WRITE_DISABLED — no provider write is
+    // dispatched and the flag can never LIFT a write lane.
     const ctx = setup({
       flags: resolvePhase2Flags({ ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT: 'off' }),
     });
-    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    const adapter = createFakeDocumentProviderAdapter();
+    ctx.adapters.set('google_workspace', adapter);
     ctx.policies.push(basePolicy());
     ctx.destinations.push(baseDestination());
-    const documentId = await createViaApi(ctx, createBody());
+    // Seed the fake adapter store + registry DIRECTLY (the route create is itself deployment-
+    // gated under flag-off, so we seed the artifact without exercising the create route).
+    const seeded = await adapter.create({
+      artifact_type: 'document',
+      title: 'rollback seed',
+      idempotencyKey: 'op-seed-rollback',
+      now: TEST_NOW,
+    });
+    const registered = ctx.registry.register(baseWriteInput({ external_id: seeded.descriptor.external_id }), 'ws_A');
     const res = await requestApp(ctx.app, {
-      path: `/api/document-integrations/${documentId}/mutations`,
+      path: `/api/document-integrations/${registered.record.id}/mutations`,
       method: 'POST',
       body: {
         expectedRevision: 'rev-1',
-        idempotencyKey: 'op_rollback_range',
+        idempotencyKey: 'op_rollback_master',
         operation: { kind: 'set_range', cell: 'A1', value: '10' },
       },
     });
     expect(res.status).toBe(403);
     const body = await bodyOf(res);
-    expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
+    expect(body.error.code).toBe('WRITE_DISABLED');
   });
 });
 
@@ -1455,5 +1468,93 @@ describe('T-008 — B4 wall-clock production clock (no injected `now`)', () => {
     const modifiedMs = Date.parse(body.document.modifiedAt);
     expect(Number.isFinite(modifiedMs)).toBe(true);
     expect(Math.abs(Date.now() - modifiedMs)).toBeLessThan(60_000);
+  });
+});
+
+describe('T-013 (THE-954) — Google admin write gate and destination UX (R-005/R-007, one-negative-test-per-gate)', () => {
+  it('NEGATIVE flag: audited deployment flag OFF denies a Google create (master write gate, typed WRITE_DISABLED)', async () => {
+    const ctx = setup({
+      flags: resolvePhase2Flags({ ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT: 'off' }),
+    });
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    // Every OTHER gate would pass (admin + destination + write mode + no-confirmation), yet the
+    // audited flag is the deployment-level availability gate: off => the write is not deployed.
+    const res = await requestApp(ctx.app, { path: '/api/document-integrations', method: 'POST', body: createBody() });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('WRITE_DISABLED');
+  });
+
+  it('NEGATIVE admin: a non-admin write authorization denies a Google create (R-005 gate, typed WRITE_DISABLED)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy({ adminWriteAuthorized: false }));
+    ctx.destinations.push(baseDestination());
+    const res = await requestApp(ctx.app, { path: '/api/document-integrations', method: 'POST', body: createBody() });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('WRITE_DISABLED');
+  });
+
+  it('NEGATIVE confirmation: a create whose confirmation policy requires but is not satisfied is denied (CONFIRMATION_REQUIRED)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy({ confirmationPolicy: 'required' }));
+    ctx.destinations.push(baseDestination());
+    // No `confirmed` flag supplied => confirmation not satisfied => blocked even though every
+    // other gate (admin/destination/write mode/flag/capability) is satisfied.
+    const res = await requestApp(ctx.app, { path: '/api/document-integrations', method: 'POST', body: createBody({ confirmed: false }) });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CONFIRMATION_REQUIRED');
+  });
+
+  it('NEGATIVE confirmation (update): a mutation whose confirmation policy is not satisfied is denied (CONFIRMATION_REQUIRED)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy({ confirmationPolicy: 'required' }));
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody({ confirmed: true }));
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-0',
+        idempotencyKey: 'op-confirm-update',
+        operation: { kind: 'replace_text', content: 'x', text: 'x' },
+        confirmed: false,
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CONFIRMATION_REQUIRED');
+  });
+
+  it('SUCCESS: a Google create passes when EVERY gate is satisfied (flag on + admin + approved destination + create mode + confirmation satisfied)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy({ confirmationPolicy: 'required' }));
+    ctx.destinations.push(baseDestination());
+    const res = await requestApp(ctx.app, { path: '/api/document-integrations', method: 'POST', body: createBody({ confirmed: true }) });
+    expect(res.status).toBe(201);
+    expect((await bodyOf(res)).documentId).toBeDefined();
+  });
+
+  it('R-007: an unauthorized/wrong-scope destination fails without fallback (typed DESTINATION_NOT_ALLOWED)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy({ allowedDestinationIds: new Set(['dest_1']) }));
+    // Only dest_1 serves ws_A; dest_OTHER is NOT approved for this scope => no fallback.
+    ctx.destinations.push(baseDestination({ id: 'dest_1' }));
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: createBody({ destinationId: 'dest_OTHER' }),
+    });
+    expect(res.status).toBe(422);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('DESTINATION_NOT_ALLOWED');
   });
 });

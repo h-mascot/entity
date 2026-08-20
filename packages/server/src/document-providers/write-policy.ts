@@ -80,6 +80,14 @@ export interface WritePolicy {
   confirmationPolicy: ConfirmationPolicy | null;
   /** False => effective write mode is `disabled` regardless of `writeMode` (R-003 default). */
   writeAuthorizationProven: boolean;
+  /**
+   * T-013 (R-005 "explicit administrator write authorization"): an EXPLICIT administrator
+   * write authorization, independent of `writeAuthorizationProven` (R-003) and of any broad
+   * OAuth scopes. Both must hold for an effective write mode. Default after migration is
+   * `false` (fail closed): a read-only or merely-scoped connection is NEVER promoted to
+   * write-capable without an explicit administrator authorization.
+   */
+  adminWriteAuthorized: boolean;
   /** False => policy is disabled but its record is preserved (never auto-deleted). */
   enabled: boolean;
 }
@@ -102,6 +110,8 @@ export interface WritePolicyInput {
   writeMode?: WriteMode;
   confirmationPolicy?: ConfirmationPolicy | null;
   writeAuthorizationProven?: boolean;
+  /** T-013 R-005 explicit administrator write authorization (default `false`, fail closed). */
+  adminWriteAuthorized?: boolean;
   enabled?: boolean;
 }
 
@@ -119,6 +129,10 @@ export function createPolicyForWorkspace(input: WritePolicyInput): WritePolicy {
     writeMode: input.writeMode ?? 'disabled',
     confirmationPolicy: input.confirmationPolicy ?? null,
     writeAuthorizationProven: input.writeAuthorizationProven ?? false,
+    // T-013 (R-005): EXPLICIT administrator write authorization defaults to false (fail
+    // closed). A policy is not admin-authorized merely because it exists or because the
+    // connection carries broad OAuth scopes.
+    adminWriteAuthorized: input.adminWriteAuthorized ?? false,
     enabled: input.enabled ?? true,
   };
 }
@@ -135,12 +149,20 @@ export function defaultDestinationId(policy: WritePolicy): string | null {
  * can be proven." A disabled policy, or a policy without a proven explicit write authorization,
  * resolves to `disabled` — even if a `writeMode` value was stored — so a read-only connection
  * can NEVER be promoted to write-capable by stored mode alone or by broad OAuth scopes.
+ *
+ * T-013 (R-005): the write is additionally gated on EXPLICIT administrator write authorization
+ * (`adminWriteAuthorized`). Broad OAuth scope alone does not enable writes; a policy that is
+ * not explicitly admin-authorized resolves to `disabled` regardless of `writeMode` or granted
+ * scopes (R-005 "explicit administrator write authorization"; RK-007 least-privilege).
  */
 export function resolvedWriteMode(policy: WritePolicy): WriteMode {
   if (!policy.enabled) {
     return 'disabled';
   }
   if (!policy.writeAuthorizationProven) {
+    return 'disabled';
+  }
+  if (!policy.adminWriteAuthorized) {
     return 'disabled';
   }
   return policy.writeMode;
@@ -347,10 +369,61 @@ export function resolveMutationAllowance(
  *
  * R-003 logical model supports an optional confirmation policy. The exact default (OQ-003) is
  * open downstream; here `null`/`auto_approve`/`not_required` mean no confirmation is demanded
- * and only `required` gates the operation on human confirmation (wired in T-008).
+ * and only `required` gates the operation on human confirmation. Enforcement is wired in T-013
+ * (R-005 "applicable confirmation policy satisfied") via `resolveConfirmationAllowance`.
  */
 export function requiresConfirmation(policy: WritePolicy, _operation: WriteOperation): boolean {
   return policy.confirmationPolicy === 'required';
+}
+
+/** A fully resolved confirmation decision for one write operation (T-013, R-005 gate). */
+export interface ConfirmationDecision {
+  policyFound: boolean;
+  /** Whether an applicable confirmation policy actually requires explicit confirmation. */
+  confirmationRequired: boolean;
+  /**
+   * Whether the applicable confirmation policy is SATISFIED (`true` when no confirmation is
+   * required, or when the caller supplied confirmation). `false` only when confirmation is
+   * required but the request did not provide it.
+   */
+  satisfied: boolean;
+  /**
+   * `'allowed'` when the confirmation policy imposes no unsatisfied block; `'denied'` when a
+   * required confirmation is missing OR no governing policy exists (fail closed — a missing
+   * policy must never let a write through the confirmation gate).
+   */
+  allowance: PolicyAllowance;
+}
+
+/**
+ * T-013 (R-005 "applicable confirmation policy satisfied"): resolve whether a write operation
+ * satisfies the governing confirmation policy.
+ *
+ * Fail closed: a missing governing policy is `denied`. When the policy requires confirmation
+ * (`confirmationPolicy === 'required'`, OQ-003 default open) the write is `denied` unless the
+ * caller explicitly supplies confirmation (`confirmed === true`). `null`/`auto_approve`/
+ * `not_required` require no confirmation. This gate is INDEPENDENT of destination and write
+ * mode — a write that passes the destination/write-mode gates is STILL blocked here unless the
+ * confirmation policy is satisfied (R-005: removing any one gate prevents the write).
+ */
+export function resolveConfirmationAllowance(
+  policies: readonly WritePolicy[],
+  scope: WriteRequestScope,
+  operation: WriteOperation,
+  confirmed: boolean,
+): ConfirmationDecision {
+  const policy = findGoverningPolicy(policies, scope);
+  if (!policy) {
+    return { policyFound: false, confirmationRequired: false, satisfied: false, allowance: 'denied' };
+  }
+  const confirmationRequired = requiresConfirmation(policy, operation);
+  const satisfied = !confirmationRequired || confirmed === true;
+  return {
+    policyFound: true,
+    confirmationRequired,
+    satisfied,
+    allowance: satisfied ? 'allowed' : 'denied',
+  };
 }
 
 /** Typed configuration error: no write destination policy governs the request scope (acceptance 3). */
