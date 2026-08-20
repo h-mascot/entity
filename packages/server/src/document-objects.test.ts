@@ -1802,6 +1802,31 @@ describe('T-012 R-004 — Google V1 read-only mapping into the unified document 
     }
   });
 
+  it('T-013 carry-forward F2 (THE-953): unproven read-like lanes and export are never claimed supported (capability honesty pin)', () => {
+    // Pins the capability-honesty invariants that previously had ZERO coverage in this suite.
+    // These pin CURRENT CORRECT behavior — GREEN (not RED→GREEN).
+    const mapping = mapGoogleExternalRefToUnifiedReport(googleRef(), new Date(FIXED_NOW));
+    // (1) The unproven lanes — thumbnail / version_history / change_tracking / permission_read /
+    // export — are never claimed `supported` by the unified Google mapping, even when the legacy
+    // connector claims write/export support. Unknown/unproven capability never lifts a lane.
+    for (const unproven of [
+      'thumbnail',
+      'version_history',
+      'change_tracking',
+      'permission_read',
+      'export',
+    ] as const) {
+      expect(mapping.report[unproven].state).toBe('unsupported');
+      expect(mapping.report[unproven].name).toBe(unproven);
+      expect(capabilityAllowsAction(mapping.report[unproven])).toBe(false);
+    }
+    // (2) The legacy GOOGLE_V1_MUTATION_CAPABILITIES vocabulary includes `export`, and every
+    // member of that legacy write vocabulary is read-only (`false`) on the mapping.
+    for (const mutation of ['create', 'update', 'write', 'export', 'sync'] as const) {
+      expect(mapping.legacy.mutation_capabilities[mutation]).toBe(false);
+    }
+  });
+
   it('assertGoogleUnifiedWritesDisabled accepts a disabled report and throws on a tampered one (defense-in-depth)', () => {
     const mapping = mapGoogleExternalRefToUnifiedReport(googleRef(), new Date(FIXED_NOW));
     // A correctly-disabled Google V1 report passes the guard (no throw).

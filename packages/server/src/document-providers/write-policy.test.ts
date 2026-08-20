@@ -39,6 +39,7 @@ import {
   defaultDestinationId,
   findGoverningPolicy,
   requiresConfirmation,
+  resolveConfirmationAllowance,
   resolveCreateAllowance,
   resolveDestinationAllowance,
   resolveMutationAllowance,
@@ -75,6 +76,9 @@ function basePolicy(overrides: Partial<WritePolicy> = {}): WritePolicy {
     writeMode: 'create_and_update',
     confirmationPolicy: null,
     writeAuthorizationProven: true,
+    // T-013 (R-005): explicit administrator write authorization. Tests that intend a fully
+    // authorized policy set this explicitly; T-013 negative tests override it to prove denial.
+    adminWriteAuthorized: true,
     ...overrides,
   });
 }
@@ -582,5 +586,87 @@ describe('write policy: UnapprovedDestinationError cause differentiation (THE-94
         baseScope({ destinationId: 'dest_allowed' }),
       ),
     ).toThrow(UnapprovedDestinationError);
+  });
+});
+
+describe('T-013 R-005 — explicit administrator write authorization gate (one-negative-test-per-gate)', () => {
+  it('NEGATIVE admin: a policy without explicit admin authorization resolves to disabled (non-admin denied)', () => {
+    const nonAdmin = basePolicy({
+      adminWriteAuthorized: false,
+      writeMode: 'create_and_update',
+      writeAuthorizationProven: true,
+    });
+    // Broad OAuth scope / proven write authorization alone NEVER enables the write without
+    // the separate explicit administrator authorization (R-005 gate).
+    expect(resolvedWriteMode(nonAdmin)).toBe('disabled');
+    expect(resolveCreateAllowance([nonAdmin], [baseDestination()], baseScope()).policy).toBe('denied');
+    expect(resolveMutationAllowance([nonAdmin], baseScope()).policy).toBe('denied');
+  });
+
+  it('admin authorization alone does NOT prove write authorization; both explicit gates required', () => {
+    const adminOnly = basePolicy({ adminWriteAuthorized: true, writeAuthorizationProven: false });
+    expect(resolvedWriteMode(adminOnly)).toBe('disabled');
+    expect(resolveMutationAllowance([adminOnly], baseScope()).policy).toBe('denied');
+    const unprovenNoAdmin = basePolicy({ adminWriteAuthorized: false, writeAuthorizationProven: false });
+    expect(resolvedWriteMode(unprovenNoAdmin)).toBe('disabled');
+  });
+
+  it('SUCCESS: a write that passes EVERY gate (admin + proven + allow create/update + approved destination) is allowed', () => {
+    const full = basePolicy({
+      adminWriteAuthorized: true,
+      writeAuthorizationProven: true,
+      writeMode: 'create_and_update',
+      allowedDestinationIds: new Set(['dest_allowed']),
+    });
+    expect(resolvedWriteMode(full)).toBe('create_and_update');
+    const create = resolveCreateAllowance([full], [baseDestination()], baseScope());
+    expect(create.destination).toBe('allowed');
+    expect(create.policy).toBe('allowed');
+    expect(resolveMutationAllowance([full], baseScope()).policy).toBe('allowed');
+  });
+});
+
+describe('T-013 R-005 — applicable confirmation policy satisfied (one-negative-test-per-gate)', () => {
+  it('NEGATIVE confirmation: a required confirmation policy that is NOT satisfied denies the write', () => {
+    const required = basePolicy({ confirmationPolicy: 'required' });
+    const decision = resolveConfirmationAllowance([required], baseScope(), 'create', false);
+    expect(decision.policyFound).toBe(true);
+    expect(decision.confirmationRequired).toBe(true);
+    expect(decision.satisfied).toBe(false);
+    expect(decision.allowance).toBe('denied');
+    // Applies to updates too.
+    expect(resolveConfirmationAllowance([required], baseScope(), 'update', false).allowance).toBe('denied');
+  });
+
+  it('a required confirmation policy that IS satisfied allows the write', () => {
+    const required = basePolicy({ confirmationPolicy: 'required' });
+    expect(resolveConfirmationAllowance([required], baseScope(), 'create', true).allowance).toBe('allowed');
+    expect(resolveConfirmationAllowance([required], baseScope(), 'update', true).allowance).toBe('allowed');
+  });
+
+  it('no required confirmation (null/auto_approve) allows the write without explicit confirmation', () => {
+    expect(resolveConfirmationAllowance([basePolicy({ confirmationPolicy: null })], baseScope(), 'create', false).allowance).toBe('allowed');
+    expect(resolveConfirmationAllowance([basePolicy({ confirmationPolicy: 'auto_approve' })], baseScope(), 'create', false).allowance).toBe('allowed');
+    expect(resolveConfirmationAllowance([basePolicy({ confirmationPolicy: 'not_required' })], baseScope(), 'create', false).allowance).toBe('allowed');
+  });
+
+  it('missing governing policy fails the confirmation gate closed (never allows)', () => {
+    const decision = resolveConfirmationAllowance([], baseScope(), 'create', true);
+    expect(decision.policyFound).toBe(false);
+    expect(decision.allowance).toBe('denied');
+  });
+});
+
+describe('T-013 R-005 — table-driven gate matrix (removing ANY one gate prevents the write)', () => {
+  const success = () => basePolicy(); // every gate satisfied
+  it('success path requires ALL gates: feature availability (route, tested elsewhere) + admin + destination + write mode + confirmation', () => {
+    // Posture a single fully-satisfied fixture and prove create is allowed.
+    const decision = resolveCreateAllowance([success()], [baseDestination()], baseScope());
+    expect(decision.policyFound).toBe(true);
+    expect(decision.writeMode).toBe('create_and_update');
+    expect(decision.destination).toBe('allowed');
+    expect(decision.policy).toBe('allowed');
+    // Confirmation gate separately satisfied (not required under the base fixture).
+    expect(resolveConfirmationAllowance([success()], baseScope(), 'create', false).allowance).toBe('allowed');
   });
 });

@@ -68,6 +68,7 @@ import {
   UnapprovedDestinationError,
   type WritePolicy,
   type WriteRequestScope,
+  resolveConfirmationAllowance,
   resolveCreateAllowance,
   resolveMutationAllowance,
 } from '../document-providers/write-policy';
@@ -97,6 +98,7 @@ export type DocumentApiErrorCode =
   | 'DESTINATION_REQUIRED'
   | 'DESTINATION_NOT_ALLOWED'
   | 'WRITE_DISABLED'
+  | 'CONFIRMATION_REQUIRED'
   | 'INVALID_REQUEST'
   | 'UNSUPPORTED_OPERATION'
   | 'CREATE_RECONCILIATION_REQUIRED'
@@ -161,12 +163,16 @@ export interface CreateDocumentBody {
   idempotencyKey: string;
   initialContent?: unknown;
   associations?: unknown;
+  /** T-013 R-005 #7: explicit human confirmation, required when the governing policy demands it. */
+  confirmed?: boolean;
 }
 
 export interface MutateDocumentBody {
   expectedRevision: string;
   idempotencyKey: string;
   operation: Record<string, unknown>;
+  /** T-013 R-005 #7: explicit human confirmation, required when the governing policy demands it. */
+  confirmed?: boolean;
 }
 
 /** The workspace/tenant scope a write request resolves against (R-007 explicit destination). */
@@ -203,6 +209,63 @@ function resolveWriteEvidence(
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return Boolean(v && typeof v === 'object' && !Array.isArray(v));
+}
+
+/**
+ * T-013 (R-005 "deployment-level feature availability"; 14.6 rollback) — the audited feature
+ * gate is the master availability switch for Google WRITE authorization.
+ *
+ * OQ-018 ("Which current Entity feature-flag mechanism should host the write gates?") is open;
+ * there is NO dedicated Google-write audited flag. Per the task we reuse the existing audited
+ * flag surface rather than inventing a new untracked flag: `capability_resolver_enforcement`
+ * (packages/server/src/phase2-flags.ts, surface `document_capabilities`) is the on-point audited
+ * flag already governing the resolver-driven write machinery. When it is DISABLED we fail closed
+ * Google writes (WRITE_DISABLED) — disabling the audited flag immediately restores effective
+ * read-only behavior WITHOUT schema rollback (14.6). The flag can only ever DISABLE a Google
+ * write; it can never lift the admin/destination/write-mode/confirmation gates.
+ */
+function assertGoogleWriteDeploymentAvailable(
+  deps: DocumentIntegrationsRouterDeps,
+  operation: string,
+): void {
+  if (!capabilityResolutionEnabled(deps.flags)) {
+    throw new DocumentApiError(
+      403,
+      'WRITE_DISABLED',
+      `Google ${operation} is not deployed: the audited write-gate feature flag is disabled; ` +
+        `restoring read-only behavior (fail closed, no schema rollback).`,
+    );
+  }
+}
+
+/**
+ * T-013 (R-005 "applicable confirmation policy satisfied") — enforce the confirmation gate at
+ * the route boundary. Fail closed: a missing governing policy is denied; a required confirmation
+ * that the request did not satisfy is a typed CONFIRMATION_REQUIRED. Only a satisfied
+ * (or not-required) confirmation policies lets the write proceed past this gate.
+ */
+function assertGoogleWriteConfirmationSatisfied(
+  deps: DocumentIntegrationsRouterDeps,
+  scope: WriteRequestScope,
+  operation: 'create' | 'update',
+  confirmed: boolean,
+): void {
+  const decision = resolveConfirmationAllowance(deps.policies, scope, operation, confirmed);
+  if (decision.allowance === 'denied') {
+    if (!decision.policyFound) {
+      throw new DocumentApiError(
+        409,
+        'DESTINATION_REQUIRED',
+        'no write destination policy governs the request scope; confirmation cannot be resolved (fail closed).',
+      );
+    }
+    throw new DocumentApiError(
+      403,
+      'CONFIRMATION_REQUIRED',
+      `this ${operation} requires explicit human confirmation per the governing confirmation policy; ` +
+        `the request did not provide it (blocked).`,
+    );
+  }
 }
 
 function bodyObject(req: Request): Record<string, unknown> {
@@ -574,6 +637,12 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
       );
       const destinationId = optionalString(body as unknown as Record<string, unknown>, 'destinationId');
       const adapter = getAdapter(deps, provider);
+      // T-013 (R-005 #1) deployment-level feature availability: the audited flag is the master
+      // availability switch for Google writes. Disabled => create is undispatched (read-only).
+      assertGoogleWriteDeploymentAvailable(deps, 'create');
+      // R-005 #7 applicable confirmation policy: an explicit, truthful confirmation flag from the
+      // caller is required when the governing confirmation policy demands it (OQ-003 default open).
+      const confirmed = (body as unknown as Record<string, unknown>).confirmed === true;
 
       // B3 (THE-949/T-008): `initialContent`/`associations` declared on the §12.2 envelope must
       // NEVER be accepted then silently dropped. The current adapter create lane cannot honor
@@ -636,6 +705,9 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
           'creation is not authorized by the governing write policy / destination (fail closed).',
         );
       }
+      // T-013 (R-005 #7): applicable confirmation policy must be satisfied AFTER the write
+      // policy/destination gates pass — removing ANY gate prevents the write.
+      assertGoogleWriteConfirmationSatisfied(deps, scope, 'create', confirmed);
       // Capability resolver: create must be fully actionable (fail closed on unknown/degraded).
       // M2: connection state is DERIVED from actual registered state (default unknown => fail
       // closed), never fabricated as 'authorized'; runtime evidence is actual (default none).
@@ -760,6 +832,10 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
       const idempotencyKey = requiredString(body as unknown as Record<string, unknown>, 'idempotencyKey');
       const mutation = parseMutation((body as unknown as Record<string, unknown>).operation);
       const adapter = getAdapter(deps, record.provider);
+      // T-013 (R-005 #1) deployment-level feature availability (master write-gate switch).
+      assertGoogleWriteDeploymentAvailable(deps, 'mutation');
+      // T-013 (R-005 #7) applicable confirmation policy.
+      const confirmed = (body as unknown as Record<string, unknown>).confirmed === true;
 
       // Mutation policy (R-003): only create_and_update authorizes mutations.
       const scope = writeScopeFor(
@@ -786,6 +862,8 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
           'mutation is not authorized by the governing write policy (only create_and_update allows updates).',
         );
       }
+      // T-013 (R-005 #7): applicable confirmation policy must be satisfied for the update too.
+      assertGoogleWriteConfirmationSatisfied(deps, scope, 'update', confirmed);
       // Capability resolver: the mutation lane must be fully supported (fail closed on
       // unknown/degraded). UnsupportedAdapterMutationError surfaces as CAPABILITY_UNSUPPORTED.
       // M2: runtime evidence is actual (default none) — never a fabricated healthy/gate-open claim.
