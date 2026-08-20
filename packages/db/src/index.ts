@@ -2739,6 +2739,10 @@ export const ACTIVITY_EVENT_TYPES = [
   'permission_denied',
   'integration_degraded',
   'migration_warning',
+  // T-010 (THE-951): a document operation (create/mutate/read/reconcile) normalized activity event.
+  // Kept as a first-class structured event so R-027 document mutations persist with a valid
+  // activity_event_type + schema_status 'structured' instead of degrading to legacy_event_observed.
+  'document_operation',
   // Workplane minimal ActivityEvent spine (THE-869 / WP1-C-01)
   ...ACTIVITY_EVENT_SPINE_TYPES,
   'legacy_event_observed',

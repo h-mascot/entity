@@ -39,12 +39,13 @@
  * Privacy/security: leaf identifiers only (document id, provider, artifact type, revisions,
  * correlated activity/receipt ids). It never reads or logs credentials, raw tokens, tenant
  * secrets, or document contents. Fail closed on unknown/degraded authority: an unseen/misclassified
- * actor class folds to `unknown` with a NULL actor id (identity is never fabricated), and a
- * missing/dangling link throws a typed `AuditorTraversalGapError` rather than silently returning a
- * partial chain.
+ * actor class folds to `unknown` with a NULL actor id (identity is never fabricated), never promoted
+ * to a trusted agent/human, and a missing/dangling link in an agent mutation's receipt chain throws
+ * a typed `AuditorTraversalGapError` rather than silently returning a partial chain.
  */
 
 import type {
+  ActivityEventActorType,
   ActivityRecord,
   CreateActivityInput,
 } from '../../../db/src';
@@ -106,10 +107,6 @@ export interface DocumentActivityRecord {
 /** The minimum surface this adapter needs to persist an R-027 activity (the real ActivityRepository). */
 export interface DocumentActivityPersistence {
   createActivity: (input: CreateActivityInput) => ActivityRecord;
-  /** Deterministic id for the persisted activity (test injection; the real repo mints ids). */
-  idFactory?: () => number;
-  /** Deterministic timestamp injector; defaults to the wall clock for production. */
-  now?: () => string;
 }
 
 const ACTIVITY_EVENT_PAYLOAD_VERSION = 1;
@@ -179,6 +176,28 @@ export function classifyDocumentActor(input: ActorIdentityInput): ResolvedActor 
  * --------------------------------------------------------------------------- */
 
 /**
+ * Map an R-027 document actor class onto the payload schema's `ActivityEventActorType`
+ * vocabulary (`human|agent|system|workflow|unknown`) WITHOUT ever promoting a non-agent actor to a
+ * trusted `agent` or `human`. The payload schema has no `provider_external_actor` /
+ * `local_external_actor` class, so external and unknown actors map fail-closed to `unknown` — the
+ * honest class is preserved on the payload's `data.actorClass` and the principal on
+ * `actor_principal_id` / `data.actorId`, never asserted as a trusted Entity agent/human.
+ */
+function schemaActorType(actorClass: DocumentActivityActorClass): ActivityEventActorType {
+  switch (actorClass) {
+    case 'agent':
+    case 'human':
+    case 'system':
+      return actorClass;
+    case 'provider_external_actor':
+    case 'local_external_actor':
+    case 'unknown':
+      // Fail closed: never claim a trusted agent/human for an external/unknown actor.
+      return 'unknown';
+  }
+}
+
+/**
  * Persist one normalized R-027 document-activity record through the EXISTING `activities` table
  * (the real `ActivityRepository.createActivity`), embedding the normalized fields in the
  * structured `activity_event_payload` so an auditor can correlate to the document, its version, and
@@ -187,20 +206,21 @@ export function classifyDocumentActor(input: ActorIdentityInput): ResolvedActor 
 export function recordDocumentActivity(input: {
   activity: DocumentActivityRecord;
   createActivity: DocumentActivityPersistence['createActivity'];
-  idFactory?: DocumentActivityPersistence['idFactory'];
-  now?: DocumentActivityPersistence['now'];
   taskId?: number | null;
 }): ActivityRecord {
+  // `agent_name` is a row that asserts a trusted Entity AGENT actor: set it ONLY for a genuine
+  // agent-class mutation, never for an external/human/system/unknown actor (R-027 never promotes).
+  const agentName = input.activity.actorClass === 'agent' ? (input.activity.actorId ?? undefined) : undefined;
   const created = input.createActivity({
     source: 'task',
     type: 'task_updated',
-    activity_event_type: 'document_mutation',
+    activity_event_type: 'document_operation',
     activity_event_payload_version: ACTIVITY_EVENT_PAYLOAD_VERSION,
     activity_event_schema_status: 'structured',
     activity_event_payload: {
       version: ACTIVITY_EVENT_PAYLOAD_VERSION,
       actor_principal_id: input.activity.actorId ?? undefined,
-      actor_type: input.activity.actorClass,
+      actor_type: schemaActorType(input.activity.actorClass),
       task_id: input.taskId ?? undefined,
       object_refs: [
         { object_type: 'external_document_ref', object_id: input.activity.documentId, link_role: 'operation_target' },
@@ -227,7 +247,7 @@ export function recordDocumentActivity(input: {
     },
     action: `${input.activity.operationType} document`,
     description: `${input.activity.actorClass} ${input.activity.operationType} on document ${input.activity.documentId}${input.activity.receiptId ? ` linked to receipt ${input.activity.receiptId}` : ''}.`,
-    agent_name: input.activity.actorId ?? undefined,
+    agent_name: agentName,
     task_id: input.taskId ?? undefined,
     metadata: JSON.stringify({
       id: input.activity.id,
@@ -251,8 +271,6 @@ export interface LinkDocumentMutationToReceiptInput {
   documentActivity: DocumentActivityRecord;
   /** Audited phase-2 flag snapshot; gating on `receipt_completion_enforcement`. */
   flags: Phase2FlagSnapshot;
-  /** Actor principal for the linkage (best-effort attribution). */
-  actorPrincipalId?: string | null;
 }
 
 export interface LinkDocumentMutationToReceiptResult {
@@ -271,11 +289,12 @@ export interface LinkDocumentMutationToReceiptResult {
  * hashed canonical receipt is the auditable execution proof, and the document activity carries its
  * correlation id.
  *
- * Capability-honest + reversible: whether the receipt is REQUIRED is read live from the audited
- * `receipt_completion_enforcement` flag via `phase2FlagEnabled`. When enabled the receipt link is
- * required (fail closed on a missing canonical receipt); when the flag is disabled the adapter
- * reports `required:false` while still carrying the canonical linkage — the whole behavior is
- * reversible through the audited feature-flag framework and never hardcoded.
+ * Enforcement is carried by the CALLER and the audited flag, not by this function: `receipt` is a
+ * REQUIRED parameter (there is no "missing receipt" branch here — a caller that must fail closed on
+ * a missing canonical receipt should refuse to call this with no receipt). Whether the receipt link
+ * is REQUIRED is reported live from the audited `receipt_completion_enforcement` flag via
+ * `phase2FlagEnabled` (`required:true` when enabled, `required:false` when disabled) so downstream
+ * consumers can enforce it honestly and reversibly through the audited feature-flag framework.
  */
 export async function linkDocumentMutationToReceipt(
   input: LinkDocumentMutationToReceiptInput,
@@ -388,6 +407,9 @@ export function traverseAuditorChain(
   });
 
   // 2. Execution receipt (the canonical Entity low-level receipt — proof, not the provider artifact).
+  //    R-028 requires the receipt for AGENT mutations. A non-agent operation may legitimately carry
+  //    no receipt (e.g. an external/human/read op); when it has one we still resolve and link it,
+  //    but a missing receipt only FAILS the chain for a genuine agent mutation.
   if (documentActivity.receiptId) {
     const receipt = deps.resolveReceipt(documentActivity.receiptId);
     if (!receipt) {
@@ -402,11 +424,11 @@ export function traverseAuditorChain(
       label: `Execution receipt`,
       reference: receipt.stablePath,
     });
-  } else {
+  } else if (documentActivity.actorClass === 'agent') {
     throw new AuditorTraversalGapError(
       'receipt',
       documentActivity.id,
-      'a document mutation carries no canonical execution receipt id (R-028); the provider artifact alone is not sufficient proof',
+      'an agent document mutation carries no canonical execution receipt id (R-028); the provider artifact alone is not sufficient proof',
     );
   }
 

@@ -15,10 +15,19 @@ existing canonical surfaces, plus its colocated TDD tests and this evidence.
 
 ## Allowed paths touched (only)
 
-- `packages/server/src/document-providers/activity-adapter.ts` (new — the integration adapter)
-- `packages/server/src/document-providers/activity-adapter.test.ts` (new — colocated TDD tests,
-  20 tests; the colocated test for the new module, mirroring the `revision-coordinator.test.ts`
-  precedent on the T-009 path)
+- `packages/server/src/document-providers/activity-adapter.ts` (new in r1 — the integration adapter;
+  r2: F1/F2/F4/F5/F6 fixes)
+- `packages/server/src/document-providers/activity-adapter.test.ts` (new in r1 — colocated TDD tests;
+  r2: +9 tests for the F2 no-promotion capture surface, the non-agent traversal gate, and the
+  persistence unit gaps; `now`/`actorPrincipalId` dead args removed per F5)
+- `packages/server/src/document-providers/activity-adapter.integration.test.ts` (new in r2 — REAL
+  `createActivityRepository` integration regression for F1+F2, 3 tests)
+- `packages/db/src/index.ts` (r2, F1 direction (a) — LEAST db change): adds the single
+  `document_operation` value to the closed `ACTIVITY_EVENT_TYPES` vocabulary; nothing else in
+  `packages/db` was edited
+- `packages/db/src/task-repository.test.ts` (r2, F1 direction (a)): one existing db test file gains
+  one test proving the real `createActivityRepository` persists `document_operation` as a valid
+  structured event (22/184 → 22/185)
 - `docs/plans/evidence/entity-document-integrations/T-010/EVIDENCE.md` (this file)
 - Disclosed carry-forward (reviewer-sanctioned, THE-950 GLM 5.3 r2 F1, LOW): **one-line**
   correction in `docs/plans/evidence/entity-document-integrations/T-009/EVIDENCE.md` — the "final
@@ -221,22 +230,23 @@ fail-closed forged-receipt negative) all target the absent module — RED. Defer
 fix (the persisted record is an `ActivityRecord`, not the `DocumentActivityRecord`, so the field
 assertions read the structured payload) after the first GREEN run; no acceptance behavior changed.
 
-### GREEN — focused (final HEAD)
+### GREEN — focused (r2 final HEAD)
 
 Command:
 
 ```sh
-cd packages/server && <repo-root>/node_modules/.bin/vitest run src/document-providers/activity-adapter.test.ts src/receipt-writer.test.ts
+cd packages/server && <repo-root>/node_modules/.bin/vitest run src/document-providers/activity-adapter.test.ts src/document-providers/activity-adapter.integration.test.ts src/receipt-writer.test.ts
 ```
 
 Result (GREEN, exit 0):
 
 ```
- ✓ src/receipt-writer.test.ts (9 tests) 31ms
- ✓ src/document-providers/activity-adapter.test.ts (20 tests) 26ms
+ ✓ src/receipt-writer.test.ts (9 tests) 14ms
+ ✓ src/document-providers/activity-adapter.test.ts (28 tests) 17ms
+ ✓ src/document-providers/activity-adapter.integration.test.ts (3 tests) 153ms
 
- Test Files  2 passed (2)
-      Tests  29 passed (29)
+ Test Files  3 passed (3)
+      Tests  40 passed (40)
 ```
 
 ### GREEN — strict tsc build
@@ -253,8 +263,24 @@ Result: **exit 0** (strict tsc).
 cd packages/server && <repo-root>/node_modules/.bin/vitest run
 ```
 
-Result: **210 test files passed, 1924 tests passed** (exit 0) — the 1904 pre-existing full-suite
-count plus 20 new activity-adapter tests.
+Result: **211 test files passed, 1935 tests passed** (exit 0) — the 1904 pre-existing full-suite
+count plus 8 new activity-adapter unit tests (20→28) and 3 new real-repository integration tests.
+
+Note on `npm run ctrl:gate`/`npx vitest run` / the pre-existing `std-env` conflict: unchanged from r1
+(see Runner note below). The one-off full-server run at r2 initially reported 1 flaky failure (210
+passed / 1 failed / 1935), then passed cleanly 4 consecutive times (211 / 1935) with no code change;
+this is an unrelated transient timing flake, not a regression.
+
+### GREEN — db suite (r2, F1 direction (a))
+
+Command:
+
+```sh
+cd packages/db && <repo-root>/node_modules/.bin/vitest run
+```
+
+Result: **22 test files passed, 185 tests passed** (exit 0) — baseline 22/184 plus 1 new
+`document_operation`-structured-projection test in `task-repository.test.ts`.
 
 ### Runner note (pre-existing environment conflict, NOT a code change)
 
@@ -389,6 +415,11 @@ runner). The Finding ID **THE-950 r2 F1** is recorded on that same line. No othe
   non-goal.
 - **§13 events are not this ticket.** The adapter adds no `document_integration_events` writes and
   no change/reconciler integration.
+- **F1 direction (a) is the session's single sanctioned `packages/db` exception.** Per the task's
+  allowed-path contract, the only `packages/db` change is the minimal `ACTIVITY_EVENT_TYPES` +
+  `document_operation` vocabulary addition in `packages/db/src/index.ts` (plus its existing db test
+  file `task-repository.test.ts`), chosen to fix F1 (disclosed above). `activity-event-spine.ts` and
+  everything else in `packages/db` is untouched.
 - **`.project-gate.json` unchanged.** The only observed gate deviation is the pre-existing
   server-workspace `std-env`/vitest hoisting crash described under Runner note, which is
   environmental (affects `npx vitest run` for ANY task in this checkout) and not a gate-logic
@@ -416,3 +447,99 @@ does not invent product defaults:
   correlating the canonical receipt) into the route boundary is deferred to a real provider-adapter
   round (T-014+); this ticket supplies the tested integration contract and the receipt-traversal
   acceptance proof. Any product decisions on the receipt system remain OQ-019's.
+
+---
+
+## GLM 5.3 review round 2 — THE-951 r2 disposition (F1–F6 + integration-RED)
+
+Round 1 verdict (THE-951-55b9708-glm53-r1): **CHANGES_REQUESTED** (blockers F1, F2; HIGH test gap;
+F4/F5/F6 should-fixes; F3 record-only). Round 2 was issue-scoped to exactly the reviewed surface.
+The verified-clean r1 surface (six-value actor vocabulary at the classify layer,
+`completeTaskWithReceipt` composition without a fork/second store, flag gating, hops-4/5 traversal
+negatives, no secrets/PII) was intentionally NOT touched; the full r1 focused + full suites remain
+green.
+
+### F1 (blocker, Correctness / R-027) — persisted structured trail no longer degrades
+
+**Direction chosen: (a) extend the closed `ACTIVITY_EVENT_TYPES` vocabulary (db lane), the minimal
+addition of `document_operation`.** Chosen over (b) remapping onto `artifact_linked` because a
+document create/mutate/read/reconcile is a distinct first-class event (not an evidence-artifact
+linkage), so carrying it as its own valid structured event keeps the downstream
+`activity_event_type`-keyed consumption (listActivitiesByTaskId / receipt sourceEvents) honest.
+Exactly one value (`document_operation`) was added to `packages/db/src/index.ts` `ACTIVITY_EVENT_TYPES`
+(nothing else in `packages/db`); the adapter now passes `activity_event_type: 'document_operation'`.
+Proof: `packages/db/src/task-repository.test.ts` (+1) exercises the REAL `createActivityRepository`
+projection and asserts `document_operation` + `structured` + legacy_type null; and the real-repo
+integration test asserts the same through the adapter (below).
+
+### F2 (blocker, Security / attribution integrity) — no durable promotion of external actors
+
+Adapter-side only, no db vocabulary change. `activity-adapter.ts` now maps the payload `actor_type`
+through `schemaActorType`, which emits the honest schema-valid class for `agent`/`human`/`system` and
+**fail-closed `unknown`** for `provider_external_actor`/`local_external_actor`/`unknown` (never
+`agent`/`human`); `agent_name` (a row asserting a trusted Entity AGENT) is set ONLY for a genuine
+`agent`-class actor. The honest class remains retrievable on `data.actorClass` and the principal on
+`actor_principal_id` / `data.actorId`. Covered by the real-repo integration test (provider + local
+external actor persist with `agent_name: null` and `actor_type: 'unknown'`) and capture-level unit
+tests.
+
+### HIGH test gap (blocker) — REAL-repository regression, failing-test-first
+
+New `activity-adapter.integration.test.ts` drives `recordDocumentActivity` through the REAL
+`createActivityRepository` on a temp DB (`ENTITY_TASK_DB_PATH` env switch, same pattern as the db
+test suite), so the genuine `buildActivityEventProjection` SQL path runs.
+
+**RED (on r1 HEAD `55b9708`, before fixes)** — command
+`cd packages/server && <root>/node_modules/.bin/vitest run src/document-providers/activity-adapter.integration.test.ts`
+→ **1 file / 3 tests failed**:
+```
+F1: expected 'legacy_event_observed' to be 'document_operation'
+F2 (provider_external_actor): expected 'provider-user-99' to be null (agent_name promoted)
+F2 (local_external_actor):    expected 'local-editor-7' to be null (agent_name promoted)
+```
+This reproduces exactly the reviewer's empirical F1/F2 findings at the real persistence surface.
+
+**GREEN (r2 HEAD, after fixes)** — same command → **1 file / 3 tests passed**; focused suite
+(adapter + integration + receipt-writer) **3 files / 40 tests passed**; full server suite
+**211 files / 1935 tests passed**; db suite **22 files / 185 tests passed**; `npm run build` (strict
+tsc) **exit 0**.
+
+### F4 (MEDIUM, non-blocking) — receipt demand gated on agent mutations
+
+`traverseAuditorChain` now requires a canonical receipt ONLY when `actorClass === 'agent'` (R-028
+scopes the receipt to agent mutations). A human/non-agent operation with `receiptId: null` no longer
+throws `AuditorTraversalGapError`; when a receipt id IS present it is still resolved/linked (dangling
+still fails). Agent-mutation happy paths and all four r1 dangling-link negatives are unchanged.
+Proof: new unit test "does NOT require a canonical receipt for a non-agent mutation".
+
+### F5 (LOW, non-blocking) — dead/misleading surface removed
+
+`idFactory` and `now` removed from `DocumentActivityPersistence` and `recordDocumentActivity`
+(never used; tests passed `now` believing it injected determinism). `actorPrincipalId` removed from
+`LinkDocumentMutationToReceiptInput` (never read). All test call sites updated accordingly. The real
+repo mints ids/timestamps.
+
+### F6 (LOW, non-blocking) — honest docstring
+
+`linkDocumentMutationToReceipt`'s docstring no longer claims it "fails closed on a missing canonical
+receipt" (no such branch exists — `receipt` is a required parameter). It now states that enforcement
+is carried by the caller and the audited `receipt_completion_enforcement` flag (reported as
+`required`), which is the honest description of what the function does.
+
+### F3 — record-only, pending Henry (NOT coded)
+
+Per the round-1 reviewer and this task's scope, the architecture acceptance-risk — that the adapter
+is wired to nothing (no production module imports it; the T-008/T-009 create/mutate routes still
+hardcode `receiptId: null`), so R-027/R-028 are unmet by any executable path until a real
+provider-adapter round (T-014+) — is **NOT wired in this round**. No routes touched, no
+`receiptId: null` placeholder changed. This is recorded here as **pending Henry's explicit
+sign-off** (deferral decision under OQ-019), not unilaterally decided in-code.
+
+### Additional test gaps (covered)
+
+- Failed-op persistence (`succeeded: false` + non-null `reasonCode`) — new unit test.
+- `taskId` threading (`task_id` on both the payload and the row) — new unit test + integration tests
+  pass real `taskId`.
+- Pre-existing `receiptId` preservation at linkage (`documentActivity.receiptId ?? receiptId`) — new
+  unit test.
+- `read` / `reconcile` operation types exercised — new unit test.

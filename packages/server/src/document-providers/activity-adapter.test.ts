@@ -267,7 +267,6 @@ describe('T-010 — R-027 activity attribution (durable normalized trail, via ex
       {
         activity: activity,
         createActivity: repo.createActivity,
-        now: () => FIXED_NOW,
       },
     );
 
@@ -305,7 +304,7 @@ describe('T-010 — R-027 activity attribution (durable normalized trail, via ex
 
   it('persists the normalized record through the existing activity payload, carrying identifier fields', async () => {
     const { created, repo } = makeActivitySink();
-    recordDocumentActivity({ activity: makeDocumentActivity(), createActivity: repo.createActivity, now: () => FIXED_NOW });
+    recordDocumentActivity({ activity: makeDocumentActivity(), createActivity: repo.createActivity });
 
     const payload = created[0]?.activity_event_payload as Record<string, unknown>;
     expect(payload).toBeDefined();
@@ -331,10 +330,117 @@ describe('T-010 — R-027 activity attribution (durable normalized trail, via ex
     recordDocumentActivity({
       activity: makeDocumentActivity({ receiptId: 'receipt-1' }),
       createActivity: repo.createActivity,
-      now: () => FIXED_NOW,
     });
     const data = (created[0]?.activity_event_payload as Record<string, unknown>).data as Record<string, unknown>;
     expect(data.receiptId).toBe('receipt-1');
+  });
+});
+
+/* --------------------------------------------------------------------------- *
+ * R-027 — persistence unit gaps (failed op, task_id threading, receipt preservation, op types)
+ * --------------------------------------------------------------------------- */
+
+describe('T-010 — R-027 persistence unit gaps (failed op / taskId / receipt preservation / op types)', () => {
+  it('persists a FAILED operation with succeeded:false and a non-null reasonCode', () => {
+    const { created, repo } = makeActivitySink();
+    recordDocumentActivity({
+      activity: makeDocumentActivity({
+        succeeded: false,
+        reasonCode: 'provider_mutation_rejected',
+        receiptId: null,
+      }),
+      createActivity: repo.createActivity,
+    });
+    const data = (created[0]?.activity_event_payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data).toMatchObject({ succeeded: false, reasonCode: 'provider_mutation_rejected' });
+  });
+
+  it('threads task_id onto both the payload and the activity row', () => {
+    const { created, repo } = makeActivitySink();
+    recordDocumentActivity({
+      activity: makeDocumentActivity(),
+      createActivity: repo.createActivity,
+      taskId: 42,
+    });
+    const payload = created[0]?.activity_event_payload as Record<string, unknown>;
+    expect(payload.task_id).toBe(42);
+    expect(created[0]?.task_id).toBe(42);
+  });
+
+  it('preserves a pre-existing receiptId instead of overwriting it at linkage', async () => {
+    // The document activity already carries a canonical receipt id; linkage must NOT replace it.
+    const storageRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'entity-activity-receipt-'));
+    tempDirs.push(storageRoot);
+    const { result } = await createCanonicalReceipt({ receiptId: 'receipt-preexisting', storageRoot });
+    const flags = resolvePhase2Flags();
+
+    const linked = await linkDocumentMutationToReceipt({
+      flags,
+      receipt: result,
+      documentActivity: makeDocumentActivity({ receiptId: 'receipt-original' }),
+    });
+    expect(linked.documentActivity.receiptId).toBe('receipt-original');
+  });
+
+  it('persists read and reconcile operation types on at least one path', () => {
+    for (const operationType of ['read', 'reconcile'] as const) {
+      const { created, repo } = makeActivitySink();
+      recordDocumentActivity({
+        activity: makeDocumentActivity({ operationType }),
+        createActivity: repo.createActivity,
+      });
+      const data = (created[0]?.activity_event_payload as Record<string, unknown>).data as Record<string, unknown>;
+      expect(data.operationType).toBe(operationType);
+      const payload = created[0]?.activity_event_payload as Record<string, unknown>;
+      expect(payload.actor_type).toBe('agent');
+    }
+  });
+});
+
+/* --------------------------------------------------------------------------- *
+ * R-027 — F2 no-promotion: external actors never persist as trusted agent/human
+ * --------------------------------------------------------------------------- */
+
+describe('T-010 — R-027 no-promotion at the capture surface (external actors never assert agent/human)', () => {
+  it('asserts agent_name only for a genuine agent-class actor', () => {
+    const { created, repo } = makeActivitySink();
+    recordDocumentActivity({ activity: makeDocumentActivity(), createActivity: repo.createActivity });
+    expect(created[0]?.agent_name).toBe('agent-1');
+    const payload = created[0]?.activity_event_payload as Record<string, unknown>;
+    expect(payload.actor_type).toBe('agent');
+  });
+
+  it('never sets agent_name nor a trusted actor_type for a provider_external_actor', () => {
+    const { created, repo } = makeActivitySink();
+    recordDocumentActivity({
+      activity: makeDocumentActivity({
+        actorClass: 'provider_external_actor',
+        actorId: 'provider-user-99',
+      }),
+      createActivity: repo.createActivity,
+    });
+    // The row-level agent_name (which asserts a trusted Entity AGENT) must be unset...
+    expect(created[0]?.agent_name).toBeUndefined();
+    // ...and the payload actor_type must map fail-closed to `unknown`, never `agent`/`human`.
+    const payload = created[0]?.activity_event_payload as Record<string, unknown>;
+    expect(payload.actor_type).toBe('unknown');
+    expect(['agent', 'human']).not.toContain(payload.actor_type);
+    // The honest class and principal remain retrievable on the structured payload.
+    expect((payload.data as Record<string, unknown>).actorClass).toBe('provider_external_actor');
+    expect((payload.data as Record<string, unknown>).actorId).toBe('provider-user-99');
+    expect(payload.actor_principal_id).toBe('provider-user-99');
+  });
+
+  it('never promotes a local_external_actor nor an unknown actor to a trusted agent/human', () => {
+    for (const actorClass of ['local_external_actor', 'unknown'] as const) {
+      const { created, repo } = makeActivitySink();
+      recordDocumentActivity({
+        activity: makeDocumentActivity({ actorClass, actorId: actorClass === 'unknown' ? null : 'local-1' }),
+        createActivity: repo.createActivity,
+      });
+      expect(created[0]?.agent_name).toBeUndefined();
+      expect((created[0]?.activity_event_payload as Record<string, unknown>).actor_type).toBe('unknown');
+    }
   });
 });
 
@@ -405,7 +511,6 @@ describe('T-010 — R-028 every agent mutation produces/links the canonical rece
         flags,
         receipt: result,
         documentActivity: activity,
-        actorPrincipalId: 'agent-1',
       },
     );
 
@@ -430,7 +535,6 @@ describe('T-010 — R-028 every agent mutation produces/links the canonical rece
       flags: enabled,
       receipt: result,
       documentActivity: makeDocumentActivity(),
-      actorPrincipalId: 'agent-1',
     });
     // With enforcement ON the receipt link is required and resolvable.
     expect(linked.required).toBe(true);
@@ -469,7 +573,6 @@ describe('T-010 — R-028 feature-flag reversibility (audited framework)', () =>
       flags: flagsOff,
       receipt: result,
       documentActivity: makeDocumentActivity(),
-      actorPrincipalId: 'agent-1',
     });
     // When the audited flag is off, the adapter reports the receipt as not-required (honest,
     // reversible through the flag) while still carrying the canonical linkage.
@@ -578,6 +681,19 @@ describe('T-010 — R-028 auditor traversal end-to-end (Entity action → receip
         resolveProviderArtifact: () => undefined,
       }),
     ).toThrow(AuditorTraversalGapError);
+  });
+
+  it('does NOT require a canonical receipt for a non-agent mutation (R-028 scopes receipt to agent mutations)', async () => {
+    const docActivity = makeDocumentActivity({ receiptId: null, actorClass: 'human' });
+    const hops = traverseAuditorChain(docActivity, {
+      resolveEntityAction: () => makeEntityAction(),
+      resolveReceipt: () => undefined,
+      resolveDocument: () => ({ id: 'doc-1', currentRevision: 'rev-2', externalId: 'ext-1' }),
+      resolveProviderArtifact: () => ({ external_id: 'ext-1' } as unknown as ProviderArtifactDescriptor),
+    });
+    const stageOrder = hops.map((hop) => hop.stage);
+    // No receipt hop, and no AuditorTraversalGapError: a human operation with no receipt is valid.
+    expect(stageOrder).toEqual(['entity_action', 'document_operation', 'document_revision', 'provider_artifact']);
   });
 
   it('FAILS when the document version/revision link is missing or dangling', async () => {
