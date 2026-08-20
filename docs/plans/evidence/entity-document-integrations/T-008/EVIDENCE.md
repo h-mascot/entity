@@ -5,6 +5,8 @@ Run marker: `loom-run:entity-doc-integrations-20260818`
 Worker model: `daystrom/deepseek` (medium) — pinned externally, not substituted.
 Branch: `runner/entity-document-integrations-20260818`
 Pre-issue reviewed base (T-007 approved HEAD): `2f150e4ab333a7c08f9b67d4466b2d417e5858d3` (GLM 5.3 r3 FINAL)
+Candidate reviewed: `56c05d8fdfd258aaafd55e53d8c448d94f068cd2` (GLM 5.3 r1 → CHANGES_REQUESTED, THE-949 r2)
+Round 2 (this file) fixes THE-949 r1 findings B1–B4 / M1 / M2 / L1a–e and test gaps 1–3. See §11.
 Node: `nvm use 22` (v22.22.2) — required for better-sqlite3 native bindings (Node 26
 `ERR_DLOPEN_FAILED` ABI mismatch).
 
@@ -139,24 +141,35 @@ Carry-forward edits (already in the preserved working tree, kept and re-verified
 - Create is enforced through the T-007 destinations/write-policy (R-003): unapproved destination →
   typed `DESTINATION_NOT_ALLOWED` with a machine-readable `cause` (THE-948 r3 F4);
   missing policy → typed `DESTINATION_REQUIRED`; policy `denied` → typed `WRITE_DISABLED`.
-- Capabilities carry reason codes (T-006 fold honored) and fail closed on unknown/degraded
+- Capabilities carry reason codes (T-006 fold honored). Capability evidence is DERIVED from actual
+  state, not fabricated (THE-949 r2 M2): the create lane uses registered connection state via
+  `connectionStateFor` (default `unknown` → fail closed) and every lane uses real runtime evidence
+  via `runtimeEvidence` (default none) — the route never hardcodes `connection:'authorized'` or
+  `runtime:{healthy:true,mutationGateOpen:true}`. A disconnected/unknown connection or a closed
+  mutation gate cannot be papered over at the route; write lanes fail closed on unknown/degraded
   capability or authority.
-- Versions surface revision, actorType/actorId, observedAt, providerModifiedAt.
+- Versions surface revision, actorType/actorId, observedAt, providerModifiedAt with honest
+  attribution (R-027): the adapter version ref carries no actor, so `actorType` is `unknown` (never
+  a fabricated `agent`), and `providerModifiedAt` is distinct from `observedAt` — `null` (unknown)
+  when the provider did not report a separate modification timestamp (THE-949 r2 M1).
 - Provider-neutral: every provider is reached through the `DocumentProviderAdapter` contract
   (T-005) via the deterministic fake adapter in all tests; no provider-specific code, no network,
-  no wall clock (the clock is injected/fixed), no unseeded randomness.
+  no unseeded randomness. The clock is INJECTED in tests (frozen determinism is injection-only);
+  the un-injected production default is WALL-CLOCK (THE-949 r2 B4).
 
 ## 4. Automated proof — API contract tests
 
-`packages/server/src/routes/document-integrations.test.ts` (18 tests) covers all five routes and the
-full contract. Focused run (Node 22), exit 0:
+`packages/server/src/routes/document-integrations.test.ts` (31 tests) covers all five routes and the
+full contract, including the THE-949 r2 additions (B1 canonical shapes, B2 replay, B3 rejection,
+B4 wall-clock, M1 versions, M2 fail-closed create, gap 2/3 boundary cases). Focused run (Node 22),
+exit 0:
 
 ```sh
 cd packages/server && npx vitest run \
   src/routes/document-integrations.test.ts \
   src/document-providers/write-policy.test.ts \
   src/document-providers/registry.test.ts \
-  src/document-providers/capability-resolver.test.ts   # 4 files / 122 tests / exit 0
+  src/document-providers/capability-resolver.test.ts   # 4 files / 136 tests / exit 0
 ```
 
 Per-route negative proof (all asserted in the test file):
@@ -180,6 +193,23 @@ Per-route negative proof (all asserted in the test file):
   whose message never names the owning workspace.
 - **Capabilities include reason codes** and honor the T-006 fold; **versions** include
   revision/actorType/actorId/observedAt/providerModifiedAt.
+- **B1**: canonical §12.4 `set_range` (sheet/range/values) and §12.5 `update_slide_text`
+  (slideRef/elementRef/text) are accepted at the route boundary and surface `CAPABILITY_UNSUPPORTED`
+  (not `INVALID_REQUEST`); unknown `operation.kind` → `UNSUPPORTED_OPERATION`; `target.anchor` is
+  rejected typed `CAPABILITY_UNSUPPORTED` (never silently dropped).
+- **B2**: a create retry with the SAME `idempotencyKey` reconciles with `200 reconciled:true` and the
+  same `documentId` — never `409 DOCUMENT_ALREADY_EXISTS`.
+- **B3**: `initialContent` / `associations` that the lane cannot honor are REJECTED typed
+  `CAPABILITY_UNSUPPORTED` — no accepted-but-dropped path.
+- **B4**: an un-injected `now` defaults to WALL-CLOCK (advances with real time), never the frozen
+  constant.
+- **M1**: versions use honest `actorType:'unknown'` and distinct `providerModifiedAt:null`.
+- **M2**: an unknown connection state or a closed mutation gate fails create closed
+  (`CAPABILITY_UNSUPPORTED`) — the route no longer fabricates `authorized`/healthy/gate-open.
+- **gap 2/3**: create with no `destinationId` but a governing policy → `WRITE_DISABLED` (not
+  `DESTINATION_REQUIRED`); capability-resolver disabled (rollback) still fails closed via the
+  adapter; a KNOWN document with no registered adapter → `503 PROVIDER_UNAVAILABLE`.
+
 
 ## 5. RED → GREEN proof
 
@@ -238,6 +268,31 @@ F4-lane "id omitted from `RegistryWriteInput`" is enforced at compile time by `@
 inside the test; the strict tsc build passing at HEAD proves that annotation is still exercised (the
 `@ts-expect-error` is NOT unused), so a caller-chosen `id` override cannot silently reappear.
 
+### 5c. THE-949 r1 → r2 RED→GREEN (this round's findings)
+
+Proven by reverting the 4 source files (`document-integrations.ts`, `registry.ts`, `index.ts`,
+`request-permissions.ts`) to candidate HEAD `56c05d8` while KEEPING the newly-added tests, running
+them, then restoring the fixed sources and re-running.
+
+RED (candidate source, new tests kept) — `npx vitest run src/routes/document-integrations.test.ts
+src/document-providers/registry.test.ts` → `11 failed | 53 passed (64)`, exit 1:
+
+1. `B2 (gap 1): a create retry with the SAME idempotencyKey …` — got 409 `DOCUMENT_ALREADY_EXISTS` on replay (B2).
+2. `B3: create with initialContent … REJECTED (no silent drop)` — got 201 (content silently dropped) (B3).
+3. `B3: create with associations … REJECTED (no silent drop)` — got 201 (associations silently dropped) (B3).
+4. `M2: create does NOT fabricate connection authorized … CAPABILITY_UNSUPPORTED` — got 201 (route assumed authorized) (M2).
+5. `M2: a closed mutation gate (runtime evidence) fails create closed` — got 201 (runtime ignored) (M2).
+6. `B1 (gap 2): canonical §12.4 set_range … CAPABILITY_UNSUPPORTED, not INVALID_REQUEST` — got 400 (B1).
+7. `B1 (gap 2): canonical §12.5 update_slide_text … CAPABILITY_UNSUPPORTED, not INVALID_REQUEST` — got 400 (B1).
+8. `B1: operation.target.anchor is NOT silently dropped` — got 200 (anchor dropped) (B1).
+9. `versions include … ` — got `actorType:'agent'` + duplicated `providerModifiedAt` (M1).
+10. `the un-injected production clock is WALL-CLOCK … not frozen` — got the frozen `2026-08-18T…` (B4).
+11. `L1a … TYPED DocumentRegistryIdentityConflictError` — got a generic string-matched error (L1a).
+
+GREEN (fixed sources restored) — `npx vitest run src/routes/document-integrations.test.ts
+src/document-providers/registry.test.ts` → `Tests 64 passed (64)`, exit 0. Focused group (4 files)
+`136 passed (136)`, exit 0; full server suite `208 files / 1862 tests / exit 0` (see §9).
+
 ## 6. Route-mount proof
 
 `packages/server/src/index.ts` mounts the router under `/api/document-integrations` following the
@@ -251,6 +306,9 @@ inside the test; the strict tsc build passing at HEAD proves that annotation is 
   `PROVIDER_UNAVAILABLE` / `DESTINATION_REQUIRED` rather than inventing a provider.
 - `resolveWorkspace` maps a bound customer principal to its single authorized org (fail closed on
   ambiguity / out-of-membership), and the trusted service/admin path to the deployment default org.
+  THE-949 r2 (L1d/L1e): a global admin with ambiguous scope (no explicit header, multiple orgs) now
+  FAILS CLOSED (`WORKSPACE_REQUIRED`) instead of silently binding the default org, and this
+  namespace reads the caller-explicit org from the HEADER ONLY (no query/body org selectors).
 - The editor router (`editor/index.ts`) and the `/api/documents` namespace are untouched — no
   sibling routes added (binding namespace constraint honored).
 

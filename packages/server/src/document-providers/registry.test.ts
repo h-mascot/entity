@@ -11,6 +11,7 @@ import {
 } from '../../../db/src/document-integrations';
 import type { DocumentRegistry, RegistryWriteInput } from './registry';
 import {
+  DocumentRegistryIdentityConflictError,
   DocumentRegistryIsolationError,
   DocumentRegistryValidationError,
 } from './registry';
@@ -218,6 +219,26 @@ describe('T-004 document registry — workspace isolation (security)', () => {
     // Strict create of the same identity anywhere → throws (identity is globally owned).
     expect(() => registry.create(baseInput(), 'workspace-a')).toThrowError(/already exists/i);
     expect(() => registry.create(baseInput(), 'workspace-b')).toThrowError(/already exists/i);
+  });
+
+  it('L1a (THE-949/T-008): a duplicate-identity strict create throws a TYPED DocumentRegistryIdentityConflictError, not a db-string match', async () => {
+    const { registry } = await openRegistry();
+    registry.register(baseInput({ external_id: 'l1a-typed' }), 'workspace-a');
+    // Same-workspace duplicate and cross-workspace probe both surface the TYPED conflict, whose
+    // message never names the owning workspace (not an existence oracle).
+    expect(() =>
+      registry.create(baseInput({ external_id: 'l1a-typed' }), 'workspace-a'),
+    ).toThrowError(DocumentRegistryIdentityConflictError);
+    expect(() =>
+      registry.create(baseInput({ external_id: 'l1a-typed' }), 'workspace-b'),
+    ).toThrowError(DocumentRegistryIdentityConflictError);
+    try {
+      registry.create(baseInput({ external_id: 'l1a-typed' }), 'workspace-b');
+    } catch (err) {
+      expect(err).toBeInstanceOf(DocumentRegistryIdentityConflictError);
+      expect((err as DocumentRegistryIdentityConflictError).externalId).toBe('l1a-typed');
+      expect(String((err as Error).message)).not.toMatch(/workspace-a/);
+    }
   });
 });
 

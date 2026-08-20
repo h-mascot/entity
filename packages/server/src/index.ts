@@ -127,7 +127,7 @@ import {
   getCustomerPrincipal,
   isOrgAuthorized,
 } from "./principals/request-context";
-import { readExplicitRequestOrg } from "./request-permissions";
+import { readExplicitRequestOrgHeader } from "./request-permissions";
 import { readDefaultOrgId } from "./config/admin-runtime";
 import { createDataPlaneCredentialGuard } from "./middleware/data-plane-credential";
 import { registerStrategicRoutes, registerTaskRoutes } from "./routes/tasks";
@@ -446,17 +446,21 @@ runInferenceProviderMigrations({
   function resolveDocumentIntegrationsWorkspace(req: Request): string | null {
     try {
       const customer = getCustomerPrincipal(req);
-      const explicit = readExplicitRequestOrg(req);
+      // L1e: this namespace reads the caller-explicit org from the HEADER ONLY (no query/body
+      // org selectors — they must never steer the workspace binding).
+      const explicit = readExplicitRequestOrgHeader(req);
       if (customer) {
         if (customer.isGlobalAdmin) {
-          return explicit ?? (customer.orgIds.length === 1 ? customer.orgIds[0] : null)
-            ?? readDefaultOrgId();
+          // L1d: a global admin with ambiguous scope (no explicit header, multiple orgs) FAILS
+          // CLOSED (WORKSPACE_REQUIRED) instead of silently binding the deployment default org.
+          return explicit ?? (customer.orgIds.length === 1 ? customer.orgIds[0] : null);
         }
         if (explicit) {
           return isOrgAuthorized(req, explicit) ? explicit : null;
         }
         return customer.orgIds.length === 1 ? customer.orgIds[0] : null;
       }
+      // Trusted service/admin path binds the deployment default org.
       return explicit ?? readDefaultOrgId();
     } catch {
       // Any resolver/config fault fails closed rather than leaking a 500.
