@@ -27,6 +27,15 @@ import {
   type RequestOrgBinding,
 } from './request-permissions';
 import type { PermissionAction, ProtectedObject } from './permissions';
+import {
+  CAPABILITY_NAMES,
+  capabilityAllowsAction,
+  FAIL_CLOSED_CAPABILITIES,
+  type CapabilityReport,
+  type CapabilitySource,
+  type CapabilityState,
+  type CapabilityType,
+} from './document-providers/types';
 
 interface DocumentObjectRouterDeps {
   documentRepo?: DocumentObjectRepository;
@@ -161,6 +170,18 @@ function parseNativeIndexResult(body: Record<string, unknown>): NativeIndexResul
   }
   const state = rawState as NativeDocumentSearchIndexState;
   const indexedAt = optionalString(body, 'indexed_at');
+  // T-012 carry-forward F3 (THE-952 approved): a `fresh` index outcome must carry a real,
+  // parseable `indexed_at`. Reject with a typed 400 instead of silently coercing an absent or
+  // unparseable timestamp to server-now, so `{state:'fresh'}` can never yield a contradictory
+  // `indexed:false` + `indexState:'fresh'` pair in the search surface.
+  if (state === 'fresh') {
+    if (!indexedAt) {
+      throw new DocumentObjectApiError(400, 'indexed_at is required when state is fresh');
+    }
+    if (!Number.isFinite(Date.parse(indexedAt))) {
+      throw new DocumentObjectApiError(400, 'indexed_at must be a parseable timestamp');
+    }
+  }
   const error = readString(body.error);
   return { state, indexedAt, error };
 }
@@ -615,4 +636,135 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
   });
 
   return router;
+}
+
+/* =============================================================================
+ * T-012 — Migrate existing Google read path into unified document model (THE-953).
+ *
+ * R-004 "Preserve existing Google V1 read-only behavior": map existing Google
+ * external-document-ref metadata into the provider-neutral capability vocabulary
+ * (T-002 CapabilityReport) so later write tickets negotiate through the unified
+ * model, while preserving read/index/link/preview behavior and keeping ALL Google
+ * writes disabled until V2 write authorization is explicitly enabled.
+ *
+ * This COMPOSES the existing read-only surface (buildGoogleExternalDocumentMetadata)
+ * into the T-002 capability model — it introduces no second capability namespace,
+ * no receipt store, no provider registry, and no event table. Capability honesty:
+ * only read-like lanes proven by the legacy read-only flags are actionable, and
+ * every write/embedding/human-edit lane fails closed (`unsupported`) regardless of
+ * what the connector's capabilities_json claims.
+ *
+ * R-004: "…when any write endpoint, tool, or UI attempts mutation, then no Google
+ * mutation request is sent." A consumer must not reach a provider mutation through
+ * this mapping: `assertGoogleUnifiedWritesDisabled` (below) guarantees the mapped
+ * report never enables a write lane.
+ * ============================================================================= */
+
+/** The legacy V1 Google mutation-capability vocabulary (all read-only, always `false`). */
+const GOOGLE_V1_MUTATION_CAPABILITIES = {
+  create: false,
+  update: false,
+  write: false,
+  export: false,
+  sync: false,
+} as const;
+
+/** A Google V1 external ref mapped into the unified capability model (T-012). */
+export interface GoogleUnifiedCapabilityMapping {
+  /** Provider-neutral T-002 capability report (complete vocabulary). */
+  report: CapabilityReport;
+  /** Legacy V1 read-only flags preserved from the Google metadata. */
+  legacy: {
+    read: boolean;
+    index: boolean;
+    link: boolean;
+    preview: boolean;
+    mutation_capabilities: typeof GOOGLE_V1_MUTATION_CAPABILITIES;
+  };
+}
+
+function readLikeCapabilityState(
+  legacyFlag: boolean,
+  usable: boolean,
+  source: CapabilitySource,
+): { state: CapabilityState; source: CapabilitySource } {
+  if (!legacyFlag) return { state: 'unsupported', source };
+  return usable ? { state: 'supported', source } : { state: 'degraded', source };
+}
+
+/**
+ * Map an existing Google `ExternalDocumentRefRecord` into the unified T-002
+ * capability report. Read-only lanes (`read`/`preview`/`open_external`) reflect the
+ * legacy read-only flags and connection health; every write/embedding/human-edit lane
+ * is hard `unsupported` (R-004 fail-closed / R-002 unknown-fails-closed), and
+ * unproven read-like lanes (thumbnail/version_history/change_tracking/permission_read/
+ * export) are `unsupported` — never claimed without proof.
+ */
+export function mapGoogleExternalRefToUnifiedReport(
+  record: ExternalDocumentRefRecord,
+  now: Date = new Date(),
+): GoogleUnifiedCapabilityMapping {
+  const meta = buildGoogleExternalDocumentMetadata(record, now);
+  const usable = !meta.degraded;
+  const legacy = {
+    read: meta.capabilities.read === true,
+    index: meta.capabilities.index === true,
+    link: meta.capabilities.link === true,
+    preview: meta.capabilities.preview === true,
+    mutation_capabilities: GOOGLE_V1_MUTATION_CAPABILITIES,
+  };
+
+  const read = readLikeCapabilityState(legacy.read, usable, 'adapter');
+  const preview = readLikeCapabilityState(legacy.preview, usable, 'adapter');
+  const openExternal = readLikeCapabilityState(legacy.link && Boolean(meta.open_url), usable, 'adapter');
+
+  const states: Record<CapabilityType, CapabilityState> = {
+    read: read.state,
+    preview: preview.state,
+    open_external: openExternal.state,
+    create: 'unsupported',
+    agent_text_mutation: 'unsupported',
+    agent_range_mutation: 'unsupported',
+    agent_slide_mutation: 'unsupported',
+    permission_write: 'unsupported',
+    embed_editor: 'unsupported',
+    human_edit: 'unsupported',
+    thumbnail: 'unsupported',
+    version_history: 'unsupported',
+    change_tracking: 'unsupported',
+    permission_read: 'unsupported',
+    export: 'unsupported',
+  };
+
+  const report = Object.fromEntries(
+    CAPABILITY_NAMES.map((name) => [name, { name, state: states[name], source: 'adapter' as CapabilitySource }]),
+  ) as CapabilityReport;
+
+  return { report, legacy };
+}
+
+/**
+ * Typed fail-closed guard for R-004: proves a mapped Google report never enables a
+ * Google mutation. Throws when any write/embedding/human-edit lane is actionable;
+ * a caller must run this (or equivalent capability negotiation) BEFORE reaching a
+ * provider mutation so that "no Google mutation request is sent while disabled".
+ *
+ * Because the mapping above hard-codes every write/embedding lane to `unsupported`,
+ * this guard only ever throws if a later layer mutates the report; it is the
+ * defense-in-depth proof point for the T-012 fail-closed invariant.
+ */
+export function assertGoogleUnifiedWritesDisabled(mapping: GoogleUnifiedCapabilityMapping): void {
+  const writeLanes: CapabilityType[] = [...FAIL_CLOSED_CAPABILITIES, 'human_edit'];
+  for (const name of writeLanes) {
+    const resolved = mapping.report[name];
+    if (!resolved) {
+      throw new Error(`T-012 fail-closed invariant violated: missing capability ${name}`);
+    }
+    if (capabilityAllowsAction(resolved)) {
+      throw new Error(
+        `T-012 fail-closed invariant violated: Google write lane is actionable (${name}); ` +
+        'no Google mutation may be sent while the V2 write flag is disabled',
+      );
+    }
+  }
 }

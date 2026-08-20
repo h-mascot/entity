@@ -4,8 +4,19 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createDocumentObjectRouter } from './document-objects';
+import { assertGoogleUnifiedWritesDisabled, createDocumentObjectRouter, mapGoogleExternalRefToUnifiedReport, type GoogleUnifiedCapabilityMapping } from './document-objects';
 import { nativeResult, secondsSince, type ScopedSearchResult } from './routes/scoped-search-documents';
+import { createFakeDocumentProviderAdapter } from './document-providers/fake-adapter';
+import {
+  assertAdapterActionSupported,
+  CAPABILITY_NAMES,
+  capabilityAllowsAction,
+  FAIL_CLOSED_CAPABILITIES,
+  type CapabilityReport,
+  type CapabilityState,
+  type CapabilityType,
+  UnsupportedAdapterMutationError,
+} from './document-providers/types';
 import type {
   CreateEvidenceArtifactInput,
   CreateExternalDocumentRefInput,
@@ -15,6 +26,7 @@ import type {
   EvidenceArtifactRecord,
   EvidenceArtifactVersionRecord,
   ExternalDocumentRefRecord,
+  NativeDocumentIndexFailureState,
   NativeDocumentRecord,
   NativeDocumentVersionRecord,
   ObjectRef,
@@ -181,7 +193,7 @@ function createFakeRepos(): {
     markNativeDocumentIndexFailed: (
       id: string,
       error?: string | null,
-      state: 'fresh' | 'stale' | 'degraded' | 'indexing_failed' = 'indexing_failed',
+      state: NativeDocumentIndexFailureState = 'indexing_failed',
     ) => {
       const current = nativeDocuments.get(id);
       if (!current) return undefined;
@@ -1322,6 +1334,163 @@ describe('T-011 R-029 search/indexing — native document index state', () => {
     // The document write lifecycle is unaffected by a bad index-result call.
     expect(denied.nativeDocument).toMatchObject({ id: 'r029-closed-doc', search_index_state: 'stale' });
   });
+
+  // T-012 carry-forward F5 (THE-952 approved): authorization-path tests for the write-gated
+  // `POST /native-documents/:id/index-result`, mirroring the GET/PATCH denial patterns.
+  it('denies index-result for an unknown document id (404)', async () => {
+    const missing = await fetch(`${baseUrl}/api/document-objects/native-documents/does-not-exist/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'fresh', indexed_at: '2026-08-01T09:00:00.000Z' }),
+    });
+    expect(missing.status).toBe(404);
+    expect(await readJson(missing)).toEqual({ error: 'native document not found' });
+    // No index state could have been written for a nonexistent document.
+    expect(repos.documentRepo.getNativeDocument('does-not-exist')).toBeUndefined();
+  });
+
+  it('denies index-result write for a caller without the write role (403)', async () => {
+    await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'r029-roledenied-doc',
+        org_id: 'org-a',
+        title: 'R029 role-denied doc',
+        content_hash: 'sha256:r029-roledenied',
+      }),
+    });
+    // A viewer role fails the `contributor` minimum required for the write action.
+    const denied = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-roledenied-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a', 'x-entity-role': 'viewer' },
+      body: JSON.stringify({ state: 'fresh', indexed_at: '2026-08-01T09:00:00.000Z' }),
+    });
+    expect(denied.status).toBe(403);
+    expect(await readJson(denied)).toEqual({
+      error: 'permission denied',
+      code: 'permission_denied',
+      reason: 'requires contributor role',
+    });
+    // The write was denied before any index-state mutation.
+    expect((repos.documentRepo.getNativeDocument('r029-roledenied-doc') as { search_index_state: string }).search_index_state).toBe('stale');
+  });
+
+  it('denies index-result across orgs without leaking the document body (403)', async () => {
+    await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-b' },
+      body: JSON.stringify({
+        id: 'r029-crossorg-index',
+        org_id: 'org-b',
+        title: 'Other org index target',
+        content_hash: 'sha256:r029-crossorg',
+      }),
+    });
+    const denied = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-crossorg-index/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'fresh', indexed_at: '2026-08-01T09:00:00.000Z' }),
+    });
+    expect(denied.status).toBe(403);
+    expect(await readJson(denied)).toEqual({
+      error: 'permission denied',
+      code: 'permission_denied',
+      reason: 'object is outside the request org',
+    });
+    expect((repos.documentRepo.getNativeDocument('r029-crossorg-index') as { search_index_state: string }).search_index_state).toBe('stale');
+  });
+
+  // T-012 carry-forward F3 (THE-952 approved): a `fresh` index outcome must carry a real,
+  // parseable `indexed_at` — never a silent coercion to server-now, and never a contradictory
+  // `{state:'fresh'}` that would surface `indexed:false` with `indexState:'fresh'`.
+  it('rejects a fresh index-result that omits or mangles indexed_at (typed 400, no server-now coercion)', async () => {
+    await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'r029-fresh-ts-doc',
+        org_id: 'org-a',
+        title: 'R029 fresh timestamp doc',
+        content_hash: 'sha256:r029-ts',
+      }),
+    });
+    const before = repos.documentRepo.getNativeDocument('r029-fresh-ts-doc') as { search_index_state: string; last_indexed_at: string | null };
+    expect(before.search_index_state).toBe('stale');
+
+    // Missing indexed_at on a fresh outcome: typed 400, document untouched.
+    const noTs = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-fresh-ts-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'fresh' }),
+    });
+    expect(noTs.status).toBe(400);
+    expect((await readJson(noTs)).error).toMatch(/indexed_at/);
+
+    // Unparseable indexed_at on a fresh outcome: typed 400 (not silently coerced to server now).
+    const badTs = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-fresh-ts-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'fresh', indexed_at: 'not-a-real-timestamp' }),
+    });
+    expect(badTs.status).toBe(400);
+
+    // Neither rejected call mutated the document.
+    const after = repos.documentRepo.getNativeDocument('r029-fresh-ts-doc') as { search_index_state: string; last_indexed_at: string | null };
+    expect(after.search_index_state).toBe('stale');
+    expect(after.last_indexed_at).toBeNull();
+  });
+
+  it('accepts a fresh index-result with a real indexed_at and surfaces it as indexed', async () => {
+    await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'r029-fresh-valid-doc',
+        org_id: 'org-a',
+        title: 'R029 fresh valid doc',
+        content_hash: 'sha256:r029-valid',
+      }),
+    });
+    const ok = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-fresh-valid-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'fresh', indexed_at: '2026-08-01T09:00:00.000Z' }),
+    });
+    expect(ok.status).toBe(200);
+    expect(await readJson(ok)).toMatchObject({
+      nativeDocument: { id: 'r029-fresh-valid-doc', search_index_state: 'fresh', last_indexed_at: '2026-08-01T09:00:00.000Z' },
+    });
+  });
+
+  // T-012 carry-forward F6b / F2 (THE-952 approved): pin that adding a link does NOT invalidate
+  // the search index state (linkNativeDocumentObject only touches linked_object_refs).
+  it('does not invalidate search index state when a link is added (F6b/F2)', async () => {
+    await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'r029-link-preserve-doc',
+        org_id: 'org-a',
+        title: 'R029 link preserve doc',
+        content_hash: 'sha256:r029-link',
+      }),
+    });
+    await fetch(`${baseUrl}/api/document-objects/native-documents/r029-link-preserve-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'fresh', indexed_at: '2026-08-01T09:00:00.000Z' }),
+    });
+    const linked = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-link-preserve-doc/links`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ object_ref: { object_type: 'task', object_id: '55', link_role: 'source_context' } }),
+    });
+    expect(linked.status).toBe(200);
+    expect(await readJson(linked)).toMatchObject({
+      nativeDocument: { id: 'r029-link-preserve-doc', search_index_state: 'fresh' },
+    });
+  });
 });
 
 describe('T-011 R-030 associations — move/rename preserves Entity-owned associations', () => {
@@ -1462,7 +1631,7 @@ describe('T-011 R-029 search visibility — nativeResult exposes index state', (
     expect((failed!.result as ScopedSearchResult).indexState).toBe('indexing_failed');
   });
 
-  it('computes index lag independently of the document modified time', () => {
+  it('secondsSince computes index lag from the index timestamp independent of modified time', () => {
     const indexedAt = '2026-07-29T08:00:00.000Z';
     const now = new Date('2026-07-30T12:00:00.000Z');
     const lag = secondsSince(now, indexedAt);
@@ -1537,5 +1706,232 @@ describe('T-011 R-029/R-030 real repository (better-sqlite3) — index state and
         { object_type: 'project', object_id: '7', link_role: 'workspace' },
       ],
     });
+  });
+});
+
+/* =============================================================================
+ * T-012 — Migrate existing Google read path into unified document model (THE-953).
+ * R-004 — "Preserve existing Google V1 read-only behavior":
+ *   read/index/link/preview preserved; writes fail closed; migration parity.
+ * ============================================================================= */
+
+describe('T-012 R-004 — Google V1 read-only mapping into the unified document model', () => {
+  function googleRef(overrides: Partial<ExternalDocumentRefRecord> = {}): ExternalDocumentRefRecord {
+    return {
+      id: 't012-google-doc',
+      org_id: 'org-a',
+      connector_type: 'google_docs',
+      external_id: 't012-doc-1',
+      external_url: 'https://docs.google.com/document/d/t012-doc-1/edit',
+      title: 'T-012 read-only account plan',
+      external_mime_type: 'application/vnd.google-apps.document',
+      external_canonical_url: 'https://docs.google.com/document/d/t012-doc-1',
+      auth_state: 'authorized',
+      readiness_state: 'ready',
+      granted_scopes: ['read', 'index', 'link', 'preview'],
+      missing_scopes: [],
+      auth_expires_at: null,
+      external_ref_state: 'available',
+      capabilities_json: JSON.stringify({
+        read: true,
+        index: true,
+        link: true,
+        preview: true,
+        create: true,
+        update: true,
+        write: true,
+        export: true,
+        sync: true,
+      }),
+      canonicality: 'entity_reference_only',
+      last_indexed_at: null,
+      last_checked_at: null,
+      entity_visibility_policy_json: '{}',
+      external_permission_summary: 'Connector can read this document',
+      linked_object_refs: [],
+      metadata_json: '{}',
+      created_at: '2026-06-24T10:50:00.000Z',
+      updated_at: '2026-06-24T10:50:00.000Z',
+      ...overrides,
+    };
+  }
+
+  const FIXED_NOW = '2026-06-24T11:00:00.000Z';
+
+  it('preserves the legacy read/index/link/preview surface while mapping into the unified model', () => {
+    const mapping = mapGoogleExternalRefToUnifiedReport(googleRef(), new Date(FIXED_NOW));
+
+    // Legacy V1 read-only flags preserved.
+    expect(mapping.legacy.read).toBe(true);
+    expect(mapping.legacy.index).toBe(true);
+    expect(mapping.legacy.link).toBe(true);
+    expect(mapping.legacy.preview).toBe(true);
+    for (const mutation of ['create', 'update', 'write', 'export', 'sync'] as const) {
+      expect(mapping.legacy.mutation_capabilities[mutation]).toBe(false);
+    }
+
+    // Unified capability vocabulary is complete (every CapabilityType present).
+    for (const name of CAPABILITY_NAMES) {
+      expect(mapping.report[name].state).toBeDefined();
+      expect(mapping.report[name].name).toBe(name);
+    }
+
+    // Read-like lanes are actionable when the read-only connection is healthy.
+    expect(capabilityAllowsAction(mapping.report.read)).toBe(true);
+    expect(capabilityAllowsAction(mapping.report.preview)).toBe(true);
+    expect(capabilityAllowsAction(mapping.report.open_external)).toBe(true);
+  });
+
+  it('fails closed on every write/embedding/human-edit lane (zero write capability enabled)', () => {
+    const mapping = mapGoogleExternalRefToUnifiedReport(googleRef(), new Date(FIXED_NOW));
+    for (const name of FAIL_CLOSED_CAPABILITIES) {
+      expect(mapping.report[name].state).toBe('unsupported');
+      expect(capabilityAllowsAction(mapping.report[name])).toBe(false);
+    }
+    expect(mapping.report.human_edit.state).toBe('unsupported');
+    expect(capabilityAllowsAction(mapping.report.human_edit)).toBe(false);
+
+    // Even an adapter-supplied report that claims every capability stays write-disabled.
+    const optimistic = googleRef({ capabilities_json: JSON.stringify({
+      read: true, index: true, link: true, preview: true,
+      create: true, update: true, write: true, export: true, sync: true,
+    }) });
+    const optimisticMapping = mapGoogleExternalRefToUnifiedReport(optimistic, new Date(FIXED_NOW));
+    for (const name of FAIL_CLOSED_CAPABILITIES) {
+      expect(capabilityAllowsAction(optimisticMapping.report[name])).toBe(false);
+    }
+  });
+
+  it('assertGoogleUnifiedWritesDisabled accepts a disabled report and throws on a tampered one (defense-in-depth)', () => {
+    const mapping = mapGoogleExternalRefToUnifiedReport(googleRef(), new Date(FIXED_NOW));
+    // A correctly-disabled Google V1 report passes the guard (no throw).
+    expect(() => assertGoogleUnifiedWritesDisabled(mapping)).not.toThrow();
+
+    // If a later layer erroneously lifts a write lane, the guard throws so no Google
+    // mutation could ever be sent through a report it did not authorize.
+    const tampered: GoogleUnifiedCapabilityMapping = {
+      ...mapping,
+      report: {
+        ...mapping.report,
+        create: { name: 'create', state: 'supported', source: 'adapter' },
+      },
+    };
+    expect(() => assertGoogleUnifiedWritesDisabled(tampered)).toThrow(/fail-closed invariant violated/);
+  });
+
+  it('degrades read-like lanes on degraded/expired/revoked auth but never enables writes', () => {
+    const degraded = googleRef({ auth_state: 'expired', auth_expires_at: '2025-01-01T00:00:00.000Z' });
+    const mapping = mapGoogleExternalRefToUnifiedReport(degraded, new Date(FIXED_NOW));
+    // Read-like lanes degrade (still honest fail-closed; write/embed lanes never lift).
+    expect(capabilityAllowsAction(mapping.report.read)).toBe(true);
+    for (const name of FAIL_CLOSED_CAPABILITIES) {
+      expect(capabilityAllowsAction(mapping.report[name])).toBe(false);
+    }
+
+    const revoked = googleRef({ auth_state: 'revoked', external_ref_state: 'permission_revoked' });
+    const revokedMapping = mapGoogleExternalRefToUnifiedReport(revoked, new Date(FIXED_NOW));
+    for (const name of FAIL_CLOSED_CAPABILITIES) {
+      expect(capabilityAllowsAction(revokedMapping.report[name])).toBe(false);
+    }
+  });
+
+  it('R-004 fail-closed writes: fake provider asserts zero mutation calls while the write flag is disabled', async () => {
+    // Deterministic real provider fake is the ONLY provider (no network).
+    const adapter = createFakeDocumentProviderAdapter({ provider: 'google_workspace', connectionState: 'authorized' });
+
+    // Counting wrapper proves no Google mutation request is ever sent.
+    const mutationCalls = { create: 0, mutate: 0 };
+    const countedAdapter = new Proxy(adapter, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (prop === 'create') {
+          return async (...args: unknown[]) => { mutationCalls.create += 1; return (value as (...a: unknown[]) => unknown)(...args); };
+        }
+        if (prop === 'mutate') {
+          return async (...args: unknown[]) => { mutationCalls.mutate += 1; return (value as (...a: unknown[]) => unknown)(...args); };
+        }
+        return value;
+      },
+    });
+
+    // The mapped unified report for a healthy Google V1 read-only ref is write-disabled.
+    const mapping = mapGoogleExternalRefToUnifiedReport(googleRef(), new Date(FIXED_NOW));
+
+    // A write attempt on EITHER write lane is rejected before it can reach the provider, because
+    // the Google write flag is disabled (R-004). The typed fail-closed error is raised immediately.
+    expect(() => assertAdapterActionSupported(mapping.report, 'create', 'create google doc')).toThrow(UnsupportedAdapterMutationError);
+    expect(() => assertAdapterActionSupported(mapping.report, 'agent_text_mutation', 'mutate google doc')).toThrow(UnsupportedAdapterMutationError);
+
+    // Zero Google mutation requests were sent while the write flag is disabled.
+    expect(mutationCalls.create).toBe(0);
+    expect(mutationCalls.mutate).toBe(0);
+  });
+
+  it('T-012 carry-forward F4 — stale/degraded/indexing_failed index-result states are accepted (narrowed failure vocabulary)', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      if (!req.headers['x-entity-org-id']) req.headers['x-entity-org-id'] = 'org-a';
+      next();
+    });
+    app.use('/api/document-objects', createDocumentObjectRouter(createFakeRepos()));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+    const localBaseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      await fetch(`${localBaseUrl}/api/document-objects/native-documents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+        body: JSON.stringify({ id: 'r029-f4-stale-doc', org_id: 'org-a', title: 'F4 stale', content_hash: 'sha256:f4' }),
+      });
+      for (const state of ['stale', 'degraded', 'indexing_failed'] as const) {
+        const res = await fetch(`${localBaseUrl}/api/document-objects/native-documents/r029-f4-stale-doc/index-result`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+          body: JSON.stringify({ state, error: 'sanitized-f4-err' }),
+        });
+        expect(res.status).toBe(200);
+        expect(await readJson(res)).toMatchObject({ nativeDocument: { id: 'r029-f4-stale-doc', search_index_state: state } });
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('T-012 carry-forward F6b/F2 — real repo: linkNativeDocumentObject does not invalidate search index state', async () => {
+    // Isolate the real repository onto a temp DB so this test never touches the default
+    // dev database (same pattern as the T-011 real-repo integration test).
+    const tmpDbPath = path.join(os.tmpdir(), `entity-t012-link-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
+    process.env.ENTITY_TASK_DB_PATH = tmpDbPath;
+    try {
+      const dbMod = await import('../../db/src');
+      const repo = dbMod.createDocumentObjectRepository();
+      repo.createNativeDocument({
+        id: 'rel-link-preserve',
+        org_id: 'org-a',
+        title: 'Real repo link preserve',
+        content_hash: 'sha256:rel-link',
+      });
+      repo.markNativeDocumentIndexed('rel-link-preserve', '2026-08-01T09:00:00.000Z');
+      expect(repo.getNativeDocument('rel-link-preserve')).toMatchObject({ search_index_state: 'fresh' });
+
+      const linked = repo.linkNativeDocumentObject('rel-link-preserve', { object_type: 'task', object_id: '66', link_role: 'source_context' });
+      expect(linked).toMatchObject({
+        search_index_state: 'fresh',
+        linked_object_refs: [{ object_type: 'task', object_id: '66', link_role: 'source_context' }],
+      });
+    } finally {
+      if (originalDbPath !== undefined) {
+        process.env.ENTITY_TASK_DB_PATH = originalDbPath;
+      } else {
+        delete process.env.ENTITY_TASK_DB_PATH;
+      }
+      try { if (tmpDbPath) fs.unlinkSync(tmpDbPath); } catch {}
+      try { if (tmpDbPath) fs.unlinkSync(tmpDbPath + '-wal'); } catch {}
+      try { if (tmpDbPath) fs.unlinkSync(tmpDbPath + '-shm'); } catch {}
+    }
   });
 });
