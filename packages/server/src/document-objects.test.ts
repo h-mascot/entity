@@ -1,7 +1,11 @@
 import express from 'express';
 import http from 'http';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDocumentObjectRouter } from './document-objects';
+import { nativeResult, secondsSince, type ScopedSearchResult } from './routes/scoped-search-documents';
 import type {
   CreateEvidenceArtifactInput,
   CreateExternalDocumentRefInput,
@@ -87,6 +91,9 @@ function createFakeRepos(): {
         linked_object_refs: input.linked_object_refs ?? [],
         created_by_principal_id: input.created_by_principal_id ?? null,
         metadata_json: input.metadata_json ?? '{}',
+        last_indexed_at: input.last_indexed_at ?? null,
+        search_index_state: input.search_index_state ?? 'stale',
+        last_index_error: input.last_index_error ?? null,
         created_at: now,
         updated_at: now,
       };
@@ -130,6 +137,9 @@ function createFakeRepos(): {
         content_hash: input.content_hash,
         metadata_json: input.metadata_json ?? current.metadata_json,
         version,
+        search_index_state: 'stale',
+        last_indexed_at: null,
+        last_index_error: null,
         updated_at: now,
       };
       nativeDocuments.set(id, updated);
@@ -153,6 +163,33 @@ function createFakeRepos(): {
       const current = nativeDocuments.get(id);
       if (!current) return undefined;
       const updated = { ...current, linked_object_refs: appendObjectRef(current.linked_object_refs, objectRef) };
+      nativeDocuments.set(id, updated);
+      return updated;
+    },
+    markNativeDocumentIndexed: (id: string, indexedAt?: string | null) => {
+      const current = nativeDocuments.get(id);
+      if (!current) return undefined;
+      const updated: NativeDocumentRecord = {
+        ...current,
+        search_index_state: 'fresh',
+        last_indexed_at: indexedAt ?? null,
+        last_index_error: null,
+      };
+      nativeDocuments.set(id, updated);
+      return updated;
+    },
+    markNativeDocumentIndexFailed: (
+      id: string,
+      error?: string | null,
+      state: 'fresh' | 'stale' | 'degraded' | 'indexing_failed' = 'indexing_failed',
+    ) => {
+      const current = nativeDocuments.get(id);
+      if (!current) return undefined;
+      const updated: NativeDocumentRecord = {
+        ...current,
+        search_index_state: state,
+        last_index_error: error ?? null,
+      };
       nativeDocuments.set(id, updated);
       return updated;
     },
@@ -1061,5 +1098,444 @@ describe('document object routes', () => {
       },
     });
     expect(JSON.stringify(body)).not.toContain('Restricted people note');
+  });
+});
+
+/* =============================================================================
+ * T-011 — Integrate search and associations (THE-952).
+ * R-029 search/indexing: managed documents participate in Entity search; index
+ *   state tracked independently from provider modified time; successful changes
+ *   invalidate or refresh search state; indexing failure does NOT falsely mark
+ *   the provider write as failed; UI can identify stale/degraded indexing.
+ * R-030 associations: Entity-owned associations (workspace/project/task/File
+ *   Source) must not depend on provider folders and must survive provider moves.
+ * ============================================================================= */
+
+function nativeRecord(overrides: Partial<NativeDocumentRecord> = {}): NativeDocumentRecord {
+  return {
+    id: 'native-index-1',
+    org_id: 'org-a',
+    team_id: 'team-a',
+    project_id: 42,
+    title: 'Indexed native note',
+    document_kind: 'note',
+    body_format: 'markdown',
+    stable_path: '/documents/native/native-index-1.md',
+    content_hash: 'sha256:native-index',
+    mutability_policy: 'editable_versioned',
+    version: 1,
+    lifecycle_state: 'active',
+    sensitivity: null,
+    acl_json: '{}',
+    linked_object_refs: [],
+    created_by_principal_id: 'user-a',
+    metadata_json: '{}',
+    created_at: '2026-07-30T12:00:00.000Z',
+    updated_at: '2026-07-30T12:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('T-011 R-029 search/indexing — native document index state', () => {
+  let baseUrl = '';
+  let server: http.Server;
+  let repos: { documentRepo: DocumentObjectRepository; artifactRepo: EvidenceArtifactRepository };
+
+  beforeAll(async () => {
+    repos = createFakeRepos();
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      if (!req.headers['x-entity-org-id']) req.headers['x-entity-org-id'] = 'org-a';
+      next();
+    });
+    app.use('/api/document-objects', createDocumentObjectRouter(repos));
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  });
+
+  it('reports index state independently of provider modified time and refreshes to fresh on successful indexing', async () => {
+    const create = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'r029-indexed-doc',
+        org_id: 'org-a',
+        title: 'R029 indexed doc',
+        content_hash: 'sha256:r029-v1',
+      }),
+    });
+    expect(create.status).toBe(201);
+    const created = await readJson(create);
+    const createdUpdatedAt = (created.nativeDocument as { updated_at?: string }).updated_at;
+    // A freshly created document has not been indexed yet (stale, no provider content).
+    expect(created.nativeDocument).toMatchObject({
+      id: 'r029-indexed-doc',
+      search_index_state: 'stale',
+      last_indexed_at: null,
+    });
+
+    // Successful indexing refreshes state independently of the document's own modified time.
+    const indexedAt = '2026-08-01T09:00:00.000Z';
+    const idx = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-indexed-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'fresh', indexed_at: indexedAt }),
+    });
+    expect(idx.status).toBe(200);
+    expect(await readJson(idx)).toMatchObject({
+      nativeDocument: {
+        id: 'r029-indexed-doc',
+        search_index_state: 'fresh',
+        last_indexed_at: indexedAt,
+        last_index_error: null,
+        updated_at: createdUpdatedAt,
+      },
+    });
+
+    // The index state is independent from the document version / content (no rewrite).
+    const readBack = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-indexed-doc`, {
+      headers: { 'x-entity-org-id': 'org-a' },
+    });
+    const body = await readJson(readBack);
+    expect(body.nativeDocument).toMatchObject({
+      content_hash: 'sha256:r029-v1',
+      version: 1,
+      search_index_state: 'fresh',
+      last_indexed_at: indexedAt,
+    });
+  });
+
+  it('invalidates search state on a successful document change and keeps writing the document', async () => {
+    const create = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'r029-invalidate-doc',
+        org_id: 'org-a',
+        title: 'R029 invalidate doc',
+        content_hash: 'sha256:r029-a',
+      }),
+    });
+    expect(create.status).toBe(201);
+    await fetch(`${baseUrl}/api/document-objects/native-documents/r029-invalidate-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'fresh', indexed_at: '2026-08-01T09:00:00.000Z' }),
+    });
+    const before = await readJson(await fetch(`${baseUrl}/api/document-objects/native-documents/r029-invalidate-doc`, {
+      headers: { 'x-entity-org-id': 'org-a' },
+    }));
+    expect((before.nativeDocument as { search_index_state: string }).search_index_state).toBe('fresh');
+
+    // A successful write invalidates the search state.
+    const update = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-invalidate-doc`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ content_hash: 'sha256:r029-b' }),
+    });
+    expect(update.status).toBe(200);
+    expect(await readJson(update)).toMatchObject({
+      nativeDocument: { id: 'r029-invalidate-doc', search_index_state: 'stale', last_indexed_at: null },
+    });
+  });
+
+  it('does not mark the provider write as failed when indexing fails, records the failure, and retries to fresh', async () => {
+    const create = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'r029-failure-doc',
+        org_id: 'org-a',
+        title: 'R029 failure doc',
+        content_hash: 'sha256:r029-fail',
+        linked_object_refs: [{ object_type: 'task', object_id: '99', link_role: 'source_context' }],
+      }),
+    });
+    expect(create.status).toBe(201);
+
+    // The provider write (create) succeeded (201) even though indexing later fails.
+    const fail = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-failure-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'indexing_failed', error: 'sanitized-index-err:crash' }),
+    });
+    expect(fail.status).toBe(200);
+    expect(await readJson(fail)).toMatchObject({
+      nativeDocument: {
+        id: 'r029-failure-doc',
+        search_index_state: 'indexing_failed',
+        last_index_error: 'sanitized-index-err:crash',
+      },
+    });
+
+    // The document itself is unaffected by the index failure: it remains readable.
+    const readBack = await readJson(await fetch(`${baseUrl}/api/document-objects/native-documents/r029-failure-doc`, {
+      headers: { 'x-entity-org-id': 'org-a' },
+    }));
+    expect(readBack.nativeDocument).toMatchObject({
+      id: 'r029-failure-doc',
+      title: 'R029 failure doc',
+      content_hash: 'sha256:r029-fail',
+      linked_object_refs: [{ object_type: 'task', object_id: '99', link_role: 'source_context' }],
+    });
+
+    // Retry: a later successful indexing returns the doc to fresh and clears the error.
+    const retry = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-failure-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'fresh', indexed_at: '2026-08-02T10:00:00.000Z' }),
+    });
+    expect(retry.status).toBe(200);
+    expect(await readJson(retry)).toMatchObject({
+      nativeDocument: { id: 'r029-failure-doc', search_index_state: 'fresh', last_index_error: null },
+    });
+  });
+
+  it('rejects unknown or degraded index-result states that are not Entity-supported (fails closed)', async () => {
+    await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'r029-closed-doc',
+        org_id: 'org-a',
+        title: 'R029 closed doc',
+        content_hash: 'sha256:r029-closed',
+      }),
+    });
+    const bad = await fetch(`${baseUrl}/api/document-objects/native-documents/r029-closed-doc/index-result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({ state: 'sneaky_supported' }),
+    });
+    expect(bad.status).toBe(400);
+    const denied = await readJson(await fetch(`${baseUrl}/api/document-objects/native-documents/r029-closed-doc`, {
+      headers: { 'x-entity-org-id': 'org-a' },
+    }));
+    // The document write lifecycle is unaffected by a bad index-result call.
+    expect(denied.nativeDocument).toMatchObject({ id: 'r029-closed-doc', search_index_state: 'stale' });
+  });
+});
+
+describe('T-011 R-030 associations — move/rename preserves Entity-owned associations', () => {
+  let baseUrl = '';
+  let server: http.Server;
+  let repos: { documentRepo: DocumentObjectRepository; artifactRepo: EvidenceArtifactRepository };
+
+  beforeAll(async () => {
+    repos = createFakeRepos();
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      if (!req.headers['x-entity-org-id']) req.headers['x-entity-org-id'] = 'org-a';
+      next();
+    });
+    app.use('/api/document-objects', createDocumentObjectRouter(repos));
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  });
+
+  it('preserves task/project/File Source associations when a document is moved (stable_path change)', async () => {
+    const create = await fetch(`${baseUrl}/api/document-objects/native-documents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        id: 'r030-move-doc',
+        org_id: 'org-a',
+        title: 'R030 move doc',
+        content_hash: 'sha256:r030-v1',
+        stable_path: '/documents/native/old/location.md',
+        linked_object_refs: [
+          { object_type: 'task', object_id: '7', link_role: 'source_context' },
+          { object_type: 'project', object_id: '42', link_role: 'workspace' },
+          { object_type: 'file_source', object_id: 'src-1', link_role: 'origin' },
+        ],
+      }),
+    });
+    expect(create.status).toBe(201);
+
+    // Simulate a provider-side move/rename: the stable path changes but the Entity-owned
+    // associations are not tied to any provider folder and must survive.
+    const move = await fetch(`${baseUrl}/api/document-objects/native-documents/r030-move-doc`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+      body: JSON.stringify({
+        content_hash: 'sha256:r030-v2',
+        stable_path: '/documents/native/new/location.md',
+      }),
+    });
+    expect(move.status).toBe(200);
+    expect(await readJson(move)).toMatchObject({
+      nativeDocument: {
+        id: 'r030-move-doc',
+        stable_path: '/documents/native/new/location.md',
+        linked_object_refs: [
+          { object_type: 'task', object_id: '7', link_role: 'source_context' },
+          { object_type: 'project', object_id: '42', link_role: 'workspace' },
+          { object_type: 'file_source', object_id: 'src-1', link_role: 'origin' },
+        ],
+      },
+    });
+
+    // The associations come back on a fresh read after the move.
+    const readBack = await readJson(await fetch(`${baseUrl}/api/document-objects/native-documents/r030-move-doc`, {
+      headers: { 'x-entity-org-id': 'org-a' },
+    }));
+    expect(readBack.nativeDocument).toMatchObject({
+      stable_path: '/documents/native/new/location.md',
+      linked_object_refs: [
+        { object_type: 'task', object_id: '7', link_role: 'source_context' },
+        { object_type: 'project', object_id: '42', link_role: 'workspace' },
+        { object_type: 'file_source', object_id: 'src-1', link_role: 'origin' },
+      ],
+    });
+  });
+});
+
+describe('T-011 R-029 search visibility — nativeResult exposes index state', () => {
+  function binding() {
+    return {
+      orgId: 'org-a',
+      principal: {
+        principal_id: 'user-a',
+        grants: [
+          {
+            role: 'manager' as const,
+            org_id: 'org-a',
+            sensitivity_categories: ['customer', 'legal', 'financial', 'security', 'production', 'confidential_strategy'],
+          },
+        ],
+      },
+    };
+  }
+
+  it('marks a fresh document as indexed with its independent index timestamp', () => {
+    const record = nativeRecord({
+      search_index_state: 'fresh' as const,
+      last_indexed_at: '2026-08-01T09:00:00.000Z',
+      updated_at: '2026-07-30T12:00:00.000Z',
+    });
+    const ranked = nativeResult(binding(), 'renewal', record);
+    expect(ranked).not.toBeNull();
+    expect(ranked!.result).toMatchObject({
+      objectType: 'native_document',
+      provenance: {
+        indexed: true,
+        indexedAt: '2026-08-01T09:00:00.000Z',
+        canonical: true,
+      },
+    });
+    expect((ranked!.result as ScopedSearchResult).indexState).toBe('fresh');
+    expect(ranked!.recencyMs).toBe(Date.parse('2026-07-30T12:00:00.000Z'));
+  });
+
+  it('exposes stale and indexing-failed documents so the UI can identify degraded indexing', () => {
+    const stale = nativeResult(binding(), 'renewal', nativeRecord({
+      search_index_state: 'stale' as const,
+      last_indexed_at: null,
+    }));
+    expect(stale!.result).toMatchObject({ provenance: { indexed: false, indexedAt: null } });
+    expect((stale!.result as ScopedSearchResult).indexState).toBe('stale');
+
+    const failed = nativeResult(binding(), 'renewal', nativeRecord({
+      search_index_state: 'indexing_failed' as const,
+      last_indexed_at: '2026-07-29T08:00:00.000Z',
+      last_index_error: 'sanitized-index-err:crash',
+    }));
+    expect(failed!.result).toMatchObject({
+      provenance: { indexed: true, indexedAt: '2026-07-29T08:00:00.000Z' },
+    });
+    expect((failed!.result as ScopedSearchResult).indexState).toBe('indexing_failed');
+  });
+
+  it('computes index lag independently of the document modified time', () => {
+    const indexedAt = '2026-07-29T08:00:00.000Z';
+    const now = new Date('2026-07-30T12:00:00.000Z');
+    const lag = secondsSince(now, indexedAt);
+    expect(lag).toBe(100800); // 28 hours in seconds
+  });
+});
+
+describe('T-011 R-029/R-030 real repository (better-sqlite3) — index state and move association', () => {
+  let tmpDbPath: string;
+
+  beforeEach(() => {
+    tmpDbPath = path.join(os.tmpdir(), `entity-t011-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    process.env.ENTITY_TASK_DB_PATH = tmpDbPath;
+    process.env.MISSION_CONTROL_DB_PATH = '/tmp/nonexistent-mc-t011.db';
+  });
+
+  afterEach(() => {
+    try { if (tmpDbPath) fs.unlinkSync(tmpDbPath); } catch {}
+    try { if (tmpDbPath) fs.unlinkSync(tmpDbPath + '-wal'); } catch {}
+    try { if (tmpDbPath) fs.unlinkSync(tmpDbPath + '-shm'); } catch {}
+  });
+
+  it('tracks native search index state independently, invalidates on write, and preserves associations across move', async () => {
+    const dbMod = await import('../../db/src');
+    const repo = dbMod.createDocumentObjectRepository();
+    const created = repo.createNativeDocument({
+      id: 'rel-native-move',
+      org_id: 'org-a',
+      title: 'Real repo move doc',
+      content_hash: 'sha256:rel-v1',
+      stable_path: '/documents/native/old.md',
+      linked_object_refs: [
+        { object_type: 'task', object_id: '11', link_role: 'source_context' },
+        { object_type: 'project', object_id: '7', link_role: 'workspace' },
+      ],
+    });
+    expect(created.search_index_state).toBe('stale');
+    expect(created.last_indexed_at).toBeNull();
+
+    const indexed = repo.markNativeDocumentIndexed('rel-native-move', '2026-08-01T09:00:00.000Z');
+    expect(indexed).toMatchObject({
+      id: 'rel-native-move',
+      search_index_state: 'fresh',
+      last_indexed_at: '2026-08-01T09:00:00.000Z',
+    });
+
+    // A successful content write invalidates the index state (R-029).
+    const updated = repo.updateNativeDocumentVersion('rel-native-move', { content_hash: 'sha256:rel-v2' });
+    expect(updated).toMatchObject({ id: 'rel-native-move', search_index_state: 'stale', last_indexed_at: null });
+
+    // Index failure isolation: the write already succeeded; a recorded failure only touches index metadata.
+    const failed = repo.markNativeDocumentIndexFailed('rel-native-move', 'sanitized-index-err:crash');
+    expect(failed).toMatchObject({ id: 'rel-native-move', search_index_state: 'indexing_failed' });
+    expect(repo.getNativeDocument('rel-native-move')).toMatchObject({
+      content_hash: 'sha256:rel-v2',
+      search_index_state: 'indexing_failed',
+    });
+
+    // Retry to fresh clears the failure.
+    expect(repo.markNativeDocumentIndexed('rel-native-move', '2026-08-02T10:00:00.000Z'))
+      .toMatchObject({ id: 'rel-native-move', search_index_state: 'fresh', last_index_error: null });
+
+    // Move (stable_path change) preserves the Entity-owned associations (R-030).
+    const moved = repo.updateNativeDocumentVersion('rel-native-move', {
+      content_hash: 'sha256:rel-v3',
+      stable_path: '/documents/native/new.md',
+    });
+    expect(moved).toMatchObject({
+      stable_path: '/documents/native/new.md',
+      linked_object_refs: [
+        { object_type: 'task', object_id: '11', link_role: 'source_context' },
+        { object_type: 'project', object_id: '7', link_role: 'workspace' },
+      ],
+    });
   });
 });

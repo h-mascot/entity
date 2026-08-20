@@ -10,6 +10,7 @@ import {
   type ListExternalDocumentRefsInput,
   type DocumentObjectRepository,
   type EvidenceArtifactRepository,
+  type NativeDocumentSearchIndexState,
   type ObjectRef,
   type UpdateEvidenceArtifactVersionInput,
   type UpdateNativeDocumentVersionInput,
@@ -143,6 +144,25 @@ function readQueryString(req: Request, key: string): string | undefined {
     return typeof first === 'string' && first.trim() ? first.trim() : undefined;
   }
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+const NATIVE_INDEX_STATES: ReadonlyArray<NativeDocumentSearchIndexState> = ['fresh', 'stale', 'degraded', 'indexing_failed'];
+
+interface NativeIndexResultInput {
+  state: NativeDocumentSearchIndexState;
+  indexedAt?: string;
+  error?: string;
+}
+
+function parseNativeIndexResult(body: Record<string, unknown>): NativeIndexResultInput {
+  const rawState = readString(body.state);
+  if (!rawState || !(NATIVE_INDEX_STATES as readonly string[]).includes(rawState)) {
+    throw new DocumentObjectApiError(400, 'state must be one of fresh, stale, degraded, or indexing_failed');
+  }
+  const state = rawState as NativeDocumentSearchIndexState;
+  const indexedAt = optionalString(body, 'indexed_at');
+  const error = readString(body.error);
+  return { state, indexedAt, error };
 }
 
 function readQueryLimit(req: Request): number | undefined {
@@ -406,6 +426,27 @@ export function createDocumentObjectRouter(deps: DocumentObjectRouterDeps = {}):
       if (!current) return res.status(404).json({ error: 'native document not found' });
       if (!ensureObjectPermission(res, binding, nativeDocumentObject(current), 'write')) return undefined;
       const nativeDocument = documentRepo.linkNativeDocumentObject(req.params.id, parseObjectRefBody(parseBody(req)));
+      if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
+      return res.json({ nativeDocument });
+    } catch (error) {
+      return sendRouteError(res, error);
+    }
+  });
+
+  // R-029 — a provider/entity re-index outcome is recorded INDEPENDENTLY of the document
+  // write. A failed index never marks the provider write as failed; a stale state keeps the
+  // UI able to identify stale/degraded indexing.
+  router.post('/native-documents/:id/index-result', (req, res) => {
+    try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      const current = documentRepo.getNativeDocument(req.params.id);
+      if (!current) return res.status(404).json({ error: 'native document not found' });
+      if (!ensureObjectPermission(res, binding, nativeDocumentObject(current), 'write')) return undefined;
+      const input = parseNativeIndexResult(parseBody(req));
+      const nativeDocument = input.state === 'fresh'
+        ? documentRepo.markNativeDocumentIndexed(req.params.id, input.indexedAt)
+        : documentRepo.markNativeDocumentIndexFailed(req.params.id, input.error, input.state);
       if (!nativeDocument) return res.status(404).json({ error: 'native document not found' });
       return res.json({ nativeDocument });
     } catch (error) {

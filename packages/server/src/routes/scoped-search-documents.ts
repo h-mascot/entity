@@ -1,6 +1,7 @@
 import type {
   ExternalDocumentRefRecord,
   NativeDocumentRecord,
+  NativeDocumentSearchIndexState,
 } from '../../../db/src';
 import type { FileIndexRecord, FileSyncRunRecord } from '../../../db/src/file-index';
 import type { FileSourceRecord } from '../../../db/src/file-sources';
@@ -39,6 +40,8 @@ export interface ScopedSearchResult {
     canonical: true;
     mutability: 'mutable' | 'editable_versioned' | 'immutable' | 'external';
   };
+  /** R-029 — search/indexing state so the UI can identify stale/degraded indexing. */
+  indexState?: NativeDocumentSearchIndexState | null;
   ranking: {
     score: number;
     basis: 'keyword';
@@ -118,6 +121,7 @@ export function keywordScore(query: string, title: string): number {
 }
 
 export function nativeResult(binding: RequestOrgBinding, query: string, record: NativeDocumentRecord): RankedSearchResult | null {
+  const indexState = record.search_index_state ?? null;
   const result: ScopedSearchResult = {
     objectType: 'native_document',
     objectId: record.id,
@@ -136,12 +140,13 @@ export function nativeResult(binding: RequestOrgBinding, query: string, record: 
     provenance: {
       backend: 'documents',
       sourceId: null,
-      indexed: false,
-      indexedAt: null,
+      indexed: Boolean(record.last_indexed_at),
+      indexedAt: record.last_indexed_at ?? null,
       lagSeconds: null,
       canonical: true,
       mutability: record.mutability_policy === 'immutable' ? 'immutable' : 'editable_versioned',
     },
+    indexState,
     ranking: { score: keywordScore(query, record.title), basis: 'keyword' },
   };
   const safe = permissionSafeResult(binding, {
