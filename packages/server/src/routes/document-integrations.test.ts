@@ -979,6 +979,166 @@ describe('THE-950 (T-009) — Revision Coordinator at the route boundary (§12.3
     return { inner, wrapped };
   }
 
+  /**
+   * Deterministic multi-lane adapter: enables the range and slide mutation lanes (in addition to
+   * the default text lane) so the route-level R-024/R-025 proofs can exercise the sheet and slide
+   * lanes end-to-end at the HTTP boundary (THE-950 r2 F3) rather than only at coordinator-unit
+   * level. The capability resolver folds these to `supported`, so the mutation reaches the
+   * Revision Coordinator precondition instead of failing earlier at the capability gate.
+   */
+  function rangeSlideGoogleAdapter() {
+    const inner = createFakeDocumentProviderAdapter({
+      capabilities: { agent_range_mutation: 'supported', agent_slide_mutation: 'supported' },
+    });
+    return { inner };
+  }
+
+  it('THE-950 F1: a mutation against a registry record whose provider artifact is GONE returns 404 DOCUMENT_NOT_FOUND (not a misleading 403 no-token)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    // The registry owns a record for external_id 'goog-doc-sample-1' in ws_A with an allowed
+    // destination (so the mutation reaches the Revision Coordinator), but the provider artifact was
+    // never created (or has vanished): the fake adapter's getMetadata returns null for that id. This
+    // is an artifact-not-found (read/metadata target miss) and must surface the typed 404, NOT the
+    // "provider exposes no revision/concurrency token" 403 that conflated getMetadata->null with no
+    // concurrency evidence (THE-950 r2 F1).
+    const created = ctx.registry.register(baseWriteInput({ destination_id: 'dest_1' }), 'ws_A');
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${created.record.id}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: 'rev-1', idempotencyKey: 'op_gone', operation: { kind: 'replace_text', content: 'x' } },
+    });
+    expect(res.status).toBe(404);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('DOCUMENT_NOT_FOUND');
+  });
+
+  it('sheet lane (set_range): two-writer stale revision returns 409 STALE_REVISION at the HTTP boundary (R-024/R-025)', async () => {
+    const ctx = setup();
+    const { inner } = rangeSlideGoogleAdapter();
+    ctx.adapters.set('google_workspace', inner);
+    // The write policy + destination must govern the spreadsheet artifact type for the create to
+    // reach the mutation lane (the default fixtures are document-scoped).
+    ctx.policies.push(basePolicy({ artifactType: 'spreadsheet' }));
+    ctx.destinations.push(baseDestination({ artifactTypes: new Set(['document', 'spreadsheet', 'presentation']) }));
+    // Create a spreadsheet through the API (range lane enabled) -> registers rev-1.
+    const documentId = await createViaApi(ctx, createBody({ artifactType: 'spreadsheet' }));
+    // Writer A commits a range mutation -> advances to rev-2.
+    const advance = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: 'rev-1', idempotencyKey: 'op_sheet_adv', operation: { kind: 'set_range', sheet: 'Forecast', range: 'B2', values: [[10, 20]] } },
+    });
+    expect(advance.status).toBe(200);
+    expect((await bodyOf(advance)).revision).toBe('rev-2');
+    // Writer B (a second independent writer) prepared against the now-stale rev-1 is rejected with
+    // the R-025 409 for the sheet lane at the HTTP boundary.
+    const stale = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: 'rev-1', idempotencyKey: 'op_sheet_stale', operation: { kind: 'set_range', sheet: 'Forecast', range: 'B2', values: [[30]] } },
+    });
+    expect(stale.status).toBe(409);
+    const sb = await bodyOf(stale);
+    expect(sb.error.code).toBe('STALE_REVISION');
+    expect(sb.error.expectedRevision).toBe('rev-1');
+    expect(sb.error.currentRevision).toBe('rev-2');
+    expect(sb.error.retryable).toBe(true);
+  });
+
+  it('slide lane (update_slide_text bare slideRef): two-writer stale revision returns 409 STALE_REVISION at the HTTP boundary (R-024/R-025)', async () => {
+    const ctx = setup();
+    const { inner } = rangeSlideGoogleAdapter();
+    ctx.adapters.set('google_workspace', inner);
+    ctx.policies.push(basePolicy({ artifactType: 'presentation' }));
+    ctx.destinations.push(baseDestination({ artifactTypes: new Set(['document', 'spreadsheet', 'presentation']) }));
+    // Create a presentation through the API (slide lane enabled) -> registers rev-1.
+    const documentId = await createViaApi(ctx, createBody({ artifactType: 'presentation' }));
+    // Writer A commits a slide mutation -> advances to rev-2.
+    const advance = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: 'rev-1', idempotencyKey: 'op_slide_adv', operation: { kind: 'update_slide_text', slideRef: 'slide_4' } },
+    });
+    expect(advance.status).toBe(200);
+    expect((await bodyOf(advance)).revision).toBe('rev-2');
+    // Writer B prepared against the now-stale rev-1 is rejected with the R-025 409 for the slide
+    // lane at the HTTP boundary.
+    const stale = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: 'rev-1', idempotencyKey: 'op_slide_stale', operation: { kind: 'update_slide_text', slideRef: 'slide_4' } },
+    });
+    expect(stale.status).toBe(409);
+    const sb = await bodyOf(stale);
+    expect(sb.error.code).toBe('STALE_REVISION');
+    expect(sb.error.expectedRevision).toBe('rev-1');
+    expect(sb.error.currentRevision).toBe('rev-2');
+    expect(sb.error.retryable).toBe(true);
+  });
+
+  it('sheet lane (set_range): a no-token provider FAILS CLOSED with typed CAPABILITY_UNSUPPORTED at the HTTP boundary (R-024)', async () => {
+    const ctx = setup();
+    const inner = createFakeDocumentProviderAdapter({
+      capabilities: { agent_range_mutation: 'supported' },
+    });
+    // Wrap so a PRESENT descriptor exposes no concurrency token (artifact exists, no token) —
+    // distinct from the vanished-artifact 404 covered above.
+    const wrapped: DocumentProviderAdapter = {
+      provider: 'google_workspace',
+      resolveCapabilities: (c) => inner.resolveCapabilities(c),
+      discover: (i) => inner.discover(i),
+      getMetadata: async (i) => inner.getMetadata(i).then((d) => (d ? { ...d, current_revision: null } : d)),
+      create: (i) => inner.create(i),
+      read: (i) => inner.read(i),
+      mutate: (i) => inner.mutate(i),
+      getOpenTarget: (i) => inner.getOpenTarget(i),
+      reconcileChanges: (i) => inner.reconcileChanges(i),
+    };
+    ctx.adapters.set('google_workspace', wrapped);
+    ctx.policies.push(basePolicy({ artifactType: 'spreadsheet' }));
+    ctx.destinations.push(baseDestination({ artifactTypes: new Set(['document', 'spreadsheet', 'presentation']) }));
+    const documentId = await createViaApi(ctx, createBody({ artifactType: 'spreadsheet' }));
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: 'rev-1', idempotencyKey: 'op_sheet_notoken', operation: { kind: 'set_range', sheet: 'Forecast', range: 'B2', values: [[10]] } },
+    });
+    expect(res.status).toBe(403);
+    expect((await bodyOf(res)).error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+
+  it('slide lane (update_slide_text bare slideRef): a no-token provider FAILS CLOSED with typed CAPABILITY_UNSUPPORTED at the HTTP boundary (R-024)', async () => {
+    const ctx = setup();
+    const inner = createFakeDocumentProviderAdapter({
+      capabilities: { agent_slide_mutation: 'supported' },
+    });
+    const wrapped: DocumentProviderAdapter = {
+      provider: 'google_workspace',
+      resolveCapabilities: (c) => inner.resolveCapabilities(c),
+      discover: (i) => inner.discover(i),
+      getMetadata: async (i) => inner.getMetadata(i).then((d) => (d ? { ...d, current_revision: null } : d)),
+      create: (i) => inner.create(i),
+      read: (i) => inner.read(i),
+      mutate: (i) => inner.mutate(i),
+      getOpenTarget: (i) => inner.getOpenTarget(i),
+      reconcileChanges: (i) => inner.reconcileChanges(i),
+    };
+    ctx.adapters.set('google_workspace', wrapped);
+    ctx.policies.push(basePolicy({ artifactType: 'presentation' }));
+    ctx.destinations.push(baseDestination({ artifactTypes: new Set(['document', 'spreadsheet', 'presentation']) }));
+    const documentId = await createViaApi(ctx, createBody({ artifactType: 'presentation' }));
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: { expectedRevision: 'rev-1', idempotencyKey: 'op_slide_notoken', operation: { kind: 'update_slide_text', slideRef: 'slide_4' } },
+    });
+    expect(res.status).toBe(403);
+    expect((await bodyOf(res)).error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+
   it('STALE_REVISION 409 preserves the §12.3/R-025 envelope with SANITIZED expected/current revisions', async () => {
     const ctx = setup();
     ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());

@@ -15,9 +15,9 @@ establish a safe current revision failing closed.
 ## Allowed paths touched (only)
 
 - `packages/server/src/document-providers/revision-coordinator.ts` (new — the coordinator)
-- `packages/server/src/document-providers/revision-coordinator.test.ts` (new — concurrent-writer tests, 12 tests)
+- `packages/server/src/document-providers/revision-coordinator.test.ts` (new — concurrent-writer tests, 19 tests after review-round fixes)
 - `packages/server/src/routes/document-integrations.ts` (wired the coordinator into the mutate route; 409 `STALE_REVISION` contract preserved exactly)
-- `packages/server/src/routes/document-integrations.test.ts` (route-level integration + carry-forward RED→GREEN guards; 6 new T-009 tests; existing T-008 contract tests unweakened)
+- `packages/server/src/routes/document-integrations.test.ts` (route-level integration + carry-forward RED→GREEN guards + review-round proofs; 11 new T-009 tests; existing T-008 contract tests unweakened)
 - `docs/plans/evidence/entity-document-integrations/T-009/` (this directory)
 
 No other files were edited.
@@ -115,9 +115,11 @@ Provider-neutral coordinator that owns mutation preconditions:
 
 - `readMutationPrecondition({ adapter, externalId, providerConnectionId, mutation })` — reads the
   **authoritative provider current revision** via `adapter.getMetadata`. It never fabricates a
-  revision from the registry hint or any secondary source; when the provider exposes none
-  (null/empty `current_revision`), `concurrencyProven=false` (R-024 "never proceed on unverifiable
-  state").
+  revision from the registry hint or any secondary source. It distinguishes a **null descriptor**
+  (provider artifact not found / vanished → rethrows `AdapterArtifactNotFoundError`, surfaced as the
+  typed 404 `DOCUMENT_NOT_FOUND`) from a **present descriptor whose `current_revision` is
+  null/empty** (`concurrencyProven=false`, R-024 "never proceed on unverifiable state") — THE-950 r2
+  F1 fixed a regression that conflated the two and mapped a vanished artifact to a misleading 403.
 - `assertMutationPrecondition({ precondition, expectedRevision, documentId })` — fails closed with
   a typed `UnsafeMutationError` when `concurrencyProven=false` ("unsafe provider with no
   concurrency evidence fails closed"); otherwise compares expected vs current and throws the typed
@@ -125,8 +127,9 @@ Provider-neutral coordinator that owns mutation preconditions:
   retry (the caller surfaces the 409 once).
 - `preflightMutation(...)` — one-step read + assert, used by the route.
 - `sanitizeRevisionToken(raw, maxLength=64)` — treats revision tokens as **untrusted strings**:
-  strips C0/C1 control characters and HTML metacharacters (`<>"'&\`), bounds length to 64
-  (no secrets/credentials bleed, no HTML injection surface).
+  strips C0/C1 control characters, HTML metacharacters (`<>"'&\`), and (THE-950 r2 F5) Unicode
+  bidi/format controls (U+200B–U+200F, U+202A–U+202E), and bounds length to 64 (no
+  secrets/credentials bleed, no HTML injection surface).
 - `staleRevisionBody(err, documentId?)` — builds the exact §12.3/R-025 envelope
   (`code`, `message`, `documentId`, `expectedRevision`, `currentRevision`, `retryable:true`) with
   **sanitized** expected/current revisions and the fixed message (never embeds raw tokens; no
@@ -197,7 +200,30 @@ the sanitized-409 / no-token-fail-closed route tests failed because those behavi
 The fifth failure was the sanitized-409 message/envelope; the no-blind-retry test was already green
 because the route never auto-retried even before T-009.)
 
-### GREEN — focused (final HEAD)
+### Review round 1 — RED → GREEN proof (THE-950 F1 + F5)
+
+To prove the review-round tests are RED on the review candidate (which returns 403 for both the
+vanished-artifact and no-token mutation cases, and does not strip Unicode bidi/format controls),
+the coordinator source was temporarily reverted to its candidate logic (the null-descriptor rethrow
+and the `\u200b-\u200f\u202a-\u202e` character class removed) and the focused suite was re-run:
+
+```sh
+cd packages/server && npx vitest run src/document-providers/revision-coordinator.test.ts src/routes/document-integrations.test.ts
+```
+
+Result (RED, exit 1): **3 failed | 63 passed (66)** — the three FAILING tests are exactly the new
+RED tests:
+
+```
+× strips Unicode bidi/format controls (zero-width + bidi embeddings) — no hidden-direction surface   [F5]
+× a NULL descriptor (provider artifact vanished/unknown) rethrows AdapterArtifactNotFoundError...     [F1 unit]
+× THE-950 F1: a mutation against a registry record whose provider artifact is GONE returns 404...      [F1 route, got 403]
+```
+
+The F3 sheet/slide pinning tests and all carry-forward guards stayed GREEN in this
+RED run — confirming F3 is a GREEN-only (no-RED) pin.
+
+### GREEN — focused (final HEAD, after review round 1)
 
 Command (task verification #1):
 
@@ -209,8 +235,10 @@ Result (GREEN, exit 0):
 
 ```
  Test Files  2 passed (2)
-      Tests  58 passed (58)
+      Tests  66 passed (66)
 ```
+
+(The review-round RED tests above turn GREEN once the coordinator's F1/F5 fixes are present.)
 
 ### GREEN — full server suite (task verification #2, final HEAD)
 
@@ -290,6 +318,8 @@ Nothing is retried blindly; the stale writer is rejected and the current data is
 
 - HTML injection metacharacters (`< > " ' & \`) stripped → no HTML injection surface.
 - C0/C1 control characters (newlines, NUL, …) stripped.
+- Unicode bidi/format controls (U+200B–U+200F zero-width/joiners/LRM/RLM; U+202A–U+202E bidi
+  embeddings/overrides) stripped → no hidden-direction/spoofing surface (THE-950 r2 F5).
 - Bounded length (default 64) → an over-long/credential-like payload is truncated, never echoed in
   full; the full token never leaves the coordinator server-side boundary unredacted.
 - `null`/`undefined` → empty safe string.
@@ -305,6 +335,14 @@ Nothing is retried blindly; the stale writer is rejected and the current data is
 - Route (`document-integrations.test.ts`): a document backed by a no-token adapter (advertises the
   text lane but exposes no revision token) returns **403 CAPABILITY_UNSUPPORTED** on mutation —
   the lane degrades (typed capability/policy error) instead of writing on unverifiable state.
+- **F1 (THE-950 r2): a NULL descriptor is NOT the no-token case.** A mutation against a registry
+  record whose provider artifact has vanished (`getMetadata → null`) returns **404
+  DOCUMENT_NOT_FOUND** (the typed artifact-not-found), NOT the misleading 403 no-token. Unit + route
+  prove-it, RED→GREEN.
+- **F3 (THE-950 r2): route-level lane proofs.** The sheet (`set_range`) and slide
+  (`update_slide_text` bare slideRef) lanes are now proven at the HTTP boundary for the two-writer
+  stale-revision 409 and the no-token fail-closed 403 paths (GREEN-only pinning; the behavior was
+  already correct on the candidate, only the coverage was missing).
 
 ---
 
@@ -331,6 +369,42 @@ now a present-but-non-string `elementRef`, `text` (slide lane) or `sheet` (range
 - Finding ID: **THE-949 r3 FINAL finding 1 (LOW)**.
 - Disclosure: this edit is carried forward from the T-008 review and is inside the T-009 allowed
   path (`document-integrations.ts` / `document-integrations.test.ts`).
+
+---
+
+## Review round 1 (GLM 5.3) — fix disposition (THE-950)
+
+Review base: `33105b954de979b5159c14ae4ea43efbacc5c0d2`; candidate: `2baf6a1…`; verdict
+CHANGES_REQUESTED. Disposition of each finding, with the commands and RED→GREEN proofs recorded in
+the TDD section below.
+
+- **F1 (required — typed-error conflation):** `readMutationPrecondition` now distinguishes a **null
+  descriptor** (`getMetadata → null`: artifact not found / vanished at the provider) from a
+  **present descriptor** whose `current_revision` is null/empty. A vanished artifact rethrows
+  `AdapterArtifactNotFoundError` → the route's existing 404 `DOCUMENT_NOT_FOUND` mapping (not the
+  misleading 403 "provider exposes no revision/concurrency token"). A present-but-no-token
+  descriptor still fails closed (`UnsafeMutationError` → 403). Prove-It route test for BOTH paths,
+  RED→GREEN: a mutate against a registry record whose provider artifact is gone → 404, and a present
+  descriptor with null revision → 403.
+- **F2 (evidence count):** `revision-coordinator.test.ts` claim "12 tests" corrected. The file
+  contains 19 tests (16 at review candidate plus 3 added in review round 1: F1 null-descriptor,
+  F5 bidi strip, and one F1 distinction test) — all pass. All other counts in this EVIDENCE were
+  re-checked against the actual final runs (focused 66 passed; see TDD).
+- **F3 (route-level lane proof gap):** added route-level (HTTP boundary) R-024/R-025 proofs for the
+  sheet (`set_range`) and slide (`update_slide_text` bare slideRef) lanes: a two-writer stale
+  revision returns 409 `STALE_REVISION`, and a no-token provider fails closed with 403
+  `CAPABILITY_UNSUPPORTED`, for each lane. These are **pinning tests on lane-agnostic route code —
+  GREEN-only (no RED)**, because the stale-409 and fail-closed behavior was already correct on the
+  candidate; they close the PRD validation "two independent writers for each implemented mutation
+  lane" at the HTTP boundary.
+- **F4 (architecture note — documentation only, NO code):** the defense-in-depth guarantee (the
+  adapter re-checks the revision atomically inside `mutate`) rests on adapter discipline, not
+  contract enforcement — only the fake adapter implements it today. A shared revision guard /
+  contract-suite check is **deferred to the first real provider adapter (T-014+)**, and is noted
+  here rather than built now. No `types.ts` edit was made for this.
+- **F5 (INFO — hardening):** `sanitizeRevisionToken` now also strips Unicode bidi/format controls
+  (U+200B–U+200F, U+202A–U+202E) via the bounded character-class change, with one hostile-token
+  test, RED→GREEN.
 
 ---
 

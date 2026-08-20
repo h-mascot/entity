@@ -48,7 +48,7 @@ import type {
   ReconcileChangesInput,
   ReconcileChangesResult,
 } from './types';
-import { StaleRevisionError } from './types';
+import { AdapterArtifactNotFoundError, StaleRevisionError } from './types';
 import {
   sanitizeRevisionToken,
   readMutationPrecondition,
@@ -183,6 +183,18 @@ describe('T-009 — sanitizeRevisionToken (security: bounded, no HTML injection 
   it('treats null/undefined as an empty safe string', () => {
     expect(sanitizeRevisionToken(null)).toBe('');
     expect(sanitizeRevisionToken(undefined)).toBe('');
+  });
+
+  it('strips Unicode bidi/format controls (zero-width + bidi embeddings) — no hidden-direction surface', () => {
+    // U+200B–U+200F (zero-width space/joiners, LRM/RLM) and U+202A–U+202E (bidi embeddings/overrides)
+    // can hide or reorder a token in a log/response; they must be stripped like other controls.
+    for (const cp of ['\u200b', '\u200c', '\u200d', '\u200e', '\u200f', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e']) {
+      const out = sanitizeRevisionToken(`rev${cp}-2`);
+      expect(out).not.toContain(cp);
+      expect(out).toBe('rev-2');
+    }
+    // A token made entirely of bidi/format controls collapses to empty (never leaks the controls).
+    expect(sanitizeRevisionToken('\u202e\u200f\u200b')).toBe('');
   });
 });
 
@@ -347,6 +359,60 @@ describe('T-009 — unsafe provider with no concurrency evidence FAILS CLOSED (R
         documentId: 'doc_x',
       }),
     ).rejects.toBeInstanceOf(UnsafeMutationError);
+  });
+});
+
+describe('T-009 — artifact-not-found vs no-token are NOT conflated (THE-950 r2 F1)', () => {
+  it('a NULL descriptor (provider artifact vanished/unknown) rethrows AdapterArtifactNotFoundError, not a no-token fail-closed', async () => {
+    const { adapter } = await seedDoc('document', { kind: 'text', text: 'x' });
+    // A provider whose getMetadata returns null for the external id: the artifact is gone/unknown,
+    // which is an artifact-not-found (read/metadata target miss), NOT an artifact that merely
+    // exposes no concurrency token. It must propagate the typed AdapterArtifactNotFoundError so the
+    // route can map it to 404 DOCUMENT_NOT_FOUND rather than a misleading 403 "no token".
+    const goneAdapter: DocumentProviderAdapter = {
+      provider: 'google_workspace',
+      resolveCapabilities: (ctx) => adapter.resolveCapabilities(ctx),
+      discover: (i) => adapter.discover(i),
+      getMetadata: async () => null,
+      create: (i) => adapter.create(i),
+      read: (i) => adapter.read(i),
+      mutate: (i) => adapter.mutate(i),
+      getOpenTarget: (i) => adapter.getOpenTarget(i),
+      reconcileChanges: (i) => adapter.reconcileChanges(i),
+    };
+    await expect(
+      readMutationPrecondition({
+        adapter: goneAdapter,
+        externalId: 'doc_vanished',
+        providerConnectionId: null,
+        mutation: { kind: 'text', text: 'x' },
+      }),
+    ).rejects.toBeInstanceOf(AdapterArtifactNotFoundError);
+  });
+
+  it('a PRESENT descriptor with null current_revision stays a no-token fail-closed (concurrencyProven=false, NOT artifact-not-found)', async () => {
+    const { adapter, externalId } = await seedDoc('document', { kind: 'text', text: 'x' });
+    const noTokenAdapter: DocumentProviderAdapter = {
+      provider: 'google_workspace',
+      resolveCapabilities: (ctx) => adapter.resolveCapabilities(ctx),
+      discover: (i) => adapter.discover(i),
+      getMetadata: async () => ({ ...(await adapter.getMetadata({ external_id: externalId }))!, current_revision: null }),
+      create: (i) => adapter.create(i),
+      read: (i) => adapter.read(i),
+      mutate: (i) => adapter.mutate(i),
+      getOpenTarget: (i) => adapter.getOpenTarget(i),
+      reconcileChanges: (i) => adapter.reconcileChanges(i),
+    };
+    const pre = await readMutationPrecondition({
+      adapter: noTokenAdapter,
+      externalId,
+      providerConnectionId: null,
+      mutation: { kind: 'text', text: 'x' },
+    });
+    expect(pre.concurrencyProven).toBe(false);
+    expect(pre.currentRevision).toBeNull();
+    // It is NOT an artifact-not-found — the artifact exists, it just exposes no token.
+    expect(pre).toBeDefined();
   });
 });
 

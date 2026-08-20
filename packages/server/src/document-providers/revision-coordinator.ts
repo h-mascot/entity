@@ -27,13 +27,14 @@
  * provider registry (§13 events and T-010 receipts are explicitly out of scope for T-009).
  *
  * Privacy/security: revision tokens are UNTRUSTED strings. Any token surfaced in an error, log, or
- * response is passed through `sanitizeRevisionToken` — bounded length, control characters and HTML
- * injection metacharacters stripped — so no provider credentials or tenant secrets leak and no
- * HTML injection surface is opened. Document contents are never read or logged.
+ * response is passed through `sanitizeRevisionToken` — bounded length, control characters, HTML
+ * injection metacharacters, and Unicode bidi/format controls stripped — so no provider credentials
+ * or tenant secrets leak and no HTML injection or hidden-direction surface is opened. Document
+ * contents are never read or logged.
  */
 
 import type { DocumentProviderAdapter, AdapterMutation, CapabilityType } from './types';
-import { StaleRevisionError, mutationCapability } from './types';
+import { AdapterArtifactNotFoundError, StaleRevisionError, mutationCapability } from './types';
 
 /** R-025 fixed conflict message — does NOT embed raw (possibly hostile) revision tokens. */
 export const STALE_REVISION_MESSAGE = 'The document changed after this operation was prepared.';
@@ -42,10 +43,12 @@ const DEFAULT_MAX_REVISION_TOKEN_LENGTH = 64;
 
 /**
  * Characters stripped from an untrusted revision token before it is placed in any response or log:
- * C0/C1 control characters (including newlines/NUL) and HTML/XML metacharacters. Removes the
- * HTML injection surface while preserving ordinary opaque tokens (e.g. `rev-17`, `etag_v1`).
+ * C0/C1 control characters (including newlines/NUL), HTML/XML metacharacters, and Unicode
+ * bidi/format controls (zero-width space/joiner/non-joiner U+200B–U+200F and bidi embeddings
+ * U+202A–U+202E). Removes the HTML injection surface and hidden-direction/spoofing controls while
+ * preserving ordinary opaque tokens (e.g. `rev-17`, `etag_v1`).
  */
-const UNSAFE_TOKEN_CHARS = /[\u0000-\u001f\u007f\u0080-\u009f<>"'&\\]/g;
+const UNSAFE_TOKEN_CHARS = /[\u0000-\u001f\u007f\u0080-\u009f\u200b-\u200f\u202a-\u202e<>"'&\\]/g;
 
 /**
  * Sanitize an untrusted provider revision token for error/log/response inclusion. Never treated as
@@ -84,10 +87,18 @@ export interface ReadPreconditionInput {
 /**
  * Read the authoritative provider current revision for a mutation lane. The provider's own
  * concurrency token (revision ID, ETag, change token, content hash, or provider-documented token)
- * is the R-024 source of truth. When the adapter exposes none (null/empty current_revision) the
- * coordinator reports `concurrencyProven:false` — it NEVER fabricates a revision from the registry
- * hint or any other secondary source, because a fabricated revision would let a stale write
- * proceed on unverifiable state.
+ * is the R-024 source of truth.
+ *
+ * Typed-error distinction (THE-950 r2 F1): a **null descriptor** (`getMetadata → null`, i.e. the
+ * artifact is not found / has vanished at the provider) is NOT the same as a present artifact that
+ * merely exposes no concurrency token. A vanished artifact is a read/metadata target miss and is
+ * rethrown as `AdapterArtifactNotFoundError` so the route surfaces the existing typed
+ * `DOCUMENT_NOT_FOUND` (404) — never a misleading "provider exposes no revision token" capability
+ * error. Only a PRESENT descriptor whose `current_revision` is null/empty is the R-024
+ * fail-closed no-token case (`concurrencyProven:false`).
+ *
+ * The coordinator never fabricates a revision from the registry hint or any secondary source,
+ * because a fabricated revision would let a stale write proceed on unverifiable state.
  */
 export async function readMutationPrecondition(
   input: ReadPreconditionInput,
@@ -97,6 +108,13 @@ export async function readMutationPrecondition(
     external_id: input.externalId,
     provider_connection_id: input.providerConnectionId ?? null,
   });
+  // A null descriptor means the provider artifact does not exist (or vanished) — propagate the
+  // artifact-not-found semantics so the route can map it to 404 DOCUMENT_NOT_FOUND (the adapter
+  // contract types AdapterArtifactNotFoundError as covering read/metadata targets). This is
+  // distinct from a present descriptor exposing no concurrency token, which fails closed below.
+  if (metadata === null) {
+    throw new AdapterArtifactNotFoundError(input.externalId);
+  }
   const currentRevision = metadata?.current_revision ?? null;
   const concurrencyProven = currentRevision != null && currentRevision !== '';
   return { lane, currentRevision, concurrencyProven };
