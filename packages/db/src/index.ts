@@ -790,6 +790,14 @@ export type NativeDocumentLifecycleState = 'draft' | 'active' | 'archived' | 'su
  */
 export type NativeDocumentSearchIndexState = 'fresh' | 'stale' | 'degraded' | 'indexing_failed';
 
+/**
+ * The states a re-index FAILURE/outcome may record through
+ * `markNativeDocumentIndexFailed`. Deliberately narrower than
+ * `NativeDocumentSearchIndexState`: a `fresh` outcome is recorded via
+ * `markNativeDocumentIndexed`, never through the failure lane (T-012 F4 carry-forward).
+ */
+export type NativeDocumentIndexFailureState = 'stale' | 'degraded' | 'indexing_failed';
+
 export interface NativeDocumentRecord {
   id: string;
   org_id: string;
@@ -961,7 +969,7 @@ export interface DocumentObjectRepository {
   markNativeDocumentIndexFailed: (
     id: string,
     error?: string | null,
-    state?: NativeDocumentSearchIndexState,
+    state?: NativeDocumentIndexFailureState,
   ) => NativeDocumentRecord | undefined;
   createExternalDocumentRef: (input: CreateExternalDocumentRefInput) => ExternalDocumentRefRecord;
   getExternalDocumentRef: (id: string) => ExternalDocumentRefRecord | undefined;
