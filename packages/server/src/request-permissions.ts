@@ -74,6 +74,39 @@ export function readExplicitRequestOrgHeader(req: Request): string | null {
   return value || null;
 }
 
+/** The membership facts a customer principal carries (as consumed by `resolveCustomerWorkspaceScope`). */
+export interface CustomerWorkspaceScope {
+  isGlobalAdmin: boolean;
+  orgIds: string[];
+}
+
+/**
+ * THE-949/T-008 L1d: resolve the workspace for a customer principal from the caller-EXPLICIT
+ * (header-only) org plus their membership, without any deployment-default-org fallback.
+ *
+ * Fail-closed rules:
+ *  - Global admin: an explicit org wins; otherwise bind the single membership org, else `null`
+ *    (ambiguous scope => WORKSPACE_REQUIRED). Never silently binds the deployment default.
+ *  - Non-global customer: an explicit org is honored ONLY if it lies within membership
+ *    (`isExplicitAuthorized`); a missing explicit scope auto-binds the single membership org, else
+ *    `null` (ambiguous).
+ *
+ * Returns `null` (fail closed) on any ambiguity rather than guessing a workspace.
+ */
+export function resolveCustomerWorkspaceScope(
+  customer: CustomerWorkspaceScope,
+  explicit: string | null,
+  isExplicitAuthorized: boolean,
+): string | null {
+  if (customer.isGlobalAdmin) {
+    return explicit ?? (customer.orgIds.length === 1 ? customer.orgIds[0] : null);
+  }
+  if (explicit) {
+    return isExplicitAuthorized ? explicit : null;
+  }
+  return customer.orgIds.length === 1 ? customer.orgIds[0] : null;
+}
+
 function readEnforceStoredPrincipals(): boolean {
   try {
     return readAccessControlRuntimeSettings().enforceStoredPrincipals;

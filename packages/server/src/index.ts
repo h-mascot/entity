@@ -127,7 +127,7 @@ import {
   getCustomerPrincipal,
   isOrgAuthorized,
 } from "./principals/request-context";
-import { readExplicitRequestOrgHeader } from "./request-permissions";
+import { readExplicitRequestOrgHeader, resolveCustomerWorkspaceScope } from "./request-permissions";
 import { readDefaultOrgId } from "./config/admin-runtime";
 import { createDataPlaneCredentialGuard } from "./middleware/data-plane-credential";
 import { registerStrategicRoutes, registerTaskRoutes } from "./routes/tasks";
@@ -450,15 +450,14 @@ runInferenceProviderMigrations({
       // org selectors — they must never steer the workspace binding).
       const explicit = readExplicitRequestOrgHeader(req);
       if (customer) {
-        if (customer.isGlobalAdmin) {
-          // L1d: a global admin with ambiguous scope (no explicit header, multiple orgs) FAILS
-          // CLOSED (WORKSPACE_REQUIRED) instead of silently binding the deployment default org.
-          return explicit ?? (customer.orgIds.length === 1 ? customer.orgIds[0] : null);
-        }
-        if (explicit) {
-          return isOrgAuthorized(req, explicit) ? explicit : null;
-        }
-        return customer.orgIds.length === 1 ? customer.orgIds[0] : null;
+        // L1d: a customer (including an ambiguous global admin) resolves through the pure,
+        // fail-closed decision — explicit ?? single-membership-org, else null (WORKSPACE_REQUIRED);
+        // never the deployment default for a customer.
+        return resolveCustomerWorkspaceScope(
+          customer,
+          explicit,
+          explicit ? isOrgAuthorized(req, explicit) : false,
+        );
       }
       // Trusted service/admin path binds the deployment default org.
       return explicit ?? readDefaultOrgId();

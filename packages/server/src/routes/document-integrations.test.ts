@@ -36,6 +36,8 @@ import type { DocumentProviderAdapter } from '../document-providers/types';
 import { createFakeDocumentProviderAdapter } from '../document-providers/fake-adapter';
 import {
   createDocumentIntegrationsRouter,
+  DocumentApiError,
+  parseMutation,
   type DocumentIntegrationsRouterDeps,
 } from './document-integrations';
 import type { WritePolicy } from '../document-providers/write-policy';
@@ -605,6 +607,69 @@ describe('T-008 provider-neutral document API — create (§12.2)', () => {
     const body = await bodyOf(res);
     expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
   });
+
+  it('F2: an idempotent replay whose provider identity is NOT yet registered returns 409 CREATE_RECONCILIATION_REQUIRED', async () => {
+    const ctx = setup();
+    const adapter = createFakeDocumentProviderAdapter();
+    ctx.adapters.set('google_workspace', adapter);
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    // Seed the adapter's OWN idempotency map directly (bypassing the registry) so a replay of the
+    // same key yields created:false for an artifact the canonical registry has never seen.
+    await adapter.create({
+      artifact_type: 'document',
+      title: 'orphaned provider-side artifact',
+      idempotencyKey: 'op_orphan_replay',
+      now: TEST_NOW,
+    });
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: {
+        artifactType: 'document',
+        title: 'Q3',
+        provider: 'google_workspace',
+        destinationId: 'dest_1',
+        idempotencyKey: 'op_orphan_replay',
+      },
+    });
+    expect(res.status).toBe(409);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CREATE_RECONCILIATION_REQUIRED');
+  });
+
+  it('F2: a cross-workspace idempotent replay fails closed (409 CREATE_RECONCILIATION_REQUIRED) without naming the owning workspace', async () => {
+    const ctx = setup();
+    const adapter = createFakeDocumentProviderAdapter();
+    ctx.adapters.set('google_workspace', adapter);
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    // ws_B has its own valid policy so the replay reaches the identity/reconcile path.
+    ctx.policies.push(basePolicy({ workspaceId: 'ws_B' }));
+    ctx.destinations.push(baseDestination({ workspaceId: 'ws_B' }));
+    // Own the identity + replay key in ws_A first (registry record AND the adapter's replay map).
+    const first = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      headers: { 'x-entity-workspace-id': 'ws_A' },
+      body: { artifactType: 'document', title: 'Q3', provider: 'google_workspace', destinationId: 'dest_1', idempotencyKey: 'op_xws_replay' },
+    });
+    expect(first.status).toBe(201);
+
+    // Same idempotency key replayed from ws_B: the workspace-scoped registry lookup returns
+    // undefined (the record is ws_A-owned), so it fails closed with CREATE_RECONCILIATION_REQUIRED
+    // and must NOT name the owning workspace (no existence oracle).
+    const replay = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      headers: { 'x-entity-workspace-id': 'ws_B' },
+      body: { artifactType: 'document', title: 'Q3', provider: 'google_workspace', destinationId: 'dest_1', idempotencyKey: 'op_xws_replay' },
+    });
+    expect(replay.status).toBe(409);
+    const body = await bodyOf(replay);
+    expect(body.error.code).toBe('CREATE_RECONCILIATION_REQUIRED');
+    expect(body.error.message).not.toMatch(/ws_A/);
+  });
 });
 
 describe('T-008 provider-neutral document API — mutate (§12.3, revision requirement)', () => {
@@ -805,6 +870,65 @@ describe('T-008 provider-neutral document API — mutate (§12.3, revision requi
     expect(res.status).toBe(403);
     const body = await bodyOf(res);
     expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+
+  it('F1: canonical §12.5 elementRef/text are NOT silently dropped — parseMutation rejects non-empty elementRef/text with typed CAPABILITY_UNSUPPORTED', () => {
+    // A non-empty elementRef/text payload cannot be forwarded by the slide lane (which carries only
+    // a slideId); it must fail closed with a typed capability outcome instead of returning a
+    // mutation that silently ignores the text (accepted-but-dropped, the class B1/B3 eliminated).
+    expect(() =>
+      parseMutation({ kind: 'update_slide_text', slideRef: 'slide_4', elementRef: 'title', text: 'Revised' }),
+    ).toThrow(DocumentApiError);
+    try {
+      parseMutation({ kind: 'update_slide_text', slideRef: 'slide_4', elementRef: 'title', text: 'Revised' });
+      // unreachable
+    } catch (err) {
+      expect(err).toBeInstanceOf(DocumentApiError);
+      expect((err as DocumentApiError).code).toBe('CAPABILITY_UNSUPPORTED');
+      expect((err as DocumentApiError).statusCode).toBe(403);
+    }
+    // A bare §12.5 slideRef with NO elementRef/text payload still maps to the plain slide lane.
+    expect(parseMutation({ kind: 'update_slide_text', slideRef: 'slide_4' })).toEqual({ kind: 'slide', slideId: 'slide_4' });
+  });
+
+  it('F5: a non-array `values` on the §12.4 range lane is a typed INVALID_REQUEST, not silently ignored', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_f5_badvalues',
+        operation: { kind: 'set_range', sheet: 'Forecast', range: 'B2', values: 'not-an-array' },
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('INVALID_REQUEST');
+  });
+
+  it('F5: a non-string target.anchor is a typed INVALID_REQUEST, not silently skipped', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_f5_badanchor',
+        operation: { kind: 'replace_text', target: { anchor: 42 }, content: 'x' },
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('INVALID_REQUEST');
   });
 
   it('gap 2: capability-resolver disabled (rollback) still fails closed via the adapter (CAPABILITY_UNSUPPORTED)', async () => {

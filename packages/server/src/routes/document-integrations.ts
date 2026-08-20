@@ -247,19 +247,31 @@ function parseProvider(body: Record<string, unknown>): DocumentProvider {
  * (`CAPABILITY_UNSUPPORTED`), never a malformed request (`INVALID_REQUEST`). A non-empty
  * `target.anchor` (structured targeting) is not representable by the current adapter mutation
  * lanes, so it is rejected with a typed `CAPABILITY_UNSUPPORTED` instead of being silently
- * dropped (§12.3).
+ * dropped (§12.3); a non-empty §12.5 `elementRef`/`text` payload is likewise not representable by
+ * the slide lane (which carries only a slideId) and is rejected the same way (THE-949 r3 F1).
+ * Malformed present values — a non-array `values` or a present-but-non-string `target.anchor` —
+ * are typed `INVALID_REQUEST` rather than silently coerced/ignored (THE-949 r3 F5).
  */
-function parseMutation(raw: unknown): AdapterMutation {
+export function parseMutation(raw: unknown): AdapterMutation {
   if (!isRecord(raw) || typeof raw.kind !== 'string') {
     throw new DocumentApiError(400, 'INVALID_REQUEST', 'operation.kind is required');
   }
-  // §12.3 structured targeting: `operation.target.anchor` must never be silently dropped.
-  if (isRecord(raw.target) && typeof raw.target.anchor === 'string' && raw.target.anchor.trim()) {
+  // §12.3 structured targeting: `operation.target.anchor` must never be silently dropped. A
+  // non-empty string anchor is a capability outcome; any OTHER present anchor (non-string, e.g. a
+  // number, or blank) is a malformed request, never silently skipped.
+  if (isRecord(raw.target) && raw.target.anchor !== undefined) {
+    if (typeof raw.target.anchor === 'string' && raw.target.anchor.trim()) {
+      throw new DocumentApiError(
+        403,
+        'CAPABILITY_UNSUPPORTED',
+        `structured targeting (operation.target.anchor='${raw.target.anchor}') is not ` +
+          `supported by the active mutation lane; failing closed instead of dropping it.`,
+      );
+    }
     throw new DocumentApiError(
-      403,
-      'CAPABILITY_UNSUPPORTED',
-      `structured targeting (operation.target.anchor='${raw.target.anchor}') is not ` +
-        `supported by the active mutation lane; failing closed instead of dropping it.`,
+      400,
+      'INVALID_REQUEST',
+      'operation.target.anchor must be a non-empty string when present.',
     );
   }
   switch (raw.kind) {
@@ -278,7 +290,12 @@ function parseMutation(raw: unknown): AdapterMutation {
       const range = typeof raw.range === 'string' ? raw.range : '';
       const cell = typeof raw.cell === 'string' ? raw.cell : '';
       const value = typeof raw.value === 'string' ? raw.value : '';
-      // 2D values array (canonical §12.4) serialized into the string lane when present.
+      // 2D values array (canonical §12.4) serialized into the string lane when present. A present
+      // but non-array `values` is a malformed request — typed INVALID_REQUEST, never silently
+      // coerced/ignored (no-silent-drop stance).
+      if (raw.values !== undefined && !Array.isArray(raw.values)) {
+        throw new DocumentApiError(400, 'INVALID_REQUEST', 'range mutation values must be an array when present.');
+      }
       const values = Array.isArray(raw.values) ? JSON.stringify(raw.values) : '';
       if (!cell && !range) {
         throw new DocumentApiError(
@@ -292,7 +309,20 @@ function parseMutation(raw: unknown): AdapterMutation {
     }
     case 'update_slide_text':
     case 'slide': {
-      // Canonical §12.5: slideRef/elementRef/text. Legacy alias: slideId.
+      // Canonical §12.5: slideRef/elementRef/text. Legacy alias: slideId. The adapter slide lane
+      // carries only a slideId, so a non-empty elementRef or text payload (structured slide
+      // targeting / content) cannot be faithfully forwarded — reject it with a typed
+      // CAPABILITY_UNSUPPORTED instead of silently dropping it (§12.5 no-silent-drop).
+      const elementRef = typeof raw.elementRef === 'string' ? raw.elementRef.trim() : '';
+      const text = typeof raw.text === 'string' ? raw.text.trim() : '';
+      if (elementRef || text) {
+        throw new DocumentApiError(
+          403,
+          'CAPABILITY_UNSUPPORTED',
+          'update_slide_text elementRef/text payload is not representable by the active mutation ' +
+            'lane; failing closed instead of dropping it (§12.5).',
+        );
+      }
       const slideRef = typeof raw.slideRef === 'string' ? raw.slideRef : '';
       const slideId = typeof raw.slideId === 'string' ? raw.slideId : '';
       const resolvedSlideId = slideRef || slideId;
@@ -845,6 +875,11 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
         // observed; providerModifiedAt is only present when the provider reported a separate
         // modification timestamp — otherwise `null` (unknown/absent), never a duplicate of
         // observedAt.
+        // NOTE (THE-949 r3 F3): `providerModifiedAt` is structurally ALWAYS null because
+        // `ProviderVersionRef` exposes no field by which a provider can report a separate
+        // modification timestamp — it carries only `revision` + `observed_at`. Plumbing that
+        // field is a deliberate omission deferred to a slide/adapter-capable round (T-009/T-016);
+        // this comment states the omission explicitly rather than implying the mechanism exists.
         actorType: 'unknown',
         actorId: null,
         observedAt: v.observed_at ?? now,
