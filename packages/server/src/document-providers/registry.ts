@@ -54,12 +54,15 @@ import {
 } from '../../../db/src/document-integrations';
 
 /**
- * Canonical write input for the registry: the T-003 db input verbatim, minus workspace_id.
- * workspace is supplied as an explicit isolation scope on every method rather than embedded
- * in the payload, so a caller can never slip a foreign workspace in as data. Reusing the db
- * vocabulary avoids a competing type namespace.
+ * Canonical write input for the registry: the T-003 db input verbatim, minus workspace_id and
+ * the caller-supplied `id`. workspace is supplied as an explicit isolation scope on every method
+ * rather than embedded in the payload, so a caller can never slip a foreign workspace in as data.
+ * `id` is OMITTED (THE-945 r3 F4): the canonical Entity document id is deterministically derived
+ * by the T-003 layer from the provider identity (documentObjectIdForIdentity), never caller-
+ * chosen. Reusing the db vocabulary avoids a competing type namespace; the exclusion removes an
+ * undocumented deterministic-identity override on the minting paths.
  */
-export type RegistryWriteInput = Omit<CreateDocumentObjectInput, 'workspace_id'>;
+export type RegistryWriteInput = Omit<CreateDocumentObjectInput, 'workspace_id' | 'id'>;
 
 /** Namespace-scoped metadata update for an existing canonical record. */
 export type DocumentRegistryUpdatePatch = UpdateDocumentObjectFields;
@@ -215,6 +218,23 @@ export function createDocumentRegistry(db: Database.Database): DocumentRegistry 
             `workspace; refusing cross-workspace registration`,
         );
       }
+      // THE-945 r3 F1: fail-closed cross-provider identity merge. The (provider_connection_id,
+      // external_id) tuple is the R-001 uniqueness key; `provider` and `artifact_type` are part
+      // of that identity, not mutable annotations. A rediscovery/register that reuses an existing
+      // external identity while claiming a DIFFERENT provider or artifact_type must be rejected
+      // with a typed validation error instead of silently rewriting the record's identity columns
+      // (which would fork the numerical uniqueness into a logically-divergent record).
+      if (
+        existing &&
+        (existing.provider !== input.provider || existing.artifact_type !== input.artifact_type)
+      ) {
+        throw new DocumentRegistryValidationError(
+          `provider identity (provider_connection_id, external_id) is already owned by ` +
+            `${existing.provider}/${existing.artifact_type}; register/rediscover attempted to ` +
+            `merge it into ${input.provider}/${input.artifact_type}. Cross-provider or ` +
+            `cross-artifact-type identity merge is rejected (fail closed).`,
+        );
+      }
       // Same-workspace match → rediscovery update (created=false); no match → create (created=true).
       // Both behaviors are owned by the T-003 registration primitive, so identity logic is not
       // duplicated here.
@@ -263,11 +283,19 @@ export function createDocumentRegistry(db: Database.Database): DocumentRegistry 
       return record;
     },
     update(documentId, workspaceId, patch) {
-      const existing = repo.getDocumentObject(documentId);
-      if (!existing || existing.workspace_id !== workspaceId) {
-        return undefined;
-      }
-      return repo.updateDocumentObject(documentId, patch);
+      // THE-945 r3 F3: the workspace pre-check and the delegated write are not two independent
+      // statements. Wrapping them in ONE `BEGIN IMMEDIATE` transaction makes the check-and-write
+      // race-safe: the first statement takes the write lock, so a concurrent writer can never
+      // interleave a mutation between our workspace check and our write (mirrors the atomicity
+      // already applied to register/rediscover/create).
+      const tx = db.transaction((): DocumentObjectRecord | undefined => {
+        const existing = repo.getDocumentObject(documentId);
+        if (!existing || existing.workspace_id !== workspaceId) {
+          return undefined;
+        }
+        return repo.updateDocumentObject(documentId, patch);
+      });
+      return tx.immediate();
     },
   };
 }

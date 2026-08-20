@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  type DocumentArtifactType,
   type DocumentObjectRecord,
   type DocumentProvider,
 } from '../../../db/src/document-integrations';
@@ -487,6 +488,53 @@ describe('T-004 document registry — review round 2 fixes (B1/B2/M2)', () => {
     }
   });
 
+  it('F3-carried: registry.update is atomic — its workspace check and write run as ONE immediate transaction (THE-945 r3 F3, RED)', async () => {
+    // The current implementation performs the workspace check (`get`) and the delegated write
+    // as two independent statements with no surrounding transaction. This probe uses a second
+    // connection on a file-backed DB that holds an uncommitted `BEGIN IMMEDIATE` write on the
+    // target row; an atomic immediate-transaction update must take the write lock from its
+    // FIRST statement and fail fast (`database is locked`) instead of doing a lock-free read
+    // and only then attempting a separate write.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't004-f3-'));
+    const file = path.join(dir, 'shared.db');
+    const dbA = new Database(file);
+    const dbB = new Database(file);
+    dbA.pragma('busy_timeout = 5000');
+    dbB.pragma('busy_timeout = 300'); // bounded so a contended write fails fast, never hangs
+    const closeDbs = () => {
+      dbA.close();
+      dbB.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    };
+    try {
+      const { createDocumentRegistry } = await import('./registry');
+      const { createDocumentIntegrationsRepository } = await import(
+        '../../../db/src/document-integrations'
+      );
+      const repoA = createDocumentIntegrationsRepository(dbA);
+      repoA.ensureSchema();
+      const repoB = createDocumentIntegrationsRepository(dbB);
+      repoB.ensureSchema();
+      const registryA = createDocumentRegistry(dbA);
+      const registryB = createDocumentRegistry(dbB);
+      const created = registryA.register(baseInput({ title: 'f3-async' }), 'workspace-a');
+
+      // Connection A holds an uncommitted write lock on the row.
+      dbA.transaction(() => {
+        dbA.prepare('UPDATE document_objects SET title = ? WHERE id = ?')
+          .run('lockheld', created.record.id);
+        // B's update must contend for the write lock atomically (its check+write is one
+        // IMMEDIATE write transaction). If it performed a lock-free read first then wrote,
+        // the read would not block and the update would proceed past the get.
+        expect(() =>
+          registryB.update(created.record.id, 'workspace-b', { title: 'x' }),
+        ).toThrow(/database is locked|locked/i);
+      }).immediate();
+    } finally {
+      closeDbs();
+    }
+  });
+
   it('M2: register/rediscover without explicit indexed_at leaves the stored value unchanged; explicit still applies', async () => {
     const { registry, db } = await openRegistry();
     const created = registry.register(
@@ -510,5 +558,78 @@ describe('T-004 document registry — review round 2 fixes (B1/B2/M2)', () => {
     );
     expect(explicit.record.indexed_at).toBe('2026-03-01T00:00:00.000Z');
     expect(countRows(db, (r) => r.external_id === 'm2-preserve')).toBe(1);
+  });
+});
+
+describe('T-004 document registry — THE-945 r3 review round 3 carry-forward (F4)', () => {
+  it('F4-carried: RegistryWriteInput omits the caller-supplied id (deterministic identity override excluded)', () => {
+    // The canonical Entity document id is deterministically derived by the T-003 layer from the
+    // provider identity (THE-945 r3 F4). A well-typed caller therefore cannot set `id` on a
+    // registry write; this assignment would become legal and the @ts-expect-error would be
+    // flagged unused by the strict tsc gate if a caller-chosen `id` were ever re-exposed.
+    // @ts-expect-error RegistryWriteInput must not expose a caller-supplied id override.
+    const withId: RegistryWriteInput = { ...baseInput(), id: 'doc_callerpicked' };
+    expect(withId).toBeDefined();
+  });
+
+  it('F4-carried: minting methods return a deterministically derived canonical id, never a caller-chosen one', async () => {
+    const { registry } = await openRegistry();
+    // register/rediscover derive the canonical id deterministically from the provider identity
+    // (documentObjectIdForIdentity → `doc_…`), never from caller input.
+    const registered = registry.register(baseInput({ external_id: 'f4-register' }), 'workspace-a');
+    expect(registered.record.id).toMatch(/^doc_/);
+    const rediscovered = registry.rediscover(baseInput({ external_id: 'f4-rediscover' }), 'workspace-a');
+    expect(rediscovered.record.id).toMatch(/^doc_/);
+    // Strict create minted a new canonical id named by the registry (uuid), never the caller.
+    const created = registry.create(baseInput({ external_id: 'f4-create' }), 'workspace-a');
+    expect(created.id).toBeTruthy();
+    expect(created.id).toMatch(/^doc_|^[0-9a-f-]{36}$/);
+  });
+});
+
+describe('T-004 document registry — THE-945 r3 review round 3 carry-forward (F1)', () => {
+  it('F1 RED: a register/rediscover whose provider differs from the existing identity owner FAILS CLOSED (typed validation error)', async () => {
+    const { registry, db } = await openRegistry();
+    // Workspace A owns the identity for google_workspace/document.
+    registry.register(baseInput(), 'workspace-a');
+
+    // Rediscover/register the SAME external identity but claiming a DIFFERENT provider
+    // (cross-provider identity merge). This MUST fail closed instead of silently updating the
+    // google_workspace record into a microsoft_365 record with the same external_id.
+    expect(() =>
+      registry.rediscover(
+        baseInput({ provider: 'microsoft_365' as DocumentProvider, title: 'Merge attempt' }),
+        'workspace-a',
+      ),
+    ).toThrow(DocumentRegistryValidationError);
+    expect(() =>
+      registry.register(
+        baseInput({ provider: 'microsoft_365' as DocumentProvider, title: 'Merge attempt' }),
+        'workspace-a',
+      ),
+    ).toThrow(DocumentRegistryValidationError);
+
+    // The original record is untouched — never mutated into a cross-provider merge.
+    const after = registry.findByProviderIdentity(null, 'goog-doc-sample-1', 'workspace-a');
+    expect(after?.provider).toBe('google_workspace');
+    expect(after?.title).toBe('Sample Doc');
+    expect(countRows(db, () => true)).toBe(1);
+  });
+
+  it('F1 RED: a register/rediscover whose artifact_type differs from the existing identity owner FAILS CLOSED', async () => {
+    const { registry, db } = await openRegistry();
+    registry.register(baseInput(), 'workspace-a');
+
+    // Same provider identity but a different artifact_type (document -> spreadsheet) is an
+    // identity-merge hazard too: the external identity cannot silently change its artifact type.
+    expect(() =>
+      registry.rediscover(
+        baseInput({ artifact_type: 'spreadsheet' as DocumentArtifactType, title: 'Type flip' }),
+        'workspace-a',
+      ),
+    ).toThrow(DocumentRegistryValidationError);
+    const after = registry.findByProviderIdentity(null, 'goog-doc-sample-1', 'workspace-a');
+    expect(after?.artifact_type).toBe('document');
+    expect(countRows(db, () => true)).toBe(1);
   });
 });

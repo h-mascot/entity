@@ -215,6 +215,39 @@ export function resolveDestinationAllowance(
   return 'allowed';
 }
 
+/**
+ * Why an explicit destination is NOT approvable (THE-948 r3 F4 → T-008). The carry-forward
+ * requires the four failure modes of `UnapprovedDestinationError` to be distinguishable so a
+ * caller can tell a pure policy veto from a configuration/record bug. All four remain
+ * fail-closed; this only enriches the typed error's `cause` for machines.
+ *
+ * Precondition: `resolveDestinationAllowance(...)` returned `denied`/`unknown` and
+ * `scope.destinationId != null`. Cause precedence:
+ *   - not_in_approved_set           — the id is absent from the policy's approved set (policy veto).
+ *   - destination_record_missing    — the id is approved but no destination record exists at all.
+ *   - destination_record_disabled   — the record exists but is `enabled:false`.
+ *   - destination_scope_mismatch    — the record exists, enabled, but serves a different
+ *                                     workspace/tenant/provider/connection/artifact scope.
+ */
+export function destinationDenialCause(
+  scope: WriteRequestScope,
+  allowedDestinationIds: ReadonlySet<string>,
+  destinations: readonly DocumentDestination[],
+): UnapprovedDestinationCause {
+  const { destinationId } = scope;
+  if (destinationId == null || !allowedDestinationIds.has(destinationId)) {
+    return 'not_in_approved_set';
+  }
+  const record = destinations.find((d) => d.id === destinationId);
+  if (!record) {
+    return 'destination_record_missing';
+  }
+  if (!record.enabled) {
+    return 'destination_record_disabled';
+  }
+  return 'destination_scope_mismatch';
+}
+
 /** A fully resolved create decision for one request. */
 export interface CreateDecision {
   policyFound: boolean;
@@ -252,7 +285,11 @@ export function resolveCreateAllowance(
     // approved by the policy set AND backed by an enabled, scope-serving destination record.
     const dest = resolveDestinationAllowance(scope, policy.allowedDestinationIds, destinations);
     if (dest !== 'allowed') {
-      throw new UnapprovedDestinationError(scope.workspaceId, scope.destinationId);
+      throw new UnapprovedDestinationError(
+        scope.workspaceId,
+        scope.destinationId,
+        destinationDenialCause(scope, policy.allowedDestinationIds, destinations),
+      );
     }
     const mode = resolvedWriteMode(policy);
     const createModePermits = mode === 'create_only' || mode === 'create_and_update';
@@ -342,18 +379,37 @@ export class MissingDestinationPolicyError extends Error {
   }
 }
 
+/**
+ * The four distinguishable failure modes of an unapprovable explicit destination (THE-948 r3
+ * F4). All four remain fail-closed; the cause only lets a caller tell a pure policy veto
+ * (`not_in_approved_set`) from a configuration/record bug (`destination_record_missing` /
+ * `destination_record_disabled` / `destination_scope_mismatch`).
+ */
+export type UnapprovedDestinationCause =
+  | 'not_in_approved_set'
+  | 'destination_record_missing'
+  | 'destination_record_disabled'
+  | 'destination_scope_mismatch';
+
 /** Typed error: the request named a specific destination the workspace is not approved to write into. */
 export class UnapprovedDestinationError extends Error {
   readonly workspaceId: string;
   readonly destinationId: string;
+  /** Distinguishable failure mode (policy veto vs config/record bug) — all remain fail-closed. */
+  readonly cause: UnapprovedDestinationCause;
 
-  constructor(workspaceId: string, destinationId: string) {
+  constructor(
+    workspaceId: string,
+    destinationId: string,
+    cause: UnapprovedDestinationCause = 'not_in_approved_set',
+  ) {
     super(
       `UNAPPROVED_DESTINATION: workspace ${workspaceId} is not authorized to write into ` +
-        `destination ${destinationId}; blocked (fail closed).`,
+        `destination ${destinationId} (cause: ${cause}); blocked (fail closed).`,
     );
     this.name = 'UnapprovedDestinationError';
     this.workspaceId = workspaceId;
     this.destinationId = destinationId;
+    this.cause = cause;
   }
 }
