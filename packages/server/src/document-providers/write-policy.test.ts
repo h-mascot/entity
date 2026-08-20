@@ -487,3 +487,100 @@ describe('write policy: exact artifact type governs over wildcard (THE-948 r1 F2
     expect(resolveMutationAllowance([disabledExact, enabledWild], baseScope()).policy).toBe('denied');
   });
 });
+
+describe('write policy: UnapprovedDestinationError cause differentiation (THE-948 r3 F4 → T-008)', () => {
+  it('not-in-approved-set: a destination absent from the policy approved set carries an explicit cause', () => {
+    const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
+    const dests = [baseDestination()];
+    try {
+      resolveCreateAllowance([policy], dests, baseScope({ destinationId: 'dest_unapproved' }));
+      throw new Error('expected UnapprovedDestinationError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(UnapprovedDestinationError);
+      if (err instanceof UnapprovedDestinationError) {
+        expect(err.workspaceId).toBe('ws_A');
+        expect(err.destinationId).toBe('dest_unapproved');
+        // Distinguishable cause for a pure policy veto (not a config/record bug).
+        expect(err.cause).toBe('not_in_approved_set');
+      }
+    }
+  });
+
+  it('record-missing: an approved id with NO destination record carries a distinct cause', () => {
+    const policy = basePolicy({ allowedDestinationIds: new Set(['dest_approved_no_record']) });
+    try {
+      // No destination record exists at all.
+      resolveCreateAllowance([policy], [], baseScope({ destinationId: 'dest_approved_no_record' }));
+      throw new Error('expected UnapprovedDestinationError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(UnapprovedDestinationError);
+      if (err instanceof UnapprovedDestinationError) {
+        expect(err.cause).toBe('destination_record_missing');
+      }
+    }
+  });
+
+  it('record-disabled: an approved id whose destination record is disabled carries a distinct cause', () => {
+    const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
+    const dests = [baseDestination({ enabled: false })];
+    try {
+      resolveCreateAllowance([policy], dests, baseScope({ destinationId: 'dest_allowed' }));
+      throw new Error('expected UnapprovedDestinationError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(UnapprovedDestinationError);
+      if (err instanceof UnapprovedDestinationError) {
+        expect(err.cause).toBe('destination_record_disabled');
+      }
+    }
+  });
+
+  it('scope-mismatch: an approved id whose record serves a different scope carries a distinct cause', () => {
+    const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
+    // The record exists and is enabled but belongs to another workspace.
+    const dests = [baseDestination({ workspaceId: 'ws_OTHER' })];
+    try {
+      resolveCreateAllowance([policy], dests, baseScope({ destinationId: 'dest_allowed' }));
+      throw new Error('expected UnapprovedDestinationError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(UnapprovedDestinationError);
+      if (err instanceof UnapprovedDestinationError) {
+        expect(err.cause).toBe('destination_scope_mismatch');
+      }
+    }
+  });
+
+  it('all four denial causes remain fail-closed: every one throws UnapprovedDestinationError', () => {
+    // no-set
+    expect(() =>
+      resolveCreateAllowance(
+        [basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) })],
+        [baseDestination()],
+        baseScope({ destinationId: 'dest_unapproved' }),
+      ),
+    ).toThrow(UnapprovedDestinationError);
+    // record-missing
+    expect(() =>
+      resolveCreateAllowance(
+        [basePolicy({ allowedDestinationIds: new Set(['dest_no_record']) })],
+        [],
+        baseScope({ destinationId: 'dest_no_record' }),
+      ),
+    ).toThrow(UnapprovedDestinationError);
+    // record-disabled
+    expect(() =>
+      resolveCreateAllowance(
+        [basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) })],
+        [baseDestination({ enabled: false })],
+        baseScope({ destinationId: 'dest_allowed' }),
+      ),
+    ).toThrow(UnapprovedDestinationError);
+    // scope-mismatch
+    expect(() =>
+      resolveCreateAllowance(
+        [basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) })],
+        [baseDestination({ workspaceId: 'ws_OTHER' })],
+        baseScope({ destinationId: 'dest_allowed' }),
+      ),
+    ).toThrow(UnapprovedDestinationError);
+  });
+});

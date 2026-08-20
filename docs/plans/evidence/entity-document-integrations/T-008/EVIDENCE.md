@@ -1,0 +1,341 @@
+# T-008 — Implement provider-neutral Document API
+
+Issue: THE-949 ([LOOM-DOCS T-008] Implement provider-neutral Document API)
+Run marker: `loom-run:entity-doc-integrations-20260818`
+Worker model: `daystrom/deepseek` (medium) — pinned externally, not substituted.
+Branch: `runner/entity-document-integrations-20260818`
+Pre-issue reviewed base (T-007 approved HEAD): `2f150e4ab333a7c08f9b67d4466b2d417e5858d3` (GLM 5.3 r3 FINAL)
+Node: `nvm use 22` (v22.22.2) — required for better-sqlite3 native bindings (Node 26
+`ERR_DLOPEN_FAILED` ABI mismatch).
+
+## 1. Acceptance requirement (verbatim authority)
+
+T-008 section of the canonical PRD (`docs/loom/entity-document-integrations/phase2-canonical-prd.md`),
+quoted verbatim (not paraphrased into new defaults):
+
+> ### T-008 — Implement provider-neutral Document API
+>
+> Goal/value: Give humans/agents a stable API.
+>
+> Dependencies: T-004–T-007.
+>
+> Scope: get/create/mutate/versions/capabilities.
+>
+> Non-goal: Provider-specific implementation.
+>
+> Acceptance: typed errors and revision requirement implemented.
+>
+> Automated proof: API contract tests.
+
+Binding namespace constraint and route templates from §12 (verbatim; this round takes option (a), the
+default — a distinct `/api/document-integrations` namespace following the `/api/document-objects`
+precedent):
+
+> Binding namespace constraint. /api/documents is already mounted by the agent-native editor module
+> at packages/server/src/editor/index.ts:43 and serves /:docId/state, /:docId/edit, /:docId/comments,
+> /:docId/suggestions, and /:docId/reviews behind createEditorRouteAuth scope checks
+> (documents:read, documents:edit, documents:comment:write, documents:suggest:write,
+> documents:review:write). The Document Integration Platform must not add sibling routes into that
+> router. T-008 must take one of two options: (a) mount the provider-neutral API under a distinct
+> namespace, following the /api/document-objects precedent at packages/server/src/index.ts:329; or
+> (b) extend the existing editor router … Option (a) is the default. Option (b) requires the ADR
+> before any route is added.
+
+> Route templates, under the option (a) default:
+>
+> Get document: GET /api/document-integrations/{documentId}
+> Create document: POST /api/document-integrations
+> Mutate document: POST /api/document-integrations/{documentId}/mutations
+> Capabilities: GET /api/document-integrations/{documentId}/capabilities
+> Versions: GET /api/document-integrations/{documentId}/versions
+
+§12 contracts implemented here, quoted verbatim where the acceptance hinges on shape:
+
+### 12.3 Mutate document (revision requirement + 409 contract)
+
+> POST /api/document-integrations/{documentId}/mutations
+>
+> Request:
+> {
+>   "expectedRevision": "rev_17",
+>   "idempotencyKey": "op_01J...",
+>   "operation": { "kind": "replace_text", … }
+> }
+>
+> Response:
+> {
+>   "documentId": "doc_01J...",
+>   "previousRevision": "rev_17",
+>   "revision": "rev_18",
+>   "operationId": "op_01J...",
+>   "receiptId": "receipt_01J..."
+> }
+>
+> Conflict: 409 Conflict
+> {
+>   "error": {
+>     "code": "STALE_REVISION",
+>     "message": "The document changed after this operation was prepared.",
+>     "documentId": "doc_01J...",
+>     "expectedRevision": "rev_17",
+>     "currentRevision": "rev_18",
+>     "retryable": true
+>   }
+> }
+
+### 12.6 Capability endpoint
+
+> GET /api/document-integrations/{documentId}/capabilities
+> or an equivalent field on document retrieval.
+> Responses must include reason codes.
+
+### 12.7 Versions
+
+> GET /api/document-integrations/{documentId}/versions
+>
+> Response:
+> {
+>   "versions": [
+>     {
+>       "revision": "rev_18",
+>       "actorType": "agent",
+>       "actorId": "agent_...",
+>       "observedAt": "2026-08-09T06:10:00Z",
+>       "providerModifiedAt": "2026-08-09T06:09:58Z"
+>     }
+>   ]
+> }
+
+## 2. Scope delivered (named paths)
+
+New (this round):
+- `packages/server/src/routes/document-integrations.ts` (router: get/create/mutate/capabilities/versions)
+- `packages/server/src/routes/document-integrations.test.ts` (API contract tests)
+- `docs/plans/evidence/entity-document-integrations/T-008/EVIDENCE.md` (this file)
+- `packages/server/src/index.ts` — mount ONLY: the `/api/document-integrations` router wired to the
+  T-003-backed registry + phase-2 flags + a fail-closed workspace resolver. No editor-route changes.
+
+Carry-forward edits (already in the preserved working tree, kept and re-verified this round):
+- `packages/server/src/document-providers/registry.ts` + `registry.test.ts` — THE-945 r3 F1 / F3 / F4
+- `packages/server/src/document-providers/write-policy.ts` + `write-policy.test.ts` — THE-948 r3 F4
+  (`UnapprovedDestinationError` cause differentiation)
+- `docs/plans/evidence/entity-document-integrations/T-007/EVIDENCE.md` — one trivial §8b count fix
+  (three→four)
+
+## 3. What T-008 delivers
+
+- Five provider-neutral routes under the option (a) default namespace `/api/document-integrations`.
+- Every route scopes every lookup by the resolved workspace (THE-945 r3 F3 predicate holds at the
+  route boundary). A cross-workspace read/mutate returns the SAME typed 404 as an unknown id; a
+  cross-workspace create returns a typed 409 that never names the owning workspace (THE-944 r2 F7 —
+  a cross-workspace probe is not an existence oracle).
+- Typed, machine-readable errors throughout (never a bare 500 for an expected failure):
+  `WORKSPACE_REQUIRED`, `WORKSPACE_ISOLATION`, `DOCUMENT_NOT_FOUND`, `DOCUMENT_ALREADY_EXISTS`,
+  `STALE_REVISION`, `INVALID_REQUEST`, `DESTINATION_REQUIRED`, `DESTINATION_NOT_ALLOWED`,
+  `WRITE_DISABLED`, `CAPABILITY_UNSUPPORTED`, `UNSUPPORTED_OPERATION`, `PROVIDER_UNAVAILABLE`.
+- Mutation enforces the §12.3 revision requirement: `expectedRevision` + `idempotencyKey` + a typed
+  `operation` are all required; a stale expected revision returns 409 `STALE_REVISION` with
+  expected/current revision and `retryable:true`.
+- Create is enforced through the T-007 destinations/write-policy (R-003): unapproved destination →
+  typed `DESTINATION_NOT_ALLOWED` with a machine-readable `cause` (THE-948 r3 F4);
+  missing policy → typed `DESTINATION_REQUIRED`; policy `denied` → typed `WRITE_DISABLED`.
+- Capabilities carry reason codes (T-006 fold honored) and fail closed on unknown/degraded
+  capability or authority.
+- Versions surface revision, actorType/actorId, observedAt, providerModifiedAt.
+- Provider-neutral: every provider is reached through the `DocumentProviderAdapter` contract
+  (T-005) via the deterministic fake adapter in all tests; no provider-specific code, no network,
+  no wall clock (the clock is injected/fixed), no unseeded randomness.
+
+## 4. Automated proof — API contract tests
+
+`packages/server/src/routes/document-integrations.test.ts` (18 tests) covers all five routes and the
+full contract. Focused run (Node 22), exit 0:
+
+```sh
+cd packages/server && npx vitest run \
+  src/routes/document-integrations.test.ts \
+  src/document-providers/write-policy.test.ts \
+  src/document-providers/registry.test.ts \
+  src/document-providers/capability-resolver.test.ts   # 4 files / 122 tests / exit 0
+```
+
+Per-route negative proof (all asserted in the test file):
+
+- **Mutation requires `expectedRevision` + `idempotencyKey` + typed operation** — omitting any one
+  returns a typed 400 `INVALID_REQUEST` before the adapter is touched.
+- **Stale-revision 409** (STALE_REVISION test, §12.3): a document advanced to `rev-2`, then mutated
+  with a stale `expectedRevision` of `rev-1`, returns `409`, `error.code === 'STALE_REVISION'`,
+  `error.expectedRevision === 'rev-1'`, `error.currentRevision === 'rev-2'`,
+  `error.retryable === true`. Full 409 body shape (documentId, expectedRevision, currentRevision,
+  retryable) verified.
+- **Unapproved-destination negative** (create into `dest_evil` not in the policy's approved set)
+  returns `422 DESTINATION_NOT_ALLOWED` with `error.cause === 'not_in_approved_set'` — fail closed.
+- **Unknown/degraded capability fail-closed** (capabilities + mutate lanes): `agent_range_mutation`
+  is honestly `unsupported` by the fake baseline → `state:'unsupported'`; a degraded connection
+  never promotes a write lane to `supported`; a mutate into an unsupported lane returns typed
+  `403 CAPABILITY_UNSUPPORTED`.
+- **Cross-workspace isolation**: GET and mutate of another workspace's id return the SAME 404 body
+  as an unknown id; a workspace-unbindable request returns typed `403 WORKSPACE_REQUIRED`;
+  a cross-workspace create of an existing provider identity returns `409 DOCUMENT_ALREADY_EXISTS`
+  whose message never names the owning workspace.
+- **Capabilities include reason codes** and honor the T-006 fold; **versions** include
+  revision/actorType/actorId/observedAt/providerModifiedAt.
+
+## 5. RED → GREEN proof
+
+### 5a. T-008 route integration fixes (this round)
+
+The preserved `document-integrations.test.ts` was executing 4 FAIL cases at session resume because
+the mutation/version tests seeded documents directly in the registry (leaving the fake adapter's own
+in-memory store blind to the artifact) and one cross-workspace create test had no second-workspace
+policy (so it failed at the policy gate before reaching the identity-conflict check). Fixes:
+
+1. Seeded all three mutation tests (success, stale, unsupported) and the versions test **through the
+   API** (`createViaApi`) so the deterministic fake adapter knows the artifact — the prior session's
+   recorded intent, adopted as the code required.
+2. Added a `ws_B` policy + destination so the cross-workspace create test reaches the
+   identity-conflict check (THE-944 r2 F7) rather than `DESTINATION_REQUIRED`.
+3. Fixed the router to persist `destination_id` on the created canonical record, so downstream
+   mutate/version/capability evidence scopes resolve against the R-003 destination instead of
+   failing closed on a null destination (this is why the API-created registry records now satisfy
+   the mutation lanes).
+
+RED (route test file at resume, `npx vitest run src/routes/document-integrations.test.ts`):
+`Test Files 1 failed | Tests 4 failed | 14 passed (18)` — `cross-workspace create` (DESTINATION_REQUIRED
+instead of DOCUMENT_ALREADY_EXISTS), `successful mutation` (200 vs 404), `STALE_REVISION` (409 vs 403),
+`versions include …` (200 vs 404).
+
+GREEN (after the three fixes above): `Tests 18 passed (18)`, exit 0.
+
+### 5b. Carry-forward RED tests (THE-945 r3 F1/F3/F4, THE-948 r3 F4)
+
+The carry-forward tests in `registry.test.ts` / `write-policy.test.ts` are genuinely RED against the
+base `2f150e4` source. Proven by writing the base-`2f150e4` versions of `registry.ts` /
+`write-policy.ts` into the working tree (keeping the carry-forward tests) and running the targeted
+group; then restoring the carry-forward sources and re-running.
+
+RED (base source, tests kept):
+```sh
+npx vitest run src/document-providers/registry.test.ts src/document-providers/write-policy.test.ts \
+  -t "RED|carried|carry|cause|F1|F3|F4"   # 7 failed | 15 passed | 45 skipped, exit 1
+```
+Failing (7):
+- registry F1: `F1 RED: a register/rediscover whose provider differs … FAILS CLOSED`
+- registry F1: `F1 RED: a register/rediscover whose artifact_type differs … FAILS CLOSED`
+- registry F3: `F3-carried: registry.update is atomic — one immediate transaction`
+- write-policy F4: `not-in-approved-set … carries an explicit cause`
+- write-policy F4: `record-missing: an approved id with NO destination record carries a distinct cause`
+- write-policy F4: `record-disabled: an approved id whose destination record is disabled …`
+- write-policy F4: `scope-mismatch: an approved id whose record serves a different scope …`
+
+GREEN (carry-forward source restored):
+```sh
+npx vitest run src/document-providers/registry.test.ts src/document-providers/write-policy.test.ts \
+  -t "RED|carried|carry|cause|F1|F3|F4"   # 22 passed | 45 skipped, exit 0
+```
+
+F4-lane "id omitted from `RegistryWriteInput`" is enforced at compile time by `@ts-expect-error`
+inside the test; the strict tsc build passing at HEAD proves that annotation is still exercised (the
+`@ts-expect-error` is NOT unused), so a caller-chosen `id` override cannot silently reappear.
+
+## 6. Route-mount proof
+
+`packages/server/src/index.ts` mounts the router under `/api/document-integrations` following the
+`/api/document-objects` precedent (option (a)):
+- The router is created with the T-003-backed registry (`createDocumentRegistry(entityDb)`), the
+  phase-2 flag snapshot (`phase2Flags`), and an injected fail-closed `resolveWorkspace`.
+- The T-003 additive schema is applied idempotently via `applyDocumentIntegrationsMigration(entityDb)`
+  (reversible; touches no legacy document data).
+- `adapters: () => undefined` and empty `policies`/`destinations` — because no real provider adapters
+  are wired until T-012+, every provider-aware write/capability path fails closed with a typed
+  `PROVIDER_UNAVAILABLE` / `DESTINATION_REQUIRED` rather than inventing a provider.
+- `resolveWorkspace` maps a bound customer principal to its single authorized org (fail closed on
+  ambiguity / out-of-membership), and the trusted service/admin path to the deployment default org.
+- The editor router (`editor/index.ts`) and the `/api/documents` namespace are untouched — no
+  sibling routes added (binding namespace constraint honored).
+
+## 7. Rule-outs
+
+- **PRD (`phase2-canonical-prd.md`) — READ-ONLY.** Not modified. Quoted verbatim (§1) only.
+- **`editor/index.ts` and the `/api/documents` editor namespace — UNTOUCHED.** Option (a) taken: the
+  provider-neutral API lives under its own `/api/document-integrations` namespace.
+- **§13 Events — NOT this ticket.** No event table, no `document_integration_events` writes, no
+  `document_events` claim. No competing registry / receipt store / API namespace.
+- **No provider-specific lanes.** Every provider is reached through the `DocumentProviderAdapter`
+  (T-005); all tests use the deterministic fake. No provider-name-implies-capability shortcut
+  (D-003 / R-002).
+- **Read-only paths untouched:** `AGENTS.md`, `ISSUE-MAP.md`, `BUILD-CONTEXT.md`, gates, test
+  allowlists, `migrations.ts`, `scoped-search-documents.ts`, `documents.ts`, editor router.
+- **No persistence/migration changes beyond the additive T-003 schema application in the mount**
+  (the schema itself is owned by read-only `migrations.ts`; the mount only calls the existing,
+  additive, reversible `applyDocumentIntegrationsMigration`).
+- No Linear/GitHub/deploy/production writes; no push; no merge to main; no OpenWiki regeneration;
+  no next-issue selection; no test allowlist/gate weakening; deterministic (no time/network/
+  randomness dependence).
+- Privacy: no credentials, raw tokens, tenant secrets, document contents, or operator-specific
+  absolute paths in code, fixtures, evidence, or output.
+
+## 8. Carry-forward disclosures (reviewer-sanctioned, exact findings only)
+
+- **THE-944 r2 F7** (strict-create error differentiation): enforced at the route boundary in
+  `document-integrations.ts` create — a cross-workspace probe gets the same `409 DOCUMENT_ALREADY_EXISTS`
+  as a same-workspace duplicate, and the message never names the owning workspace; pinned by the
+  `cross-workspace create` test.
+- **THE-945 r3 F1** (provider/artifact_type mismatch rejection): `registry.ts` rejects a
+  register/rediscover that reuses an existing provider identity while claiming a different provider
+  or artifact_type via `DocumentRegistryValidationError`; RED→GREEN in §5b.
+- **THE-945 r3 F3** (race-safe `registry.update`): `registry.update` now wraps its workspace
+  check-and-write in one `BEGIN IMMEDIATE` transaction; pinned by the atomicity RED test (§5b) using
+  a second connection holding a write lock.
+- **THE-945 r3 F4** (omit `id` from `RegistryWriteInput`): `id` is excluded from the registry write
+  input; the deterministic T-003-derived canonical id is authoritative; enforced at compile time by
+  `@ts-expect-error` and pinned by the `get`-lane assertions (§5b).
+- **THE-948 r3 F4** (cause differentiation): `UnapprovedDestinationError` now carries one of
+  `not_in_approved_set` / `destination_record_missing` / `destination_record_disabled` /
+  `destination_scope_mismatch`, all still fail-closed; surfaced by the create route as
+  `DESTINATION_NOT_ALLOWED` with `error.cause`. The T-007 EVIDENCE's §8b three→four count fix is the
+  only change to T-007 evidence.
+- **THE-948 r3 F1/F2/F3** carried as-is from T-007 (destination record integration, fail-closed
+  branches, disabled-exact-over-enabled-wildcard precedence): re-verified this round via the focused
+  `write-policy.test.ts` / `capability-resolver.test.ts` run (§4, 122/122).
+
+## 9. Verification commands (Node 22 — v22.22.2)
+
+Commands actually run this round (exit codes in `#` comments):
+
+```sh
+# 1. Focused T-008 + carry-forward suites
+cd packages/server && npx vitest run src/routes/document-integrations.test.ts \
+  src/document-providers/write-policy.test.ts src/document-providers/registry.test.ts \
+  src/document-providers/capability-resolver.test.ts          # 4 files / 122 tests / exit 0
+
+# 2. Strict tsc build
+cd packages/server && npm run build                            # tsc strict / exit 0
+
+# 3. Full server suite at final HEAD
+cd packages/server && npx vitest run                           # 208 files / 1848 tests / exit 0
+
+# 4. CTRL gate (root build + unit tests) under Node 22
+npm run ctrl:gate                                              # [ctrl] gate passed ✅ / exit 0
+
+# 5. Diff hygiene
+git diff --check                                               # clean / exit 0
+git status --short                                             # only scoped paths; clean after commit
+```
+
+RED→GREEN proof commands with exit codes are in §5.
+
+Note on `npm run ctrl:gate`: the gate runner does not select a Node runtime itself; under the
+PATH-default Node 26 the build fails on the known `better-sqlite3` `ERR_DLOPEN_FAILED` ABI mismatch.
+Run in a shell that has selected Node 22 (`source ~/.nvm/nvm.sh && nvm use 22`) — the gate then passes
+`[ctrl] unit tests passed` / `[ctrl] gate passed ✅` (exit 0).
+
+## 10. Worktree / diff hygiene
+
+```sh
+git status --short   # only scoped paths, clean after commit (worktree clean)
+git diff --check     # clean (exit 0)
+```
+
+Final commit SHA is recorded in the commit message and the final answer (a NEW commit on top of base
+`2f150e4`; never amend/rebase, and the commit's own SHA is never written into tracked files).

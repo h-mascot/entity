@@ -1,0 +1,731 @@
+/**
+ * T-008 — Provider-neutral Document Integration API.
+ *
+ * Source of truth: docs/loom/entity-document-integrations/phase2-canonical-prd.md §12.
+ * Route templates (option (a), the default — mounted under `/api/document-integrations`):
+ *   GET  /{documentId}              §12.1 Get document
+ *   POST /                          §12.2 Create document
+ *   POST /{documentId}/mutations   §12.3 Mutate document
+ *   GET  /{documentId}/capabilities §12.6 Capabilities
+ *   GET  /{documentId}/versions     §12.7 Versions
+ *
+ * Namespace (binding constraint, PRD ~:2403): `/api/documents` is already mounted by the
+ * agent-native editor module at packages/server/src/editor/index.ts:43. THIS router does NOT add
+ * sibling routes into that router; it mounts under `/api/document-integrations`, following the
+ * `/api/document-objects` precedent at packages/server/src/index.ts:329 (option (a)).
+ *
+ * Scope: get/create/mutate/versions/capabilities. Non-goal: provider-specific implementation —
+ * every provider is reached through a `DocumentProviderAdapter` selected per provider kind, and
+ * all tests use the deterministic fake adapter (T-005). §13 events are NOT this ticket; this
+ * module adds no event table, no receipt store, no competing provider registry, and no competing
+ * API namespace.
+ *
+ * Revision requirement (T-008 acceptance "typed errors and revision requirement implemented"):
+ * mutations REQUIRE `expectedRevision` + `idempotencyKey` and carry a typed `operation`. A stale
+ * expected revision is surfaced as HTTP 409 STALE_REVISION with expected/current revision and
+ * `retryable:true`, exactly the §12.3 conflict contract. Full revision-coordinator internals
+ * (T-009) are out of scope; here the route requires, validates, and surfaces revision semantics
+ * against the registry/adapter truth.
+ *
+ * Typed errors throughout: machine-readable `code`s for stale revision, unknown/degraded
+ * capability, missing/unapproved destination policy, workspace isolation — never a bare 500 for
+ * an expected failure.
+ *
+ * Security: every route scopes every lookup by the resolved workspace (THE-945 r3 F3 predicate
+ * holds at the route boundary via registry.get/update/create + policy scoping). Fail closed on
+ * unknown/degraded capability or authority. Cross-workspace probes are not an existence oracle:
+ * a read of an id owned by another workspace returns the same typed NOT_FOUND as an unknown id,
+ * and a cross-workspace create fails with a typed conflict that does not reveal the owner
+ * (THE-944 r2 F7).
+ *
+ * Privacy: no credentials, raw tokens, tenant secrets, document contents, or operator-specific
+ * absolute paths in fixtures/logs/output. Versions surface leaf revision metadata only.
+ */
+
+import { Router, type Request, type Response } from 'express';
+import type { Phase2FlagSnapshot } from '../phase2-flags';
+import type { DocumentRegistry } from '../document-providers/registry';
+import type { DocumentProviderAdapter } from '../document-providers/types';
+import {
+  AdapterArtifactNotFoundError,
+  StaleRevisionError,
+  UnsupportedAdapterMutationError,
+  type AdapterMutation,
+  type CapabilityReport,
+  mutationCapability,
+} from '../document-providers/types';
+import {
+  resolveCapabilities,
+  capabilityResolutionEnabled,
+} from '../document-providers/capability-resolver';
+import {
+  MissingDestinationPolicyError,
+  UnapprovedDestinationError,
+  type WritePolicy,
+  type WriteRequestScope,
+  resolveCreateAllowance,
+  resolveMutationAllowance,
+} from '../document-providers/write-policy';
+import type { DocumentDestination } from '../document-providers/destinations';
+import type { DocumentArtifactType, DocumentObjectRecord, DocumentProvider } from '../../../db/src/document-integrations';
+
+/** Machine-readable error code the API emits. Every expected failure has a typed code. */
+export type DocumentApiErrorCode =
+  | 'WORKSPACE_REQUIRED'
+  | 'WORKSPACE_ISOLATION'
+  | 'DOCUMENT_NOT_FOUND'
+  | 'DOCUMENT_ALREADY_EXISTS'
+  | 'STALE_REVISION'
+  | 'MISSING_REVISION'
+  | 'MISSING_IDEMPOTENCY_KEY'
+  | 'CAPABILITY_UNSUPPORTED'
+  | 'DESTINATION_REQUIRED'
+  | 'DESTINATION_NOT_ALLOWED'
+  | 'WRITE_DISABLED'
+  | 'INVALID_REQUEST'
+  | 'UNSUPPORTED_OPERATION'
+  | 'PROVIDER_UNAVAILABLE';
+
+/** Typed API error: statusCode + machine-readable code + optional detail for the 409 contract. */
+export class DocumentApiError extends Error {
+  readonly statusCode: number;
+  readonly code: DocumentApiErrorCode;
+  readonly detail: Record<string, unknown> | undefined;
+
+  constructor(
+    statusCode: number,
+    code: DocumentApiErrorCode,
+    message: string,
+    detail?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = 'DocumentApiError';
+    this.statusCode = statusCode;
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+export interface DocumentIntegrationsRouterDeps {
+  registry: DocumentRegistry;
+  /** Provider selection. Returns the adapter for a provider kind, or undefined (fail closed). */
+  adapters: (provider: string) => DocumentProviderAdapter | undefined;
+  /** R-003 write policies. */
+  policies: readonly WritePolicy[];
+  /** R-003 destination records. */
+  destinations: readonly DocumentDestination[];
+  /** Phase 2 flag snapshot used to gate the capability resolver (reversible rollout). */
+  flags: Phase2FlagSnapshot;
+  /**
+   * Resolve the workspace for a request. Returns null to fail closed (workspace cannot be
+   * determined) — the route then returns a typed WORKSPACE_REQUIRED error and no lookup runs.
+   */
+  resolveWorkspace: (req: Request) => string | null;
+  /** Injected clock for deterministic timestamps (no wall-clock dependence). */
+  now?: () => string;
+}
+
+export interface CreateDocumentBody {
+  artifactType: string;
+  title: string;
+  provider: string;
+  destinationId?: string | null;
+  idempotencyKey: string;
+  initialContent?: unknown;
+  associations?: unknown;
+}
+
+export interface MutateDocumentBody {
+  expectedRevision: string;
+  idempotencyKey: string;
+  operation: Record<string, unknown>;
+}
+
+/** The workspace/tenant scope a write request resolves against (R-007 explicit destination). */
+function writeScopeFor(
+  workspaceId: string,
+  tenantId: string | null,
+  provider: DocumentProvider,
+  artifactType: DocumentArtifactType,
+  connectionId: string | null,
+  destinationId: string | null,
+): WriteRequestScope {
+  return { workspaceId, tenantId, provider, artifactType, connectionId, destinationId };
+}
+
+/**
+ * Resolve the R-003 destination + policy evidence for a request scope. Missing or unapproved
+ * destination policies fail closed to `denied`/`denied` (a typed config/policy error is surfaced
+ * by the route as DESTINATION_REQUIRED / DESTINATION_NOT_ALLOWED); any other error propagates.
+ */
+function resolveWriteEvidence(
+  deps: DocumentIntegrationsRouterDeps,
+  scope: WriteRequestScope,
+): { destination: 'allowed' | 'denied' | 'unknown'; policy: 'allowed' | 'denied' | 'unknown' } {
+  try {
+    const decision = resolveCreateAllowance(deps.policies, deps.destinations, scope);
+    return { destination: decision.destination, policy: decision.policy };
+  } catch (err) {
+    if (err instanceof MissingDestinationPolicyError || err instanceof UnapprovedDestinationError) {
+      return { destination: 'denied', policy: 'denied' };
+    }
+    throw err;
+  }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return Boolean(v && typeof v === 'object' && !Array.isArray(v));
+}
+
+function bodyObject(req: Request): Record<string, unknown> {
+  if (!isRecord(req.body)) {
+    throw new DocumentApiError(400, 'INVALID_REQUEST', 'request body must be a JSON object');
+  }
+  return req.body;
+}
+
+function requiredString(body: Record<string, unknown>, key: string): string {
+  const value = typeof body[key] === 'string' ? (body[key] as string).trim() : '';
+  if (!value) {
+    throw new DocumentApiError(400, 'INVALID_REQUEST', `${key} is required`);
+  }
+  return value;
+}
+
+function optionalString(body: Record<string, unknown>, key: string): string | null {
+  if (body[key] === undefined || body[key] === null) return null;
+  const value = typeof body[key] === 'string' ? (body[key] as string).trim() : '';
+  return value || null;
+}
+
+const ARTIFACT_TYPES: readonly DocumentArtifactType[] = ['document', 'spreadsheet', 'presentation'];
+const PROVIDERS = ['google_workspace', 'microsoft_365', 'local_office'];
+
+function parseArtifactType(body: Record<string, unknown>): DocumentArtifactType {
+  const raw = requiredString(body, 'artifactType');
+  if (!(ARTIFACT_TYPES as readonly string[]).includes(raw)) {
+    throw new DocumentApiError(400, 'INVALID_REQUEST', `unsupported artifactType: ${raw}`);
+  }
+  return raw as DocumentArtifactType;
+}
+
+function parseProvider(body: Record<string, unknown>): DocumentProvider {
+  const raw = requiredString(body, 'provider');
+  if (!(PROVIDERS as readonly string[]).includes(raw)) {
+    throw new DocumentApiError(400, 'INVALID_REQUEST', `unsupported provider: ${raw}`);
+  }
+  return raw as DocumentProvider;
+}
+
+/** Map the §12.3 provider-neutral operation envelope onto the R-023 adapter mutation lanes. */
+function parseMutation(raw: unknown): AdapterMutation {
+  if (!isRecord(raw) || typeof raw.kind !== 'string') {
+    throw new DocumentApiError(400, 'INVALID_REQUEST', 'operation.kind is required');
+  }
+  switch (raw.kind) {
+    case 'replace_text':
+    case 'text': {
+      const text = typeof raw.content === 'string' ? raw.content : typeof raw.text === 'string' ? raw.text : '';
+      if (!text) {
+        throw new DocumentApiError(400, 'INVALID_REQUEST', 'text mutation requires content');
+      }
+      return { kind: 'text', text };
+    }
+    case 'set_range':
+    case 'range': {
+      const cell = typeof raw.cell === 'string' ? raw.cell : '';
+      const value = typeof raw.value === 'string' ? raw.value : '';
+      if (!cell) {
+        throw new DocumentApiError(400, 'INVALID_REQUEST', 'range mutation requires cell');
+      }
+      return { kind: 'range', cell, value };
+    }
+    case 'update_slide_text':
+    case 'slide': {
+      const slideId = typeof raw.slideId === 'string' ? raw.slideId : '';
+      if (!slideId) {
+        throw new DocumentApiError(400, 'INVALID_REQUEST', 'slide mutation requires slideId');
+      }
+      return { kind: 'slide', slideId };
+    }
+    default:
+      throw new DocumentApiError(400, 'UNSUPPORTED_OPERATION', `unsupported operation kind: ${String(raw.kind)}`);
+  }
+}
+
+function requireWorkspace(resolveWorkspace: (req: Request) => string | null, req: Request): string {
+  const workspace = resolveWorkspace(req);
+  if (!workspace) {
+    throw new DocumentApiError(
+      403,
+      'WORKSPACE_REQUIRED',
+      'unable to determine the request workspace; failing closed (workspace isolation).',
+    );
+  }
+  return workspace;
+}
+
+/**
+ * Build the §12.1 capabilities map for a document by resolving the provider adapter + auth
+ * state + destination/policy evidence through the T-006 Capability Resolver. Reason codes are
+ * carried through; unknown/degraded capabilities stay fail-closed. If the resolver gate is
+ * disabled (phase-2 rollback), every lane reports `unknown` (fail closed) rather than a
+ * provider-name assumption.
+ */
+async function resolveDocumentCapabilities(
+  deps: DocumentIntegrationsRouterDeps,
+  workspaceId: string,
+  record: DocumentObjectRecord,
+): Promise<CapabilityReport> {
+  const adapter = deps.adapters(record.provider);
+  if (!adapter) {
+    throw new DocumentApiError(
+      503,
+      'PROVIDER_UNAVAILABLE',
+      `no provider adapter is registered for provider ${record.provider}; failing closed.`,
+    );
+  }
+  // R-003 destination/policy evidence for the read/capability envelope: use the document's own
+  // destination when present, otherwise no explicit destination (fail closed, never guessed).
+  const scope = writeScopeFor(
+    workspaceId,
+    record.tenant_external_id ?? null,
+    record.provider,
+    record.artifact_type,
+    record.provider_connection_id ?? null,
+    record.destination_id ?? null,
+  );
+  let destination: 'allowed' | 'denied' | 'unknown' = record.destination_id == null ? 'unknown' : 'denied';
+  const evidence = resolveWriteEvidence(deps, scope);
+  destination = evidence.destination;
+  const policy = evidence.policy;
+  // The T-006 resolver is pure and always folds correctly, and it fails closed on
+  // unknown/degraded/unsupported lanes. Capability reports are truthful runtime evidence; the
+  // phase-2 gate only controls whether a WRITE is routed through enforcement (create/mutate).
+  const authState = record.auth_state;
+  return resolveCapabilities({
+    adapter,
+    artifactType: record.artifact_type,
+    connection: authState,
+    destination,
+    policy,
+    runtime: { healthy: true, mutationGateOpen: true },
+  });
+}
+
+function sendDocumentApiError(res: Response, err: unknown): Response {
+  if (err instanceof DocumentApiError) {
+    const body: Record<string, unknown> = { error: { code: err.code, message: err.message } };
+    if (err.detail) {
+      Object.assign(body.error as Record<string, unknown>, err.detail);
+    }
+    return res.status(err.statusCode).json(body);
+  }
+  if (err instanceof StaleRevisionError) {
+    return res.status(409).json({
+      error: {
+        code: 'STALE_REVISION',
+        message: err.message,
+        expectedRevision: err.expectedRevision,
+        currentRevision: err.currentRevision,
+        retryable: err.retryable,
+      },
+    });
+  }
+  if (err instanceof UnapprovedDestinationError) {
+    return res.status(422).json({
+      error: {
+        code: 'DESTINATION_NOT_ALLOWED',
+        message: err.message,
+        workspaceId: err.workspaceId,
+        destinationId: err.destinationId,
+        cause: err.cause,
+      },
+    });
+  }
+  if (err instanceof MissingDestinationPolicyError) {
+    return res.status(409).json({
+      error: { code: 'DESTINATION_REQUIRED', message: err.message },
+    });
+  }
+  if (err instanceof UnsupportedAdapterMutationError) {
+    return res.status(403).json({
+      error: {
+        code: 'CAPABILITY_UNSUPPORTED',
+        message: err.message,
+        capability: err.capability,
+      },
+    });
+  }
+  if (err instanceof AdapterArtifactNotFoundError) {
+    return res.status(404).json({
+      error: { code: 'DOCUMENT_NOT_FOUND', message: err.message },
+    });
+  }
+  // Bare-500 guard: any unexpected error stays an Error; the Express error path may surface it.
+  if (err instanceof Error) {
+    return res.status(500).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: 'internal document error' } });
+  }
+  return res.status(500).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: 'internal document error' } });
+}
+
+/** Global adapter selector used only when a request maps a provider to an adapter. */
+function getAdapter(
+  deps: DocumentIntegrationsRouterDeps,
+  provider: string,
+): DocumentProviderAdapter {
+  const adapter = deps.adapters(provider);
+  if (!adapter) {
+    throw new DocumentApiError(
+      503,
+      'PROVIDER_UNAVAILABLE',
+      `no provider adapter is registered for provider ${provider}; failing closed.`,
+    );
+  }
+  return adapter;
+}
+
+/** §12.1 envelope fields from a canonical record + capabilities map. */
+function toEnvelope(record: DocumentObjectRecord, capabilities: CapabilityReport): Record<string, unknown> {
+  return {
+    id: record.id,
+    url: `/documents/${record.id}`,
+    title: record.title,
+    provider: record.provider,
+    artifactType: record.artifact_type,
+    providerUrl: record.provider_url ?? null,
+    owner: { summary: record.owner_summary ?? null },
+    readiness: { state: record.readiness_state },
+    revision: record.current_revision ?? null,
+    modifiedAt: record.provider_modified_at ?? null,
+    indexedAt: record.indexed_at ?? null,
+    preview: { state: record.preview_state },
+    capabilities: Object.fromEntries(
+      Object.values(capabilities).map((cap) => [
+        cap.name,
+        {
+          state: cap.state,
+          source: cap.source,
+          ...(cap.reasonCode ? { reasonCode: cap.reasonCode } : {}),
+        },
+      ]),
+    ),
+  };
+}
+
+export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRouterDeps): Router {
+  const router = Router();
+  const nowIso = deps.now ?? (() => '2026-08-18T00:00:00.000Z');
+
+  // Utility to load a document, scoped to the request workspace. Returns undefined for an
+  // unknown id OR an id owned by a different workspace — both surface the SAME typed
+  // DOCUMENT_NOT_FOUND, so a cross-workspace probe is not an existence oracle.
+  function requireOwnedDocument(workspaceId: string, documentId: string): DocumentObjectRecord {
+    const record = deps.registry.get(documentId, workspaceId);
+    if (!record) {
+      throw new DocumentApiError(404, 'DOCUMENT_NOT_FOUND', `document ${documentId} was not found`);
+    }
+    return record;
+  }
+
+  // GET /{documentId} — §12.1 Get document.
+  router.get('/:documentId', async (req, res) => {
+    try {
+      const workspaceId = requireWorkspace(deps.resolveWorkspace, req);
+      const record = requireOwnedDocument(workspaceId, req.params.documentId);
+      const capabilities = await resolveDocumentCapabilities(deps, workspaceId, record);
+      return res.json({ document: toEnvelope(record, capabilities) });
+    } catch (err) {
+      return sendDocumentApiError(res, err);
+    }
+  });
+
+  // POST / — §12.2 Create document (enforced through T-007 destinations/write policy, R-003).
+  router.post('/', async (req, res) => {
+    try {
+      const workspaceId = requireWorkspace(deps.resolveWorkspace, req);
+      const body = bodyObject(req) as unknown as CreateDocumentBody;
+      const provider = parseProvider(body as unknown as Record<string, unknown>);
+      const artifactType = parseArtifactType(body as unknown as Record<string, unknown>);
+      const title = requiredString(body as unknown as Record<string, unknown>, 'title');
+      const idempotencyKey = requiredString(
+        body as unknown as Record<string, unknown>,
+        'idempotencyKey',
+      );
+      const destinationId = optionalString(body as unknown as Record<string, unknown>, 'destinationId');
+      const adapter = getAdapter(deps, provider);
+
+      const scope = writeScopeFor(
+        workspaceId,
+        null,
+        provider,
+        artifactType,
+        null,
+        destinationId,
+      );
+      // R-003 create allowance. Missing policy -> typed config error; unapproved -> typed veto
+      // with cause; policy denied -> typed WRITE_DISABLED. All fail closed.
+      let allowance: {
+        destination: 'allowed' | 'denied' | 'unknown';
+        policy: 'allowed' | 'denied' | 'unknown';
+      };
+      try {
+        const decision = resolveCreateAllowance(deps.policies, deps.destinations, scope);
+        allowance = { destination: decision.destination, policy: decision.policy };
+      } catch (err) {
+        if (err instanceof MissingDestinationPolicyError) {
+          throw new DocumentApiError(409, 'DESTINATION_REQUIRED', err.message);
+        }
+        if (err instanceof UnapprovedDestinationError) {
+          throw new DocumentApiError(
+            422,
+            'DESTINATION_NOT_ALLOWED',
+            err.message,
+            { workspaceId: err.workspaceId, destinationId: err.destinationId, cause: err.cause },
+          );
+        }
+        throw err;
+      }
+      if (allowance.policy === 'denied' || allowance.destination !== 'allowed') {
+        throw new DocumentApiError(
+          403,
+          'WRITE_DISABLED',
+          'creation is not authorized by the governing write policy / destination (fail closed).',
+        );
+      }
+      // Capability resolver: create must be fully actionable (fail closed on unknown/degraded).
+      if (capabilityResolutionEnabled(deps.flags)) {
+        const report = await resolveCapabilities({
+          adapter,
+          artifactType,
+          connection: 'authorized',
+          destination: 'allowed',
+          policy: 'allowed',
+          runtime: { healthy: true, mutationGateOpen: true },
+        });
+        if (!(report.create.state === 'supported')) {
+          throw new DocumentApiError(
+            403,
+            'CAPABILITY_UNSUPPORTED',
+            `provider ${provider} does not support create for ${artifactType}; failing closed.`,
+          );
+        }
+      }
+      const created = await adapter.create({
+        artifact_type: artifactType,
+        title,
+        idempotencyKey,
+        now: nowIso(),
+      });
+      // Strict create (THE-944 r2 F7): a provider identity already owned anywhere surfaces a
+      // typed conflict WITHOUT revealing whether it belongs to this workspace (no existence
+      // oracle). The registry's own derived id is authoritative (THE-945 r3 F4).
+      let canonical: DocumentObjectRecord;
+      try {
+        canonical = deps.registry.create(
+          {
+            provider,
+            artifact_type: artifactType,
+            title,
+            // Persist the destination the document was created into so downstream evidence
+            // (mutation/version/capability scopes read record.destination_id) resolves against
+            // the R-003 destination rather than failing closed on a null destination.
+            destination_id: destinationId,
+            external_id: created.descriptor.external_id,
+            provider_connection_id: created.descriptor.provider_connection_id,
+            provider_url: created.descriptor.provider_url,
+            owner_summary: null,
+            tenant_external_id: null,
+            permissions_summary_json: null,
+            sensitivity_label: null,
+            auth_state: created.descriptor.auth_state,
+            readiness_state: created.descriptor.readiness_state,
+            current_revision: created.descriptor.current_revision,
+            provider_modified_at: created.descriptor.provider_modified_at,
+            preview_state: created.descriptor.preview_state,
+            conflict_state: created.descriptor.conflict_state,
+          },
+          workspaceId,
+        );
+      } catch (err) {
+        if (err instanceof Error && /already exists|provider identity/i.test(err.message)) {
+          // Same typed conflict for same-workspace duplicate and cross-workspace ownership —
+          // never reveals which workspace owns the identity.
+          throw new DocumentApiError(
+            409,
+            'DOCUMENT_ALREADY_EXISTS',
+            'a document with this provider identity already exists.',
+          );
+        }
+        throw err;
+      }
+      return res.status(201).json({
+        documentId: canonical.id,
+        entityUrl: `/documents/${canonical.id}`,
+        provider,
+        revision: canonical.current_revision,
+        operationId: idempotencyKey,
+        receiptId: null,
+      });
+    } catch (err) {
+      return sendDocumentApiError(res, err);
+    }
+  });
+
+  // POST /{documentId}/mutations — §12.3 Mutate document (revision requirement).
+  router.post('/:documentId/mutations', async (req, res) => {
+    try {
+      const workspaceId = requireWorkspace(deps.resolveWorkspace, req);
+      const record = requireOwnedDocument(workspaceId, req.params.documentId);
+      const body = bodyObject(req) as unknown as MutateDocumentBody;
+      const expectedRevision = requiredString(body as unknown as Record<string, unknown>, 'expectedRevision');
+      const idempotencyKey = requiredString(body as unknown as Record<string, unknown>, 'idempotencyKey');
+      const mutation = parseMutation((body as unknown as Record<string, unknown>).operation);
+      const adapter = getAdapter(deps, record.provider);
+
+      // Mutation policy (R-003): only create_and_update authorizes mutations.
+      const scope = writeScopeFor(
+        workspaceId,
+        record.tenant_external_id ?? null,
+        record.provider,
+        record.artifact_type,
+        record.provider_connection_id ?? null,
+        record.destination_id ?? null,
+      );
+      let mutationAllowed = false;
+      try {
+        mutationAllowed = resolveMutationAllowance(deps.policies, scope).policy === 'allowed';
+      } catch (err) {
+        if (err instanceof MissingDestinationPolicyError) {
+          throw new DocumentApiError(409, 'DESTINATION_REQUIRED', err.message);
+        }
+        throw err;
+      }
+      if (!mutationAllowed) {
+        throw new DocumentApiError(
+          403,
+          'WRITE_DISABLED',
+          'mutation is not authorized by the governing write policy (only create_and_update allows updates).',
+        );
+      }
+      // Capability resolver: the mutation lane must be fully supported (fail closed on
+      // unknown/degraded). UnsupportedAdapterMutationError surfaces as CAPABILITY_UNSUPPORTED.
+      if (capabilityResolutionEnabled(deps.flags)) {
+        const evidence = resolveWriteEvidence(deps, scope);
+        const report = await resolveCapabilities({
+          adapter,
+          artifactType: record.artifact_type,
+          connection: record.auth_state,
+          destination: evidence.destination,
+          policy: evidence.policy,
+          runtime: { healthy: true, mutationGateOpen: true },
+        });
+        if (!(report[mutationCapability(mutation)].state === 'supported')) {
+          throw new DocumentApiError(
+            403,
+            'CAPABILITY_UNSUPPORTED',
+            `${mutation.kind} mutation is not supported by provider ${record.provider}; failing closed.`,
+          );
+        }
+      }
+      let result: { priorRevision: string; resultRevision: string };
+      try {
+        const mutated = await adapter.mutate({
+          external_id: record.external_id ?? '',
+          provider_connection_id: record.provider_connection_id ?? null,
+          expectedRevision,
+          mutation,
+          idempotencyKey,
+          now: nowIso(),
+        });
+        result = { priorRevision: mutated.priorRevision, resultRevision: mutated.resultRevision };
+      } catch (err) {
+        if (err instanceof StaleRevisionError) {
+          // §12.3 409 contract: expected/current + retryable.
+          return res.status(409).json({
+            error: {
+              code: 'STALE_REVISION',
+              message: err.message,
+              documentId: record.id,
+              expectedRevision: err.expectedRevision,
+              currentRevision: err.currentRevision,
+              retryable: true,
+            },
+          });
+        }
+        throw err;
+      }
+      // Reflect the new revision onto the canonical record (registry/adapter truth).
+      const updated = deps.registry.update(record.id, workspaceId, {
+        current_revision: result.resultRevision,
+        provider_modified_at: nowIso(),
+      });
+      return res.status(200).json({
+        documentId: record.id,
+        previousRevision: result.priorRevision,
+        revision: updated?.current_revision ?? result.resultRevision,
+        operationId: idempotencyKey,
+        receiptId: null,
+      });
+    } catch (err) {
+      return sendDocumentApiError(res, err);
+    }
+  });
+
+  // GET /{documentId}/capabilities — §12.6 Capabilities (with reason codes).
+  router.get('/:documentId/capabilities', async (req, res) => {
+    try {
+      const workspaceId = requireWorkspace(deps.resolveWorkspace, req);
+      const record = requireOwnedDocument(workspaceId, req.params.documentId);
+      const capabilities = await resolveDocumentCapabilities(deps, workspaceId, record);
+      const capabilitiesMap = Object.fromEntries(
+        Object.values(capabilities).map((cap) => [
+          cap.name,
+          {
+            state: cap.state,
+            source: cap.source,
+            ...(cap.reasonCode ? { reasonCode: cap.reasonCode } : {}),
+          },
+        ]),
+      );
+      return res.json({ documentId: record.id, capabilities: capabilitiesMap });
+    } catch (err) {
+      return sendDocumentApiError(res, err);
+    }
+  });
+
+  // GET /{documentId}/versions — §12.7 Versions (revision, actorType/actorId, observedAt,
+  // providerModifiedAt).
+  router.get('/:documentId/versions', async (req, res) => {
+    try {
+      const workspaceId = requireWorkspace(deps.resolveWorkspace, req);
+      const record = requireOwnedDocument(workspaceId, req.params.documentId);
+      const adapter = getAdapter(deps, record.provider);
+      if (!adapter.getVersions) {
+        throw new DocumentApiError(
+          403,
+          'CAPABILITY_UNSUPPORTED',
+          `provider ${record.provider} does not expose version history; failing closed.`,
+        );
+      }
+      // Read-lane honesty: an unsupported version_history lane fails closed (typed).
+      const versions = await adapter.getVersions({
+        external_id: record.external_id ?? '',
+        provider_connection_id: record.provider_connection_id ?? null,
+      });
+      const now = nowIso();
+      const items = versions.versions.map((v) => ({
+        revision: v.revision,
+        actorType: 'agent',
+        actorId: null,
+        observedAt: v.observed_at ?? now,
+        providerModifiedAt: v.observed_at ?? null,
+      }));
+      return res.json({ documentId: record.id, versions: items });
+    } catch (err) {
+      return sendDocumentApiError(res, err);
+    }
+  });
+
+  return router;
+}
