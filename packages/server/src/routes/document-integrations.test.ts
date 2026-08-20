@@ -52,6 +52,9 @@ interface TestContext {
   defaultWorkspace: string;
 }
 
+/** Deterministic injected clock for the test router (B4: frozen determinism belongs to injection). */
+const TEST_NOW = '2026-08-18T00:00:00.000Z';
+
 const openDatabases: Database.Database[] = [];
 const tempDirs: string[] = [];
 
@@ -139,6 +142,11 @@ function setup(overrides: Partial<DocumentIntegrationsRouterDeps> = {}): TestCon
       const header = req.headers['x-entity-workspace-id'];
       return typeof header === 'string' && header ? header : 'ws_A';
     },
+    // Deterministic clock injected for the tests (B4: frozen determinism is injection-only).
+    now: () => TEST_NOW,
+    // M2: the route derives connection state from the registered connection. In the default test
+    // fixture the fake adapter's registered connection is authorized, so consumers inject that.
+    connectionStateFor: () => 'authorized',
     ...overrides,
   };
   const app = express();
@@ -269,7 +277,6 @@ function createBody(overrides: Record<string, unknown> = {}): Record<string, unk
     provider: 'google_workspace',
     destinationId: 'dest_1',
     idempotencyKey: `op-create-${idempotencySeq}`,
-    initialContent: { kind: 'structured_document', blocks: [{ type: 'heading', text: 'Q3' }] },
     ...overrides,
   };
 }
@@ -328,6 +335,18 @@ describe('T-008 provider-neutral document API — get (§12.1)', () => {
     expect(crossBody.error.code).toBe('DOCUMENT_NOT_FOUND');
     expect(crossBody.error.code).toBe(unknownBody.error.code);
   });
+
+  it('gap 3: a KNOWN document with no registered adapter returns typed 503 PROVIDER_UNAVAILABLE (fail closed)', async () => {
+    const ctx = setup();
+    // No adapter is registered for google_workspace.
+    const created = ctx.registry.register(baseWriteInput(), 'ws_A');
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${created.record.id}`,
+    });
+    expect(res.status).toBe(503);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('PROVIDER_UNAVAILABLE');
+  });
 });
 
 describe('T-008 provider-neutral document API — create (§12.2)', () => {
@@ -346,7 +365,6 @@ describe('T-008 provider-neutral document API — create (§12.2)', () => {
         provider: 'google_workspace',
         destinationId: 'dest_1',
         idempotencyKey: 'op_1',
-        initialContent: { kind: 'structured_document', blocks: [{ type: 'heading', text: 'Q3' }] },
       },
     });
     expect(res.status).toBe(201);
@@ -453,6 +471,139 @@ describe('T-008 provider-neutral document API — create (§12.2)', () => {
     expect(body.error.code).toBe('DOCUMENT_ALREADY_EXISTS');
     // The error message must not name the owning workspace.
     expect(body.error.message).not.toMatch(/ws_A/);
+  });
+
+  it('B2 (gap 1): a create retry with the SAME idempotencyKey reconciles to the existing record (200, never 409 DOCUMENT_ALREADY_EXISTS)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const body = {
+      artifactType: 'document',
+      title: 'Q3',
+      provider: 'google_workspace',
+      destinationId: 'dest_1',
+      idempotencyKey: 'op_replay',
+    };
+    const first = await requestApp(ctx.app, { path: '/api/document-integrations', method: 'POST', body });
+    expect(first.status).toBe(201);
+    const firstId = (await bodyOf(first)).documentId;
+
+    // Same idempotency key -> idempotent replay (created.created === false) must reconcile.
+    const retry = await requestApp(ctx.app, { path: '/api/document-integrations', method: 'POST', body });
+    expect(retry.status).toBe(200);
+    const retryBody = await bodyOf(retry);
+    expect(retryBody.documentId).toBe(firstId);
+    expect(retryBody.reconciled).toBe(true);
+    expect(retryBody.error).toBeUndefined();
+  });
+
+  it('B3: create with initialContent that the lane cannot honor is REJECTED (no silent drop)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: {
+        artifactType: 'document',
+        title: 'Q3',
+        provider: 'google_workspace',
+        destinationId: 'dest_1',
+        idempotencyKey: 'op_content',
+        initialContent: { kind: 'structured_document', blocks: [{ type: 'heading', text: 'Q3' }] },
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+
+  it('B3: create with associations that the lane cannot honor is REJECTED (no silent drop)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: {
+        artifactType: 'document',
+        title: 'Q3',
+        provider: 'google_workspace',
+        destinationId: 'dest_1',
+        idempotencyKey: 'op_assoc',
+        associations: [{ type: 'project', id: 'project_123' }],
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+
+  it('gap 2: create with NO destinationId (but a governing policy) fails closed with WRITE_DISABLED — not DESTINATION_REQUIRED', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: {
+        artifactType: 'document',
+        title: 'Q3',
+        provider: 'google_workspace',
+        idempotencyKey: 'op_nodest',
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('WRITE_DISABLED');
+  });
+
+  it('M2: create does NOT fabricate connection authorized — an unknown connection state fails closed (CAPABILITY_UNSUPPORTED)', async () => {
+    // connectionStateFor overridden to return undefined (unknown) — the route must not assume
+    // 'authorized' and must fail closed.
+    const ctx = setup({ connectionStateFor: () => undefined });
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: {
+        artifactType: 'document',
+        title: 'Q3',
+        provider: 'google_workspace',
+        destinationId: 'dest_1',
+        idempotencyKey: 'op_unknown_conn',
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+
+  it('M2: a closed mutation gate (runtime evidence) fails create closed (CAPABILITY_UNSUPPORTED)', async () => {
+    const ctx = setup({ runtimeEvidence: () => ({ mutationGateOpen: false }) });
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: {
+        artifactType: 'document',
+        title: 'Q3',
+        provider: 'google_workspace',
+        destinationId: 'dest_1',
+        idempotencyKey: 'op_closed_gate',
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
   });
 });
 
@@ -563,6 +714,122 @@ describe('T-008 provider-neutral document API — mutate (§12.3, revision requi
     const body = await bodyOf(res);
     expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
   });
+
+  it('B1 (gap 2): the canonical §12.4 set_range shape (sheet/range/values) is accepted and fails closed as CAPABILITY_UNSUPPORTED, not INVALID_REQUEST', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_canon_range',
+        operation: {
+          kind: 'set_range',
+          sheet: 'Forecast',
+          range: 'B2',
+          values: [[10, 20, 30], [40, 50, 60]],
+        },
+      },
+    });
+    // The canonical shape is NOT a malformed request; the range lane is honestly unsupported by
+    // the active engine, so it is a capability outcome.
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+
+  it('B1 (gap 2): the canonical §12.5 update_slide_text shape (slideRef/elementRef/text) is accepted and fails closed as CAPABILITY_UNSUPPORTED, not INVALID_REQUEST', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_canon_slide',
+        operation: {
+          kind: 'update_slide_text',
+          slideRef: 'slide_4',
+          elementRef: 'title',
+          text: 'Revised market outlook',
+        },
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+
+  it('B1 (gap 2): unknown operation.kind returns a typed UNSUPPORTED_OPERATION (400)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const created = ctx.registry.register(baseWriteInput(), 'ws_A');
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${created.record.id}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_unknown_kind',
+        operation: { kind: 'insert_hyperlink', url: 'https://x' },
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('UNSUPPORTED_OPERATION');
+  });
+
+  it('B1: operation.target.anchor is NOT silently dropped — rejected with a typed CAPABILITY_UNSUPPORTED', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_anchor',
+        operation: { kind: 'replace_text', target: { anchor: 'section' }, content: 'x' },
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
+
+  it('gap 2: capability-resolver disabled (rollback) still fails closed via the adapter (CAPABILITY_UNSUPPORTED)', async () => {
+    // Flag-off (rollback posture): the route skips its own T-006 pre-check, but the adapter's
+    // own fail-closed enforcement still rejects an unsupported lane.
+    const ctx = setup({
+      flags: resolvePhase2Flags({ ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT: 'off' }),
+    });
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody());
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_rollback_range',
+        operation: { kind: 'set_range', cell: 'A1', value: '10' },
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('CAPABILITY_UNSUPPORTED');
+  });
 });
 
 describe('T-008 provider-neutral document API — capabilities (§12.6, reason codes + fail closed)', () => {
@@ -607,7 +874,7 @@ describe('T-008 provider-neutral document API — versions (§12.7)', () => {
     ctx.policies.push(basePolicy());
     ctx.destinations.push(baseDestination());
     // Seed through the API so the fake adapter knows the artifact. The injected clock is the
-    // fixed FAKE_ADAPTER_FIXED_NOW constant (deterministic — no wall-clock dependence).
+    // deterministic TEST_NOW constant (B4: frozen determinism only in test injection).
     const documentId = await createViaApi(ctx, createBody());
 
     const res = await requestApp(ctx.app, {
@@ -619,10 +886,15 @@ describe('T-008 provider-neutral document API — versions (§12.7)', () => {
     expect(body.versions.length).toBeGreaterThan(0);
     const v = body.versions[0];
     expect(v.revision).toBe('rev-1');
-    expect(v.actorType).toBe('agent');
+    // M1: honest coarse attribution — the adapter version ref carries no actor, so classify
+    // `unknown` rather than fabricating `agent`.
+    expect(v.actorType).toBe('unknown');
     expect('actorId' in v).toBe(true);
     expect('observedAt' in v).toBe(true);
-    expect(v.providerModifiedAt).toBe('2026-08-18T00:00:00.000Z');
+    expect(v.observedAt).toBe(TEST_NOW);
+    // M1: providerModifiedAt is distinct from observedAt; the provider did not report a separate
+    // modification timestamp, so it is unknown (null), never a duplicate of observedAt.
+    expect(v.providerModifiedAt).toBeNull();
   });
 
   it('versions of an unknown id return typed DOCUMENT_NOT_FOUND', async () => {
@@ -673,5 +945,55 @@ describe('T-008 provider-neutral document API — workspace isolation blast radi
     const res = await requestApp(app, { path: '/api/document-integrations/doc_x' });
     expect(res.status).toBe(403);
     expect((await bodyOf(res)).error.code).toBe('WORKSPACE_REQUIRED');
+  });
+});
+
+describe('T-008 — B4 wall-clock production clock (no injected `now`)', () => {
+  it('the un-injected production clock is WALL-CLOCK (advances with real time), not frozen', async () => {
+    const db = openFreshDb();
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    const registry2 = createDocumentRegistry(db);
+    const adapters = new Map<string, DocumentProviderAdapter>();
+    adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    const policies: WritePolicy[] = [basePolicy()];
+    const destinations: DocumentDestination[] = [baseDestination()];
+    const app = express();
+    app.use(express.json());
+    // NOTE: NO `now` is injected here — the router must fall back to wall-clock (B4) rather than
+    // a frozen constant. connectionStateFor is provided so the create reaches the timestamp path.
+    app.use(
+      '/api/document-integrations',
+      createDocumentIntegrationsRouter({
+        registry: registry2,
+        adapters: (p) => adapters.get(p),
+        policies,
+        destinations,
+        flags: resolvePhase2Flags(),
+        resolveWorkspace: () => 'ws_A',
+        connectionStateFor: () => 'authorized',
+      }),
+    );
+    const res = await requestApp(app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: {
+        artifactType: 'document',
+        title: 'B4',
+        provider: 'google_workspace',
+        destinationId: 'dest_1',
+        idempotencyKey: 'b4-clock',
+      },
+    });
+    expect(res.status).toBe(201);
+    const id = (await bodyOf(res)).documentId;
+    const getRes = await requestApp(app, { path: `/api/document-integrations/${id}` });
+    const body = await bodyOf(getRes);
+    // Not the frozen TEST_NOW constant.
+    expect(body.document.modifiedAt).not.toBe(TEST_NOW);
+    // A wall-clock advance: within 60s of the real current time.
+    const modifiedMs = Date.parse(body.document.modifiedAt);
+    expect(Number.isFinite(modifiedMs)).toBe(true);
+    expect(Math.abs(Date.now() - modifiedMs)).toBeLessThan(60_000);
   });
 });

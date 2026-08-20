@@ -45,6 +45,7 @@
 import { Router, type Request, type Response } from 'express';
 import type { Phase2FlagSnapshot } from '../phase2-flags';
 import type { DocumentRegistry } from '../document-providers/registry';
+import { DocumentRegistryIdentityConflictError } from '../document-providers/registry';
 import type { DocumentProviderAdapter } from '../document-providers/types';
 import {
   AdapterArtifactNotFoundError,
@@ -67,7 +68,12 @@ import {
   resolveMutationAllowance,
 } from '../document-providers/write-policy';
 import type { DocumentDestination } from '../document-providers/destinations';
-import type { DocumentArtifactType, DocumentObjectRecord, DocumentProvider } from '../../../db/src/document-integrations';
+import type {
+  DocumentArtifactType,
+  DocumentAuthState,
+  DocumentObjectRecord,
+  DocumentProvider,
+} from '../../../db/src/document-integrations';
 
 /** Machine-readable error code the API emits. Every expected failure has a typed code. */
 export type DocumentApiErrorCode =
@@ -84,6 +90,7 @@ export type DocumentApiErrorCode =
   | 'WRITE_DISABLED'
   | 'INVALID_REQUEST'
   | 'UNSUPPORTED_OPERATION'
+  | 'CREATE_RECONCILIATION_REQUIRED'
   | 'PROVIDER_UNAVAILABLE';
 
 /** Typed API error: statusCode + machine-readable code + optional detail for the 409 contract. */
@@ -121,6 +128,18 @@ export interface DocumentIntegrationsRouterDeps {
    * determined) — the route then returns a typed WORKSPACE_REQUIRED error and no lookup runs.
    */
   resolveWorkspace: (req: Request) => string | null;
+  /**
+   * Provider-neutral runtime evidence (bridge health, mutation gate, queue depth, …) folded into
+   * the T-006 capability resolver. Absent evidence contributes nothing — the route NEVER
+   * fabricates `healthy:true` / `mutationGateOpen:true` claims it cannot back (THE-949/T-008 M2).
+   */
+  runtimeEvidence?: (scope: WriteRequestScope) => Readonly<Record<string, unknown>>;
+  /**
+   * Authenticated connection state (R-001 `DocumentAuthState`) for a request scope, derived from
+   * actual registered connection state. The default (undefined) FAILS CLOSED as `unknown` — the
+   * route never fabricates `connection:'authorized'` for evidence it does not hold (M2).
+   */
+  connectionStateFor?: (scope: WriteRequestScope) => DocumentAuthState | undefined;
   /** Injected clock for deterministic timestamps (no wall-clock dependence). */
   now?: () => string;
 }
@@ -217,10 +236,31 @@ function parseProvider(body: Record<string, unknown>): DocumentProvider {
   return raw as DocumentProvider;
 }
 
-/** Map the §12.3 provider-neutral operation envelope onto the R-023 adapter mutation lanes. */
+/**
+ * Map the §12.3/§12.4/§12.5 provider-neutral operation envelope onto the R-023 adapter mutation
+ * lanes. BOTH the PRD canonical shapes (§12.4 `sheet`/`range`/`values`; §12.5
+ * `slideRef`/`elementRef`/`text`; §12.3 `target.anchor`) and the legacy `cell`/`slideId`/
+ * `value` shorthands are accepted at the route boundary — the canonical shapes are the pinned
+ * contract (THE-949/T-008 B1).
+ *
+ * Honesty: a shape the ACTIVE engine cannot perform is a capability outcome
+ * (`CAPABILITY_UNSUPPORTED`), never a malformed request (`INVALID_REQUEST`). A non-empty
+ * `target.anchor` (structured targeting) is not representable by the current adapter mutation
+ * lanes, so it is rejected with a typed `CAPABILITY_UNSUPPORTED` instead of being silently
+ * dropped (§12.3).
+ */
 function parseMutation(raw: unknown): AdapterMutation {
   if (!isRecord(raw) || typeof raw.kind !== 'string') {
     throw new DocumentApiError(400, 'INVALID_REQUEST', 'operation.kind is required');
+  }
+  // §12.3 structured targeting: `operation.target.anchor` must never be silently dropped.
+  if (isRecord(raw.target) && typeof raw.target.anchor === 'string' && raw.target.anchor.trim()) {
+    throw new DocumentApiError(
+      403,
+      'CAPABILITY_UNSUPPORTED',
+      `structured targeting (operation.target.anchor='${raw.target.anchor}') is not ` +
+        `supported by the active mutation lane; failing closed instead of dropping it.`,
+    );
   }
   switch (raw.kind) {
     case 'replace_text':
@@ -233,20 +273,37 @@ function parseMutation(raw: unknown): AdapterMutation {
     }
     case 'set_range':
     case 'range': {
+      // Canonical §12.4: sheet/range/values. Legacy alias: cell/value.
+      const sheet = typeof raw.sheet === 'string' ? raw.sheet : '';
+      const range = typeof raw.range === 'string' ? raw.range : '';
       const cell = typeof raw.cell === 'string' ? raw.cell : '';
       const value = typeof raw.value === 'string' ? raw.value : '';
-      if (!cell) {
-        throw new DocumentApiError(400, 'INVALID_REQUEST', 'range mutation requires cell');
+      // 2D values array (canonical §12.4) serialized into the string lane when present.
+      const values = Array.isArray(raw.values) ? JSON.stringify(raw.values) : '';
+      if (!cell && !range) {
+        throw new DocumentApiError(
+          400,
+          'INVALID_REQUEST',
+          'range mutation requires range (sheet/range canonical) or cell (alias); got neither.',
+        );
       }
-      return { kind: 'range', cell, value };
+      const resolvedCell = cell || (sheet ? `${sheet}!${range}` : range);
+      return { kind: 'range', cell: resolvedCell, value: values || value };
     }
     case 'update_slide_text':
     case 'slide': {
+      // Canonical §12.5: slideRef/elementRef/text. Legacy alias: slideId.
+      const slideRef = typeof raw.slideRef === 'string' ? raw.slideRef : '';
       const slideId = typeof raw.slideId === 'string' ? raw.slideId : '';
-      if (!slideId) {
-        throw new DocumentApiError(400, 'INVALID_REQUEST', 'slide mutation requires slideId');
+      const resolvedSlideId = slideRef || slideId;
+      if (!resolvedSlideId) {
+        throw new DocumentApiError(
+          400,
+          'INVALID_REQUEST',
+          'slide mutation requires slideRef (canonical) or slideId (alias); got neither.',
+        );
       }
-      return { kind: 'slide', slideId };
+      return { kind: 'slide', slideId: resolvedSlideId };
     }
     default:
       throw new DocumentApiError(400, 'UNSUPPORTED_OPERATION', `unsupported operation kind: ${String(raw.kind)}`);
@@ -295,13 +352,14 @@ async function resolveDocumentCapabilities(
     record.provider_connection_id ?? null,
     record.destination_id ?? null,
   );
-  let destination: 'allowed' | 'denied' | 'unknown' = record.destination_id == null ? 'unknown' : 'denied';
   const evidence = resolveWriteEvidence(deps, scope);
-  destination = evidence.destination;
+  const destination = evidence.destination;
   const policy = evidence.policy;
   // The T-006 resolver is pure and always folds correctly, and it fails closed on
   // unknown/degraded/unsupported lanes. Capability reports are truthful runtime evidence; the
   // phase-2 gate only controls whether a WRITE is routed through enforcement (create/mutate).
+  // Runtime evidence comes from actual state (M2): absent evidence contributes nothing — the
+  // route never fabricates healthy/gate-open claims.
   const authState = record.auth_state;
   return resolveCapabilities({
     adapter,
@@ -309,7 +367,7 @@ async function resolveDocumentCapabilities(
     connection: authState,
     destination,
     policy,
-    runtime: { healthy: true, mutationGateOpen: true },
+    runtime: deps.runtimeEvidence ? deps.runtimeEvidence(scope) : {},
   });
 }
 
@@ -363,7 +421,10 @@ function sendDocumentApiError(res: Response, err: unknown): Response {
     });
   }
   // Bare-500 guard: any unexpected error stays an Error; the Express error path may surface it.
+  // Log the underlying error server-side (no secrets/PII in the client body) instead of dropping
+  // it silently, and there is a single non-Error fallback (no dead duplicated branch).
   if (err instanceof Error) {
+    console.error('[document-integrations] unexpected error:', err);
     return res.status(500).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: 'internal document error' } });
   }
   return res.status(500).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: 'internal document error' } });
@@ -415,7 +476,10 @@ function toEnvelope(record: DocumentObjectRecord, capabilities: CapabilityReport
 
 export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRouterDeps): Router {
   const router = Router();
-  const nowIso = deps.now ?? (() => '2026-08-18T00:00:00.000Z');
+  // B4 (THE-949/T-008): the production default is WALL-CLOCK; frozen determinism belongs only to
+  // test injection (`deps.now`). A frozen default would stamp every production mutation/version
+  // with a constant timestamp once a real adapter is wired.
+  const nowIso = deps.now ?? (() => new Date().toISOString());
 
   // Utility to load a document, scoped to the request workspace. Returns undefined for an
   // unknown id OR an id owned by a different workspace — both surface the SAME typed
@@ -454,6 +518,29 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
       );
       const destinationId = optionalString(body as unknown as Record<string, unknown>, 'destinationId');
       const adapter = getAdapter(deps, provider);
+
+      // B3 (THE-949/T-008): `initialContent`/`associations` declared on the §12.2 envelope must
+      // NEVER be accepted then silently dropped. The current adapter create lane cannot honor
+      // either (its `create` contract takes no content/association payload), so when the client
+      // supplies them we reject with a typed `CAPABILITY_UNSUPPORTED` instead of returning 201 for
+      // a document that does not contain the requested content. No accepted-but-dropped path.
+      const rawBody = body as unknown as Record<string, unknown>;
+      if (rawBody.initialContent !== undefined && rawBody.initialContent !== null) {
+        throw new DocumentApiError(
+          403,
+          'CAPABILITY_UNSUPPORTED',
+          'initialContent cannot be honored by the active provider create lane (content seeding is '
+            + 'not supported); failing closed instead of silently dropping it.',
+        );
+      }
+      if (rawBody.associations !== undefined && rawBody.associations !== null) {
+        throw new DocumentApiError(
+          403,
+          'CAPABILITY_UNSUPPORTED',
+          'associations cannot be honored by the active provider create lane; failing closed '
+            + 'instead of silently dropping them.',
+        );
+      }
 
       const scope = writeScopeFor(
         workspaceId,
@@ -494,20 +581,24 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
         );
       }
       // Capability resolver: create must be fully actionable (fail closed on unknown/degraded).
+      // M2: connection state is DERIVED from actual registered state (default unknown => fail
+      // closed), never fabricated as 'authorized'; runtime evidence is actual (default none).
       if (capabilityResolutionEnabled(deps.flags)) {
+        const connection = deps.connectionStateFor ? deps.connectionStateFor(scope) : undefined;
         const report = await resolveCapabilities({
           adapter,
           artifactType,
-          connection: 'authorized',
+          connection: connection ?? 'unknown',
           destination: 'allowed',
           policy: 'allowed',
-          runtime: { healthy: true, mutationGateOpen: true },
+          runtime: deps.runtimeEvidence ? deps.runtimeEvidence(scope) : {},
         });
         if (!(report.create.state === 'supported')) {
           throw new DocumentApiError(
             403,
             'CAPABILITY_UNSUPPORTED',
-            `provider ${provider} does not support create for ${artifactType}; failing closed.`,
+            `provider ${provider} does not support create for ${artifactType} under the current ` +
+              `connection/capability state; failing closed.`,
           );
         }
       }
@@ -517,6 +608,37 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
         idempotencyKey,
         now: nowIso(),
       });
+      // B2 (THE-949/T-008): an idempotency-key REPLAY (created.created === false) must reconcile,
+      // never 409 DOCUMENT_ALREADY_EXISTS. The fake adapter returns created:false for a replayed
+      // key; the route returns the existing registry record (or a typed CREATE_RECONCILIATION_REQUIRED
+      // when the record is not yet present).
+      if (created.created === false) {
+        const existing = created.descriptor.external_id
+          ? deps.registry.findByProviderIdentity(
+              created.descriptor.provider_connection_id ?? null,
+              created.descriptor.external_id,
+              workspaceId,
+            )
+          : undefined;
+        if (existing) {
+          return res.status(200).json({
+            documentId: existing.id,
+            entityUrl: `/documents/${existing.id}`,
+            provider,
+            revision: existing.current_revision,
+            operationId: idempotencyKey,
+            receiptId: null,
+            reconciled: true,
+          });
+        }
+        // A succeeded-on-provider but not-yet-registered replay needs explicit reconciliation.
+        throw new DocumentApiError(
+          409,
+          'CREATE_RECONCILIATION_REQUIRED',
+          'the provider already created a document for this idempotency key, but no canonical ' +
+            'record is present; reconciliation is required (returning the existing artifact).',
+        );
+      }
       // Strict create (THE-944 r2 F7): a provider identity already owned anywhere surfaces a
       // typed conflict WITHOUT revealing whether it belongs to this workspace (no existence
       // oracle). The registry's own derived id is authoritative (THE-945 r3 F4).
@@ -548,7 +670,7 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
           workspaceId,
         );
       } catch (err) {
-        if (err instanceof Error && /already exists|provider identity/i.test(err.message)) {
+        if (err instanceof DocumentRegistryIdentityConflictError) {
           // Same typed conflict for same-workspace duplicate and cross-workspace ownership —
           // never reveals which workspace owns the identity.
           throw new DocumentApiError(
@@ -610,6 +732,7 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
       }
       // Capability resolver: the mutation lane must be fully supported (fail closed on
       // unknown/degraded). UnsupportedAdapterMutationError surfaces as CAPABILITY_UNSUPPORTED.
+      // M2: runtime evidence is actual (default none) — never a fabricated healthy/gate-open claim.
       if (capabilityResolutionEnabled(deps.flags)) {
         const evidence = resolveWriteEvidence(deps, scope);
         const report = await resolveCapabilities({
@@ -618,7 +741,7 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
           connection: record.auth_state,
           destination: evidence.destination,
           policy: evidence.policy,
-          runtime: { healthy: true, mutationGateOpen: true },
+          runtime: deps.runtimeEvidence ? deps.runtimeEvidence(scope) : {},
         });
         if (!(report[mutationCapability(mutation)].state === 'supported')) {
           throw new DocumentApiError(
@@ -716,10 +839,16 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
       const now = nowIso();
       const items = versions.versions.map((v) => ({
         revision: v.revision,
-        actorType: 'agent',
+        // M1 (THE-949/T-008): honest coarse attribution (R-027). The adapter version ref carries
+        // no actor, so classify as `unknown` rather than fabricating `agent`. §12.7 requires
+        // DISTINCT observedAt/providerModifiedAt semantics: observedAt is when the version was
+        // observed; providerModifiedAt is only present when the provider reported a separate
+        // modification timestamp — otherwise `null` (unknown/absent), never a duplicate of
+        // observedAt.
+        actorType: 'unknown',
         actorId: null,
         observedAt: v.observed_at ?? now,
-        providerModifiedAt: v.observed_at ?? null,
+        providerModifiedAt: null,
       }));
       return res.json({ documentId: record.id, versions: items });
     } catch (err) {

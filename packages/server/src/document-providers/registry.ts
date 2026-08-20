@@ -75,6 +75,27 @@ export class DocumentRegistryValidationError extends Error {
   }
 }
 
+/**
+ * Typed provider-identity conflict raised by a strict create when the (provider_connection_id,
+ * external_id) identity ALREADY maps to any canonical record — same or other workspace. The
+ * message never reveals which workspace owns the identity (a cross-workspace probe is not an
+ * existence oracle). Replacing string-matching on the T-003 db error with this typed surface
+ * (THE-949/T-008 L1a) keeps a 409 conflict stable against a db-message edit.
+ */
+export class DocumentRegistryIdentityConflictError extends Error {
+  readonly providerConnectionId: string | null;
+  readonly externalId: string;
+  constructor(providerConnectionId: string | null, externalId: string) {
+    super(
+      'document provider identity already exists (fail closed): a canonical record is already ' +
+        'bound to this provider identity.',
+    );
+    this.name = 'DocumentRegistryIdentityConflictError';
+    this.providerConnectionId = providerConnectionId;
+    this.externalId = externalId;
+  }
+}
+
 export interface RegistryRegistration {
   record: DocumentObjectRecord;
   created: boolean;
@@ -248,14 +269,30 @@ export function createDocumentRegistry(db: Database.Database): DocumentRegistry 
 
   return {
     create(input, workspaceId) {
+      const externalId = input.external_id ?? null;
       // Strict create mints a NEW canonical record. The unique identity index excludes NULL
       // identities, and no find/register/rediscover can ever resolve an identity-less record, so
       // fail closed on null/empty external_id exactly like register/rediscover — a repeated
       // identity-less create would otherwise mint unbounded canonical records (T-004 review B1).
-      assertExternalIdentity(input.external_id ?? null, 'create');
+      assertExternalIdentity(externalId, 'create');
       const tx = db.transaction((): DocumentObjectRecord => {
-        // Strict create rejects any existing identity, including a cross-workspace owner, via the
-        // T-003 primitive's loud "provider identity already exists" error — correct isolation.
+        // THE-949/T-008 L1a: duplicate-identity detection is a TYPED pre-check, not a regex on
+        // the T-003 db error string. Resolving the (provider_connection_id, external_id) identity
+        // here (workspace-blind, matching the global R-001 uniqueness) and throwing a typed
+        // `DocumentRegistryIdentityConflictError` when it already maps to any record — same or
+        // other workspace — gives the route a stable typed conflict surface (never a 500 after a
+        // db-message edit). The check and the delegated write run in ONE BEGIN IMMEDIATE
+        // transaction (atomic, mirroring register/rediscover).
+        const existing = repo.findDocumentByProviderIdentity(
+          input.provider_connection_id ?? null,
+          externalId,
+        );
+        if (existing) {
+          throw new DocumentRegistryIdentityConflictError(
+            input.provider_connection_id ?? null,
+            externalId,
+          );
+        }
         const record = repo.createDocumentObject(toDbInput(input, workspaceId));
         assertOwnedWorkspace(record, workspaceId);
         return record;
