@@ -156,6 +156,12 @@ export function resolvedWriteMode(policy: WritePolicy): WriteMode {
  * Precedence (THE-948 r1 F2): an exact `artifactType` match governs over a `'*'` wildcard,
  * regardless of array order. Within the same specificity class, the first matching policy in
  * the array wins. A wildcard governs only when no exact policy exists for the scope.
+ *
+ * Enabled/disabled interplay (THE-948 r3 F3): specificity is resolved first — an exact
+ * `artifactType` match always governs over a `'*'` wildcard no matter the array order or enabled
+ * state. Consequently a DISABLED exact policy still governs (and, through `resolvedWriteMode`,
+ * resolves to `disabled`) over an ENABLED wildcard: adding a wildcard to re-enable writes under
+ * a stale disabled exact policy does not silently resurrect them — fail closed and deterministic.
  */
 export function findGoverningPolicy(
   policies: readonly WritePolicy[],

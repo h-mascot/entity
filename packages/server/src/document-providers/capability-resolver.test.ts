@@ -606,10 +606,10 @@ describe('Capability Resolver: reasonCode carry-forward (THE-948 r1 F3)', () => 
   it('a lower-precedence layer never leaves its code on a non-winning (higher) layer', () => {
     const report = foldCapabilityReport([
       layer('destination', 'unsupported', 'destination_denied'),
-      layer('runtime', 'degraded'), // higher precedence but NOT a severity tie — runtime wins severity? no: degraded(1) < unsupported(2)
+      layer('runtime', 'degraded'), // higher precedence but not a severity tie
     ]);
-    // unsupported wins severity; runtime's degraded does not override the worse state, so the
-    // destination layer's code stays because the destination layer is the winner.
+    // Worst state wins severity: unsupported(2) > degraded(1), so the destination layer stays the
+    // winner and its reasonCode 'destination_denied' is preserved.
     expect(report.create.state).toBe('unsupported');
     expect(report.create.source).toBe('destination');
     expect(report.create.reasonCode).toBe('destination_denied');

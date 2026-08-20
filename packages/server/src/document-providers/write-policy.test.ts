@@ -320,6 +320,30 @@ describe('write policy: confirmation policy (R-003 logical model)', () => {
   });
 });
 
+describe('write policy: fail-closed rewritten branches (THE-948 r3 F2)', () => {
+  it('a create with no explicit destination fails closed to unknown/denied (never guesses a location)', () => {
+    // write-policy.ts:256-268 early-return branch — a scope that omits `destinationId` yields
+    // destination 'unknown' and policy 'denied' even though the policy itself is healthy and
+    // authorizes writes. The caller must pick an approved destination.
+    const policy = basePolicy();
+    const decision = resolveCreateAllowance([policy], [baseDestination()], baseScope({ destinationId: null }));
+    expect(decision.policyFound).toBe(true);
+    expect(decision.writeMode).toBe('create_and_update');
+    expect(decision.destination).toBe('unknown');
+    expect(decision.policy).toBe('denied');
+    // The pure allowance predicate independently pins the same 'unknown' (unknown never enables).
+    expect(resolveDestinationAllowance(baseScope({ destinationId: null }), policy.allowedDestinationIds, [baseDestination()])).toBe('unknown');
+  });
+
+  it('an empty approved set yields unknown and hard-fails an explicit destination (never allows)', () => {
+    // write-policy.ts:190-193 — no approved destinations => 'unknown'; and via :247-250 an
+    // explicit destination under an empty approved set throws the typed UnapprovedDestinationError.
+    const policy = basePolicy({ allowedDestinationIds: new Set<string>() });
+    expect(resolveDestinationAllowance(baseScope(), policy.allowedDestinationIds, [baseDestination()])).toBe('unknown');
+    expect(() => resolveCreateAllowance([policy], [baseDestination()], baseScope())).toThrow(UnapprovedDestinationError);
+  });
+});
+
 describe('write policy: disabled preserves existing records (R-003 acceptance 4)', () => {
   it('disabling a policy blocks new writes but does not delete the policy/document records', () => {
     const servicePolicies: WritePolicy[] = [basePolicy()];
@@ -395,26 +419,27 @@ describe('write policy: destination records gate creation (THE-948 r1 F1)', () =
   // RED on current HEAD: an approved ID whose destination record is disabled, or whose record
   // mismatches the scope, must NOT authorize the create. The policy allowed set alone is not
   // sufficient — the destination record itself must be enabled and serve the request scope.
-  it('RED F1: an approved destination whose record is disabled does not authorize the create', () => {
+  // Name reflects steady-state meaning (these now pass at HEAD; RED is recorded in EVIDENCE §5a).
+  it('an approved destination whose record is disabled does not authorize the create', () => {
     const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
     const dests = [baseDestination({ enabled: false })];
     // explicit destination, approved by policy set, but the record is disabled => blocked.
     expect(() => resolveCreateAllowance([policy], dests, baseScope())).toThrow(UnapprovedDestinationError);
   });
 
-  it('RED F1: an approved destination whose record mismatches the workspace does not authorize the create', () => {
+  it('an approved destination whose record mismatches the workspace does not authorize the create', () => {
     const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
     const dests = [baseDestination({ workspaceId: 'ws_OTHER' })];
     expect(() => resolveCreateAllowance([policy], dests, baseScope())).toThrow(UnapprovedDestinationError);
   });
 
-  it('RED F1: an approved destination whose record mismatches the artifact type does not authorize the create', () => {
+  it('an approved destination whose record mismatches the artifact type does not authorize the create', () => {
     const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
     const dests = [baseDestination({ artifactTypes: new Set(['spreadsheet']) })];
     expect(() => resolveCreateAllowance([policy], dests, baseScope())).toThrow(UnapprovedDestinationError);
   });
 
-  it('RED F1: an approved destination whose record serves the scope authorizes the create', () => {
+  it('an approved destination whose record serves the scope authorizes the create', () => {
     const policy = basePolicy({ allowedDestinationIds: new Set(['dest_allowed']) });
     const dests = [baseDestination()];
     const decision = resolveCreateAllowance([policy], dests, baseScope());
@@ -446,5 +471,19 @@ describe('write policy: exact artifact type governs over wildcard (THE-948 r1 F2
   it('an exact policy for a *different* type never governs the request', () => {
     const otherExact = basePolicy({ artifactType: 'spreadsheet' });
     expect(findGoverningPolicy([otherExact, wild], baseScope())).toBe(wild);
+  });
+
+  it('a disabled exact policy governs over an enabled wildcard regardless of order (THE-948 r3 F3)', () => {
+    // Precedence resolves specificity FIRST: an exact type policy governs over '*' even when the
+    // exact policy is disabled and the wildcard is enabled — so adding a wildcard cannot
+    // silently resurrect writes under a stale disabled exact policy (fail closed, deterministic).
+    const disabledExact = basePolicy({ artifactType: 'document', enabled: false });
+    const enabledWild = basePolicy({ artifactType: '*', enabled: true });
+    // wildcard-first and disabled-exact-first both resolve to the disabled exact policy => disabled.
+    expect(findGoverningPolicy([enabledWild, disabledExact], baseScope())).toBe(disabledExact);
+    expect(findGoverningPolicy([disabledExact, enabledWild], baseScope())).toBe(disabledExact);
+    expect(resolvedWriteMode(disabledExact)).toBe('disabled');
+    expect(resolveMutationAllowance([enabledWild, disabledExact], baseScope()).policy).toBe('denied');
+    expect(resolveMutationAllowance([disabledExact, enabledWild], baseScope()).policy).toBe('denied');
   });
 });
