@@ -6,7 +6,9 @@ Worker model: `daystrom/deepseek` (medium) — pinned externally, not substitute
 Branch: `runner/entity-document-integrations-20260818`
 Pre-issue reviewed base (T-007 approved HEAD): `2f150e4ab333a7c08f9b67d4466b2d417e5858d3` (GLM 5.3 r3 FINAL)
 Candidate reviewed: `56c05d8fdfd258aaafd55e53d8c448d94f068cd2` (GLM 5.3 r1 → CHANGES_REQUESTED, THE-949 r2)
-Round 2 (this file) fixes THE-949 r1 findings B1–B4 / M1 / M2 / L1a–e and test gaps 1–3. See §11.
+Reviewed candidate (r2): `404c922e6f3b4eeb4d4a53bd6fab793e0bd1f9a0` (GLM 5.3 r2 → CHANGES_REQUESTED — this round 3,
+FINAL, fixes F1–F6; the findings mapping lives in §4/§5d). Round 2 fixed THE-949 r1 findings B1–B4 / M1 / M2 /
+L1a–e and test gaps 1–3 (see §4/§5c).
 Node: `nvm use 22` (v22.22.2) — required for better-sqlite3 native bindings (Node 26
 `ERR_DLOPEN_FAILED` ABI mismatch).
 
@@ -371,7 +373,7 @@ cd packages/server && npx vitest run src/routes/document-integrations.test.ts \
 cd packages/server && npm run build                            # tsc strict / exit 0
 
 # 3. Full server suite at final HEAD
-cd packages/server && npx vitest run                           # 208 files / 1848 tests / exit 0
+cd packages/server && npx vitest run                           # 208 files / 1862 tests / exit 0
 
 # 4. CTRL gate (root build + unit tests) under Node 22
 npm run ctrl:gate                                              # [ctrl] gate passed ✅ / exit 0
@@ -397,3 +399,98 @@ git diff --check     # clean (exit 0)
 
 Final commit SHA is recorded in the commit message and the final answer (a NEW commit on top of base
 `2f150e4`; never amend/rebase, and the commit's own SHA is never written into tracked files).
+
+## 11. Round 3 (FINAL) — fixes THE-949 r2 findings F1–F6
+
+This round was reviewed against candidate `404c922e6f3b4eeb4d4a53bd6fab793e0bd1f9a0` (GLM 5.3 r2),
+verdict **CHANGES_REQUESTED** for findings F1–F6. All six are closed here; the verified-correct F1-era
+items (B1–B4 / M1 / M2 / L1a–e / gaps 1–3) were NOT touched. Fixes are small and localized exactly as
+scoped.
+
+### Finding disposition
+
+- **F1 (MEDIUM) — §12.5 `elementRef`/`text` silently dropped.** Chose the reviewer's FIRST sanctioned
+  option (typed `CAPABILITY_UNSUPPORTED` rejection, NOT an `AdapterMutation` extension): `parseMutation`
+  now rejects a non-empty `elementRef`/`text` payload on the slide lane with `403 CAPABILITY_UNSUPPORTED`
+  (mirroring the anchor guard and the `:241-252` no-silent-drop contract). `parseMutation` is now
+  exported for the RED→GREEN unit proof. A bare §12.5 `slideRef` with no `elementRef`/`text` still maps
+  to the plain slide lane.
+- **F2 (MEDIUM) — `CREATE_RECONCILIATION_REQUIRED` zero coverage.** Added both negative tests: (a) a
+  replayed idempotency key whose provider-side artifact is NOT yet registered → `409
+  CREATE_RECONCILIATION_REQUIRED`; (b) cross-workspace replay — the workspace-scoped
+  `findByProviderIdentity` returns undefined for a ws_A-owned record, so a ws_B replay fails closed
+  with `409 CREATE_RECONCILIATION_REQUIRED` and the message never names `ws_A` (no existence oracle).
+- **F3 (LOW) — `providerModifiedAt` can never be non-null.** Chose the reviewer's MINIMAL option
+  (comment correction, NOT `ProviderVersionRef` plumbing): the `:843-849` comment now states the
+  omission EXPLICITLY — `ProviderVersionRef` carries only `revision` + `observed_at`, so
+  `providerModifiedAt` is structurally always `null`; plumbing is deferred to the slide/adapter-capable
+  round (T-009/T-016). No behavior/type change.
+- **F4 (LOW) — L1e/L1d workspace-binding untested.** Extracted the pure customer workspace decision
+  from `index.ts:453` into `resolveCustomerWorkspaceScope` in `request-permissions.ts` (index.ts now
+  calls it), and added tests pinning: header-only selector trims correctly and ignores body/query;
+  `explicit ?? (single-org)` with NO default-org fallback; ambiguous global admin (no explicit, multiple
+  orgs) FAILS CLOSED (`null` → WORKSPACE_REQUIRED); out-of-membership explicit header fails closed;
+  catch → `null` → WORKSPACE_REQUIRED is the existing route-level mapping (already pinned at
+  `document-integrations.test.ts` `WORKSPACE_REQUIRED` test). `readExplicitRequestOrgHeader` was
+  unchanged (the index.ts refactor is the only index.ts edit, strictly required for F4 mount-level
+  pinning).
+- **F5 (LOW) — `parseMutation` validation gaps.** A present-but-non-array `values` on the §12.4 range
+  lane is now a typed `400 INVALID_REQUEST` (was silently ignored → fell through to the value/empty
+  string). A
+  present-but-non-string `target.anchor` (e.g. number) is now a typed `400 INVALID_REQUEST` (was
+  silently skipped → 200); the non-empty-string case remains `403 CAPABILITY_UNSUPPORTED`. Both are
+  consistent with the diff's own no-silent-drop stance.
+- **F6 (INFO) — EVIDENCE.md.** `:8` "See §11" (a nonexistent section) is now a pointer to the real
+  findings mapping (§4/§5c) plus the new round-3 §11; the stale §9 full-suite count (`1848`) is corrected
+  to the actual `1862` (§5c had it right).
+
+### 5d. Round-3 RED→GREEN proof (F1 / F5 / F4 logic changes)
+
+Proven by writing the NEW tests first and running them against the un-modified `404c922` sources, then
+applying the fixes and re-running.
+
+RED (`404c922` sources, new tests kept) — Node 22:
+```sh
+npx vitest run src/routes/document-integrations.test.ts -t "F1:|F5:"   # 3 failed | 33 skipped, exit 1
+npx vitest run src/request-permissions.test.ts                          # 4 failed | 8 passed (12), exit 1
+```
+- F1: `parseMutation({kind:'update_slide_text',slideRef,elementRef:'title',text:'Revised'})` did NOT
+  throw — got `{kind:'slide',slideId}` (elementRef/text dropped).
+- F5 non-array `values` → got `403 CAPABILITY_UNSUPPORTED` (silently coerced to ``''`` then failed in
+  the unsupported lane) instead of `400 INVALID_REQUEST`.
+- F5 non-string `target.anchor` → got `200` (anchor silently skipped) instead of `400 INVALID_REQUEST`.
+- F4: `resolveCustomerWorkspaceScope` undefined (not yet exported) — 4 request-permissions tests fail.
+
+GREEN (fixed sources):
+```sh
+npx vitest run src/routes/document-integrations.test.ts -t "F1:|F5:|F2:"   # 5 passed, exit 0
+npx vitest run src/request-permissions.test.ts                              # 12 passed (12), exit 0
+```
+
+F2 is a coverage-gap fix on existing 409 code (the branch is exercised only via the new negative tests);
+it passed on `404c922` and stays green, so no RED needed for F2.
+
+### Round-3 verification (final HEAD, Node 22)
+
+Commands actually run this round (exit codes in `#` comments):
+
+```sh
+# 1. Focused T-008 + request-permissions + carry-forward suites
+cd packages/server && npx vitest run src/routes/document-integrations.test.ts \
+  src/request-permissions.test.ts src/document-providers/write-policy.test.ts \
+  src/document-providers/registry.test.ts src/document-providers/capability-resolver.test.ts \
+                                                                   # 5 files / 153 tests / exit 0
+
+# 2. Strict tsc build
+cd packages/server && npm run build                             # tsc strict / exit 0
+
+# 3. Full server suite at final HEAD
+cd packages/server && npx vitest run                            # 208 files / 1874 tests / exit 0
+
+# 4. Diff hygiene
+git diff --check                                                # clean / exit 0
+git status --short                                              # only scoped paths; clean after commit
+```
+
+The full-suite count rose from `1862` (r2) to `1874` (r3): +5 route tests (F1, F2×2, F5×2) and +7
+request-permissions tests (F4) = +12, matching `1862 + 12 = 1874`.
