@@ -196,6 +196,30 @@ describe('T-009 — sanitizeRevisionToken (security: bounded, no HTML injection 
     // A token made entirely of bidi/format controls collapses to empty (never leaks the controls).
     expect(sanitizeRevisionToken('\u202e\u200f\u200b')).toBe('');
   });
+
+  // THE-950 r2 F2 (CORE half — due THIS lane, THE-956/T-015): the core sanitize set must cover
+  // the same extended unsafe set the adapters enforce at their boundary: bidi ISOLATES
+  // (U+2066–U+2069), BOM/ZWNBSP (U+FEFF), Word Joiner (U+2060), Soft Hyphen (U+00AD), and the
+  // Arabic Letter Mark (U+061C). The adapter half landed and was verified at T-014.
+  it('strips the EXTENDED unsafe set (bidi isolates U+2066–2069, U+FEFF, U+2060, U+00AD, U+061C) — THE-950 r2 F2 core half', () => {
+    const EXTENDED: ReadonlyArray<{ label: string; char: string }> = [
+      { label: 'LRI U+2066', char: '\u2066' },
+      { label: 'RLI U+2067', char: '\u2067' },
+      { label: 'FSI U+2068', char: '\u2068' },
+      { label: 'PDI U+2069', char: '\u2069' },
+      { label: 'BOM/ZWNBSP U+FEFF', char: '\ufeff' },
+      { label: 'Word Joiner U+2060', char: '\u2060' },
+      { label: 'Soft Hyphen U+00AD', char: '\u00ad' },
+      { label: 'Arabic Letter Mark U+061C', char: '\u061c' },
+    ];
+    for (const { label, char } of EXTENDED) {
+      const out = sanitizeRevisionToken(`rev${char}-2`);
+      expect(out, label).not.toContain(char);
+      expect(out, label).toBe('rev-2');
+    }
+    // A token made entirely of extended controls collapses to empty.
+    expect(sanitizeRevisionToken('\u2066\u2069\ufeff\u2060\u00ad\u061c')).toBe('');
+  });
 });
 
 describe.each(LANE_MUTATIONS)('T-009 — two independent writers (R-024) for lane %s', ({ artifactType, mutation }) => {

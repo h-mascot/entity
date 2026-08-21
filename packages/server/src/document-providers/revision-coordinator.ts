@@ -44,11 +44,15 @@ const DEFAULT_MAX_REVISION_TOKEN_LENGTH = 64;
 /**
  * Characters stripped from an untrusted revision token before it is placed in any response or log:
  * C0/C1 control characters (including newlines/NUL), HTML/XML metacharacters, and Unicode
- * bidi/format controls (zero-width space/joiner/non-joiner U+200B–U+200F and bidi embeddings
- * U+202A–U+202E). Removes the HTML injection surface and hidden-direction/spoofing controls while
- * preserving ordinary opaque tokens (e.g. `rev-17`, `etag_v1`).
+ * bidi/format controls (zero-width space/joiner/non-joiner U+200B–U+200F, bidi embeddings
+ * U+202A–U+202E, bidi ISOLATES U+2066–U+2069, Arabic Letter Mark U+061C) plus invisible/
+ * spoofing format characters (BOM/ZWNBSP U+FEFF, Word Joiner U+2060, Soft Hyphen U+00AD).
+ * THE-950 r2 F2 (core half, landed T-015/THE-956): this set now matches the extended set the
+ * real adapters enforce at their boundary. Removes the HTML injection surface and
+ * hidden-direction/spoofing controls while preserving ordinary opaque tokens (e.g. `rev-17`,
+ * `etag_v1`).
  */
-const UNSAFE_TOKEN_CHARS = /[\u0000-\u001f\u007f\u0080-\u009f\u200b-\u200f\u202a-\u202e<>"'&\\]/g;
+const UNSAFE_TOKEN_CHARS = /[\u0000-\u001f\u007f\u0080-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2060\u00ad<>"'&\\]/g;
 
 /**
  * Sanitize an untrusted provider revision token for error/log/response inclusion. Never treated as

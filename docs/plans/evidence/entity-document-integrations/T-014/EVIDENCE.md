@@ -179,3 +179,14 @@ invented; no product defaults chosen for open questions.
 2. Core-half F2 (revision-coordinator sanitize set extension) remains carried — see above.
 3. OQ-003 (`confirmed` as human-confirmation control) and OQ-018 (flag host) remain open by
    design; no product defaults invented.
+
+## Dated correction (2026-08-18, T-015/THE-956 — THE-955 r1 F6)
+
+**Correction to "Unresolved risks / observations" item 1 above (no history rewrite; t004EvidenceCorrection
+precedent):** the claim that create-time revision capture uses the transport response revisionId
+"as-is" was STALE. The create lane DOES strictly validate the create-response revision:
+`descriptorFor()` runs `requireSafeReportedRevision()` on it, so an unsafe create-response token
+rejects the create outright with a typed `UnsafeRevisionTokenError`. Proven by the create-time
+negative test added in T-015 (`create rejects a create-response revision containing an unsafe
+character`) in `docs-adapter.test.ts`. The in-code NOTE in `docs-adapter.ts` carries the same
+correction. Item 1 is therefore resolved, not an accepted risk.

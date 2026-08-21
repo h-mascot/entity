@@ -117,10 +117,23 @@ export interface GoogleDocMetadata {
   modifiedTime: string;
 }
 
-/** The DECLARED, bounded batchUpdate envelope. Only these request kinds are ever forwarded. */
-export type GoogleDocsBatchRequest =
-  | { kind: 'insertText'; location: { index: number }; text: string }
-  | { kind: 'replaceAllText'; containsText: string | null; replaceText: string };
+/**
+ * The DECLARED, bounded batchUpdate envelope. Only this request kind is ever forwarded.
+ * THE-955 r1 F2: `replaceAllText` was REMOVED from the declared envelope. The T-005 text lane
+ * carries no anchor, so a "replace" cannot be expressed through the adapter contract; rather
+ * than silently reinterpret an anchorless replace as prepend-as-replace (or forward an
+ * anchorless replaceAllText, which has no defined provider semantic), the adapter implements
+ * INSERT-only semantics and rejects any other request kind with a typed error at the
+ * `DECLARED_DOCS_REQUEST_KINDS` guard below.
+ */
+export type GoogleDocsBatchRequest = { kind: 'insertText'; location: { index: number }; text: string };
+
+/**
+ * THE-955 r1 F2: the exact request kinds this adapter may forward to the transport. The
+ * mutate lane checks every constructed request against this set BEFORE any transport call and
+ * throws a typed UnsupportedAdapterMutationError otherwise (fail-closed bounded mutation).
+ */
+export const DECLARED_DOCS_REQUEST_KINDS: ReadonlySet<string> = new Set(['insertText']);
 
 /**
  * Minimal Google Docs/Drive transport the adapter needs. Real implementations wrap the
@@ -158,11 +171,16 @@ export interface GoogleDocsAdapterOptions {
  *   - directional marks LRM/RLM (U+200E/U+200F), embedded-popovers (U+202A–U+202E)
  *   - bidi isolates LRI/RLI/FSI/PDI (U+2066–U+2069), Arabic Letter Mark (U+061C)
  *   - zero-width no-break space/BOM (U+FEFF), Word Joiner (U+2060), soft hyphen (U+00AD)
+ *   - LINE SEPARATOR U+2028 (kept: a raw separator inside a single-line token field can spoof
+ *     line structure in logs/responses; it never occurs in a legitimate provider token)
  *   - injection metacharacters '<' and '"' (HTML/attribute contexts)
- * A benign opaque token (e.g. `rev_17QkAaiFhyZK871Jozj6w`) passes untouched.
+ * THE-955 r1 F7: U+2022 (bullet '•') was REMOVED from this set — it is a benign printable
+ * character, not a control; the previous regex/comment mismatch is resolved in favor of the
+ * documented set above. A benign opaque token (e.g. `rev_17QkAaiFhyZK871Jozj6w`) passes
+ * untouched.
  */
 const UNSAFE_REVISION_CHARACTERS =
-  /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2060\u00ad<>"\u2028\u2022]/;
+  /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2060\u00ad<>"\u2028]/;
 
 function firstUnsafeCodePoint(token: string): number | null {
   for (const ch of token) {
@@ -260,15 +278,17 @@ class GoogleDocsAdapter implements DocumentProviderAdapter {
     // Fold the caller-supplied context with the transport's own evidence, taking the MORE
     // restrictive of the two (fail-closed precedence, R-002 source ordering).
     const states: DocumentAuthState[] = [context.connectionState, this.connectionState()];
-    // Fail-closed precedence over the two evidence sources: only unanimous `authorized` is
-    // authorized; a degraded participant degrades; anything else fails closed.
-    const worst: DocumentAuthState = states.every((s) => s === 'authorized')
-      ? 'authorized'
-      : states.some((s) => s === 'degraded') && states.every((s) => s === 'degraded' || s === 'authorized')
+    // Fail-closed precedence over the two evidence sources: `unauthorized` dominates; then
+    // `degraded`; unanimous `authorized` is the only authorized outcome; otherwise `unknown`
+    // (THE-955 r1 F1 / T-005 fake-adapter semantics: an `unknown` evidence source folds the
+    // lanes to the conservative non-actionable `unknown`, never to a lifted state).
+    const worst: DocumentAuthState = states.some((s) => s === 'unauthorized')
+      ? 'unauthorized'
+      : states.some((s) => s === 'degraded')
         ? 'degraded'
-        : states.every((s) => s === 'unknown')
-          ? 'unknown'
-          : 'unauthorized';
+        : states.every((s) => s === 'authorized')
+          ? 'authorized'
+          : 'unknown';
     const live = foldConnectionState(worst);
     const report = {} as CapabilityReport;
     // Every supported lane inherits the folded connection liveness; anything this adapter
@@ -278,15 +298,18 @@ class GoogleDocsAdapter implements DocumentProviderAdapter {
       ['read', SUPPORTED_CAPABILITIES.has('read') ? live : 'unsupported'],
       ['preview', 'unsupported'],
       ['thumbnail', 'unsupported'],
-      ['open_external', SUPPORTED_CAPABILITIES.has('open_external') ? 'supported' : 'unsupported'],
-      ['human_edit', SUPPORTED_CAPABILITIES.has('human_edit') ? 'supported' : 'unsupported'],
+      // THE-955 r1 F1: these lanes fold from the LIVE connection state like every other lane —
+      // no hardcoded 'supported' ternary (a degraded/unauthorized connection must degrade or
+      // fail-close them too).
+      ['open_external', SUPPORTED_CAPABILITIES.has('open_external') ? live : 'unsupported'],
+      ['human_edit', SUPPORTED_CAPABILITIES.has('human_edit') ? live : 'unsupported'],
       [
         'agent_text_mutation',
         SUPPORTED_CAPABILITIES.has('agent_text_mutation') ? live : 'unsupported',
       ],
       ['agent_range_mutation', 'unsupported'],
       ['agent_slide_mutation', 'unsupported'],
-      ['version_history', SUPPORTED_CAPABILITIES.has('version_history') ? 'supported' : 'unsupported'],
+      ['version_history', SUPPORTED_CAPABILITIES.has('version_history') ? live : 'unsupported'],
       ['change_tracking', 'unsupported'],
       ['permission_read', 'unsupported'],
       ['permission_write', 'unsupported'],
@@ -389,9 +412,10 @@ class GoogleDocsAdapter implements DocumentProviderAdapter {
       idempotencyKey: input.idempotencyKey,
     });
     this.remember(document.documentId, input.artifact_type);
-    // NOTE(T-014 observation): the create response's typed revisionId field is captured
-    // as-is; strict token validation is enforced on every read-back path (see
-    // requireSafeReportedRevision) and on every client-supplied expectedRevision.
+    // CORRECTED (T-015/THE-956, 2026-08-18; THE-955 r1 F6): the create response's revisionId
+    // IS strictly validated — descriptorFor() runs requireSafeReportedRevision on it, so an
+    // unsafe create-response token rejects the create outright (fail-closed at EVERY
+    // descriptor boundary, including create-time; proven by the create-time negative test).
     const descriptor = await this.descriptorFor(document, input.artifact_type);
     return { descriptor, created };
   }
@@ -445,10 +469,21 @@ class GoogleDocsAdapter implements DocumentProviderAdapter {
     }
 
     // 5. Forward ONLY the declared bounded envelope. The text lane maps to a deterministic
-    //    insert-at-top-of-body request (index 1); nothing else is ever emitted.
+    //    insert-at-top-of-body request (index 1) — INSERT semantics only (THE-955 r1 F2):
+    //    there is no replace path, and every constructed request is re-checked against the
+    //    declared kind set before the transport call (typed fail-closed guard).
     const requests: GoogleDocsBatchRequest[] = [
       { kind: 'insertText', location: { index: 1 }, text: input.mutation.text },
     ];
+    for (const req of requests) {
+      if (!DECLARED_DOCS_REQUEST_KINDS.has(req.kind)) {
+        throw new UnsupportedAdapterMutationError(
+          capability,
+          `request kind ${req.kind} is outside the Google Docs adapter's declared envelope ` +
+            `(insert-only semantics; no replace_text path); failing closed`,
+        );
+      }
+    }
     try {
       const response = this.transport.batchUpdate({
         documentId: input.external_id,
