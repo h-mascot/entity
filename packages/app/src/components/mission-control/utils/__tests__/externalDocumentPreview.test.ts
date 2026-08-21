@@ -145,3 +145,129 @@ test('shows deleted or permission-revoked external refs as degraded without prev
   assert.equal(view?.previewText, null);
   assert.ok(view?.degradedMessages.some((message) => message.includes('External document state is deleted')));
 });
+
+// --- T-018 (THE-959) — R-009 preview/open/permissions honesty ---
+
+test('R-009.1: preview failure does not remove the provider open action', () => {
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/preview-fail-85',
+    title: 'Preview Failure Doc',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    granted_scopes: ['read', 'index', 'link', 'preview'],
+    metadata: {
+      // No snippet, no preview text: preview fails structurally.
+      capabilities: { read: true, link: true, preview: false },
+    },
+  });
+
+  assert.equal(view?.previewAvailable, false);
+  assert.equal(view?.previewText, null);
+  // Structural assertion: the provider open affordance survives the preview failure.
+  assert.equal(view?.canOpen, true);
+  assert.equal(view?.openUrl, 'https://docs.google.com/document/d/preview-fail-85');
+  assert.equal(view?.editUrl, 'https://docs.google.com/document/d/preview-fail-85');
+  assert.equal(view?.editLabel, 'Edit in Google');
+});
+
+test('R-009.2: the edit action resolves the provider-evidenced artifact URL', () => {
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/edit-target-86',
+    title: 'Edit Target Doc',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    granted_scopes: ['read', 'index', 'link', 'preview'],
+    metadata: { snippet: 'context only' },
+  });
+
+  assert.equal(view?.editLabel, 'Edit in Google');
+  assert.equal(view?.editUrl, 'https://docs.google.com/document/d/edit-target-86');
+});
+
+test('R-009.3: preview is never labeled as an Entity-native editor', () => {
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/native-87',
+    title: 'Native Label Doc',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    metadata: { snippet: 'snippet' },
+  });
+
+  assert.equal(view?.previewIsNativeEditor, false);
+  assert.match(view?.previewLabel ?? '', /not an Entity-native editor/i);
+  assert.equal(view?.mutationControlsVisible, false);
+});
+
+test('§9.3: permission summaries outside the derivable vocabulary collapse to Unknown', () => {
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/perm-88',
+    title: 'Opaque Permissions Doc',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    metadata: {
+      snippet: 'context',
+      external_permission_summary: 'Visible to linked workspace users',
+    },
+  });
+
+  assert.equal(view?.externalPermissionSummary, null);
+  assert.equal(view?.externalPermissionSummaryKnown, false);
+});
+
+test('§9.3: provider sharing evidence maps into the allowed vocabulary and never downgrades external sharing', () => {
+  const linkShared = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/perm-89',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    metadata: { snippet: 'context', visibility: 'anyone_with_link' },
+  });
+  assert.equal(linkShared?.externalPermissionSummary, 'Link-shared');
+  assert.equal(linkShared?.externalPermissionSummaryKnown, true);
+
+  const external = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/perm-90',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    metadata: {
+      snippet: 'context',
+      visibility: 'domain',
+      sharing_state: 'external_sharing_detected',
+    },
+  });
+  assert.equal(external?.externalPermissionSummary, 'External sharing detected');
+});
+
+test('§9.4: Entity-integration-policy read-only messaging never blames the provider', () => {
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/policy-91',
+    title: 'Entity Policy Doc',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    metadata: { snippet: 'context' },
+  });
+
+  assert.equal(view?.writeDisabledSource, 'entity-integration-policy');
+  assert.match(view?.writeDisabledMessage ?? '', /Entity/i);
+  assert.doesNotMatch(view?.writeDisabledMessage ?? '', /google .*read-only/i);
+});
+
+test('§9.4: genuine provider write-protection evidence is attributed to the provider', () => {
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/provider-ro-92',
+    title: 'Provider Read-Only Doc',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    metadata: { snippet: 'context', provider_write_protected: true },
+  });
+
+  assert.equal(view?.writeDisabledSource, 'provider');
+  assert.match(view?.writeDisabledMessage ?? '', /Google/i);
+});
