@@ -87,3 +87,41 @@ No tokens, credentials, tenant data, or operator-specific absolute paths appear 
 1. Exact live Graph endpoint URL forms and the real semantics tying siteId/libraryId/driveId together require live-documentation re-verification — flagged as a wiring/sandbox-lane step (T-038/T-039). This module intentionally defines only identity SHAPES as opaque injectable strings.
 2. Whether SharePoint library destinations should also retain the site's web URL or group id for human-facing display is open downstream; the retained record currently carries only opaque stable identifiers (deliberately minimal).
 3. Multi-destination policies currently reject ambiguity rather than accepting caller-selected disambiguation; if a future lane wants explicit per-request destination choice, it should layer on the T-007 `WriteRequestScope.destinationId` mechanism rather than loosening `AmbiguousDestinationError`.
+
+---
+
+# r2 addendum — THE-961 round 2 (GLM 5.3 review fixes), base bdcec705
+
+All findings F1–F8 from the r1 GLM 5.3 verdict addressed; RED→GREEN discipline throughout (RED tests written and confirmed failing at base BEFORE implementation).
+
+## Findings fixed
+
+- **F1 (rediscovery gating/binding)** — `rediscoverDestination` now takes a mandatory `connection` snapshot (same posture gate as creation via `assertConnectionMayResolveDestinations`) and a MANDATORY `tenantBinding` (optional→required: unbound rediscovery is a compile-time impossibility for TS callers, with a runtime `InvalidDestinationRecordError('authority')` guard for JS callers). Binding-vs-record and observed tenant/issuer claims enforced on every rediscovery. Header/EVIDENCE claims updated to match the implemented contract.
+- **F2 (result-side allowlist enforcement)** — new `ObservedIdentityMismatchError`: the transport's observed identity is verified against the permitted entry's identity per required fields (kind always; driveId for onedrive; siteId+libraryId, plus configured driveId, for sharepoint) on BOTH creation and rediscovery, BEFORE any retention (`retainDestinationRecord` can no longer persist drifted identities). The transport's echoed `requestedDestinationId` is verified against the requested id on both paths.
+- **F3 (authority cross-checks)** — new `DestinationAuthorityMismatchError`: at entry, `policy.connectionId === connection.connectionId` is enforced, and the caller-presented `tenantBinding` must equal `connection.tenantBinding` (tenant + issuer) else `TenantMismatchError`. A mis-wired caller is rejected before any gating or resolution.
+- **F4 (honest diagnostics)** — a disabled-only configuration now emits `reasonCode='no_enabled_candidate'`; scope/type mismatches among enabled entries keep the existing codes. The previously-dead code path is now reachable and honest.
+- **F5 (redaction consistency)** — `DestinationPolicyMissingError` and `DestinationUnresolvableError` messages now carry lengths only (`workspaceLength=N`, `destinationLength=N`); header invariant ("typed errors carry reason codes and lengths, never raw values") now holds across all typed errors in this module.
+- **F6 (truthful consent error)** — `consentState==='unknown'` now throws the new module-local `DestinationConsentUnknownError` carrying `(consentState=unknown, authState=<state>)` instead of a misleading "CONNECTION_NOT_AUTHORIZED (authState=authorized)" `DegradedConnectionError`. No connection.ts edit needed (fix confined to this module's throw site).
+- **F7 (explicit destination choice)** — IMPLEMENTED as a small backward-compatible change: optional `requestedDestinationId?` argument to `resolveCreationDestination`. It only NARROWS the already-permitted enabled candidate set (select, never widen); an id outside the permitted set throws `DestinationNotPermittedError('policy_scope_mismatch')`, and omitting it preserves exact r1 semantics including `AmbiguousDestinationError`. This honors T-007's `WriteRequestScope.destinationId` doctrine inside the existing contract; no ceiling enlargement.
+- **F8 (test gaps)** — added coverage for: per-entry `TenantMismatchError`, creation-path `InvalidDestinationRecordError('identity.driveId')` and `('identity.siteId/libraryId')`, both issuer-mismatch halves (creation + rediscovery), rediscovery gating/binding (F1), observed-identity drift + echoed-id mismatch on both paths (F2).
+
+## RED→GREEN per finding (RED counts = tests failing at base bdcec705 for the stated reason)
+
+- F1: 3 RED (F1a revoked, F1b degraded, F1c unbound) + 2 confirming tests passing at base (F1d/F1e — binding/issuer enforcement partially pre-existed; now mandatory+gated).
+- F2: 4 RED (drift-creation, echoed-id-creation, drift-rediscovery, echoed-id-rediscovery).
+- F3: 1 RED (policy/connection divergence). The binding-vs-connection test passes at base transitively (per-entry tenant check) — kept as regression coverage.
+- F4: 1 RED. F5: 1 RED. F6: 1 RED. F7: 2 RED (selection works / non-permitted id fails closed).
+- F8: 4 confirming tests pass at base (enforcement existed; coverage gap closed).
+- Total RED at base: 13 failing / 22 passing; GREEN after fix: 35/35.
+
+## Verification (Node 22)
+
+1. Focused: `npx vitest run src/document-providers/microsoft/destinations.test.ts` → **35 passed (35)**, exit 0.
+2. `npm run build` (strict tsc) → exit 0.
+3. Full server suite at final HEAD: `npx vitest run` → **218 files passed, 2223 tests passed**, exit 0.
+4. `npm run ctrl:gate` → see commit-time record below; `git diff --check` clean; worktree clean after single commit.
+
+## Rule-outs (r2)
+
+- `microsoft/connection.ts` — not edited; F6 resolved entirely within destinations.ts via the module-local `DestinationConsentUnknownError` (documented in the header as the one deliberate addition to the shared error vocabulary, since connection.ts was out of scope and DegradedConnectionError cannot express consent-unknown-with-authorized-auth).
+- All other paths unchanged from r1 rule-outs; PRD read-only; no routes/db/types/registry/write-policy/capability-resolver/Google-lane/OpenWiki changes; no network verification attempted (live Graph endpoint re-verification remains the disclosed wiring/sandbox carry; OQ-013 stays injected-data; OQ-018 observation only).

@@ -292,8 +292,14 @@ describe('T-020 microsoft destinations (R-011)', () => {
     expect(record.libraryId).toBe('library-fixture-1');
     expect(record.driveId).toBe('drive-fixture-2');
 
-    // Rediscovery through the SAME injected seam re-resolves to the same identity.
-    const rediscovered = rediscoverDestination({ transport, record });
+    // Rediscovery through the SAME injected seam re-resolves to the same identity
+    // (r2: rediscovery is gated and bound exactly like creation).
+    const rediscovered = rediscoverDestination({
+      transport,
+      record,
+      connection: authorizedSnapshot(),
+      tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+    });
     expect(rediscovered.observedIdentity).toEqual(sharepointIdentity);
   });
 
@@ -433,8 +439,434 @@ describe('T-020 microsoft destinations (R-011)', () => {
       libraryId: null,
       displayName: 'broken',
     };
-    expect(() => rediscoverDestination({ transport: fakeTransport({}), record: bad })).toThrow(
-      InvalidDestinationRecordError,
-    );
+    expect(() =>
+      rediscoverDestination({
+        transport: fakeTransport({}),
+        record: bad,
+        connection: authorizedSnapshot(),
+        tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+      }),
+    ).toThrow(InvalidDestinationRecordError);
+  });
+
+  /* =====================================================================
+   * r2 (THE-961 round 2) — GLM 5.3 review fixes F1–F8.
+   * Assertions use error name/message (not class imports) so each RED test
+   * fails at base for the STATED reason (missing enforcement), not a missing
+   * symbol.
+   * ===================================================================== */
+
+  function retainedOnedriveRecord() {
+    return {
+      destinationId: 'od-1',
+      workspaceId: WORKSPACE,
+      tenantId: TENANT,
+      connectionId: CONNECTION,
+      kind: 'onedrive' as const,
+      displayName: 'display-od-1',
+      driveId: 'drive-fixture-1',
+      ownerUserId: 'user-fixture-1',
+      siteId: null,
+      libraryId: null,
+    };
+  }
+
+  function catchName(fn: () => unknown): string {
+    try {
+      fn();
+    } catch (e) {
+      return (e as Error).name;
+    }
+    return 'NO_THROW';
+  }
+
+  describe('F1: rediscovery is gated and bound like creation', () => {
+    const transport = fakeTransport({
+      'drive-fixture-1': observedFor('od-1', onedriveIdentity),
+    });
+
+    it('RED F1a: revoked connection blocks rediscovery (typed, fail closed)', () => {
+      expect(
+        catchName(() =>
+          rediscoverDestination({
+            transport,
+            record: retainedOnedriveRecord(),
+            connection: authorizedSnapshot({ revoked: true, authState: 'unauthorized' }),
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('RevokedConnectionError');
+    });
+
+    it('RED F1b: degraded connection blocks rediscovery (typed, fail closed)', () => {
+      expect(
+        catchName(() =>
+          rediscoverDestination({
+            transport,
+            record: retainedOnedriveRecord(),
+            connection: authorizedSnapshot({ authState: 'degraded' }),
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('DegradedConnectionError');
+    });
+
+    it('RED F1c: unbound rediscovery fails closed at runtime (tenant binding mandatory)', () => {
+      expect(
+        catchName(() =>
+          rediscoverDestination({
+            transport,
+            record: retainedOnedriveRecord(),
+            connection: authorizedSnapshot(),
+            tenantBinding: undefined,
+          } as unknown as Parameters<typeof rediscoverDestination>[0]),
+        ),
+      ).toBe('InvalidDestinationRecordError');
+    });
+
+    it('RED F1d: rediscovery binding diverging from the record rejects (TenantMismatchError)', () => {
+      expect(
+        catchName(() =>
+          rediscoverDestination({
+            transport,
+            record: retainedOnedriveRecord(),
+            connection: authorizedSnapshot(),
+            tenantBinding: { tenantId: OTHER_TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('TenantMismatchError');
+    });
+
+    it('RED F1e: rediscovery observed ISSUER mismatch rejects (TenantMismatchError)', () => {
+      const wrongIssuerTransport = fakeTransport({
+        'drive-fixture-1': {
+          requestedDestinationId: 'od-1',
+          outcome: 'resolved' as const,
+          observedIdentity: onedriveIdentity,
+          observedTenantId: TENANT,
+          observedIssuer: 'issuer-form-fixture/other',
+        },
+      });
+      expect(
+        catchName(() =>
+          rediscoverDestination({
+            transport: wrongIssuerTransport,
+            record: retainedOnedriveRecord(),
+            connection: authorizedSnapshot(),
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('TenantMismatchError');
+    });
+  });
+
+  describe('F2: policy allowlist constrains the RESULT, not just the request', () => {
+    it('RED F2a: resolver returning a different well-formed identity rejects; nothing retained', () => {
+      const driftTransport = fakeTransport({
+        'drive-fixture-1': observedFor('od-1', {
+          ...onedriveIdentity,
+          driveId: 'drive-fixture-999',
+        }),
+      });
+      const policy = policyWith([{ id: 'od-1', identity: onedriveIdentity }]);
+      let retained: unknown = 'not-called';
+      expect(
+        catchName(() => {
+          const resolved = resolveCreationDestination({
+            transport: driftTransport,
+            policy,
+            connection: authorizedSnapshot(),
+            artifactType: 'document',
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          });
+          retained = retainDestinationRecord(resolved);
+        }),
+      ).toBe('ObservedIdentityMismatchError');
+      expect(retained).toBe('not-called');
+    });
+
+    it('RED F2b: echoed requestedDestinationId mismatch on creation rejects', () => {
+      const echoTransport = fakeTransport({
+        // Transport echoes a DIFFERENT requestedDestinationId than was requested.
+        'drive-fixture-1': observedFor('od-wrong', onedriveIdentity),
+      });
+      const policy = policyWith([{ id: 'od-1', identity: onedriveIdentity }]);
+      expect(
+        catchName(() =>
+          resolveCreationDestination({
+            transport: echoTransport,
+            policy,
+            connection: authorizedSnapshot(),
+            artifactType: 'document',
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('ObservedIdentityMismatchError');
+    });
+
+    it('RED F2c: observed identity drift on rediscovery rejects', () => {
+      const driftTransport = fakeTransport({
+        'drive-fixture-1': observedFor('od-1', {
+          ...onedriveIdentity,
+          driveId: 'drive-fixture-999',
+        }),
+      });
+      expect(
+        catchName(() =>
+          rediscoverDestination({
+            transport: driftTransport,
+            record: retainedOnedriveRecord(),
+            connection: authorizedSnapshot(),
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('ObservedIdentityMismatchError');
+    });
+
+    it('RED F2d: echoed requestedDestinationId mismatch on rediscovery rejects', () => {
+      const echoTransport = fakeTransport({
+        'drive-fixture-1': observedFor('od-wrong', onedriveIdentity),
+      });
+      expect(
+        catchName(() =>
+          rediscoverDestination({
+            transport: echoTransport,
+            record: retainedOnedriveRecord(),
+            connection: authorizedSnapshot(),
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('ObservedIdentityMismatchError');
+    });
+  });
+
+  describe('F3: authority sources are cross-checked at entry', () => {
+    it('RED F3a: policy.connectionId != connection.connectionId rejects (typed)', () => {
+      const transport = fakeTransport({
+        'drive-fixture-1': observedFor('od-1', onedriveIdentity),
+      });
+      const policy = policyWith([{ id: 'od-1', identity: onedriveIdentity }]);
+      expect(
+        catchName(() =>
+          resolveCreationDestination({
+            transport,
+            policy,
+            connection: authorizedSnapshot({ connectionId: 'conn-fixture-OTHER' }),
+            artifactType: 'document',
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('DestinationAuthorityMismatchError');
+    });
+
+    it('RED F3b: tenantBinding diverging from connection.tenantBinding rejects (TenantMismatchError)', () => {
+      const transport = fakeTransport({
+        'drive-fixture-1': observedFor('od-1', onedriveIdentity),
+      });
+      const policy = policyWith([{ id: 'od-1', identity: onedriveIdentity }]);
+      expect(
+        catchName(() =>
+          resolveCreationDestination({
+            transport,
+            policy,
+            connection: authorizedSnapshot(),
+            artifactType: 'document',
+            tenantBinding: { tenantId: OTHER_TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('TenantMismatchError');
+    });
+  });
+
+  it('RED F4: disabled-only configuration reports no_enabled_candidate (honest diagnostics)', () => {
+    const transport = fakeTransport({});
+    const policy = policyWith([{ id: 'od-1', identity: onedriveIdentity, enabled: false }]);
+    try {
+      resolveCreationDestination({
+        transport,
+        policy,
+        connection: authorizedSnapshot(),
+        artifactType: 'document',
+        tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+      });
+      throw new Error('NO_THROW');
+    } catch (e) {
+      expect(e).toBeInstanceOf(DestinationNotPermittedError);
+      expect((e as DestinationNotPermittedError).reasonCode).toBe('no_enabled_candidate');
+    }
+  });
+
+  it('RED F5: typed config errors carry lengths, never raw values, in messages', () => {
+    const missing = new DestinationPolicyMissingError('ws-raw-secret-ish');
+    expect(missing.message).not.toContain('ws-raw-secret-ish');
+    expect(missing.message).toMatch(/workspaceLength=17/);
+
+    const unresolvable = new DestinationUnresolvableError('dest-raw-id');
+    expect(unresolvable.message).not.toContain('dest-raw-id');
+    expect(unresolvable.message).toMatch(/destinationLength=11/);
+  });
+
+  it('RED F6: consent unknown with authorized auth reports consent, not CONNECTION_NOT_AUTHORIZED', () => {
+    const transport = fakeTransport({});
+    const policy = policyWith([{ id: 'od-1', identity: onedriveIdentity }]);
+    try {
+      resolveCreationDestination({
+        transport,
+        policy,
+        connection: authorizedSnapshot({ consentState: 'unknown' }),
+        artifactType: 'document',
+        tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+      });
+      throw new Error('NO_THROW');
+    } catch (e) {
+      const msg = (e as Error).message;
+      expect(msg).toMatch(/CONSENT/i);
+      expect(msg).toContain('consentState=unknown');
+      expect(msg).not.toContain('CONNECTION_NOT_AUTHORIZED');
+    }
+  });
+
+  describe('F7: explicit destination choice among allowed candidates', () => {
+    const twoDestinations = () => {
+      const transport = fakeTransport({
+        'drive-fixture-1': observedFor('od-1', onedriveIdentity),
+        'drive-fixture-3': observedFor('od-2', { ...onedriveIdentity, driveId: 'drive-fixture-3' }),
+      });
+      const policy = policyWith([
+        { id: 'od-1', identity: onedriveIdentity },
+        { id: 'od-2', identity: { ...onedriveIdentity, driveId: 'drive-fixture-3' } },
+      ]);
+      return { transport, policy };
+    };
+
+    it('RED F7a: explicit requestedDestinationId selects the allowed destination (no ambiguity)', () => {
+      const { transport, policy } = twoDestinations();
+      const resolved = resolveCreationDestination({
+        transport,
+        policy,
+        connection: authorizedSnapshot(),
+        artifactType: 'document',
+        tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+        requestedDestinationId: 'od-2',
+      });
+      expect(resolved.destination.destinationId).toBe('od-2');
+    });
+
+    it('RED F7b: explicit destination outside the permitted set fails closed (typed)', () => {
+      const { transport, policy } = twoDestinations();
+      expect(
+        catchName(() =>
+          resolveCreationDestination({
+            transport,
+            policy,
+            connection: authorizedSnapshot(),
+            artifactType: 'document',
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+            requestedDestinationId: 'od-not-in-policy',
+          }),
+        ),
+      ).toBe('DestinationNotPermittedError');
+    });
+  });
+
+  describe('F8: previously untested enforcement sites', () => {
+    it('RED F8a: permitted entry tenant != binding tenant rejects with TenantMismatchError', () => {
+      const transport = fakeTransport({});
+      const policy: MicrosoftWorkspaceDestinationPolicy = {
+        workspaceId: WORKSPACE,
+        tenantId: OTHER_TENANT,
+        connectionId: CONNECTION,
+        permittedDestinations: [
+          {
+            destinationId: 'od-1',
+            workspaceId: WORKSPACE,
+            tenantId: OTHER_TENANT,
+            connectionId: CONNECTION,
+            artifactTypes: new Set<DocumentArtifactType>(['document']),
+            identity: onedriveIdentity,
+            displayName: 'display-od-1',
+            enabled: true,
+          },
+        ],
+      };
+      expect(
+        catchName(() =>
+          resolveCreationDestination({
+            transport,
+            policy,
+            connection: authorizedSnapshot(),
+            artifactType: 'document',
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('TenantMismatchError');
+    });
+
+    it('RED F8b: onedrive entry without driveId rejects InvalidDestinationRecordError(identity.driveId)', () => {
+      const transport = fakeTransport({});
+      const policy = policyWith([
+        { id: 'od-1', identity: { ...onedriveIdentity, driveId: null } },
+      ]);
+      try {
+        resolveCreationDestination({
+          transport,
+          policy,
+          connection: authorizedSnapshot(),
+          artifactType: 'document',
+          tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+        });
+        throw new Error('NO_THROW');
+      } catch (e) {
+        expect(e).toBeInstanceOf(InvalidDestinationRecordError);
+        expect((e as InvalidDestinationRecordError).field).toBe('identity.driveId');
+      }
+    });
+
+    it('RED F8c: sharepoint entry without site/library rejects InvalidDestinationRecordError', () => {
+      const transport = fakeTransport({});
+      const policy = policyWith([
+        {
+          id: 'sp-1',
+          identity: { ...sharepointIdentity, siteId: null, libraryId: null },
+        },
+      ]);
+      try {
+        resolveCreationDestination({
+          transport,
+          policy,
+          connection: authorizedSnapshot(),
+          artifactType: 'document',
+          tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+        });
+        throw new Error('NO_THROW');
+      } catch (e) {
+        expect(e).toBeInstanceOf(InvalidDestinationRecordError);
+        expect((e as InvalidDestinationRecordError).field).toBe('identity.siteId/libraryId');
+      }
+    });
+
+    it('RED F8d: creation-path observed ISSUER mismatch rejects (TenantMismatchError)', () => {
+      const transport = fakeTransport({
+        'drive-fixture-1': {
+          requestedDestinationId: 'od-1',
+          outcome: 'resolved' as const,
+          observedIdentity: onedriveIdentity,
+          observedTenantId: TENANT,
+          observedIssuer: 'issuer-form-fixture/other',
+        },
+      });
+      const policy = policyWith([{ id: 'od-1', identity: onedriveIdentity }]);
+      expect(
+        catchName(() =>
+          resolveCreationDestination({
+            transport,
+            policy,
+            connection: authorizedSnapshot(),
+            artifactType: 'document',
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('TenantMismatchError');
+    });
   });
 });
