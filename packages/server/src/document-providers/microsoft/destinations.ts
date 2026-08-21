@@ -27,8 +27,9 @@
  *     binding conventions; an observed tenant that mismatches the binding rejects with
  *     the shared TenantMismatchError and never resolves the destination.
  *   - CAPABILITY HONESTY: revoked / degraded / unauthorized / admin-consent-pending /
- *     write-scope-ungranted connection states NEVER resolve or lift any destination
- *     capability (reuse of the connection module's typed errors).
+ *     consent-unknown / write-scope-ungranted connection states NEVER resolve or lift
+ *     any destination capability — on CREATION and on REDISCOVERY alike (reuse of the
+ *     connection module's typed errors, plus this module's consent-unknown error).
  *   - NO RAW SECRETS: opaque identifiers only; typed errors carry reason codes and
  *     lengths, never raw values.
  *
@@ -37,7 +38,7 @@
  * shape for later lanes to persist.
  */
 
-import type { DocumentArtifactType } from '../../../../db/src/document-integrations';
+import type { DocumentArtifactType, DocumentAuthState } from '../../../../db/src/document-integrations';
 import {
   AdminConsentRequiredError,
   DegradedConnectionError,
@@ -148,8 +149,8 @@ export class DestinationPolicyMissingError extends Error {
   readonly workspaceId: string;
   constructor(workspaceId: string) {
     super(
-      `DESTINATION_POLICY_MISSING: workspace ${workspaceId} has no configured permitted ` +
-        `Microsoft destinations; creation blocked (fail closed)`,
+      `DESTINATION_POLICY_MISSING: workspaceLength=${workspaceId.length} has no configured ` +
+        `permitted Microsoft destinations; creation blocked (fail closed)`,
     );
     this.name = 'DestinationPolicyMissingError';
     this.workspaceId = workspaceId;
@@ -199,10 +200,62 @@ export class DestinationUnresolvableError extends Error {
   constructor(destinationId: string) {
     super(
       `DESTINATION_UNRESOLVABLE: the injected transport could not resolve permitted ` +
-        `destination ${destinationId}; blocked (fail closed)`,
+        `destinationLength=${destinationId.length}; blocked (fail closed)`,
     );
     this.name = 'DestinationUnresolvableError';
     this.destinationId = destinationId;
+  }
+}
+
+/**
+ * F6: consent state unresolved (unknown) with an otherwise-authorized connection. Distinct
+ * from DegradedConnectionError so the thrown error is truthful about WHY resolution is
+ * blocked — the message carries the consent state, never a misleading
+ * "CONNECTION_NOT_AUTHORIZED (authState=authorized)".
+ */
+export class DestinationConsentUnknownError extends Error {
+  readonly authState: DocumentAuthState;
+  constructor(authState: DocumentAuthState) {
+    super(
+      `DESTINATION_CONSENT_UNKNOWN: consent state is unresolved (consentState=unknown, ` +
+        `authState=${authState}); destination resolution blocked (fail closed)`,
+    );
+    this.name = 'DestinationConsentUnknownError';
+    this.authState = authState;
+  }
+}
+
+/**
+ * F2: the transport's OBSERVED identity (or echoed requestedDestinationId) diverges from
+ * the permitted/retained identity this seam asked it to resolve. The transport is untrusted;
+ * a redirect-following or buggy resolver must never relocate the allowed destination.
+ */
+export class ObservedIdentityMismatchError extends Error {
+  readonly field: string;
+  constructor(field: string) {
+    super(
+      `OBSERVED_IDENTITY_MISMATCH: observed "${field}" diverges from the permitted ` +
+        `destination identity; blocked (fail closed)`,
+    );
+    this.name = 'ObservedIdentityMismatchError';
+    this.field = field;
+  }
+}
+
+/**
+ * F3: two caller-presented authority sources disagree (policy.connectionId vs the
+ * connection snapshot, or the tenant binding vs the connection's own binding). A
+ * mis-wired caller must never gate on connection A and receive a result attributed to B.
+ */
+export class DestinationAuthorityMismatchError extends Error {
+  readonly axis: 'policy_connection_vs_connection' | 'binding_vs_connection';
+  constructor(axis: 'policy_connection_vs_connection' | 'binding_vs_connection') {
+    super(
+      `DESTINATION_AUTHORITY_MISMATCH: authority sources disagree (${axis}); ` +
+        `blocked (fail closed)`,
+    );
+    this.name = 'DestinationAuthorityMismatchError';
+    this.axis = axis;
   }
 }
 
@@ -218,6 +271,55 @@ export class InvalidDestinationRecordError extends Error {
 
 const NON_EMPTY = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0;
+
+/**
+ * F2: the transport's observed identity must match the identity this seam asked it to
+ * resolve, on every REQUIRED field for the kind (plus kind itself, plus driveId for a
+ * SharePoint library when one was configured). The transport is untrusted; drift rejects
+ * BEFORE any retention so a wrong identity never becomes the durable rediscovery key.
+ */
+function assertObservedIdentityMatches(
+  expected: MicrosoftDestinationIdentity,
+  observed: MicrosoftDestinationIdentity,
+): void {
+  if (expected.kind !== observed.kind) throw new ObservedIdentityMismatchError('identity.kind');
+  if (expected.kind === 'onedrive') {
+    if (expected.driveId !== observed.driveId) {
+      throw new ObservedIdentityMismatchError('identity.driveId');
+    }
+  } else {
+    if (expected.siteId !== observed.siteId) throw new ObservedIdentityMismatchError('identity.siteId');
+    if (expected.libraryId !== observed.libraryId) {
+      throw new ObservedIdentityMismatchError('identity.libraryId');
+    }
+    if (expected.driveId !== null && expected.driveId !== observed.driveId) {
+      throw new ObservedIdentityMismatchError('identity.driveId');
+    }
+  }
+}
+
+/** F2: the transport's echoed requestedDestinationId must match what was requested. */
+function assertEchoedDestinationIdMatches(requested: string, echoed: string): void {
+  if (requested !== echoed) throw new ObservedIdentityMismatchError('requestedDestinationId');
+}
+
+/** F3: the caller-presented authority sources must agree before anything resolves. */
+function assertAuthoritiesAgree(input: {
+  policy: MicrosoftWorkspaceDestinationPolicy;
+  connection: MicrosoftConnectionSnapshot;
+  tenantBinding: MicrosoftTenantBinding;
+}): void {
+  if (input.policy.connectionId !== input.connection.connectionId) {
+    throw new DestinationAuthorityMismatchError('policy_connection_vs_connection');
+  }
+  const connBinding = input.connection.tenantBinding;
+  if (
+    input.tenantBinding.tenantId !== connBinding.tenantId ||
+    input.tenantBinding.issuerForm !== connBinding.issuerForm
+  ) {
+    throw new TenantMismatchError(connBinding.tenantId, input.tenantBinding.tenantId);
+  }
+}
 
 /* =============================================================================
  * Connection gating (capability honesty — mirrors connection.ts writeLaneLifted).
@@ -237,8 +339,10 @@ function assertConnectionMayResolveDestinations(connection: MicrosoftConnectionS
   if (connection.authState !== 'authorized') {
     throw new DegradedConnectionError(connection.authState);
   }
+  // F6: an authorized connection with unresolved consent is NOT "not authorized" — throw
+  // the truthful consent-specific error instead of a misleading DegradedConnectionError.
   if (connection.consentState === 'unknown') {
-    throw new DegradedConnectionError(connection.authState);
+    throw new DestinationConsentUnknownError(connection.authState);
   }
   const writeGranted = connection.scopes.some((s) => s.kind === 'write' && s.granted);
   if (!writeGranted) throw new InsufficientScopeError('write');
@@ -291,8 +395,16 @@ function validatePermittedDestination(
  *   5. uniqueness: more than one survivor => AmbiguousDestinationError (creation must
  *      identify an allowed destination, not guess among several);
  *   6. transport resolution of the single survivor with OBSERVED tenant claims enforced
- *      against the same binding (cross-tenant observation => TenantMismatchError);
- *      unresolvable => DestinationUnresolvableError.
+ *      against the same binding (cross-tenant observation => TenantMismatchError), the
+ *      OBSERVED IDENTITY enforced against the permitted entry's identity per required
+ *      fields, and the echoed requestedDestinationId verified (any drift => typed
+ *      rejection BEFORE retention); unresolvable => DestinationUnresolvableError.
+ *
+ * F3: the three caller-presented authority sources (policy, connection, tenantBinding)
+ * are cross-checked at entry — a mis-wired caller is rejected, never served a result
+ * attributed to a different connection.
+ * F7: an optional `requestedDestinationId` narrows the enabled candidate set to one
+ * explicitly chosen ALLOWED destination; an id outside the permitted set fails closed.
  */
 export function resolveCreationDestination(input: {
   transport: MicrosoftDestinationTransport;
@@ -301,8 +413,11 @@ export function resolveCreationDestination(input: {
   artifactType: DocumentArtifactType;
   /** The caller-presented connection tenant binding (T-019 conventions). */
   tenantBinding: MicrosoftTenantBinding;
+  /** F7: optional explicit choice among the ALLOWED destinations; never bypasses policy. */
+  requestedDestinationId?: string;
 }): ResolvedMicrosoftDestination {
   assertConnectionMayResolveDestinations(input.connection);
+  assertAuthoritiesAgree(input);
 
   const { policy } = input;
   if (policy.permittedDestinations.length === 0) {
@@ -320,21 +435,34 @@ export function resolveCreationDestination(input: {
       entry.connectionId === policy.connectionId &&
       entry.artifactTypes.has(input.artifactType),
   );
-  if (candidates.length === 0) {
-    // Distinguish "types never served" from "enabled candidates existed but mismatched".
+  // F7: an explicit choice narrows the ALREADY-PERMITTED candidate set — it can only
+  // select, never widen. An id outside the permitted set fails closed.
+  let scoped = candidates;
+  if (input.requestedDestinationId !== undefined) {
+    scoped = candidates.filter((e) => e.destinationId === input.requestedDestinationId);
+    if (scoped.length === 0) {
+      throw new DestinationNotPermittedError('policy_scope_mismatch', policy.workspaceId);
+    }
+  }
+  if (scoped.length === 0) {
+    // F4: honest diagnostics — distinguish a disabled-only configuration (no enabled
+    // candidate exists at all) from scope/type mismatches among enabled entries.
+    const anyEnabled = policy.permittedDestinations.some(
+      (e) => e.enabled && e.connectionId === policy.connectionId,
+    );
     const anyTypeServed = policy.permittedDestinations.some((e) =>
       e.artifactTypes.has(input.artifactType),
     );
     throw new DestinationNotPermittedError(
-      anyTypeServed ? 'policy_scope_mismatch' : 'artifact_type_not_served',
+      !anyEnabled ? 'no_enabled_candidate' : anyTypeServed ? 'policy_scope_mismatch' : 'artifact_type_not_served',
       policy.workspaceId,
     );
   }
-  if (candidates.length > 1) {
-    throw new AmbiguousDestinationError(candidates.length, policy.workspaceId);
+  if (scoped.length > 1) {
+    throw new AmbiguousDestinationError(scoped.length, policy.workspaceId);
   }
 
-  const destination = candidates[0]!;
+  const destination = scoped[0]!;
   const observed = input.transport.resolveDestination({
     requestedDestinationId: destination.destinationId,
     identity: destination.identity,
@@ -342,6 +470,7 @@ export function resolveCreationDestination(input: {
   if (observed.outcome !== 'resolved') {
     throw new DestinationUnresolvableError(destination.destinationId);
   }
+  assertEchoedDestinationIdMatches(destination.destinationId, observed.requestedDestinationId);
   // Observed tenant claims MUST match the binding — never trusted from the transport's
   // own claim of success (same doctrine as connection.completeAuthorization).
   if (
@@ -350,6 +479,9 @@ export function resolveCreationDestination(input: {
   ) {
     throw new TenantMismatchError(input.tenantBinding.tenantId, observed.observedTenantId);
   }
+  // F2: the observed identity must be the permitted entry's identity — a buggy or
+  // redirect-following resolver must never relocate the allowed destination.
+  assertObservedIdentityMatches(destination.identity, observed.observedIdentity);
   return {
     workspaceId: policy.workspaceId,
     tenantId: policy.tenantId,
@@ -402,14 +534,18 @@ export function retainDestinationRecord(
 
 /**
  * Re-resolve a previously retained destination through the SAME injected seam (R-011.2
- * "retained sufficiently for rediscovery"). Validates the retained record structurally
- * (fail closed), then enforces the caller-presented tenant binding against the fresh
- * observation exactly like creation time.
+ * "retained sufficiently for rediscovery"). F1: rediscovery is gated and bound exactly
+ * like creation — the connection posture gate applies (revoked/degraded/unauthorized/
+ * consent-pending/write-scope-ungranted connections never rediscover), the tenant
+ * binding is MANDATORY (unbound rediscovery fails closed), and the fresh observation's
+ * tenant claims, echoed requestedDestinationId, and observed identity are all enforced
+ * against the retained record before the observation is returned.
  */
 export function rediscoverDestination(input: {
   transport: MicrosoftDestinationTransport;
   record: MicrosoftRetainedDestinationRecord;
-  tenantBinding?: MicrosoftTenantBinding;
+  connection: MicrosoftConnectionSnapshot;
+  tenantBinding: MicrosoftTenantBinding;
 }): Extract<MicrosoftObservedDestination, { outcome: 'resolved' }> {
   const { record } = input;
   if (!NON_EMPTY(record.destinationId)) {
@@ -425,7 +561,15 @@ export function rediscoverDestination(input: {
   } else if (!NON_EMPTY(record.siteId ?? '') || !NON_EMPTY(record.libraryId ?? '')) {
     throw new InvalidDestinationRecordError('siteId/libraryId');
   }
-  if (input.tenantBinding && input.tenantBinding.tenantId !== record.tenantId) {
+  // F1: mandatory authority — unbound rediscovery fails closed at runtime too (the type
+  // makes it a compile-time impossibility for TS callers; this guards JS callers).
+  if (!input.connection || !input.tenantBinding) {
+    throw new InvalidDestinationRecordError('authority');
+  }
+  // F1: same posture gate as creation — revoked/degraded/consent-pending/unscoped
+  // connections never resolve any destination capability, including rediscovery.
+  assertConnectionMayResolveDestinations(input.connection);
+  if (input.tenantBinding.tenantId !== record.tenantId) {
     throw new TenantMismatchError(input.tenantBinding.tenantId, record.tenantId);
   }
   const observed = input.transport.resolveDestination({
@@ -441,14 +585,25 @@ export function rediscoverDestination(input: {
   if (observed.outcome !== 'resolved') {
     throw new DestinationUnresolvableError(record.destinationId);
   }
-  if (input.tenantBinding) {
-    if (
-      observed.observedTenantId !== input.tenantBinding.tenantId ||
-      observed.observedIssuer !== input.tenantBinding.issuerForm
-    ) {
-      throw new TenantMismatchError(input.tenantBinding.tenantId, observed.observedTenantId);
-    }
+  assertEchoedDestinationIdMatches(record.destinationId, observed.requestedDestinationId);
+  if (
+    observed.observedTenantId !== input.tenantBinding.tenantId ||
+    observed.observedIssuer !== input.tenantBinding.issuerForm
+  ) {
+    throw new TenantMismatchError(input.tenantBinding.tenantId, observed.observedTenantId);
   }
+  // F2: the fresh observation must match the retained identity on required fields —
+  // drift rejects before the observation escapes the seam.
+  assertObservedIdentityMatches(
+    {
+      kind: record.kind,
+      driveId: record.driveId,
+      ownerUserId: record.ownerUserId,
+      siteId: record.siteId,
+      libraryId: record.libraryId,
+    },
+    observed.observedIdentity,
+  );
   return observed;
 }
 
