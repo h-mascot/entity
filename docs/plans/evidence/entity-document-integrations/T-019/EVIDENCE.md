@@ -147,3 +147,41 @@ Open question: live doc re-verification of exact scope strings/GUID forms is a w
 
 - Exact Microsoft scope identifiers and endpoint forms are injectable configuration; no documented-default invention. Live verification deferred (wiring/sandbox lane).
 - Observed tenant claims at artifact-operation time are caller-attested until adapters/routes wire real token introspection (later Microsoft lanes); fail-closed posture makes premature trust non-exploitative but the attestation source must be hardened at wiring time.
+
+## r2 addendum — GLM 5.3 review round 1 fixes (THE-960, round 2 of 3)
+
+Base: `ea6f7d8` (r1 commit). Single commit on top touching only `connection.ts`, `connection.test.ts`, this file.
+
+### F3 disposition (manager disposition choice)
+
+**Option (b): terminal revocation.** R-010.3's "degraded/reauthorization" framing is honored for degraded states (which remain recoverable via a fresh authorization transaction), but a revoked connection is terminally dead: `revoke()` rotates both secret references in the injected store, so the module could not complete a new exchange even if it allowed one, and R-032 requires revocation to prevent every future operation. Chosen over option (a) (revival) because revival through the rotated-secret store would either fail at redemption or require re-minting handles — an implicit un-revoke path that contradicts R-032's prevention guarantee and the scoped-AGENTS "fails closed" invariant. `beginAuthorization()` and `completeAuthorization()` on a revoked connection now throw `RevokedConnectionError` before any state transition; no contradictory `authorized + ready + revoked` snapshot is reachable.
+
+### Findings fixed (RED → GREEN; RED counts at base ea6f7d8, Node 22)
+
+- **F1 (BLOCKER, consent-gate inversion)** — `writeLaneLifted()` blocked `not_required` and allowed `unknown`; inverted to block only `admin_consent_required`/`unknown`. RED×2: authorized+`not_required`+write-scope DB-loaded connection now lifts the lane; authorized+`unknown` fails closed with `InsufficientScopeError`. Existing consent-pending coverage stayed green.
+- **F2 (BLOCKER, auth-code seam)** — transport interface now returns `codeVerifier` from `beginAuthorization` and receives `{stateParameter, code, codeVerifier}` at `redeemAuthorizationCode`; PKCE claim retained in header (now true). RED×1: fake transport asserts it received the echoed code and the begin-time verifier.
+- **F3 (MAJOR)** — terminal-revocation disposition above. RED×1: post-`revoke()`, both authorization entry points throw `RevokedConnectionError`; no contradictory snapshot reachable.
+- **F4 (MAJOR, wrong read-path error)** — non-authorized reads now throw new typed `DegradedConnectionError(authState)`; revoked reads still throw `RevokedConnectionError` (checked first); removed the pointless `lastCsrfFailure = undefined` erase. RED×2 (degraded-not-Revoked; revoked-still-Revoked).
+- **F5 (MINOR, corrupted diagnostics)** — both `TenantMismatchError` sites now always pass the observed TENANT value, never the issuer string. RED×1: issuer-only mismatch yields `observedTenantLength === boundTenantId.length`, null divergence, no URL in message.
+- **F6 (MINOR, provider discarded)** — constructor rejects records whose `provider !== 'microsoft_365'` (`InvalidConnectionRecordError('provider')`, message generalized to "failed record validation"); snapshot reports the validated stored provider instead of a hardcoded literal. RED×1.
+- **F7 (MINOR, scope-entry aliasing)** — constructor deep-copies each scope entry; snapshot deep-copies again. RED×1: flipping `granted` via caller reference or snapshot copy leaves the write gate closed.
+- **F8 (MINOR, silent 'error' outcome)** — `'error'` redemption outcome degrades state AND throws new typed `AuthorizationRedemptionError`. RED×1.
+- **CSRF `'missing'` test gap** — RED×1: empty-state callback rejected with `reasonCode='missing'` and recorded in `lastCsrfFailure`.
+
+### Commands (Node 22.22.2; default Node 26 has the known better-sqlite3 ABI mismatch)
+
+1. Focused: `cd packages/server && npx vitest run src/document-providers/microsoft/connection.test.ts` — RED phase 9 failed / 10 passed; GREEN phase **19 passed (19), exit 0**.
+2. `cd packages/server && npm run build` — strict tsc, **exit 0**.
+3. Full server suite at final HEAD: **217 files passed / 2188 tests passed, exit 0** (first attempt on Node 26 reproduced the pre-existing better-sqlite3 ABI failures; rerun once under Node 22 as instructed).
+4. `npm run ctrl:gate` — **passed ✅ exit 0**, first run, no flakes hit (doc-intelligence-ask-schema did not flake; db suite 185/185, server suite 217/217).
+5. `git diff --check` — clean; worktree clean after commit.
+
+### Record-only observations (no code change, per reviewer instruction)
+
+- A well-formed-state callback with no outstanding transaction is labeled `'replay'` (`lastCsrfFailure`), cosmetic; fails closed correctly.
+- An empty transport-issued state in `beginAuthorization` is classified `CsrfStateMismatchError('missing')`, conflating transport failure with CSRF; also fails closed. Both deferred to the wiring lane where transport failure surfaces are defined.
+- The echoed authorization `code` is forwarded verbatim without its own empty-check; the transport owns code validation semantics (module-level validation would invent provider policy).
+
+### Rule-outs (r2)
+
+Only the three allowed paths touched. No changes to `types.ts`, routes, index, adapters, db layer, registry, write-policy, capability-resolver, flags, Google-lane files, OpenWiki, PRD, or any Linear/GitHub/deploy surface. No new event table/receipt store/flag host; no network; injected fakes only; caller-attested tenant claims carry unchanged (OQ-018 stands).

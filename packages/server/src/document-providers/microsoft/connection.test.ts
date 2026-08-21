@@ -10,8 +10,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AdminConsentRequiredError,
+  AuthorizationRedemptionError,
   CsrfStateMismatchError,
   InsufficientScopeError,
+  InvalidConnectionRecordError,
   MicrosoftEntraConnection,
   RevokedConnectionError,
   SecretReferenceUnresolvableError,
@@ -52,28 +54,40 @@ class FakeSecretStore implements MicrosoftSecretStore {
   }
 }
 
+interface CapturedRedeemInput {
+  stateParameter: string;
+  code: string;
+  codeVerifier: string;
+}
+
 class FakeIdentityTransport implements MicrosoftIdentityTransport {
   readonly calls: CapturedIdentityCall[] = [];
+  /** Captured full redeem inputs — proves the seam delivers code (+ PKCE verifier). */
+  readonly redeemInputs: CapturedRedeemInput[] = [];
   private pendingStates = new Map<string, string>();
   /** Recorded redeem outcomes consumed in FIFO order. */
   redeemQueue: RedeemFixture[] = [];
   /** When set, beginAuthorization returns this attacker-supplied state instead. */
   tamperedStateOverride: string | null = null;
 
-  beginAuthorization(input: { connectionId: string }): { stateParameter: string } {
+  beginAuthorization(input: {
+    connectionId: string;
+  }): { stateParameter: string; codeVerifier: string } {
     this.calls.push({ kind: 'beginAuthorization', connectionId: input.connectionId });
     const state =
       this.tamperedStateOverride ?? `state-${input.connectionId}-${this.calls.length}`;
+    const codeVerifier = `verifier-${input.connectionId}-${this.calls.length}`;
     this.pendingStates.set(input.connectionId, state);
-    return { stateParameter: state };
+    return { stateParameter: state, codeVerifier };
   }
 
   issuedState(connectionId: string): string | undefined {
     return this.pendingStates.get(connectionId);
   }
 
-  redeemAuthorizationCode(input: { stateParameter: string }): RedeemFixture {
+  redeemAuthorizationCode(input: CapturedRedeemInput): RedeemFixture {
     this.calls.push({ kind: 'redeemAuthorizationCode', stateParameter: input.stateParameter });
+    this.redeemInputs.push({ ...input });
     const next = this.redeemQueue.shift();
     if (!next) throw new Error('fixture queue empty');
     return next;
@@ -362,5 +376,268 @@ describe('T-019 Microsoft Entra connection', () => {
       /* expected */
     }
     expect(connection.writeLaneLifted()).toBe(false);
+  });
+
+  /* =========================================================================
+   * Round 2 review fixes (THE-960 r1 verdict, F1–F8).
+   * ======================================================================= */
+
+  function authorize(connection: MicrosoftEntraConnection, transport: FakeIdentityTransport): void {
+    const begun = connection.beginAuthorization();
+    transport.redeemQueue.push({
+      observedTenantId: BOUND_TENANT,
+      observedIssuer: ISSUER_FORM_BOUND,
+      outcome: 'consented',
+    });
+    connection.completeAuthorization({
+      stateParameter: begun.stateParameter,
+      code: 'code-fixture',
+    });
+  }
+
+  it('RED F1: authorized + not_required + granted write scope lifts the write lane (direct/app grants can write)', () => {
+    // A DB-loaded direct/app-grant connection: already authorized, consent not_required.
+    const secrets = new FakeSecretStore();
+    const tokenRef = secrets.put();
+    const clientSecretRef = secrets.put();
+    const connection = new MicrosoftEntraConnection({
+      transport: new FakeIdentityTransport(),
+      secretStore: secrets,
+      record: {
+        connectionId: 'conn-direct-grant',
+        provider: 'microsoft_365',
+        tenantBinding: { tenantId: BOUND_TENANT, issuerForm: ISSUER_FORM_BOUND },
+        secretReferences: { tokenRef, clientSecretRef },
+        scopes: READ_WRITE_SCOPES,
+        authState: 'authorized',
+        readinessState: 'ready',
+        consentState: 'not_required',
+        entityMetadataJson: '{}',
+      },
+    });
+    expect(connection.writeLaneLifted()).toBe(true);
+    expect(() =>
+      connection.assertArtifactOperationAllowed({
+        operation: 'write',
+        observedTenantId: BOUND_TENANT,
+        observedIssuer: ISSUER_FORM_BOUND,
+      }),
+    ).not.toThrow();
+  });
+
+  it('RED F1: consentState=unknown fails closed — never lifts a write lane even when authorized with write scope', () => {
+    const { connection, transport } = makeConnection();
+    authorize(connection, transport);
+    // Force the unknown consent state (e.g. loaded from DB without consent telemetry).
+    (connection as unknown as { consentState: string }).consentState = 'unknown';
+    expect(connection.writeLaneLifted()).toBe(false);
+    expect(() =>
+      connection.assertArtifactOperationAllowed({
+        operation: 'write',
+        observedTenantId: BOUND_TENANT,
+        observedIssuer: ISSUER_FORM_BOUND,
+      }),
+    ).toThrow(InsufficientScopeError);
+  });
+
+  it('RED F2: the transport seam receives the authorization code AND PKCE verifier on redemption', () => {
+    const { connection, transport } = makeConnection();
+    const begun = connection.beginAuthorization();
+    transport.redeemQueue.push({
+      observedTenantId: BOUND_TENANT,
+      observedIssuer: ISSUER_FORM_BOUND,
+      outcome: 'consented',
+    });
+    connection.completeAuthorization({
+      stateParameter: begun.stateParameter,
+      code: 'auth-code-fixture-123',
+    });
+
+    expect(transport.redeemInputs).toHaveLength(1);
+    const redeemInput = transport.redeemInputs[0]!;
+    expect(redeemInput.stateParameter).toBe(begun.stateParameter);
+    // The authorization code MUST reach the transport — a real Entra transport cannot
+    // perform the exchange without it.
+    expect(redeemInput.code).toBe('auth-code-fixture-123');
+    // PKCE: the verifier generated at beginAuthorization is threaded to redemption.
+    expect(redeemInput.codeVerifier).toMatch(/^verifier-/);
+  });
+
+  it('RED F3: reauthorization on a revoked connection is rejected with a typed error (terminal revocation)', () => {
+    const { connection, transport } = makeConnection();
+    authorize(connection, transport);
+    connection.revoke();
+
+    // Both halves of a fresh authorization transaction reject on a revoked connection.
+    expect(() => connection.beginAuthorization()).toThrow(RevokedConnectionError);
+    expect(() =>
+      connection.completeAuthorization({
+        stateParameter: 'state-anything',
+        code: 'code-fixture',
+      }),
+    ).toThrow(RevokedConnectionError);
+    // No contradictory authorized/ready/revoked snapshot is reachable.
+    const snapshot = connection.snapshot();
+    expect(snapshot.revoked).toBe(true);
+    expect(snapshot.authState).not.toBe('authorized');
+    expect(snapshot.readinessState).not.toBe('ready');
+  });
+
+  it('RED F4: reads on a degraded-but-never-revoked connection do NOT throw RevokedConnectionError', () => {
+    const { connection } = makeConnection();
+    // Degrade via a cross-tenant operation attempt (no revocation involved).
+    try {
+      connection.assertArtifactOperationAllowed({
+        operation: 'read',
+        observedTenantId: OTHER_TENANT,
+        observedIssuer: ISSUER_FORM_OTHER,
+      });
+    } catch {
+      /* the mismatch itself is expected */
+    }
+    expect(connection.snapshot().revoked).toBe(false);
+    expect(connection.snapshot().authState).toBe('degraded');
+
+    let caught: unknown;
+    try {
+      connection.assertArtifactOperationAllowed({
+        operation: 'read',
+        observedTenantId: BOUND_TENANT,
+        observedIssuer: ISSUER_FORM_BOUND,
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeDefined();
+    expect(caught).not.toBeInstanceOf(RevokedConnectionError);
+    expect((caught as Error).name).toBe('DegradedConnectionError');
+  });
+
+  it('RED F4: reads on a revoked connection still throw RevokedConnectionError', () => {
+    const { connection } = makeConnection();
+    connection.revoke();
+    expect(() =>
+      connection.assertArtifactOperationAllowed({
+        operation: 'read',
+        observedTenantId: BOUND_TENANT,
+        observedIssuer: ISSUER_FORM_BOUND,
+      }),
+    ).toThrow(RevokedConnectionError);
+  });
+
+  it('RED F5: issuer-only mismatch reports the OBSERVED TENANT in the tenant diagnostic, never the issuer string', () => {
+    const { connection, transport } = makeConnection();
+    const begun = connection.beginAuthorization();
+    transport.redeemQueue.push({
+      observedTenantId: BOUND_TENANT,
+      observedIssuer: ISSUER_FORM_OTHER, // tenant matches; ONLY the issuer differs
+      outcome: 'consented',
+    });
+    let caught: unknown;
+    try {
+      connection.completeAuthorization({
+        stateParameter: begun.stateParameter,
+        code: 'code-fixture',
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TenantMismatchError);
+    const err = caught as TenantMismatchError;
+    // The observed-TENANT field carries the observed tenant (same length as the binding),
+    // never the issuer URL (length 50-ish vs 16).
+    expect(err.observedTenantLength).toBe(BOUND_TENANT.length);
+    expect(err.firstDivergentCodePointHex).toBeNull();
+    expect(err.message).not.toContain('https://');
+  });
+
+  it('RED F6: a record whose provider does not match the module constant is rejected at construction', () => {
+    const secrets = new FakeSecretStore();
+    const tokenRef = secrets.put();
+    const clientSecretRef = secrets.put();
+    expect(
+      () =>
+        new MicrosoftEntraConnection({
+          transport: new FakeIdentityTransport(),
+          secretStore: secrets,
+          record: {
+            connectionId: 'conn-wrong-provider',
+            provider: 'google_workspace' as never,
+            tenantBinding: { tenantId: BOUND_TENANT, issuerForm: ISSUER_FORM_BOUND },
+            secretReferences: { tokenRef, clientSecretRef },
+            scopes: READ_WRITE_SCOPES,
+            authState: 'unauthorized',
+            readinessState: 'unknown',
+            consentState: 'not_required',
+            entityMetadataJson: '{}',
+          },
+        }),
+    ).toThrow(InvalidConnectionRecordError);
+  });
+
+  it('RED F7: mutating a scope entry after construction cannot flip the security gate externally', () => {
+    const scopes: Array<{ name: string; kind: 'read' | 'write'; granted: boolean }> = [
+      { name: 'fixture.read.scope', kind: 'read', granted: true },
+      { name: 'fixture.write.scope', kind: 'write', granted: false },
+    ];
+    const { connection, transport } = makeConnection({ scopes });
+    authorize(connection, transport);
+    expect(connection.writeLaneLifted()).toBe(false);
+
+    // External aliasing attack: flip the granted flag through the retained caller reference...
+    scopes[1]!.granted = true;
+    // ...and also through the snapshot copy.
+    const snapshot = connection.snapshot();
+    const snapWrite = snapshot.scopes.find((s) => s.kind === 'write');
+    if (snapWrite) snapWrite.granted = true;
+
+    // The gate must NOT flip through either path.
+    expect(connection.writeLaneLifted()).toBe(false);
+    expect(() =>
+      connection.assertArtifactOperationAllowed({
+        operation: 'write',
+        observedTenantId: BOUND_TENANT,
+        observedIssuer: ISSUER_FORM_BOUND,
+      }),
+    ).toThrow(InsufficientScopeError);
+  });
+
+  it("RED F8: the 'error' redemption outcome produces a typed error, not a silent degradation", () => {
+    const { connection, transport } = makeConnection();
+    const begun = connection.beginAuthorization();
+    transport.redeemQueue.push({
+      observedTenantId: BOUND_TENANT,
+      observedIssuer: ISSUER_FORM_BOUND,
+      outcome: 'error',
+    });
+    let caught: unknown;
+    try {
+      connection.completeAuthorization({
+        stateParameter: begun.stateParameter,
+        code: 'code-fixture',
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(AuthorizationRedemptionError);
+    // State degrades (fail-closed) but the failure is surfaced, not swallowed.
+    expect(connection.snapshot().authState).toBe('degraded');
+    expect(connection.snapshot().readinessState).toBe('error');
+  });
+
+  it('RED CSRF gap: the missing-state callback path is rejected with reasonCode missing', () => {
+    const { connection } = makeConnection();
+    connection.beginAuthorization();
+    let caught: unknown;
+    try {
+      connection.completeAuthorization({ stateParameter: '', code: 'code-fixture' });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CsrfStateMismatchError);
+    expect((caught as CsrfStateMismatchError).reasonCode).toBe('missing');
+    expect((connection.snapshot() as { lastCsrfFailure?: string }).lastCsrfFailure).toBe(
+      'missing',
+    );
   });
 });
