@@ -58,6 +58,7 @@ import {
   StaleRevisionError,
   UnsupportedAdapterMutationError,
 } from '../types';
+import { UNSAFE_REVISION_TOKEN_CHARACTERS } from '../revision-coordinator';
 import type { DocumentAuthState, DocumentProvider } from '../../../../db/src/document-integrations';
 
 /* =============================================================================
@@ -162,25 +163,20 @@ export interface GoogleDocsAdapterOptions {
 }
 
 /* =============================================================================
- * Revision-token strictness (THE-950 r2 F2 adapter half).
+ * Revision-token strictness (THE-950 r2 F2 adapter half; THE-956 r2 C3 shared canonical set).
  * ============================================================================= */
 
 /**
- * Characters forbidden in any revision token crossing the adapter boundary:
- *   - ASCII/C0 controls and DEL (U+0000–U+001F, U+007F)
- *   - directional marks LRM/RLM (U+200E/U+200F), embedded-popovers (U+202A–U+202E)
- *   - bidi isolates LRI/RLI/FSI/PDI (U+2066–U+2069), Arabic Letter Mark (U+061C)
- *   - zero-width no-break space/BOM (U+FEFF), Word Joiner (U+2060), soft hyphen (U+00AD)
- *   - LINE SEPARATOR U+2028 (kept: a raw separator inside a single-line token field can spoof
- *     line structure in logs/responses; it never occurs in a legitimate provider token)
- *   - injection metacharacters '<' and '"' (HTML/attribute contexts)
- * THE-955 r1 F7: U+2022 (bullet '•') was REMOVED from this set — it is a benign printable
- * character, not a control; the previous regex/comment mismatch is resolved in favor of the
- * documented set above. A benign opaque token (e.g. `rev_17QkAaiFhyZK871Jozj6w`) passes
+ * THE-956 r2 (C3): the forbidden-character class is no longer defined locally — it IS the
+ * canonical shared class exported from `../revision-coordinator` (consumed by both Google
+ * adapter boundaries and the coordinator's sanitizer, pinned equivalent by test). Relative to
+ * the previous docs-adapter-local set this is a TIGHTENING only: C1 controls (U+0080–U+009F),
+ * zero-width format characters U+200B–U+200D, and the injection metacharacters `'` `&` `\\`
+ * are now also rejected. U+2028 remains rejected; U+2022 (bullet) remains accepted (benign
+ * printable, THE-955 r1 F7). A benign opaque token (e.g. `rev_17QkAaiFhyZK871Jozj6w`) passes
  * untouched.
  */
-const UNSAFE_REVISION_CHARACTERS =
-  /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2060\u00ad<>"\u2028]/;
+const UNSAFE_REVISION_CHARACTERS = UNSAFE_REVISION_TOKEN_CHARACTERS;
 
 function firstUnsafeCodePoint(token: string): number | null {
   for (const ch of token) {

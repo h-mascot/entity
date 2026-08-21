@@ -20,8 +20,11 @@
  *     `assertAdapterActionSupported`.
  *   - BOUNDED MUTATION: only the declared structured `setRange` envelope is ever forwarded;
  *     text and slide lanes fail closed with typed UnsupportedAdapterMutationError.
- *   - RANGE TARGETING validated BEFORE any transport write: sheet exists, A1 range
- *     well-formed, values rectangular and type-bounded (string|number|boolean|null).
+ *   - RANGE TARGETING validated BEFORE any transport write: selector well-formed AND within the
+ *     documented A1 bounds/ordering (row ≤ 1048576, start ≤ end; r2 T1), multi-cell ranges
+ *     typed-rejected (the single-value lane cannot express them; r2 C2), an omitted sheet
+ *     resolves to the FIRST workbook tab (Google A1 semantics; r2 C1), sheet exists, values
+ *     rectangular and type-bounded (enforced; r2 T2d).
  *   - Revision-token strictness at the boundary (THE-950 r2 F2 extended unsafe set) on both
  *     client-supplied expectedRevision and transport-reported tokens.
  *   - Stable identity: `external_id` IS the durable Google spreadsheet id — never a locally
@@ -62,6 +65,7 @@ import {
 // Shared adapter-boundary token strictness types live with the Docs adapter (same Google
 // boundary semantics; one typed error class so route mapping stays single-sourced).
 import { UnsafeRevisionTokenError } from './docs-adapter';
+import { UNSAFE_REVISION_TOKEN_CHARACTERS } from '../revision-coordinator';
 import type { DocumentAuthState, DocumentProvider } from '../../../../db/src/document-integrations';
 
 /* =============================================================================
@@ -158,11 +162,17 @@ export interface GoogleSheetsAdapterOptions {
 }
 
 /* =============================================================================
- * Revision-token strictness (THE-950 r2 F2 extended set — same regex as the Docs adapter).
+ * Revision-token strictness (THE-950 r2 F2 / THE-956 r2 C3 — canonical SHARED set).
  * ============================================================================= */
 
-const UNSAFE_REVISION_CHARACTERS =
-  /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2060\u00ad<>"\u2028]/;
+/**
+ * THE-956 r2 (C3): the forbidden-character class is the canonical shared class exported from
+ * `../revision-coordinator` (same constant consumed by docs-adapter and the coordinator's
+ * sanitizer; equivalence pinned by test). Relative to the previous sheets-local set this is a
+ * TIGHTENING only: C1 controls (U+0080–U+009F), zero-width format characters U+200B–U+200D,
+ * and the injection metacharacters `'` `&` `\\` are now also rejected at this boundary.
+ */
+const UNSAFE_REVISION_CHARACTERS = UNSAFE_REVISION_TOKEN_CHARACTERS;
 
 function firstUnsafeCodePoint(token: string): number | null {
   for (const ch of token) {
@@ -219,16 +229,54 @@ export function isTypeBoundedValues(values: SheetsCellValue[][]): boolean {
 
 /**
  * Parse the T-005 range-lane `cell` selector into a (sheet, a1Range) pair.
- * Accepted forms: `A1`, `Sheet1!A1`, `'Q3 Budget'!A1:B2`. Returns null when malformed.
+ * Accepted forms: `A1`, `Sheet1!A1`, `'Q3 Budget'!A1:B2`. Returns null when malformed, out of
+ * the documented bounds, or reversed — use {@link classifyA1Range} for the specific reason.
  */
 export function parseCellSelector(cell: string): { sheet: string | null; range: string } | null {
   const match = /^(?:'([^']+)'|([A-Za-z0-9_.]+))?!(.+)$/.exec(cell);
   if (match) {
     const sheet = match[1] ?? match[2] ?? null;
     const range = match[3];
-    return sheet !== null && isWellFormedA1Range(range) ? { sheet, range } : null;
+    return sheet !== null && isWellFormedA1Range(range) && classifyA1Range(range) === 'ok'
+      ? { sheet, range }
+      : null;
   }
-  return isWellFormedA1Range(cell) ? { sheet: null, range: cell } : null;
+  return isWellFormedA1Range(cell) && classifyA1Range(cell) === 'ok' ? { sheet: null, range: cell } : null;
+}
+
+/** In-tree documented A1 row bound (Google Sheets grid height; module comment since r1). */
+export const MAX_A1_ROW = 1048576;
+
+export type A1RangeClassification = 'ok' | 'malformed' | 'row_out_of_bounds' | 'reversed';
+
+function a1CellParts(cell: string): { col: string; row: number } | null {
+  const m = /^([A-Za-z]{1,3})([1-9][0-9]{0,6})$/.exec(cell);
+  return m ? { col: m[1].toUpperCase(), row: Number(m[2]) } : null;
+}
+
+function a1ColumnNumber(col: string): number {
+  let n = 0;
+  for (const ch of col) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n;
+}
+
+/**
+ * Classify an A1 range against the in-tree documented rules (THE-956 r2 T1):
+ *   - 'malformed': not matching the A1 shape at all;
+ *   - 'row_out_of_bounds': any referenced row exceeds {@link MAX_A1_ROW} (1048576);
+ *   - 'reversed': the start cell is after the end cell on either axis;
+ *   - 'ok': usable as a range target.
+ * No column bound beyond the 1–3 letter pattern is enforced: no wider column limit is
+ * documented in-tree (observation recorded in EVIDENCE).
+ */
+export function classifyA1Range(range: string): A1RangeClassification {
+  if (!A1_RANGE_PATTERN.test(range)) return 'malformed';
+  const [startCell, endCell] = range.split(':');
+  const start = a1CellParts(startCell)!;
+  const end = endCell ? a1CellParts(endCell)! : start;
+  if (start.row > MAX_A1_ROW || end.row > MAX_A1_ROW) return 'row_out_of_bounds';
+  if (a1ColumnNumber(start.col) > a1ColumnNumber(end.col) || start.row > end.row) return 'reversed';
+  return 'ok';
 }
 
 /* =============================================================================
@@ -492,8 +540,14 @@ class GoogleSheetsAdapter implements DocumentProviderAdapter {
     // 3. Token strictness on the client-supplied precondition (THE-950 r2 F2).
     requireSafeExpectedRevision(input.expectedRevision);
 
-    // 4. Resolve the artifact; unknown identities never proceed to a transport write.
-    const current = this.requireMetadata(input.external_id);
+    // 4. Resolve the artifact ONCE (minor ii: no second untyped getSpreadsheet below); unknown
+    //    identities never proceed to a transport write.
+    const workbookMetadata = this.transport.getSpreadsheet({ spreadsheetId: input.external_id });
+    if (!workbookMetadata) {
+      throw new AdapterArtifactNotFoundError(input.external_id);
+    }
+    this.remember(workbookMetadata.spreadsheetId, 'spreadsheet');
+    const current = this.descriptorFor(workbookMetadata);
 
     // 5. Local optimistic-concurrency precondition (D-012 / R-024).
     if (current.current_revision !== input.expectedRevision) {
@@ -501,29 +555,61 @@ class GoogleSheetsAdapter implements DocumentProviderAdapter {
     }
 
     // 6. RANGE TARGETING VALIDATION (§12.4) BEFORE any transport write:
-    //    sheet exists, range well-formed, values rectangular and type-bounded.
+    //    selector well-formed AND within the documented bounds and ordering (r2 T1), target
+    //    tab exists, values rectangular and type-bounded (enforced, not just constructed).
     const parsed = parseCellSelector(input.mutation.cell);
     if (!parsed) {
+      // T-015 r2 T1: report the SPECIFIC reason (right-reason rejections, not lookup accidents).
+      const bang = input.mutation.cell.indexOf('!');
+      const rangePart = bang >= 0 ? input.mutation.cell.slice(bang + 1) : input.mutation.cell;
+      const classification = classifyA1Range(rangePart);
+      const detail =
+        classification === 'row_out_of_bounds'
+          ? `row exceeds the documented A1 bound (${MAX_A1_ROW})`
+          : classification === 'reversed'
+            ? 'range start is after its end (reversed)'
+            : `expected [']Sheet'[!]A1[:B2]`;
       throw new UnsupportedAdapterMutationError(
         capability,
-        `malformed range target ${JSON.stringify(input.mutation.cell)}: expected ` +
-          `[']Sheet'[!]A1[:B2]; failing closed`,
+        `malformed range target ${JSON.stringify(input.mutation.cell)}: ${detail}; failing closed`,
       );
     }
-    const workbook = this.transport.getSpreadsheet({ spreadsheetId: input.external_id })!;
-    const targetSheet = parsed.sheet ?? workbook.title;
-    if (!workbook.sheets.some((s) => s.title === targetSheet)) {
+    // T-015 r2 C2: the T-005 range lane carries exactly ONE value, so it can only ever express
+    // a SINGLE-cell §12.4 set_range. A multi-cell range forwarded with a 1×1 grid would perform
+    // a silent partial write under real values.update semantics — typed-reject instead.
+    if (parsed.range.includes(':')) {
       throw new UnsupportedAdapterMutationError(
         capability,
-        `range targeting rejected: sheet ${JSON.stringify(targetSheet)} does not exist in ` +
+        `multi-cell range ${JSON.stringify(parsed.range)} cannot be expressed by the single-value ` +
+          `range lane (§12.4 set_range requires a full rectangular values grid); failing closed ` +
+          `instead of a partial write`,
+      );
+    }
+    // T-015 r2 C1 (reviewer-sanctioned option (a)): an OMITTED sheet resolves to the FIRST
+    // sheet from workbook metadata (Google A1 semantics) — never to the workbook title, which
+    // silently targeted a same-named tab or failed on typical workbooks.
+    const targetSheet = parsed.sheet ?? workbookMetadata.sheets[0]?.title;
+    if (targetSheet === undefined || !workbookMetadata.sheets.some((s) => s.title === targetSheet)) {
+      throw new UnsupportedAdapterMutationError(
+        capability,
+        `range targeting rejected: sheet ${JSON.stringify(targetSheet ?? null)} does not exist in ` +
           `workbook ${input.external_id}; failing closed`,
+      );
+    }
+    const values: SheetsCellValue[][] = [[input.mutation.value]];
+    // T-015 r2 T2(d): the grid helpers are ENFORCED on the outbound envelope before any
+    // transport write (defense in depth over the statically-typed construction).
+    if (!isRectangularValues(values) || !isTypeBoundedValues(values)) {
+      throw new UnsupportedAdapterMutationError(
+        capability,
+        'values grid violates the §12.4 rectangularity/type bound; failing closed',
       );
     }
     const request: GoogleSheetsSetRangeRequest = {
       kind: 'setRange',
       sheet: targetSheet,
       range: parsed.range,
-      values: [[input.mutation.value]],
+      values,
     };
     if (!DECLARED_SHEETS_REQUEST_KINDS.has(request.kind)) {
       throw new UnsupportedAdapterMutationError(
