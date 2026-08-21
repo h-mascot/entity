@@ -275,14 +275,22 @@ const NON_EMPTY = (value: unknown): value is string =>
 /**
  * F2: the transport's observed identity must match the identity this seam asked it to
  * resolve, on every REQUIRED field for the kind (plus kind itself, plus driveId for a
- * SharePoint library when one was configured). The transport is untrusted; drift rejects
- * BEFORE any retention so a wrong identity never becomes the durable rediscovery key.
+ * SharePoint library when one was configured, plus ownerUserId whenever one is expected).
+ * The transport is untrusted; drift rejects BEFORE any retention so a wrong identity never
+ * becomes the durable rediscovery key, and every axis persisted by retainDestinationRecord
+ * is verified here (r3 Finding 2, option a).
  */
 function assertObservedIdentityMatches(
   expected: MicrosoftDestinationIdentity,
   observed: MicrosoftDestinationIdentity,
 ): void {
   if (expected.kind !== observed.kind) throw new ObservedIdentityMismatchError('identity.kind');
+  if (
+    expected.ownerUserId !== null &&
+    expected.ownerUserId !== observed.ownerUserId
+  ) {
+    throw new ObservedIdentityMismatchError('identity.ownerUserId');
+  }
   if (expected.kind === 'onedrive') {
     if (expected.driveId !== observed.driveId) {
       throw new ObservedIdentityMismatchError('identity.driveId');
@@ -569,8 +577,24 @@ export function rediscoverDestination(input: {
   // F1: same posture gate as creation — revoked/degraded/consent-pending/unscoped
   // connections never resolve any destination capability, including rediscovery.
   assertConnectionMayResolveDestinations(input.connection);
+  // F1 (r3): authority parity with creation — the retained record must belong to THIS
+  // connection (re-authorization preserves connectionId, so a divergent id is always
+  // mis-wiring), and the caller's binding must agree with the connection's own binding
+  // (both tenantId and issuerForm). A mis-wired caller must never re-resolve connection
+  // A's destination under connection B's posture.
+  if (record.connectionId !== input.connection.connectionId) {
+    throw new DestinationAuthorityMismatchError('policy_connection_vs_connection');
+  }
+  // Record-tenant mismatch is the most specific diagnosis — report it before parity axes.
   if (input.tenantBinding.tenantId !== record.tenantId) {
     throw new TenantMismatchError(input.tenantBinding.tenantId, record.tenantId);
+  }
+  const connBinding = input.connection.tenantBinding;
+  if (
+    input.tenantBinding.tenantId !== connBinding.tenantId ||
+    input.tenantBinding.issuerForm !== connBinding.issuerForm
+  ) {
+    throw new DestinationAuthorityMismatchError('binding_vs_connection');
   }
   const observed = input.transport.resolveDestination({
     requestedDestinationId: record.destinationId,

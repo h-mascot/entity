@@ -125,3 +125,75 @@ All findings F1–F8 from the r1 GLM 5.3 verdict addressed; RED→GREEN discipli
 
 - `microsoft/connection.ts` — not edited; F6 resolved entirely within destinations.ts via the module-local `DestinationConsentUnknownError` (documented in the header as the one deliberate addition to the shared error vocabulary, since connection.ts was out of scope and DegradedConnectionError cannot express consent-unknown-with-authorized-auth).
 - All other paths unchanged from r1 rule-outs; PRD read-only; no routes/db/types/registry/write-policy/capability-resolver/Google-lane/OpenWiki changes; no network verification attempted (live Graph endpoint re-verification remains the disclosed wiring/sandbox carry; OQ-013 stays injected-data; OQ-018 observation only).
+
+---
+
+# r3 addendum — THE-961 round 2 verdict fixes (GLM 5.3 review round 2), base 854ebd9c
+
+Continuation session (round 3 of 3, FINAL). Findings from the r2 GLM verdict addressed on top
+of the uncommitted-but-green r3 tree; single commit `fix(T-020, THE-961): r2 GLM review fixes…`
+on base 854ebd9c697196fe8488e378ed0bbbc10dcfd311, touching only destinations.ts,
+destinations.test.ts, and this EVIDENCE file.
+
+## Finding dispositions (r2 verdict findings 1–4)
+
+- **Finding 1 — rediscovery authority parity with creation:** FIXED in
+  `rediscoverDestination`. It now enforces, before any transport call:
+  (a) `record.connectionId === connection.connectionId` else
+  `DestinationAuthorityMismatchError('policy_connection_vs_connection')` — re-authorization
+  preserves connectionId, so divergence is always mis-wiring; and (b) the caller-presented
+  `tenantBinding` must equal the connection's own binding on BOTH axes (tenantId AND
+  issuerForm) else `DestinationAuthorityMismatchError('binding_vs_connection')` — closing the
+  issuer-only divergence gap that creation already rejected. Record-tenant mismatch still
+  reports first as the most specific diagnosis (`TenantMismatchError`).
+- **Finding 2 — verified retention honesty. Choice: verify-retained-axes** (option a).
+  `assertObservedIdentityMatches` now also verifies `ownerUserId` whenever one is expected
+  (`expected.ownerUserId !== null && expected.ownerUserId !== observed.ownerUserId` ⇒
+  `ObservedIdentityMismatchError('identity.ownerUserId')`), on BOTH creation and rediscovery,
+  BEFORE retention. Every axis persisted by `retainDestinationRecord` is thus verified against
+  the permitted entry's identity; a drifted identity can never become the durable rediscovery
+  key. persist-permitted-values was NOT adopted (would duplicate policy data into retained
+  records); narrow-docstring alone was NOT sufficient (the persisted record genuinely carried
+  an unverified axis).
+- **Finding 3 — creation/rediscovery drift-test parity:** test parity closed — siteId,
+  libraryId, configured-driveId, and kind drift are now exercised on the CREATION path too
+  (R3-3b-i…iv), matching rediscovery coverage; plus creation-path same-tenant/different-
+  issuerForm rejection (R3-3c) and disabled-entry `requestedDestinationId` narrowing to
+  `policy_scope_mismatch` (R3-3d).
+- **Finding 4 — LOC split of destinations.ts (~600+ lines):** RECORD-ONLY carry. Files were
+  NOT split this round: destinations.ts is not an allowed path to create new siblings under,
+  and a mechanical split late in review risks churn without behavior gain. Carried as a
+  refactor note for a wiring-lane pass.
+
+## RED→GREEN per finding (RED = failing at base 854ebd9c for the stated reason)
+
+- F1: 2 RED (R3-1a divergent connectionId; R3-1b issuer-form divergence on rediscovery).
+- F2: 1 RED (R3-2a creation-path observed ownerUserId drift).
+- F3: 6 RED-equivalent coverage additions: R3-3b-i/ii/iii/iv (4), R3-3c (1), R3-3d (1).
+- F4: no tests (record-only carry).
+- Total: 9 new tests added this round; suite grew 35 → **44 passed (44)**.
+  GREEN after fix: 44/44, exit 0.
+
+## Verification (this session; Node 22 via nvm v22.22.2)
+
+Baseline carried from the prior continuation session for the identical uncommitted tree
+(23:10 local): focused `npx vitest run src/document-providers/microsoft/destinations.test.ts`
+→ 44 passed (44); `npm run build` → exit 0. Not rerun per runaway guard.
+
+New this session:
+
+| Command | Result |
+|---|---|
+| Default-node full suite (prior session, node v26.5.0) | ENVIRONMENTAL FAIL: better-sqlite3 ABI mismatch → 538 failed / 1465 passed / 96 skipped (2099), 10 module-load errors — pre-existing env fault, not this code (focused 44/44 + tsc 0 prove health) |
+| Full server suite under Node 22 | **Test Files 218 passed (218) / Tests 2232 passed (2232)**, SUITE_EXIT=0 |
+| `npm run ctrl:gate` under Node 22 | `[ctrl] unit tests passed` / `[ctrl] gate passed ✅`, GATE_EXIT=0 — first run; known doc-intelligence flake did NOT occur |
+| `git diff --check` | clean |
+| `git status --porcelain` before commit | exactly the 2 code files (+ EVIDENCE addendum) |
+
+## Rule-outs (r3)
+
+- `microsoft/connection.ts`, `document-providers/types.ts`, routes, `db/*`, `registry.ts`,
+  write-policy/capability-resolver, Google-lane files — all untouched (final `git status`
+  shows only the 3 allowed paths). All error vocabulary reused or module-local exactly as in
+  r2. PRD read-only; no OpenWiki regeneration; no network calls; no Linear/GitHub/deploy
+  mutation. Finding-4 file split explicitly deferred (record-only carry above).
