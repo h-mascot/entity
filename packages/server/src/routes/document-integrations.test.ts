@@ -35,6 +35,12 @@ import type { DocumentArtifactType } from '../../../db/src/document-integrations
 import type { DocumentProviderAdapter } from '../document-providers/types';
 import { createFakeDocumentProviderAdapter } from '../document-providers/fake-adapter';
 import {
+  createGoogleDocsAdapter,
+  type GoogleDocsBatchRequest,
+  type GoogleDocMetadata,
+  type GoogleDocsTransport,
+} from '../document-providers/google/docs-adapter';
+import {
   createDocumentIntegrationsRouter,
   DocumentApiError,
   parseMutation,
@@ -1556,5 +1562,181 @@ describe('T-013 (THE-954) — Google admin write gate and destination UX (R-005/
     expect(res.status).toBe(422);
     const body = await bodyOf(res);
     expect(body.error.code).toBe('DESTINATION_NOT_ALLOWED');
+  });
+});
+
+/* ============================================================================
+ * T-014 (THE-955) — Google Docs adapter lane wired through the EXISTING T-013 gate stack.
+ *
+ * The REAL Google Docs adapter (createGoogleDocsAdapter with an injected deterministic
+ * transport — no network, no credentials, no tenant data) is exercised through the same
+ * create/mutate routes behind the unchanged gate stack: audited flag → admin write
+ * authorization → destination/policy → write mode → confirmation → capability resolver →
+ * revision coordinator. Receipts stay deferred (`receiptId: null`) exactly as at base.
+ * ============================================================================ */
+
+/** Deterministic transport for the route-lane tests (mirrors the adapter-suite fake). */
+class RouteLaneGoogleDocsTransport implements GoogleDocsTransport {
+  private docs = new Map<string, GoogleDocMetadata>();
+  private byIdempotency = new Map<string, string>();
+  private seq = 0;
+  private revSeq = 0;
+  connectionState = 'authorized' as const;
+
+  createDocument(input: {
+    title: string;
+    mimeType: string;
+    parent?: string | null;
+    idempotencyKey?: string;
+  }): { document: GoogleDocMetadata; created: boolean } {
+    if (input.idempotencyKey && this.byIdempotency.has(input.idempotencyKey)) {
+      const documentId = this.byIdempotency.get(input.idempotencyKey)!;
+      return { document: this.docs.get(documentId)!, created: false };
+    }
+    this.seq += 1;
+    this.revSeq += 1;
+    const documentId = `google-doc-${this.seq}`;
+    const doc: GoogleDocMetadata = {
+      documentId,
+      title: input.title,
+      url: `https://docs.google.com/document/d/${documentId}/edit`,
+      revisionId: `google-rev-${this.revSeq}`,
+      modifiedTime: TEST_NOW,
+    };
+    this.docs.set(documentId, doc);
+    if (input.idempotencyKey) this.byIdempotency.set(input.idempotencyKey, documentId);
+    return { document: doc, created: true };
+  }
+
+  getDocument(input: { documentId: string }): GoogleDocMetadata | null {
+    return this.docs.get(input.documentId) ?? null;
+  }
+
+  batchUpdate(input: { documentId: string; requests: GoogleDocsBatchRequest[]; expectedRevision: string }): {
+    documentId: string;
+    revisionId: string;
+    responses: unknown[];
+  } {
+    const doc = this.docs.get(input.documentId);
+    if (!doc) throw new Error(`route-lane transport: unknown document ${input.documentId}`);
+    if (input.expectedRevision !== doc.revisionId) {
+      const err = new Error('conflict') as Error & { expectedRevision: string; currentRevision: string };
+      err.name = 'GoogleTransportConflictError';
+      err.expectedRevision = input.expectedRevision;
+      err.currentRevision = doc.revisionId;
+      throw err;
+    }
+    this.revSeq += 1;
+    const updated = { ...doc, revisionId: `google-rev-${this.revSeq}` };
+    this.docs.set(input.documentId, updated);
+    return { documentId: input.documentId, revisionId: updated.revisionId, responses: [] };
+  }
+}
+
+describe('T-014 (THE-955) — Google Docs lane through the T-013 gate stack (routes)', () => {
+  it('SUCCESS: the real Docs adapter creates and mutates through every satisfied gate (stable Entity URL, revision capture, receiptId stays null)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createGoogleDocsAdapter({ transport: new RouteLaneGoogleDocsTransport() }));
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+
+    const createRes = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: createBody({ confirmed: true }),
+    });
+    expect(createRes.status).toBe(201);
+    const createdBody = await bodyOf(createRes);
+    // Stable Entity URL: the canonical registry id is minted once and never changes.
+    expect(createdBody.entityUrl).toBe(`/documents/${createdBody.documentId}`);
+    expect(createdBody.provider).toBe('google_workspace');
+    expect(createdBody.revision).toMatch(/^google-rev-/);
+    // Receipts stay deferred exactly as at base (T-010 out of T-014 scope).
+    expect(createdBody.receiptId).toBeNull();
+
+    const mutateRes = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${createdBody.documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: createdBody.revision,
+        idempotencyKey: 'op-t014-route-mutate',
+        operation: { kind: 'replace_text', content: 'x', text: 'revised by the docs lane' },
+        confirmed: true,
+      },
+    });
+    expect(mutateRes.status).toBe(200);
+    const mutatedBody = await bodyOf(mutateRes);
+    expect(mutatedBody.previousRevision).toBe(createdBody.revision);
+    expect(mutatedBody.revision).toMatch(/^google-rev-/);
+    expect(mutatedBody.revision).not.toBe(createdBody.revision);
+    expect(mutatedBody.receiptId).toBeNull();
+
+    // Revision capture is durable on the canonical record via a fresh GET.
+    const getRes = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${createdBody.documentId}`,
+    });
+    expect((await bodyOf(getRes)).document.revision).toBe(mutatedBody.revision);
+  });
+
+  it('NEGATIVE admin mutation (F3/THE-954-r1 carry): flipping the governing policy to adminWriteAuthorized:false denies a Docs mutation in place (typed WRITE_DISABLED)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createGoogleDocsAdapter({ transport: new RouteLaneGoogleDocsTransport() }));
+    // The policy is present (and admin-authorized) for the CREATE...
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody({ confirmed: true }));
+
+    // ...then flipped IN PLACE to non-admin before the MUTATION. findGoverningPolicy reads the
+    // array live, so the very next write sees the demoted authorization and fails closed.
+    ctx.policies[0] = createPolicyForWorkspace({
+      workspaceId: 'ws_A',
+      tenantId: null,
+      connectionId: null,
+      provider: 'google_workspace',
+      artifactType: 'document',
+      allowedDestinationIds: new Set(['dest_1']),
+      defaultDestinationId: 'dest_1',
+      writeMode: 'create_and_update',
+      confirmationPolicy: null,
+      writeAuthorizationProven: true,
+      adminWriteAuthorized: false,
+    });
+
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'google-rev-1',
+        idempotencyKey: 'op-t014-admin-negative',
+        operation: { kind: 'replace_text', content: 'x', text: 'denied' },
+        confirmed: true,
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('WRITE_DISABLED');
+  });
+
+  it('CONFLICT: a stale expectedRevision on the Docs lane surfaces the R-025 typed 409 STALE_REVISION envelope (retryable:true)', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createGoogleDocsAdapter({ transport: new RouteLaneGoogleDocsTransport() }));
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const documentId = await createViaApi(ctx, createBody({ confirmed: true }));
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${documentId}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'google-rev-DOES-NOT-EXIST',
+        idempotencyKey: 'op-t014-route-conflict',
+        operation: { kind: 'replace_text', content: 'x', text: 'stale' },
+        confirmed: true,
+      },
+    });
+    expect(res.status).toBe(409);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('STALE_REVISION');
+    expect(body.error.retryable).toBe(true);
+    expect(body.error.expectedRevision).toBe('google-rev-DOES-NOT-EXIST');
   });
 });
