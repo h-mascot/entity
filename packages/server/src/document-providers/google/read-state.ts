@@ -228,10 +228,14 @@ export function deriveGoogleReadState(input: GoogleReadStateInput): GoogleReadSt
       : null;
   // §9.4/R-009 honesty: the message may only claim affordances this same object actually
   // carries — never promise a preview/open that previewAvailable/canOpen suppress (B1).
+  // F2 honesty (deny direction): claim preview only if actually actionable, else open,
+  // else say nothing further is available — never deny an affordance canOpen carries.
   const writeDisabledMessage = writeDisabledReason === 'provider'
     ? previewActionable
       ? 'This Google artifact is read-only on the provider side. You can still preview it.'
-      : 'This Google artifact is read-only on the provider side, and no further actions are available for it here.'
+      : openUrl
+        ? 'This Google artifact is read-only on the provider side. You can still open the document in Google.'
+        : 'This Google artifact is read-only on the provider side, and no further actions are available for it here.'
     : writeDisabledReason === 'entity-integration-policy'
       ? openUrl
         ? 'Editing from Entity is disabled for this Google connection. You can still open the document in Google.'

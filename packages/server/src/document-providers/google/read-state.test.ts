@@ -221,6 +221,57 @@ describe('deriveGoogleReadState', () => {
     expect(state.canOpen).toBe(true);
   });
 
+  // --- Round-3 review fixes (THE-959 r2 verdict F2/F3 follow-ups) ---
+
+  it('F2: provider read-only message offers the live open action instead of denying all affordances', () => {
+    // Preview non-actionable + open_external supported + an https link: canOpen is true in
+    // this same object, so the message must NOT claim "no further actions are available".
+    const state = deriveGoogleReadState({
+      capabilityReport: buildReport({ preview: 'unsupported' }),
+      providerMetadata: {
+        open_url: 'https://docs.google.com/document/d/provider-ro-f2/edit',
+        provider_write_protected: true,
+      },
+      entityIntegrationWriteAllowed: true,
+    });
+    expect(state.previewAvailable).toBe(false);
+    expect(state.canOpen).toBe(true);
+    expect(state.writeDisabledMessage).toMatch(/can still open/i);
+    expect(state.writeDisabledMessage!.toLowerCase()).not.toMatch(/no further actions/);
+  });
+
+  it('F3: write-disabled message/canOpen consistency holds across the deny-direction matrix', () => {
+    const scenarios = [
+      baseInput(),
+      { ...baseInput(), capabilityReport: buildReport({ preview: 'unsupported' }) },
+      { ...baseInput(), entityIntegrationWriteAllowed: true },
+      {
+        capabilityReport: buildReport({ preview: 'unsupported' }),
+        providerMetadata: { open_url: 'https://docs.google.com/document/d/f3/edit', provider_write_protected: true },
+        entityIntegrationWriteAllowed: true,
+      },
+      {
+        capabilityReport: buildReport({ preview: 'unsupported', open_external: 'unknown' }),
+        providerMetadata: { provider_write_protected: true },
+        entityIntegrationWriteAllowed: true,
+      },
+    ];
+    for (const scenario of scenarios) {
+      const state = deriveGoogleReadState(scenario);
+      const message = (state.writeDisabledMessage ?? '').toLowerCase();
+      if (!state.writeDisabled) continue;
+      if (state.canOpen) {
+        expect([message, /no further actions/.test(message)]).toEqual([message, false]);
+      }
+      if (/can still preview/.test(message)) expect(state.previewAvailable).toBe(true);
+      if (/can still open/.test(message)) expect(state.canOpen).toBe(true);
+      if (/no further actions/.test(message)) {
+        expect(state.previewAvailable).toBe(false);
+        expect(state.canOpen).toBe(false);
+      }
+    }
+  });
+
   it('S4: fails closed on a report missing a capability key entirely', () => {
     const report: Partial<Record<CapabilityType, ResolvedCapability>> = buildReport();
     delete report.open_external;

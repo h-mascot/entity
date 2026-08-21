@@ -105,8 +105,24 @@ function readPreviewText(record: Record<string, unknown>, metadata: Record<strin
   );
 }
 
+/**
+ * Provider-evidenced URLs must be well-formed https:// links (S3/F1 hardening). Metadata is
+ * body-populatable, so `javascript:`/`data:`/http/relative/garbage strings fail closed to
+ * null rather than riding through to a clickable link target. Mirrors the server's
+ * google/read-state.ts `wellFormedHttpsUrl`. No throw — derivation stays pure.
+ */
+function wellFormedHttpsUrl(value: string): string | null {
+  if (!/^https:\/\//i.test(value)) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && parsed.hostname ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function readOpenUrl(record: Record<string, unknown>, metadata: Record<string, unknown>): string | null {
-  return readFirstString(
+  const candidate = readFirstString(
     metadata.open_url,
     metadata.openUrl,
     record.open_url,
@@ -118,6 +134,9 @@ function readOpenUrl(record: Record<string, unknown>, metadata: Record<string, u
     record.href,
     record.url
   );
+  // F1: validate BEFORE any consumer (openUrl AND editUrl derive from this value) — only a
+  // well-formed absolute https:// URL survives.
+  return candidate ? wellFormedHttpsUrl(candidate) : null;
 }
 
 function readPreviewPolicy(record: Record<string, unknown>, metadata: Record<string, unknown>): Record<string, unknown> {
@@ -142,7 +161,16 @@ function readPreviewPolicy(record: Record<string, unknown>, metadata: Record<str
  * (google/read-state.ts `GOOGLE_SHARING_EVIDENCE_TOKENS_BY_SUMMARY`) so the two independent
  * derivations cannot drift (S2 parity).
  */
-export const PERMISSION_SUMMARY_EVIDENCE_TOKENS_BY_SUMMARY: Readonly<Record<string, readonly string[]>> = {
+/** Local mirror of the server's §9.3 vocabulary union (no cross-package import). */
+type GooglePermissionSummary =
+  | 'Private'
+  | 'Workspace-shared'
+  | 'Organization-shared'
+  | 'Link-shared'
+  | 'External sharing detected'
+  | 'Unknown';
+
+export const PERMISSION_SUMMARY_EVIDENCE_TOKENS_BY_SUMMARY: Readonly<Record<GooglePermissionSummary, readonly string[]>> = {
   'External sharing detected': ['external', 'external_sharing_detected', 'external_detected', 'anyone'],
   'Link-shared': ['link', 'link_shared', 'linkshared', 'anyone_with_link', 'anyonewithlink'],
   'Workspace-shared': ['workspace', 'workspace_shared', 'team', 'shared_drive', 'shareddrive'],
@@ -301,10 +329,15 @@ export function buildExternalDocumentPreviewView(
   const writeDisabledSource: 'entity-integration-policy' | 'provider' = providerWriteProtected ? 'provider' : 'entity-integration-policy';
   // B1b honesty: each message may only claim affordances this same view object carries —
   // never "you can still preview" when previewAvailable is false in this same object.
-  const writeDisabledMessage = providerWriteProtected
+  // F2 honesty (deny direction): each message may only claim affordances this same view
+// object carries — claim preview only if actually available, else open, else say nothing
+// further is available. Never deny an affordance canOpen carries.
+const writeDisabledMessage = providerWriteProtected
     ? previewAvailable
       ? 'This Google artifact is read-only on the provider side. You can still preview it.'
-      : 'This Google artifact is read-only on the provider side, and no further actions are available for it here.'
+      : canOpen
+        ? 'This Google artifact is read-only on the provider side. You can still open the document in Google.'
+        : 'This Google artifact is read-only on the provider side, and no further actions are available for it here.'
     : canOpen
       ? 'Editing from Entity is disabled for this Google connection. You can still open the document in Google.'
       : 'Editing from Entity is disabled for this Google connection.';

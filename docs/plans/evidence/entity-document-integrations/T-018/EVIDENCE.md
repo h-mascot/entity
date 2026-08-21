@@ -148,3 +148,38 @@ The §9.3 evidence vocabulary has ZERO non-test producers today: `sharing_state`
 - S1 producer gap (above) → wiring lane.
 - §9.4 evidence-key divergence (S2 disclosure) → wiring lane consolidation.
 - Browser visual proof deferral (tracked) must be carried at wiring (T-038/T-039).
+
+---
+
+## Round 3 addendum — r2 GLM 5.3 verdict fixes (F1–F4)
+
+Round 3 of 3 (FINAL). Base for this round: `0794a2ce` (r2-fix commit). All findings fixed RED→GREEN; allowed paths only (`read-state.ts`/test, `externalDocumentPreview.ts`/test, this EVIDENCE).
+
+### Findings fixed
+
+- **F1 BLOCKER (security) — app-side https allowlist.** The r2 S3 fix hardened only the unwired server copy; the mounted app `readOpenUrl` still passed `javascript:` through as a clickable `openUrl`/`editUrl`. Fix: app-local `wellFormedHttpsUrl` in `externalDocumentPreview.ts` mirrors the server's allowlist — rejects case-variant `javascript:`/`data:`, `http:`, protocol-relative, empty-after-trim, and non-URL strings; resolves to null fail-closed, no throw. Validation applied to the candidate BEFORE any consumer: both `openUrl` AND `editUrl` derive from the validated value. **Corrected F1 rule-out:** the r2 statement "pre-existing surface… out of this finding's stated path" was INACCURATE — `externalDocumentPreview.ts` was an allowed path all round; the app copy is now fixed in-path.
+  - RED→GREEN: app test "F1: only well-formed https:// URLs qualify as clickable open/edit links (app-side allowlist)" failed at base `0794a2ce` (`javascript:` rode through as `openUrl`/`editUrl`, `canOpen: true`); passes at fix.
+- **F2 MEDIUM — provider-branch message branches on canOpen too (deny-direction honesty).** Server provider branch keyed only on `previewActionable`; with preview non-actionable + open_external actionable + https link the message claimed "no further actions are available" while `canOpen === true`. Fix applied identically on both sides: hierarchy preview → open → none ("You can still open the document in Google." when the same object carries `canOpen`; server branches on `openUrl`, which is exactly `canOpen = Boolean(openUrl)`).
+  - RED→GREEN: server test "F2: provider read-only message offers the live open action instead of denying all affordances" and app test of the same name each failed at base; both pass at fix.
+- **F3 LOW — message/canOpen consistency pins.** The r2 tests enshrined F2 (absence-only assertions). New explicit consistency assertions on both sides: if `canOpen === true` the write-disabled message must not claim "no further actions"; if it names preview/open that affordance must be true in the same object; "no further actions" requires both `previewAvailable === false` and `canOpen === false`. Covered by deny-direction matrices: server test "F3: write-disabled message/canOpen consistency holds across the deny-direction matrix" (5 scenarios), app equivalent (4 scenarios incl. scheme-rejected URL), plus the F1 app URL-scheme test per the brief.
+  - RED→GREEN: server F3 matrix failed at base (scenario 4 hit the dishonest "no further actions" branch while `canOpen === true`); app F3 matrix likewise (B1b fixture). Both pass at fix.
+- **F4 NIT — parity-literal key typing.** `PERMISSION_SUMMARY_EVIDENCE_TOKENS_BY_SUMMARY` retyped from `Record<string, …>` to `Readonly<Record<GooglePermissionSummary, …>>` via a local union mirroring the canonical member list (no cross-package import). No behavior change; exhaustive-key typo protection only.
+
+### Commands + exit codes (Node 22 via /opt/homebrew/opt/node@22/bin)
+
+1. RED baseline confirmed at base `0794a2ce` by the interrupted session start of this round: server focused → 2 failed (F2, F3); app focused → 5 failed (F1, F2, F3, B1b consistency extension).
+2. GREEN focused server: `cd packages/server && npx vitest run src/document-providers/google/read-state.test.ts` → 18 passed (18), exit 0.
+3. GREEN focused app: `cd packages/app && PATH=/opt/homebrew/opt/node@22/bin:$PATH TS_NODE_PROJECT=tsconfig.test.json node --loader ts-node/esm --test src/components/mission-control/utils/__tests__/externalDocumentPreview.test.ts` → 21 pass, 0 fail, exit 0. (Plain `node --test` without the ts-node loader crashed the runner under Node 22 — loader invocation is required for this .ts suite.)
+4. `cd packages/server && npm run build` → clean strict tsc, exit 0. Full server suite at final HEAD: `npx vitest run` → 216 files / 2169 tests passed, exit 0.
+5. `cd packages/app && npm run build` (tsc && vite build) → exit 0 (pre-existing chunk-size warning, non-error). App suite `npm test` → 508 pass / 0 fail, exit 0.
+6. `npm run ctrl:gate` → PASSED on first run, exit 0 (`[ctrl] gate passed ✅`), 216 files / 2169 tests. The known `doc-intelligence-ask-schema.test.ts` flake did NOT occur; no rerun needed.
+7. `git diff --check` → clean.
+
+### Rule-outs
+
+- `types.ts` import-only; untouched. `routes/*`, `fake-adapter.ts`, adapters, `contract.test.ts`, `TaskDetailPanel.tsx` (read-only mounting evidence) untouched. No receipt wiring, no OpenWiki regeneration, no network calls, no browser launch. Diff contains exactly the four allowed code/test paths + this EVIDENCE addendum. Single new commit on top of `0794a2ce`; no amend/rebase/push.
+
+### Tracked items (unchanged carries)
+
+- Browser visual proof deferral to T-038/T-039 must be carried at wiring.
+- Scoped-AGENTS PRD-hash pin drift escalation remains pending with the manager.
