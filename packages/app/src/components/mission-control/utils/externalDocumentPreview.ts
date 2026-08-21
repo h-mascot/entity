@@ -137,14 +137,26 @@ function readPreviewPolicy(record: Record<string, unknown>, metadata: Record<str
  * §9.3 permission-summary honesty: map provider sharing evidence into the exact displayable
  * vocabulary; anything not derivable from provider evidence collapses to null (Unknown).
  * External-sharing evidence is never downgraded to a less-exposed label.
+ *
+ * The token sets are exported and pinned identically on the server side
+ * (google/read-state.ts `GOOGLE_SHARING_EVIDENCE_TOKENS_BY_SUMMARY`) so the two independent
+ * derivations cannot drift (S2 parity).
  */
-const PERMISSION_SUMMARY_EVIDENCE_MAP: ReadonlyArray<{ tokens: ReadonlySet<string>; summary: string }> = [
-  { tokens: new Set(['external', 'external_sharing_detected', 'external_detected', 'anyone']), summary: 'External sharing detected' },
-  { tokens: new Set(['link', 'link_shared', 'anyone_with_link', 'anyonewithlink']), summary: 'Link-shared' },
-  { tokens: new Set(['workspace', 'workspace_shared', 'team', 'shared_drive', 'shareddrive']), summary: 'Workspace-shared' },
-  { tokens: new Set(['organization', 'organization_shared', 'org', 'domain', 'domain_link', 'domainlink']), summary: 'Organization-shared' },
-  { tokens: new Set(['private', 'limited', 'restricted', 'specific_people']), summary: 'Private' },
-];
+export const PERMISSION_SUMMARY_EVIDENCE_TOKENS_BY_SUMMARY: Readonly<Record<string, readonly string[]>> = {
+  'External sharing detected': ['external', 'external_sharing_detected', 'external_detected', 'anyone'],
+  'Link-shared': ['link', 'link_shared', 'linkshared', 'anyone_with_link', 'anyonewithlink'],
+  'Workspace-shared': ['workspace', 'workspace_shared', 'team', 'shared_drive', 'shareddrive'],
+  'Organization-shared': ['organization', 'organization_shared', 'org', 'domain', 'domain_link', 'domainlink'],
+  Private: ['private', 'limited', 'restricted', 'specific_people'],
+  Unknown: [],
+};
+/** Ordered most-exposed first so external-sharing evidence is never mapped down (§9.3). */
+const PERMISSION_SUMMARY_EVIDENCE_MAP: ReadonlyArray<{ tokens: ReadonlySet<string>; summary: string }> = (
+  ['External sharing detected', 'Link-shared', 'Workspace-shared', 'Organization-shared', 'Private'] as const
+).map((summary) => ({
+  tokens: new Set(PERMISSION_SUMMARY_EVIDENCE_TOKENS_BY_SUMMARY[summary] ?? []),
+  summary,
+}));
 const PERMISSION_SUMMARY_EVIDENCE_KEYS = ['sharing_state', 'sharingState', 'visibility', 'permission_summary_state', 'permissionSummaryState'] as const;
 
 function deriveExternalPermissionSummary(record: Record<string, unknown>, metadata: Record<string, unknown>): { summary: string | null; known: boolean } {
@@ -217,7 +229,8 @@ export function buildExternalDocumentPreviewView(
       previewLabel: 'Provider preview unavailable — not an Entity-native editor',
       previewIsNativeEditor: false,
       writeDisabledSource: 'entity-integration-policy',
-      writeDisabledMessage: 'Editing from Entity is disabled for this Google connection. You can still preview or open the document in Google.',
+      // B1a honesty: this object suppresses preview AND open — the message must not claim either.
+      writeDisabledMessage: 'Editing from Entity is disabled for this Google connection, and Entity permissions restrict this document, so no preview or open action is available here.',
       degraded: true,
       degradedMessages: ['Restricted by Entity permissions. Snippets and previews are hidden.'],
       tone: 'warning',
@@ -279,12 +292,22 @@ export function buildExternalDocumentPreviewView(
   // §9.3 honesty: only provider-evidence-derived vocabulary values may be displayed; raw
   // free-text `external_permission_summary` strings are collapsed rather than shown verbatim.
   const { summary: externalPermissionSummary, known: externalPermissionSummaryKnown } = deriveExternalPermissionSummary(record, metadata);
+  const openUrl = readOpenUrl(record, metadata);
+  // R-009.2 masking symmetry: a deleted/permission-revoked external ref suppresses open AND edit.
+  const maskedOpenUrl = externalRefUnavailable ? null : openUrl;
+  const canOpen = Boolean(maskedOpenUrl);
   // §9.4: distinguish Entity integration policy gating from genuine provider write protection.
   const providerWriteProtected = metadata.provider_write_protected === true || metadata.providerWriteProtected === true || record.provider_write_protected === true || metadata.write_protected === true;
   const writeDisabledSource: 'entity-integration-policy' | 'provider' = providerWriteProtected ? 'provider' : 'entity-integration-policy';
+  // B1b honesty: each message may only claim affordances this same view object carries —
+  // never "you can still preview" when previewAvailable is false in this same object.
   const writeDisabledMessage = providerWriteProtected
-    ? 'This Google artifact is read-only on the provider side. You can still preview it.'
-    : 'Editing from Entity is disabled for this Google connection. You can still preview or open the document in Google.';
+    ? previewAvailable
+      ? 'This Google artifact is read-only on the provider side. You can still preview it.'
+      : 'This Google artifact is read-only on the provider side, and no further actions are available for it here.'
+    : canOpen
+      ? 'Editing from Entity is disabled for this Google connection. You can still open the document in Google.'
+      : 'Editing from Entity is disabled for this Google connection.';
 
   const degradedMessages = [
     expired ? 'Google connector auth is expired; preview may require reconnecting Google.' : null,
@@ -294,14 +317,13 @@ export function buildExternalDocumentPreviewView(
     ...degradedReasons.map((reason) => `Connector reported ${formatLabel(reason)}.`),
     !previewText ? 'No permitted preview snippet is available for this external document.' : null,
   ].filter((entry): entry is string => Boolean(entry));
-  const openUrl = readOpenUrl(record, metadata);
 
   return {
     title: readFirstString(metadata.title, record.title, record.name) ?? 'Untitled external document',
     connectorLabel: formatLabel(connectorType),
     ownershipLabel: 'Externally owned Google Docs/Drive document',
-    openUrl: externalRefUnavailable ? null : openUrl,
-    canOpen: Boolean(openUrl && !externalRefUnavailable),
+    openUrl: maskedOpenUrl,
+    canOpen,
     previewText: previewAvailable ? previewText : null,
     previewAvailable,
     authLabel: formatLabel(expired ? 'expired' : effectiveAuthState),
@@ -316,7 +338,7 @@ export function buildExternalDocumentPreviewView(
     mimeLabel: readFirstString(metadata.external_mime_type, metadata.externalMimeType, record.external_mime_type, record.externalMimeType),
     externalPermissionSummary,
     externalPermissionSummaryKnown,
-    editUrl: openUrl,
+    editUrl: maskedOpenUrl,
     editLabel: 'Edit in Google',
     previewLabel: previewAvailable
       ? 'Provider preview — not an Entity-native editor'

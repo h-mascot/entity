@@ -1,7 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildExternalDocumentPreviewView } from '../externalDocumentPreview.ts';
+import {
+  buildExternalDocumentPreviewView,
+  PERMISSION_SUMMARY_EVIDENCE_TOKENS_BY_SUMMARY,
+} from '../externalDocumentPreview.ts';
+
+/**
+ * Canonical sharing-evidence token set, pinned identically in the server copy's test
+ * (google/read-state.test.ts) so the two independent derivations cannot drift (S2).
+ */
+const CANONICAL_SHARING_EVIDENCE_TOKENS_BY_SUMMARY = {
+  'External sharing detected': ['external', 'external_sharing_detected', 'external_detected', 'anyone'],
+  'Link-shared': ['link', 'link_shared', 'linkshared', 'anyone_with_link', 'anyonewithlink'],
+  'Workspace-shared': ['workspace', 'workspace_shared', 'team', 'shared_drive', 'shareddrive'],
+  'Organization-shared': ['organization', 'organization_shared', 'org', 'domain', 'domain_link', 'domainlink'],
+  Private: ['private', 'limited', 'restricted', 'specific_people'],
+  Unknown: [],
+};
 
 test('builds a read-only Google Docs link and preview view', () => {
   const view = buildExternalDocumentPreviewView({
@@ -146,6 +162,10 @@ test('shows deleted or permission-revoked external refs as degraded without prev
   assert.ok(view?.degradedMessages.some((message) => message.includes('External document state is deleted')));
 });
 
+test('§9.3 parity pin: the sharing-evidence token set equals the canonical member list (S2)', () => {
+  assert.deepEqual(PERMISSION_SUMMARY_EVIDENCE_TOKENS_BY_SUMMARY, CANONICAL_SHARING_EVIDENCE_TOKENS_BY_SUMMARY);
+});
+
 // --- T-018 (THE-959) — R-009 preview/open/permissions honesty ---
 
 test('R-009.1: preview failure does not remove the provider open action', () => {
@@ -256,6 +276,82 @@ test('§9.4: Entity-integration-policy read-only messaging never blames the prov
   assert.equal(view?.writeDisabledSource, 'entity-integration-policy');
   assert.match(view?.writeDisabledMessage ?? '', /Entity/i);
   assert.doesNotMatch(view?.writeDisabledMessage ?? '', /google .*read-only/i);
+});
+
+test('B1a: restricted-branch message never promises suppressed preview/open affordances', () => {
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/restricted-b1a',
+    title: 'Restricted Honesty Doc',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    granted_scopes: ['read', 'index', 'link', 'preview'],
+    metadata: { snippet: 'hidden snippet' },
+    restricted: true,
+  });
+
+  assert.equal(view?.title, 'Restricted external document');
+  // Pin the suppression fields the message must stay honest about.
+  assert.equal(view?.previewAvailable, false);
+  assert.equal(view?.openUrl, null);
+  assert.equal(view?.canOpen, false);
+  assert.equal(view?.editUrl, null);
+  const message = (view?.writeDisabledMessage ?? '').toLowerCase();
+  assert.doesNotMatch(message, /can still/);
+  assert.doesNotMatch(message, /you can/);
+});
+
+test('B1b: provider-read-only message makes no false preview claim when preview fails structurally', () => {
+  // No snippet anywhere + expired auth: previewAvailable is false in this same view object,
+  // so the §9.4 provider message must not say "You can still preview it."
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/provider-ro-b1b',
+    title: 'Provider Read-Only No Preview Doc',
+    auth_state: 'expired',
+    readiness_state: 'ready',
+    metadata: { provider_write_protected: true },
+  }, new Date('2026-06-24T09:35:00Z'));
+
+  assert.equal(view?.writeDisabledSource, 'provider');
+  assert.equal(view?.previewAvailable, false);
+  const message = view?.writeDisabledMessage ?? '';
+  assert.match(message, /provider side/i);
+  assert.doesNotMatch(message, /can still preview/i);
+});
+
+test('B2: editUrl is masked when the external ref is unavailable (deleted)', () => {
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_drive',
+    external_url: 'https://drive.google.com/file/d/deleted-edit-84/view',
+    title: 'Deleted Edit Target',
+    auth_state: 'revoked',
+    readiness_state: 'degraded',
+    granted_scopes: ['read', 'index', 'link', 'preview'],
+    external_ref_state: 'deleted',
+    metadata: { degraded_reasons: ['external_ref_deleted'] },
+  });
+
+  assert.equal(view?.degraded, true);
+  assert.equal(view?.openUrl, null);
+  assert.equal(view?.editUrl, null);
+  assert.equal(view?.canOpen, false);
+});
+
+test('B2: editUrl is masked when the external ref is permission-revoked', () => {
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_drive',
+    external_url: 'https://drive.google.com/file/d/revoked-edit-85/view',
+    title: 'Revoked Edit Target',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    granted_scopes: ['read', 'index', 'link', 'preview'],
+    external_ref_state: 'permission_revoked',
+  });
+
+  assert.equal(view?.openUrl, null);
+  assert.equal(view?.editUrl, null);
+  assert.equal(view?.canOpen, false);
 });
 
 test('§9.4: genuine provider write-protection evidence is attributed to the provider', () => {
