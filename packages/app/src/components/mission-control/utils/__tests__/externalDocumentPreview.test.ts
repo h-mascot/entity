@@ -318,6 +318,11 @@ test('B1b: provider-read-only message makes no false preview claim when preview 
   const message = view?.writeDisabledMessage ?? '';
   assert.match(message, /provider side/i);
   assert.doesNotMatch(message, /can still preview/i);
+  // F3: this same fixture carries canOpen === true — the message must name the open
+  // affordance instead of claiming nothing further is available.
+  assert.equal(view?.canOpen, true);
+  assert.match(message, /can still open/i);
+  assert.doesNotMatch(message, /no further actions/i);
 });
 
 test('B2: editUrl is masked when the external ref is unavailable (deleted)', () => {
@@ -352,6 +357,98 @@ test('B2: editUrl is masked when the external ref is permission-revoked', () => 
   assert.equal(view?.openUrl, null);
   assert.equal(view?.editUrl, null);
   assert.equal(view?.canOpen, false);
+});
+
+// --- Round-3 review fixes (THE-959 r2 verdict F1/F2/F3 follow-ups) ---
+
+test('F1: only well-formed https:// URLs qualify as clickable open/edit links (app-side allowlist)', () => {
+  const rejected = [
+    'javascript:alert(1)',
+    'JAVASCRIPT:alert(1)',
+    'data:text/html;base64,PHNjcmlwdD4=',
+    'DATA:text/plain,hello',
+    'http://docs.google.com/document/d/insecure/edit',
+    '//protocol-relative.example.com/doc',
+    'not-a-url',
+    '   ',
+  ];
+  for (const candidate of rejected) {
+    const view = buildExternalDocumentPreviewView({
+      connector_type: 'google_docs',
+      external_canonical_url: candidate,
+      title: 'Scheme Rejection Doc',
+      auth_state: 'authorized',
+      readiness_state: 'ready',
+      metadata: { snippet: 'context' },
+    });
+    assert.equal(view?.openUrl, null, `openUrl must be null for ${JSON.stringify(candidate)}`);
+    assert.equal(view?.editUrl, null, `editUrl must be null for ${JSON.stringify(candidate)}`);
+    assert.equal(view?.canOpen, false, `canOpen must be false for ${JSON.stringify(candidate)}`);
+  }
+  // Well-formed https evidence is retained verbatim through open AND edit.
+  const good = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/https-ok/edit',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+  });
+  assert.equal(good?.openUrl, 'https://docs.google.com/document/d/https-ok/edit');
+  assert.equal(good?.editUrl, 'https://docs.google.com/document/d/https-ok/edit');
+  assert.equal(good?.canOpen, true);
+});
+
+test('F2: provider read-only message offers the live open action instead of denying all affordances', () => {
+  // Provider write-protected + https link + no snippet: canOpen is true in this same view,
+  // so the message must offer the open action, not claim nothing is available.
+  const view = buildExternalDocumentPreviewView({
+    connector_type: 'google_docs',
+    external_canonical_url: 'https://docs.google.com/document/d/provider-ro-f2',
+    title: 'Provider RO Open Affordance Doc',
+    auth_state: 'authorized',
+    readiness_state: 'ready',
+    metadata: { provider_write_protected: true },
+  });
+
+  assert.equal(view?.writeDisabledSource, 'provider');
+  assert.equal(view?.previewAvailable, false);
+  assert.equal(view?.canOpen, true);
+  assert.match(view?.writeDisabledMessage ?? '', /can still open/i);
+  assert.doesNotMatch(view?.writeDisabledMessage ?? '', /no further actions/i);
+});
+
+test('F3: write-disabled message/canOpen consistency holds across the deny-direction matrix', () => {
+  const scenarios = [
+    { external_canonical_url: 'https://docs.google.com/document/d/f3-a' },
+    {
+      external_canonical_url: 'https://docs.google.com/document/d/f3-b',
+      metadata: { provider_write_protected: true },
+    },
+    {
+      external_canonical_url: 'javascript:alert(1)',
+      metadata: { provider_write_protected: true },
+    },
+    { metadata: {} },
+  ];
+  for (const extra of scenarios) {
+    const view = buildExternalDocumentPreviewView({
+      connector_type: 'google_docs',
+      title: 'Consistency Doc',
+      auth_state: 'expired',
+      readiness_state: 'ready',
+      ...extra,
+    }, new Date('2026-06-24T09:35:00Z'));
+    if (!view || !view.writeDisabledSource) continue;
+    const message = view.writeDisabledMessage.toLowerCase();
+    if (view.canOpen) {
+      assert.doesNotMatch(message, /no further actions/, JSON.stringify(extra));
+    }
+    if (/can still preview/.test(message)) assert.equal(view.previewAvailable, true, JSON.stringify(extra));
+    if (/can still open/.test(message)) assert.equal(view.canOpen, true, JSON.stringify(extra));
+    if (/no further actions/.test(message)) {
+      assert.equal(view.previewAvailable, false, JSON.stringify(extra));
+      assert.equal(view.canOpen, false, JSON.stringify(extra));
+    }
+  }
 });
 
 test('§9.4: genuine provider write-protection evidence is attributed to the provider', () => {
