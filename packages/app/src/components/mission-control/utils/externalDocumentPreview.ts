@@ -12,7 +12,19 @@ export interface ExternalDocumentPreviewView {
   readinessLabel: string;
   scopeLabel: string;
   mimeLabel: string | null;
+  /** §9.3-constrained permission summary — only vocabulary-derivable values, else null (Unknown). */
   externalPermissionSummary: string | null;
+  /** Whether the summary was actually derivable from provider sharing evidence (§9.3 honesty). */
+  externalPermissionSummaryKnown: boolean;
+  /** Provider-evidenced artifact URL for the "Edit in Google" action (never minted). */
+  editUrl: string | null;
+  editLabel: 'Edit in Google';
+  /** R-009: preview is never an Entity-native editor. */
+  previewLabel: string;
+  previewIsNativeEditor: false;
+  /** §9.4: which authority gates writes — Entity integration policy vs the provider itself. */
+  writeDisabledSource: 'entity-integration-policy' | 'provider' | null;
+  writeDisabledMessage: string;
   degraded: boolean;
   degradedMessages: string[];
   tone: ExternalDocumentPreviewTone;
@@ -121,6 +133,38 @@ function readPreviewPolicy(record: Record<string, unknown>, metadata: Record<str
   };
 }
 
+/**
+ * §9.3 permission-summary honesty: map provider sharing evidence into the exact displayable
+ * vocabulary; anything not derivable from provider evidence collapses to null (Unknown).
+ * External-sharing evidence is never downgraded to a less-exposed label.
+ */
+const PERMISSION_SUMMARY_EVIDENCE_MAP: ReadonlyArray<{ tokens: ReadonlySet<string>; summary: string }> = [
+  { tokens: new Set(['external', 'external_sharing_detected', 'external_detected', 'anyone']), summary: 'External sharing detected' },
+  { tokens: new Set(['link', 'link_shared', 'anyone_with_link', 'anyonewithlink']), summary: 'Link-shared' },
+  { tokens: new Set(['workspace', 'workspace_shared', 'team', 'shared_drive', 'shareddrive']), summary: 'Workspace-shared' },
+  { tokens: new Set(['organization', 'organization_shared', 'org', 'domain', 'domain_link', 'domainlink']), summary: 'Organization-shared' },
+  { tokens: new Set(['private', 'limited', 'restricted', 'specific_people']), summary: 'Private' },
+];
+const PERMISSION_SUMMARY_EVIDENCE_KEYS = ['sharing_state', 'sharingState', 'visibility', 'permission_summary_state', 'permissionSummaryState'] as const;
+
+function deriveExternalPermissionSummary(record: Record<string, unknown>, metadata: Record<string, unknown>): { summary: string | null; known: boolean } {
+  const tokens = new Set<string>();
+  for (const source of [record, metadata]) {
+    for (const key of PERMISSION_SUMMARY_EVIDENCE_KEYS) {
+      const value = readString(source[key]);
+      if (value) tokens.add(value.trim().toLowerCase().replace(/[\s-]+/g, '_'));
+    }
+  }
+  for (const entry of PERMISSION_SUMMARY_EVIDENCE_MAP) {
+    if ([...tokens].some((token) => entry.tokens.has(token))) {
+      return { summary: entry.summary, known: true };
+    }
+  }
+  // Raw free-text summaries are NOT derivable provider evidence in the §9.3 vocabulary —
+  // collapse them instead of displaying arbitrary strings.
+  return { summary: null, known: false };
+}
+
 function previewRestricted(record: Record<string, unknown>, metadata: Record<string, unknown>): boolean {
   const permissionState = readFirstString(
     record.permission_state,
@@ -167,6 +211,13 @@ export function buildExternalDocumentPreviewView(
       scopeLabel: 'Entity preview restricted',
       mimeLabel: null,
       externalPermissionSummary: null,
+      externalPermissionSummaryKnown: false,
+      editUrl: null,
+      editLabel: 'Edit in Google',
+      previewLabel: 'Provider preview unavailable — not an Entity-native editor',
+      previewIsNativeEditor: false,
+      writeDisabledSource: 'entity-integration-policy',
+      writeDisabledMessage: 'Editing from Entity is disabled for this Google connection. You can still preview or open the document in Google.',
       degraded: true,
       degradedMessages: ['Restricted by Entity permissions. Snippets and previews are hidden.'],
       tone: 'warning',
@@ -225,12 +276,15 @@ export function buildExternalDocumentPreviewView(
   const degraded = connectorDegraded || expired || insufficient || readinessDegraded || externalRefUnavailable || degradedReasons.length > 0;
   const previewText = readPreviewText(record, metadata);
   const previewAvailable = Boolean(previewText && !expired && !insufficient && !externalRefUnavailable);
-  const externalPermissionSummary = readFirstString(
-    metadata.external_permission_summary,
-    metadata.externalPermissionSummary,
-    record.external_permission_summary,
-    record.externalPermissionSummary
-  );
+  // §9.3 honesty: only provider-evidence-derived vocabulary values may be displayed; raw
+  // free-text `external_permission_summary` strings are collapsed rather than shown verbatim.
+  const { summary: externalPermissionSummary, known: externalPermissionSummaryKnown } = deriveExternalPermissionSummary(record, metadata);
+  // §9.4: distinguish Entity integration policy gating from genuine provider write protection.
+  const providerWriteProtected = metadata.provider_write_protected === true || metadata.providerWriteProtected === true || record.provider_write_protected === true || metadata.write_protected === true;
+  const writeDisabledSource: 'entity-integration-policy' | 'provider' = providerWriteProtected ? 'provider' : 'entity-integration-policy';
+  const writeDisabledMessage = providerWriteProtected
+    ? 'This Google artifact is read-only on the provider side. You can still preview it.'
+    : 'Editing from Entity is disabled for this Google connection. You can still preview or open the document in Google.';
 
   const degradedMessages = [
     expired ? 'Google connector auth is expired; preview may require reconnecting Google.' : null,
@@ -261,6 +315,15 @@ export function buildExternalDocumentPreviewView(
           : 'Read/index/link/preview only',
     mimeLabel: readFirstString(metadata.external_mime_type, metadata.externalMimeType, record.external_mime_type, record.externalMimeType),
     externalPermissionSummary,
+    externalPermissionSummaryKnown,
+    editUrl: openUrl,
+    editLabel: 'Edit in Google',
+    previewLabel: previewAvailable
+      ? 'Provider preview — not an Entity-native editor'
+      : 'Provider preview unavailable — not an Entity-native editor',
+    previewIsNativeEditor: false,
+    writeDisabledSource,
+    writeDisabledMessage,
     degraded,
     degradedMessages,
     tone: degraded ? 'warning' : 'ok',
