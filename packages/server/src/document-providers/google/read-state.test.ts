@@ -19,8 +19,22 @@ import { CAPABILITY_NAMES } from '../types';
 import {
   deriveGoogleReadState,
   GOOGLE_PERMISSION_SUMMARY_VALUES,
+  GOOGLE_SHARING_EVIDENCE_TOKENS_BY_SUMMARY,
   type GooglePermissionSummary,
 } from './read-state';
+
+/**
+ * Canonical sharing-evidence token set, pinned identically in the app copy's test
+ * (externalDocumentPreview.test.ts) so the two independent derivations cannot drift (S2).
+ */
+const CANONICAL_SHARING_EVIDENCE_TOKENS_BY_SUMMARY: Readonly<Record<GooglePermissionSummary, readonly string[]>> = {
+  'External sharing detected': ['external', 'external_sharing_detected', 'external_detected', 'anyone'],
+  'Link-shared': ['link', 'link_shared', 'linkshared', 'anyone_with_link', 'anyonewithlink'],
+  'Workspace-shared': ['workspace', 'workspace_shared', 'team', 'shared_drive', 'shareddrive'],
+  'Organization-shared': ['organization', 'organization_shared', 'org', 'domain', 'domain_link', 'domainlink'],
+  Private: ['private', 'limited', 'restricted', 'specific_people'],
+  Unknown: [],
+};
 
 /** Hand-rolled full-report fixture builder (fail-closed defaults, per-lane overrides). */
 function buildReport(overrides: Partial<Record<CapabilityType, CapabilityState>> = {}): CapabilityReport {
@@ -143,6 +157,20 @@ describe('deriveGoogleReadState', () => {
     expect(state.writeDisabledMessage!.toLowerCase()).not.toMatch(/google .*read-only|provider is read-only/);
   });
 
+  it('§9.4 honesty: the provider read-only message never claims a preview the same object suppresses', () => {
+    // Provider write-protected AND structurally unpreviewable (no link evidence at all → no
+    // open either); the message must promise nothing the object does not carry.
+    const state = deriveGoogleReadState({
+      capabilityReport: buildReport({ preview: 'unsupported' }),
+      providerMetadata: { provider_write_protected: true },
+      entityIntegrationWriteAllowed: true,
+    });
+    expect(state.previewAvailable).toBe(false);
+    expect(state.writeDisabledMessage).toBeTruthy();
+    expect(state.writeDisabledMessage!.toLowerCase()).not.toMatch(/can still/);
+    expect(state.writeDisabledMessage!.toLowerCase()).not.toMatch(/preview|open /);
+  });
+
   it("distinguishes genuine provider read-only evidence from Entity policy framing (§9.4)", () => {
     const state = deriveGoogleReadState({
       ...baseInput(),
@@ -152,5 +180,58 @@ describe('deriveGoogleReadState', () => {
     expect(state.writeDisabled).toBe(true);
     expect(state.writeDisabledReason).toBe('provider');
     expect(state.writeDisabledMessage).toMatch(/Google/i);
+  });
+
+  // --- Round-2 review fixes (THE-959 r1 verdict B-finding follow-ups / S2/S3/S4) ---
+
+  it('S2 parity pin: the sharing-evidence token set equals the canonical member list', () => {
+    expect(GOOGLE_SHARING_EVIDENCE_TOKENS_BY_SUMMARY).toEqual(CANONICAL_SHARING_EVIDENCE_TOKENS_BY_SUMMARY);
+  });
+
+  it('S3: only well-formed https:// URLs qualify as provider-evidenced open/edit links', () => {
+    const rejected = [
+      'javascript:alert(1)',
+      'JAVASCRIPT:alert(1)',
+      'data:text/html;base64,PHNjcmlwdD4=',
+      'DATA:text/plain,hello',
+      'http://docs.google.com/document/d/insecure/edit',
+      'not-a-url',
+      '//protocol-relative.example.com/doc',
+    ];
+    for (const candidate of rejected) {
+      const state = deriveGoogleReadState({
+        ...baseInput(),
+        providerMetadata: { open_url: candidate },
+      });
+      expect([candidate, state.openUrl]).toEqual([candidate, null]);
+      expect(state.editUrl).toBe(null);
+      expect(state.canOpen).toBe(false);
+    }
+    // Well-formed https evidence is retained verbatim.
+    const good = deriveGoogleReadState(baseInput());
+    expect(good.openUrl).toBe('https://docs.google.com/document/d/doc-83/edit');
+    expect(good.editUrl).toBe('https://docs.google.com/document/d/doc-83/edit');
+  });
+
+  it('S4: fails closed on a foreign entry whose name mismatches its capability key', () => {
+    const report = buildReport();
+    (report as Record<string, unknown>).preview = { name: 'read', state: 'supported', source: 'adapter' };
+    const state = deriveGoogleReadState({ ...baseInput(), capabilityReport: report });
+    expect(state.previewAvailable).toBe(false);
+    expect(state.canOpen).toBe(true);
+  });
+
+  it('S4: fails closed on a report missing a capability key entirely', () => {
+    const report: Partial<Record<CapabilityType, ResolvedCapability>> = buildReport();
+    delete report.open_external;
+    const state = deriveGoogleReadState({
+      ...baseInput(),
+      capabilityReport: report as CapabilityReport,
+    });
+    expect(state.canOpen).toBe(false);
+    expect(state.openUrl).toBe(null);
+    expect(state.editUrl).toBe(null);
+    // The independent preview lane is untouched by the missing open key.
+    expect(state.previewAvailable).toBe(true);
   });
 });

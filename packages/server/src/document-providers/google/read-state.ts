@@ -32,7 +32,8 @@
  *     is blamed only when the provider itself evidences write protection.
  */
 
-import type { CapabilityType, ResolvedCapability } from '../types';
+import { capabilityAllowsActionForKey } from '../types';
+import type { CapabilityReport, CapabilityType, ResolvedCapability } from '../types';
 
 /** §9.3 permission-summary vocabulary — the exact values the UI may display. */
 export type GooglePermissionSummary =
@@ -57,7 +58,7 @@ export type GoogleWriteDisabledReason = 'entity-integration-policy' | 'provider'
 
 export interface GoogleReadStateInput {
   /** Fully resolved capability report (T-006 resolver output vocabulary). */
-  capabilityReport: Readonly<Record<CapabilityType, ResolvedCapability>>;
+  capabilityReport: CapabilityReport;
   /**
    * Provider metadata projection (T-012 unified read path shape). Only its link/sharing
    * evidence fields are consulted; nothing here is trusted as identity to mint URLs from.
@@ -115,16 +116,25 @@ const LINK_EVIDENCE_KEYS = [
 ] as const;
 
 /**
- * Provider sharing-evidence tokens → §9.3 summary. Ordered so the MOST-exposed match wins:
- * external-sharing evidence can never be downgraded to a less-exposed label (§9.3 honesty).
+ * Canonical sharing-evidence token sets → §9.3 summary. Exported and pinned by BOTH sides'
+ * tests (server + app copy) so the two independent derivations cannot drift (S2 parity).
  */
-const SHARING_EVIDENCE_MAP: ReadonlyArray<{ tokens: ReadonlySet<string>; summary: GooglePermissionSummary }> = [
-  { tokens: new Set(['external', 'external_sharing_detected', 'external_detected', 'anyone']), summary: 'External sharing detected' },
-  { tokens: new Set(['link', 'link_shared', 'linkshared', 'anyone_with_link', 'anyonewithlink']), summary: 'Link-shared' },
-  { tokens: new Set(['workspace', 'workspace_shared', 'team', 'shared_drive', 'shareddrive']), summary: 'Workspace-shared' },
-  { tokens: new Set(['organization', 'organization_shared', 'org', 'domain', 'domain_link', 'domainlink']), summary: 'Organization-shared' },
-  { tokens: new Set(['private', 'limited', 'restricted', 'specific_people']), summary: 'Private' },
-];
+export const GOOGLE_SHARING_EVIDENCE_TOKENS_BY_SUMMARY: Readonly<Record<GooglePermissionSummary, readonly string[]>> = {
+  'External sharing detected': ['external', 'external_sharing_detected', 'external_detected', 'anyone'],
+  'Link-shared': ['link', 'link_shared', 'linkshared', 'anyone_with_link', 'anyonewithlink'],
+  'Workspace-shared': ['workspace', 'workspace_shared', 'team', 'shared_drive', 'shareddrive'],
+  'Organization-shared': ['organization', 'organization_shared', 'org', 'domain', 'domain_link', 'domainlink'],
+  Private: ['private', 'limited', 'restricted', 'specific_people'],
+  Unknown: [],
+};
+
+/** Ordered so the MOST-exposed match wins: external-sharing evidence is never downgraded (§9.3). */
+const SHARING_EVIDENCE_MAP: ReadonlyArray<{ tokens: ReadonlySet<string>; summary: GooglePermissionSummary }> = (
+  ['External sharing detected', 'Link-shared', 'Workspace-shared', 'Organization-shared', 'Private'] as const
+).map((summary) => ({
+  tokens: new Set(GOOGLE_SHARING_EVIDENCE_TOKENS_BY_SUMMARY[summary]),
+  summary,
+}));
 
 const SHARING_EVIDENCE_KEYS = [
   'sharing_state',
@@ -168,6 +178,21 @@ function capabilityState(report: GoogleReadStateInput['capabilityReport'], name:
 }
 
 /**
+ * Provider-evidenced URLs must be well-formed https:// links (S3 hardening). Metadata is
+ * body-populatable, so `javascript:`/`data:`/relative/garbage strings fail closed to null
+ * rather than riding through to a link target. No throw — read-state derivation is pure.
+ */
+function wellFormedHttpsUrl(value: string): string | null {
+  if (!/^https:\/\//i.test(value)) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && parsed.hostname ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Derive the deterministic preview/open/permissions read state. Pure; throws on nothing,
  * fails closed on everything unknown (R-002), and never fabricates identity or exposure.
  */
@@ -175,15 +200,18 @@ export function deriveGoogleReadState(input: GoogleReadStateInput): GoogleReadSt
   const { capabilityReport, providerMetadata, entityIntegrationWriteAllowed } = input;
 
   const previewState = capabilityState(capabilityReport, 'preview');
-  const openState = capabilityState(capabilityReport, 'open_external');
-  const previewActionable = previewState === 'supported' || previewState === 'degraded';
-  const openActionable = openState === 'supported' || openState === 'degraded';
+  // S4: reuse the exported THE-943 doctrine helper (fail-closed on malformed/foreign report
+  // entries) instead of hand-rolling the supported/degraded lookup.
+  const previewActionable = capabilityAllowsActionForKey(capabilityReport, 'preview');
+  const openActionable = capabilityAllowsActionForKey(capabilityReport, 'open_external');
   const previewFailureReason = previewActionable
     ? null
     : capabilityReport.preview?.reasonCode ?? `preview_capability_${previewState}`;
 
-  // Provider-evidenced link only — never minted from external IDs (durable-identity doctrine).
-  const evidencedUrl = firstString(providerMetadata, LINK_EVIDENCE_KEYS);
+  // Provider-evidenced link only — never minted from external IDs (durable-identity doctrine),
+  // and only when it is a well-formed https:// URL (S3 scheme allowlist).
+  const evidencedCandidate = firstString(providerMetadata, LINK_EVIDENCE_KEYS);
+  const evidencedUrl = evidencedCandidate ? wellFormedHttpsUrl(evidencedCandidate) : null;
   // R-009 criterion 1: preview failure must NOT remove the provider open action. Only absent
   // link evidence or a non-actionable open_external capability suppresses open/edit.
   const openUrl = evidencedUrl && openActionable ? evidencedUrl : null;
@@ -198,10 +226,16 @@ export function deriveGoogleReadState(input: GoogleReadStateInput): GoogleReadSt
     : !entityIntegrationWriteAllowed
       ? 'entity-integration-policy'
       : null;
+  // §9.4/R-009 honesty: the message may only claim affordances this same object actually
+  // carries — never promise a preview/open that previewAvailable/canOpen suppress (B1).
   const writeDisabledMessage = writeDisabledReason === 'provider'
-    ? 'This Google artifact is read-only on the provider side. You can still preview it.'
+    ? previewActionable
+      ? 'This Google artifact is read-only on the provider side. You can still preview it.'
+      : 'This Google artifact is read-only on the provider side, and no further actions are available for it here.'
     : writeDisabledReason === 'entity-integration-policy'
-      ? 'Editing from Entity is disabled for this Google connection. You can still preview or open the document in Google.'
+      ? openUrl
+        ? 'Editing from Entity is disabled for this Google connection. You can still open the document in Google.'
+        : 'Editing from Entity is disabled for this Google connection.'
       : null;
 
   const { summary, derivable } = derivePermissionSummary(providerMetadata);

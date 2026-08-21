@@ -106,3 +106,45 @@ Preview-failure test: named above; structural assertion on `canOpen`/`openUrl`/`
 ## Unresolved risk
 
 None blocking. Note: the R-009 "Embedding must remain unsupported" line is honored structurally (`embed_editor` remains in FAIL_CLOSED_CAPABILITIES; nothing here surfaces embedding affordances).
+
+## r2 Addendum — THE-959 GLM 5.3 round-1 review fixes (2026-08-21, base `2e37eb83…`)
+
+Round 2 of 3. All blocking findings (B1, B2) and in-path should-fixes (S2, S3, S4) fixed RED→GREEN; S1 recorded per manager-directed record-only disposition. Allowed paths only: `read-state.ts`/`read-state.test.ts`, `externalDocumentPreview.ts`/`__tests__/externalDocumentPreview.test.ts`, this EVIDENCE file.
+
+### Findings fixed
+
+- **B1 — write-disabled message honesty (§9.4/R-009).**
+  - Server (`read-state.ts`): provider-read-only message is now derived from the same object's affordances — claims "You can still preview it." ONLY when preview is actionable in that same return object, otherwise "read-only on the provider side, and no further actions are available for it here."; entity-policy message claims an open target only when `openUrl` is non-null.
+  - App (`externalDocumentPreview.ts`): restricted-branch message rewritten to claim nothing ("…Entity permissions restrict this document, so no preview or open action is available here." — no "can still"/"you can"); main-path messages now branch on the same view's actual `previewAvailable`/`canOpen`.
+  - RED→GREEN: server test "§9.4 honesty: the provider read-only message never claims a preview the same object suppresses" failed at base (message contained suppressed-affordance claims), passes at fix. App tests B1a/B1b could not even import at base (missing export) and after export-existence fix fail against base logic's hardcoded promises — both pass at fix.
+- **B2 — editUrl unavailable-ref masking (R-009.2).** `editUrl` now consumes the masked value (`maskedOpenUrl`, null under `externalRefUnavailable` for deleted/permission-revoked refs), symmetric with `openUrl`/`canOpen`. RED→GREEN: app tests "B2: editUrl is masked when the external ref is unavailable (deleted)" and "(permission-revoked)" failed at base (`editUrl` carried the live URL), pass at fix.
+- **S2 — app/server derivation parity.** App link-token set gains `'linkshared'`; both sides now export their canonical token map (`GOOGLE_SHARING_EVIDENCE_TOKENS_BY_SUMMARY` / `PERMISSION_SUMMARY_EVIDENCE_TOKENS_BY_SUMMARY`) with identical member lists, pinned by a `toEqual`/`deepEqual` parity test on each side. §9.4 evidence-key divergence (`provider_write_protected` vs `providerWriteProtected`/`write_protected` vs `providerMetadata.*`) remains a WIRING-LANE carry — full consolidation deliberately not done here (no cross-package restructuring allowed).
+- **S3 — https scheme allowlist.** `read-state.ts` accepts only well-formed `https://` URLs as provider-evidenced open/edit links; `javascript:` (any case), `data:` (any case), `http:`, protocol-relative, empty-after-trim, and non-URL strings all resolve to null without throwing. RED→GREEN: server S3 test failed at base (`javascript:alert(1)` rode through as `openUrl`), passes at fix. Base `readOpenUrl` predecessor in the app copy remains unvalidated-by-scheme — pre-existing surface, observed only (out of this finding's stated path).
+- **S4 — doctrine reuse + fail-closed coverage.** Hand-rolled supported/degraded lookup replaced with the exported `capabilityAllowsActionForKey(report, key)` from `../types` (import-only; `types.ts` untouched); input type tightened to `CapabilityReport`. Fail-closed branch covered by two new tests (foreign entry whose `name` mismatches its key → preview unavailable; report missing a capability key entirely → open/edit null).
+
+### S1 disposition (record-only, manager-directed)
+
+The §9.3 evidence vocabulary has ZERO non-test producers today: `sharing_state`/`sharingState`/`visibility`/`permission_summary_state`/`permissionSummaryState` have no writer in `packages/server`/`packages/db`. The only field actually produced is `external_permission_summary` (free-text passthrough, body-suppliable), which this derivation intentionally does not ingest. Consequence: until the wiring lane adds a token producer, the live UI permission row renders Unknown for every Google doc. Whether to accept vocabulary-exact values from the existing `external_permission_summary` field, or to add a producer, is a WIRING-LANE decision — not acted on here.
+
+### Commands + exit codes (Node 22 via /opt/homebrew/opt/node@22/bin)
+
+1. RED (at base): `cd packages/server && npx vitest run src/document-providers/google/read-state.test.ts` → 3 failed | 13 passed (16): §9.4-honesty, S2-parity, S3-https. Exit 0 (vitest run exit code masked by pipe tail; failures verbatim above).
+2. RED (at base): `cd packages/app && node --test src/components/mission-control/utils/__tests__/externalDocumentPreview.test.ts` (Node 26 default) → module-load failure: missing export `PERMISSION_SUMMARY_EVIDENCE_TOKENS_BY_SUMMARY` (tests unwritable at base without it; individual assertions verified by inspection + re-run post-export under Node 22).
+3. GREEN focused server: same command → 16 passed (16).
+4. GREEN focused app: `cd packages/app && PATH=/opt/homebrew/opt/node@22/bin:$PATH node --test src/components/mission-control/utils/__tests__/externalDocumentPreview.test.ts` → 18 pass, 0 fail, exit 0.
+5. `cd packages/server && npm run build` → clean strict tsc, exit 0 (after one intermediate TS2345 fix: input typed as `CapabilityReport`). Full server suite at final HEAD: `npx vitest run` → 216 files, 2167 tests passed.
+6. `npm --prefix packages/app run build` (tsc && vite build) → exit 0 (chunk-size warning pre-existing, non-error).
+
+### ctrl:gate
+
+`npm run ctrl:gate` → PASSED on first run, exit 0 (`[ctrl] gate passed ✅`); 216 files / 2167 tests green. The known `doc-intelligence-ask-schema.test.ts` flake did NOT occur; no rerun needed.
+
+### Rule-outs
+
+- `types.ts` — IMPORT-ONLY (S4); untouched. No routes/adapters/`fake-adapter.ts`/`contract.test.ts`/`TaskDetailPanel.tsx` edits. No OpenWiki regeneration, no receipt wiring, no flag host/event table, no network calls. Worktree diff contains exactly the four allowed paths + this EVIDENCE addendum.
+
+### Unresolved risk / carries
+
+- S1 producer gap (above) → wiring lane.
+- §9.4 evidence-key divergence (S2 disclosure) → wiring lane consolidation.
+- Browser visual proof deferral (tracked) must be carried at wiring (T-038/T-039).
