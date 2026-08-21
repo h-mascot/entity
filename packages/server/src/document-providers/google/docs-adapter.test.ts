@@ -32,6 +32,7 @@ import {
   createGoogleDocsAdapter,
   UnsafeRevisionTokenError,
   GoogleTransportConflictError,
+  DECLARED_DOCS_REQUEST_KINDS,
   type GoogleDocsBatchRequest,
   type GoogleDocsTransport,
   type GoogleDocMetadata,
@@ -77,8 +78,6 @@ class DeterministicGoogleDocsTransport implements GoogleDocsTransport {
   declaredRequestKinds: ReadonlySet<string> = new Set(['insertText', 'replaceAllText']);
   /** Override revision generation (used by tests to inject unsafe/benign revision values). */
   nextReportedRevision?: () => string;
-  /** External ids whose returned revision contains an unsafe character (fail-closed proof). */
-  docsWithUnsafeRevision = new Set<string>();
 
   private nextRevision(): string {
     this.revSeq += 1;
@@ -141,10 +140,7 @@ class DeterministicGoogleDocsTransport implements GoogleDocsTransport {
   }
 
   private metaFor(doc: FakeDoc): GoogleDocMetadata {
-    let revision = this.nextReportedRevision ? this.nextReportedRevision() : doc.revision;
-    if (this.docsWithUnsafeRevision.has(doc.documentId)) {
-      revision = `rev\u2066`; // force an unsafe bidi-isolate control into the reported revision
-    }
+    const revision = this.nextReportedRevision ? this.nextReportedRevision() : doc.revision;
     return {
       documentId: doc.documentId,
       title: doc.title,
@@ -448,7 +444,6 @@ describe('T-014 adapter-boundary revision-token strictness (THE-950 r2 F2)', () 
     // (The injection happens after create: create's own descriptor build is equally
     // fail-closed and would reject the token outright — see EVIDENCE T-014.)
     transport.nextReportedRevision = () => `rev\u2066`;
-    void transport.docsWithUnsafeRevision;
     await expect(
       adapter.read({ external_id: created.descriptor.external_id }),
     ).rejects.toBeInstanceOf(UnsafeRevisionTokenError);
@@ -459,6 +454,120 @@ describe('T-014 adapter-boundary revision-token strictness (THE-950 r2 F2)', () 
     transport.nextReportedRevision = () => 'rev_17QkAaiFhyZK871Jozj6w';
     const created = await adapter.create(docCreateInput());
     expect(created.descriptor.current_revision).toMatch(/^rev_17/);
+  });
+});
+
+/* ============================================================================
+ * THE-955 r1 F1 — capability fold from LIVE connection state.
+ * open_external / human_edit / version_history must degrade or fail-closed with the
+ * connection — never hardcoded 'supported'. Mirrors the fake adapter's T-005 behavior.
+ * ============================================================================ */
+
+describe('T-015 carry F1 (THE-955 r1) — live-state capability fold in docs-adapter', () => {
+  type Case = { state: DocumentAuthState; expected: string };
+  const cases: Case[] = [
+    { state: 'authorized', expected: 'supported' },
+    { state: 'degraded', expected: 'degraded' },
+    { state: 'unknown', expected: 'unknown' },
+    { state: 'unauthorized', expected: 'unsupported' },
+  ];
+
+  it.each(cases)('connection $state folds open_external/human_edit/version_history to $expected', async ({ state, expected }) => {
+    const { adapter } = makeAdapter();
+    const report = await adapter.resolveCapabilities({
+      provider: 'google_workspace',
+      artifact_type: 'document',
+      connectionState: state,
+      destinationId: null,
+      runtime: {},
+    });
+    expect(report.open_external.state).toBe(expected);
+    expect(report.human_edit.state).toBe(expected);
+    expect(report.version_history.state).toBe(expected);
+  });
+
+  it('a degraded TRANSPORT-side state also degrades the folded lanes (both evidence sources)', async () => {
+    const { adapter, transport } = makeAdapter();
+    transport.connectionState = 'degraded';
+    const report = await adapter.resolveCapabilities({
+      provider: 'google_workspace',
+      artifact_type: 'document',
+      connectionState: 'authorized', // caller optimistic; transport evidence wins (fail-closed)
+      destinationId: null,
+      runtime: {},
+    });
+    expect(report.open_external.state).toBe('degraded');
+    expect(report.human_edit.state).toBe('degraded');
+    expect(report.version_history.state).toBe('degraded');
+  });
+});
+
+/* ============================================================================
+ * THE-955 r1 F2 — replace_text semantics: INSERT-only; no anchorless reinterpretation.
+ * ============================================================================ */
+
+describe('T-015 carry F2 (THE-955 r1) — anchorless replace_text typed rejection (docs adapter)', () => {
+  it('replaceAllText is NOT in the declared request kinds (typed fail-closed guard)', () => {
+    expect(DECLARED_DOCS_REQUEST_KINDS.has('replaceAllText')).toBe(false);
+    expect(DECLARED_DOCS_REQUEST_KINDS.has('insertText')).toBe(true);
+  });
+
+  it('the text lane NEVER forwards an anchorless replaceAllText — only declared insertText is sent', async () => {
+    const { adapter, transport } = makeAdapter();
+    const created = await adapter.create(docCreateInput());
+    transport.recordedBatchUpdates = [];
+    await adapter.mutate({
+      external_id: created.descriptor.external_id,
+      expectedRevision: created.descriptor.current_revision ?? '',
+      mutation: textMutation(),
+    });
+    for (const update of transport.recordedBatchUpdates) {
+      for (const req of update.requests) {
+        expect(req.kind).toBe('insertText'); // never replaceAllText — no silent prepend-as-replace
+      }
+    }
+  });
+});
+
+/* ============================================================================
+ * THE-955 r1 F6 — missing docs-adapter negatives.
+ * ============================================================================ */
+
+describe('T-015 carry F6 (THE-955 r1) — docs-adapter test gaps', () => {
+  it('create rejects a create-response revision containing an unsafe character (fail-closed at create time)', async () => {
+    const { adapter, transport } = makeAdapter();
+    transport.nextReportedRevision = () => 'rev\u2066';
+    await expect(adapter.create(docCreateInput())).rejects.toBeInstanceOf(UnsafeRevisionTokenError);
+  });
+
+  it('unauthorized connection: NO write lane is actionable (create/mutate probe fails closed)', async () => {
+    const { adapter, transport } = makeAdapter();
+    transport.connectionState = 'unauthorized';
+    const report = await adapter.resolveCapabilities({
+      provider: 'google_workspace',
+      artifact_type: 'document',
+      connectionState: 'unauthorized',
+      destinationId: null,
+      runtime: {},
+    });
+    expect(report.create.state).toBe('unsupported');
+    expect(report.agent_text_mutation.state).toBe('unsupported');
+    await expect(adapter.create(docCreateInput())).rejects.toBeInstanceOf(
+      UnsupportedAdapterMutationError,
+    );
+  });
+
+  it('discover({limit}) respects the limit and reports truncated deterministically', async () => {
+    const { adapter } = makeAdapter();
+    for (let i = 0; i < 3; i += 1) {
+      await adapter.create(docCreateInput({ idempotencyKey: `t015-disc-${i}` }));
+    }
+    const limited = await adapter.discover({ limit: 2 });
+    expect(limited.items.length).toBe(2);
+    expect(limited.truncated).toBe(true);
+    const full = await adapter.discover({});
+    expect(full.items.length).toBe(3);
+    expect(full.truncated).toBe(false);
   });
 });
 
