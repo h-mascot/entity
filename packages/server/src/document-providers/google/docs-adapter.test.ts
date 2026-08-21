@@ -419,6 +419,14 @@ describe('T-014 adapter-boundary revision-token strictness (THE-950 r2 F2)', () 
     { label: 'ASCII control U+0001', char: '\u0001' },
     { label: 'HTML injection <', char: '<' },
     { label: 'double-quote "', char: '"' },
+    // THE-956 r2 C3 — canonical shared set additions (previously coordinator-only).
+    { label: 'ZWSP U+200B', char: '\u200b' },
+    { label: 'ZWNJ U+200C', char: '\u200c' },
+    { label: 'ZWJ U+200D', char: '\u200d' },
+    { label: 'C1 control U+0085', char: '\u0085' },
+    { label: "apostrophe '", char: "'" },
+    { label: 'ampersand &', char: '&' },
+    { label: 'backslash \\', char: '\\' },
   ];
 
   it.each(UNSAFE_SAMPLES)(

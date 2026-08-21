@@ -73,6 +73,24 @@ class DeterministicGoogleSheetsTransport implements GoogleSheetsTransport {
   forceEveryMutationConflict = false;
   /** When true, getSpreadsheet returns null for every id (vanished artifact). */
   vanishAll = false;
+  /** When set, getSpreadsheet returns null exactly on the Nth call (vanish-between-reads probe). */
+  vanishOnGetSpreadsheetCallNo?: number;
+  private getSpreadsheetCalls = 0;
+
+  /** Seed a workbook with an explicit title/tab layout (C1 wrong-tab-vector probe). */
+  seedWorkbook(input: { title: string; sheets: string[] }): { spreadsheetId: string; revision: string } {
+    this.seq += 1;
+    const spreadsheetId = `google-sheet-${this.seq}`;
+    const revision = this.nextRevision();
+    this.workbooks.set(spreadsheetId, {
+      spreadsheetId,
+      title: input.title,
+      revision,
+      modifiedTime: T015_FIXED_NOW,
+      sheets: input.sheets.map((title) => ({ title })),
+    });
+    return { spreadsheetId, revision };
+  }
   /** Record of every structured range-mutation envelope forwarded (bounded proof). */
   recordedRangeUpdates: Array<{ spreadsheetId: string; requests: GoogleSheetsSetRangeRequest[] }> = [];
   /** Override revision generation (inject unsafe/benign reported revision values). */
@@ -107,6 +125,8 @@ class DeterministicGoogleSheetsTransport implements GoogleSheetsTransport {
   }
 
   getSpreadsheet(input: { spreadsheetId: string }): GoogleSpreadsheetMetadata | null {
+    this.getSpreadsheetCalls += 1;
+    if (this.vanishOnGetSpreadsheetCallNo === this.getSpreadsheetCalls) return null;
     if (this.vanishAll) return null;
     const wb = this.workbooks.get(input.spreadsheetId);
     return wb ? this.metaFor(wb) : null;
@@ -351,7 +371,7 @@ describe('T-015 Google Sheets adapter — range targeting', () => {
     expect(transport.recordedRangeUpdates.length).toBe(0); // nothing reached the transport
   });
 
-  it.each(['A0', '1A', 'AAAA1', 'A1:B', 'Sheet1!', '', 'A1:C1048577'])(
+  it.each(['A0', '1A', 'AAAA1', 'A1:B', 'Sheet1!', ''])(
     'rejects malformed A1 selector %j before any transport write',
     async (cell) => {
       const { adapter, transport } = makeAdapter();
@@ -383,6 +403,149 @@ describe('T-015 Google Sheets adapter — range targeting', () => {
     expect(isRectangularValues([])).toBe(false);
     expect(isTypeBoundedValues([['a', 1, true, null]])).toBe(true);
     expect(isTypeBoundedValues([[{ bad: true }]] as unknown as SheetsCellValue[][])).toBe(false);
+  });
+});
+
+/* ============================================================================
+ * R2 (THE-956 GLM review round 1) — blocking findings C1/C2/T1/T2.
+ * ============================================================================ */
+
+describe('T-015 r2 C1 — bare-range selectors resolve to the FIRST tab, never the workbook title', () => {
+  it('wrong-tab vector: workbook titled like a tab — bare A1 targets the first tab (Data), NOT "My Workbook"', async () => {
+    const { adapter, transport } = makeAdapter();
+    const seeded = transport.seedWorkbook({ title: 'My Workbook', sheets: ['Data', 'My Workbook'] });
+    transport.recordedRangeUpdates = [];
+    const result = await adapter.mutate({
+      external_id: seeded.spreadsheetId,
+      expectedRevision: seeded.revision,
+      mutation: rangeMutation('A1'),
+    });
+    expect(result.resultRevision).toMatch(/^sheets-rev-/);
+    expect(transport.recordedRangeUpdates.length).toBe(1);
+    expect(transport.recordedRangeUpdates[0].requests[0].sheet).toBe('Data');
+    expect(transport.recordedRangeUpdates[0].requests[0].sheet).not.toBe('My Workbook');
+  });
+
+  it('typical workbook (title matches no tab): bare A1 still targets the first tab deterministically', async () => {
+    const { adapter, transport } = makeAdapter();
+    const seeded = transport.seedWorkbook({ title: 'Q3 Budget Model', sheets: ['Sheet1'] });
+    transport.recordedRangeUpdates = [];
+    await adapter.mutate({
+      external_id: seeded.spreadsheetId,
+      expectedRevision: seeded.revision,
+      mutation: rangeMutation('A1'),
+    });
+    expect(transport.recordedRangeUpdates.length).toBe(1);
+    expect(transport.recordedRangeUpdates[0].requests[0].sheet).toBe('Sheet1');
+  });
+
+  it('a workbook reporting NO tabs fails closed typed for a bare range (no invented target)', async () => {
+    const { adapter, transport } = makeAdapter();
+    const seeded = transport.seedWorkbook({ title: 'Empty', sheets: [] });
+    await expect(
+      adapter.mutate({
+        external_id: seeded.spreadsheetId,
+        expectedRevision: seeded.revision,
+        mutation: rangeMutation('A1'),
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedAdapterMutationError);
+  });
+});
+
+describe('T-015 r2 C2 — multi-cell ranges are typed-rejected by the production mutate lane (§12.4)', () => {
+  it('Sheet1!A1:B2 NEVER reaches the transport with a mismatched 1×1 values envelope', async () => {
+    const { adapter, transport } = makeAdapter();
+    const created = await adapter.create(sheetCreateInput());
+    transport.recordedRangeUpdates = [];
+    await expect(
+      adapter.mutate({
+        external_id: created.descriptor.external_id,
+        expectedRevision: created.descriptor.current_revision ?? '',
+        mutation: rangeMutation('Sheet1!A1:B2'),
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedAdapterMutationError);
+    expect(transport.recordedRangeUpdates.length).toBe(0);
+  });
+});
+
+describe('T-015 r2 T1 — A1 bounds and ordering enforced for the RIGHT reason', () => {
+  it('row beyond the documented 1048576 bound is rejected as OUT-OF-BOUNDS (never forwarded)', async () => {
+    const { adapter, transport } = makeAdapter();
+    const created = await adapter.create(sheetCreateInput());
+    transport.recordedRangeUpdates = [];
+    await expect(
+      adapter.mutate({
+        external_id: created.descriptor.external_id,
+        expectedRevision: created.descriptor.current_revision ?? '',
+        mutation: rangeMutation('Sheet1!A9999999'),
+      }),
+    ).rejects.toThrow(/bound/i);
+    expect(transport.recordedRangeUpdates.length).toBe(0);
+  });
+
+  it('a REVERSED range (start after end on either axis) is rejected as reversed (never forwarded)', async () => {
+    const { adapter, transport } = makeAdapter();
+    const created = await adapter.create(sheetCreateInput());
+    transport.recordedRangeUpdates = [];
+    await expect(
+      adapter.mutate({
+        external_id: created.descriptor.external_id,
+        expectedRevision: created.descriptor.current_revision ?? '',
+        mutation: rangeMutation('Sheet1!B2:A1'),
+      }),
+    ).rejects.toThrow(/reversed/i);
+    expect(transport.recordedRangeUpdates.length).toBe(0);
+  });
+
+  it('A1:C1048577 is rejected for the BOUNDS reason (it is pattern-valid; base passed it via sheet lookup)', async () => {
+    const { adapter, transport } = makeAdapter();
+    const created = await adapter.create(sheetCreateInput());
+    transport.recordedRangeUpdates = [];
+    await expect(
+      adapter.mutate({
+        external_id: created.descriptor.external_id,
+        expectedRevision: created.descriptor.current_revision ?? '',
+        mutation: rangeMutation('A1:C1048577'),
+      }),
+    ).rejects.toThrow(/bound/i);
+    expect(transport.recordedRangeUpdates.length).toBe(0);
+  });
+});
+
+describe('T-015 r2 T2(b)/minor(ii) — vanished artifacts are typed, and no untyped double-read crash', () => {
+  it('read on a vanished artifact throws typed AdapterArtifactNotFoundError', async () => {
+    const { adapter, transport } = makeAdapter();
+    const created = await adapter.create(sheetCreateInput());
+    transport.vanishAll = true;
+    await expect(adapter.read({ external_id: created.descriptor.external_id })).rejects.toBeInstanceOf(
+      AdapterArtifactNotFoundError,
+    );
+  });
+
+  it('mutate on a vanished artifact throws typed AdapterArtifactNotFoundError', async () => {
+    const { adapter, transport } = makeAdapter();
+    const created = await adapter.create(sheetCreateInput());
+    transport.vanishAll = true;
+    await expect(
+      adapter.mutate({
+        external_id: created.descriptor.external_id,
+        expectedRevision: created.descriptor.current_revision ?? '',
+        mutation: rangeMutation(),
+      }),
+    ).rejects.toBeInstanceOf(AdapterArtifactNotFoundError);
+  });
+
+  it('an artifact vanishing between internal metadata reads fails TYPED, never crashes untyped', async () => {
+    const { adapter, transport } = makeAdapter();
+    const created = await adapter.create(sheetCreateInput());
+    transport.vanishOnGetSpreadsheetCallNo = 2; // base: 2nd untyped `!` read → TypeError
+    await expect(
+      adapter.mutate({
+        external_id: created.descriptor.external_id,
+        expectedRevision: created.descriptor.current_revision ?? '',
+        mutation: rangeMutation(),
+      }),
+    ).rejects.toBeInstanceOf(AdapterArtifactNotFoundError);
   });
 });
 
@@ -476,6 +639,13 @@ describe('T-015 adapter-boundary revision-token strictness (THE-950 r2 F2)', () 
     { label: 'Soft Hyphen U+00AD', char: '\u00ad' },
     { label: 'Arabic Letter Mark U+061C', char: '\u061c' },
     { label: 'HTML injection <', char: '<' },
+    { label: 'ZWSP U+200B (r2 C3 shared set)', char: '\u200b' },
+    { label: 'ZWNJ U+200C (r2 C3 shared set)', char: '\u200c' },
+    { label: 'C1 control U+0085 (r2 C3 shared set)', char: '\u0085' },
+    { label: "apostrophe ' (r2 C3 shared set)", char: "'" },
+    { label: 'ampersand & (r2 C3 shared set)', char: '&' },
+    { label: 'backslash \\ (r2 C3 shared set)', char: '\\' },
+    { label: 'LINE SEPARATOR U+2028 (r2 C3 shared set)', char: '\u2028' },
   ])('mutate rejects an expectedRevision containing $label with UnsafeRevisionTokenError', async ({ char }) => {
     const { adapter } = makeAdapter();
     const created = await adapter.create(sheetCreateInput());
@@ -527,6 +697,13 @@ describe('T-015 Google Sheets adapter — live-state capability folds & fail-clo
           // unauthorized/unknown must NEVER lift a lane to supported.
           expect(report[name].state, name).not.toBe('supported');
         }
+      }
+      // T-015 r2 T2(c): read-lane enforcement on unauthorized is asserted via adapter.read
+      // THROWING, not only via report states.
+      if (state === 'unauthorized') {
+        await expect(adapter.read({ external_id: created.descriptor.external_id })).rejects.toBeInstanceOf(
+          UnsupportedAdapterMutationError,
+        );
       }
       // Writes fail closed outright on any non-authorized state.
       await expect(adapter.create(sheetCreateInput({ idempotencyKey: 't015-neg' }))).rejects.toBeInstanceOf(

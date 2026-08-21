@@ -39,20 +39,38 @@ import { AdapterArtifactNotFoundError, StaleRevisionError, mutationCapability } 
 /** R-025 fixed conflict message — does NOT embed raw (possibly hostile) revision tokens. */
 export const STALE_REVISION_MESSAGE = 'The document changed after this operation was prepared.';
 
+/**
+ * THE-956 r2 (C3): THE single canonical unsafe-revision-character class. It is exported from
+ * here and consumed by BOTH Google adapter boundaries (`docs-adapter.ts`, `sheets-adapter.ts`)
+ * as well as this module's sanitizer, so the "strip" set and the "reject" set cannot drift.
+ * Composition = union of the previous coordinator strip set and the previous adapter reject
+ * set (tightened only, never loosened):
+ *   - C0 controls + DEL (U+0000–U+001F, U+007F) and C1 controls (U+0080–U+009F)
+ *   - zero-width format characters U+200B–U+200D and directional marks U+200E/U+200F
+ *   - bidi embeddings U+202A–U+202E; bidi isolates U+2066–U+2069; Arabic Letter Mark U+061C
+ *   - BOM/ZWNBSP U+FEFF, Word Joiner U+2060, Soft Hyphen U+00AD
+ *   - LINE SEPARATOR U+2028 (adapter-boundary rule adopted here: never legitimate in a token)
+ *   - HTML/injection metacharacters `<` `>` `"` `'` `&` `\\`
+ * The coordinator STRIPS these characters from any token surfaced in an error/log/response;
+ * the adapters REJECT any token containing them at the boundary with the typed
+ * UnsafeRevisionTokenError. Ordinary opaque tokens (e.g. `rev-17`, `etag_v1`) are untouched.
+ */
+export const UNSAFE_REVISION_TOKEN_CHARACTERS =
+  /[\u0000-\u001f\u007f\u0080-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2060\u00ad<>"'&\\\u2028]/;
+
+/** Global copy of the canonical class for replace-all stripping (regexes are stateful with /g). */
+const UNSAFE_TOKEN_CHARS_GLOBAL = new RegExp(UNSAFE_REVISION_TOKEN_CHARACTERS.source, 'g');
+
 const DEFAULT_MAX_REVISION_TOKEN_LENGTH = 64;
 
 /**
  * Characters stripped from an untrusted revision token before it is placed in any response or log:
- * C0/C1 control characters (including newlines/NUL), HTML/XML metacharacters, and Unicode
- * bidi/format controls (zero-width space/joiner/non-joiner U+200B–U+200F, bidi embeddings
- * U+202A–U+202E, bidi ISOLATES U+2066–U+2069, Arabic Letter Mark U+061C) plus invisible/
- * spoofing format characters (BOM/ZWNBSP U+FEFF, Word Joiner U+2060, Soft Hyphen U+00AD).
- * THE-950 r2 F2 (core half, landed T-015/THE-956): this set now matches the extended set the
- * real adapters enforce at their boundary. Removes the HTML injection surface and
- * hidden-direction/spoofing controls while preserving ordinary opaque tokens (e.g. `rev-17`,
- * `etag_v1`).
+ * exactly the canonical shared class {@link UNSAFE_REVISION_TOKEN_CHARACTERS} above (THE-956 r2
+ * C3) — C0/C1 controls, HTML/XML metacharacters, Unicode bidi/format/spoofing controls, and
+ * LINE SEPARATOR U+2028. This IS the same set both Google adapters enforce at their boundary
+ * (shared constant, pinned by test), so a token rejected at an adapter boundary is always fully
+ * scrubbed here, and vice versa.
  */
-const UNSAFE_TOKEN_CHARS = /[\u0000-\u001f\u007f\u0080-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2060\u00ad<>"'&\\]/g;
 
 /**
  * Sanitize an untrusted provider revision token for error/log/response inclusion. Never treated as
@@ -62,7 +80,7 @@ const UNSAFE_TOKEN_CHARS = /[\u0000-\u001f\u007f\u0080-\u009f\u200b-\u200f\u202a
  */
 export function sanitizeRevisionToken(raw: unknown, maxLength = DEFAULT_MAX_REVISION_TOKEN_LENGTH): string {
   if (raw == null) return '';
-  const scrubbed = String(raw).replace(UNSAFE_TOKEN_CHARS, '');
+  const scrubbed = String(raw).replace(UNSAFE_TOKEN_CHARS_GLOBAL, '');
   return scrubbed.slice(0, maxLength);
 }
 

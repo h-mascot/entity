@@ -51,6 +51,7 @@ import type {
 import { AdapterArtifactNotFoundError, StaleRevisionError } from './types';
 import {
   sanitizeRevisionToken,
+  UNSAFE_REVISION_TOKEN_CHARACTERS,
   readMutationPrecondition,
   assertMutationPrecondition,
   UnsafeMutationError,
@@ -477,5 +478,60 @@ describe('T-009 — preflight success + STALE_REVISION envelope (R-025 contract,
     expect(body.expectedRevision).toBe('rev-1');
     expect(body.currentRevision).toBe('rev-2');
     expect(body.retryable).toBe(true);
+  });
+});
+
+/* ============================================================================
+ * THE-956 r2 (GLM review round 1, C3) — canonical unsafe-token set is SHARED and pinned.
+ *
+ * The coordinator's strip set and the Google adapters' boundary-rejection set must be the SAME
+ * set (exported from this module and consumed by both adapters). This test pins equivalence so
+ * drift cannot recur silently: for every probe character, the sanitizer strips it if and only if
+ * it is in the canonical class — and the class covers exactly the documented union.
+ * ============================================================================ */
+describe('THE-956 r2 C3 — canonical unsafe revision-token set (shared coordinator/adapters)', () => {
+  const UNSAFE_PROBES: ReadonlyArray<{ label: string; char: string }> = [
+    { label: 'C0 control U+0001', char: '\u0001' },
+    { label: 'DEL U+007F', char: '\u007f' },
+    { label: 'C1 control U+0085', char: '\u0085' },
+    { label: 'C1 control U+009F', char: '\u009f' },
+    { label: 'ZWSP U+200B', char: '\u200b' },
+    { label: 'ZWJ U+200D', char: '\u200d' },
+    { label: 'LRM U+200E', char: '\u200e' },
+    { label: 'RLM U+200F', char: '\u200f' },
+    { label: 'LINE SEPARATOR U+2028', char: '\u2028' },
+    { label: 'LRE U+202A', char: '\u202a' },
+    { label: 'LRI U+2066', char: '\u2066' },
+    { label: 'Arabic Letter Mark U+061C', char: '\u061c' },
+    { label: 'BOM U+FEFF', char: '\ufeff' },
+    { label: 'Word Joiner U+2060', char: '\u2060' },
+    { label: 'Soft Hyphen U+00AD', char: '\u00ad' },
+    { label: 'less-than <', char: '<' },
+    { label: 'greater-than >', char: '>' },
+    { label: 'double-quote "', char: '"' },
+    { label: "apostrophe '", char: "'" },
+    { label: 'ampersand &', char: '&' },
+    { label: 'backslash \\', char: '\\' },
+  ];
+  const SAFE_PROBES: ReadonlyArray<{ label: string; char: string }> = [
+    { label: 'bullet U+2022 (benign printable)', char: '\u2022' },
+    { label: 'ASCII letter', char: 'a' },
+    { label: 'digit', char: '7' },
+    { label: 'hyphen', char: '-' },
+    { label: 'underscore', char: '_' },
+  ];
+
+  it('every unsafe probe is BOTH stripped by the sanitizer AND matched by the canonical class', () => {
+    for (const { label, char } of UNSAFE_PROBES) {
+      expect(UNSAFE_REVISION_TOKEN_CHARACTERS.test(char), label).toBe(true);
+      expect(sanitizeRevisionToken(`a${char}b`), label).toBe('ab');
+    }
+  });
+
+  it('every benign probe is NEITHER stripped NOR matched (no over-restriction)', () => {
+    for (const { label, char } of SAFE_PROBES) {
+      expect(UNSAFE_REVISION_TOKEN_CHARACTERS.test(char), label).toBe(false);
+      expect(sanitizeRevisionToken(`a${char}b`), label).toBe(`a${char}b`);
+    }
   });
 });
