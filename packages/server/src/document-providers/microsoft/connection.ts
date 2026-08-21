@@ -115,6 +115,34 @@ export class RevokedConnectionError extends Error {
   }
 }
 
+/**
+ * A non-revoked connection that cannot serve operations because its auth state degraded
+ * or was never authorized (R-010.3). Distinct from RevokedConnectionError so API
+ * consumers can distinguish a dead grant from one that may recover via reauthorization.
+ */
+export class DegradedConnectionError extends Error {
+  readonly authState: DocumentAuthState;
+  constructor(authState: DocumentAuthState) {
+    super(
+      `CONNECTION_NOT_AUTHORIZED: the connection is not authorized to serve operations ` +
+        `(authState=${authState}); reauthorization is required`,
+    );
+    this.name = 'DegradedConnectionError';
+    this.authState = authState;
+  }
+}
+
+/** The injected transport reported an unrecoverable redemption error for the code exchange. */
+export class AuthorizationRedemptionError extends Error {
+  constructor() {
+    super(
+      'AUTHORIZATION_REDEMPTION_FAILED: the injected transport reported an error while ' +
+        'redeeming the authorization code; the connection is degraded',
+    );
+    this.name = 'AuthorizationRedemptionError';
+  }
+}
+
 /** R-032 least privilege: the requested lane's scope kind was not granted. */
 export class InsufficientScopeError extends Error {
   readonly requestedKind: 'read' | 'write';
@@ -142,15 +170,18 @@ export class SecretReferenceUnresolvableError extends Error {
   }
 }
 
-/** A required field of the connection record was empty. */
+/** A required field of the connection record was missing or failed validation. */
 export class InvalidConnectionRecordError extends Error {
   readonly field: string;
   constructor(field: string) {
-    super(`INVALID_CONNECTION_RECORD: field "${field}" must be a non-empty string`);
+    super(`INVALID_CONNECTION_RECORD: field "${field}" failed record validation`);
     this.name = 'InvalidConnectionRecordError';
     this.field = field;
   }
 }
+
+/** The only provider identity this module constructs connections for. */
+const MODULE_PROVIDER: DocumentProvider = 'microsoft_365';
 
 /* =============================================================================
  * Data contracts (no invented defaults; all provider-specific values are caller data).
@@ -216,6 +247,8 @@ export interface CapturedIdentityCall {
   kind: 'beginAuthorization' | 'redeemAuthorizationCode';
   connectionId?: string;
   stateParameter?: string;
+  code?: string;
+  codeVerifier?: string;
 }
 
 /* =============================================================================
@@ -231,16 +264,26 @@ export interface CapturedIdentityCall {
 export interface MicrosoftIdentityTransport {
   /**
    * Start one authorization transaction (authorization-code + PKCE + state). Returns the
-   * state parameter the provider will echo back on the redirect.
+   * state parameter the provider will echo back on the redirect AND the PKCE code
+   * verifier the transport will need at redemption time.
    */
-  beginAuthorization(input: { connectionId: string }): { stateParameter: string };
+  beginAuthorization(input: { connectionId: string }): {
+    stateParameter: string;
+    codeVerifier: string;
+  };
   /**
-   * Redeem the authorization code for the given state. Returns the OBSERVED tenant claims
+   * Redeem the authorization code for the given state. Receives the caller-echoed
+   * authorization `code` and the PKCE `codeVerifier` issued at beginAuthorization so a
+   * real transport can perform the full exchange. Returns the OBSERVED tenant claims
    * from the redeemed token plus the consent outcome — the module then enforces the
    * tenant binding itself (fail-closed; the transport's claim of a matching tenant is
    * never trusted as authorization).
    */
-  redeemAuthorizationCode(input: { stateParameter: string }): {
+  redeemAuthorizationCode(input: {
+    stateParameter: string;
+    code: string;
+    codeVerifier: string;
+  }): {
     observedTenantId: string;
     observedIssuer: string;
     outcome: 'consented' | 'admin_consent_required' | 'revoked' | 'error';
@@ -262,6 +305,7 @@ export interface MicrosoftEntraConnectionOptions {
 
 interface PendingAuthorization {
   stateParameter: string;
+  codeVerifier: string;
   consumed: boolean;
 }
 
@@ -281,6 +325,7 @@ export class MicrosoftEntraConnection {
   private readonly entityMetadataJson: string;
 
   private scopes: readonly MicrosoftScopeEntry[];
+  private readonly provider: DocumentProvider;
   private authState: DocumentAuthState;
   private readinessState: DocumentReadinessState;
   private consentState: MicrosoftConsentState;
@@ -296,6 +341,9 @@ export class MicrosoftEntraConnection {
     // Fail-closed record validation: a connection cannot exist without a concrete tenant
     // binding and resolvable secret REFERENCES (never the underlying values).
     if (!NON_EMPTY(record.connectionId)) throw new InvalidConnectionRecordError('connectionId');
+    if (record.provider !== MODULE_PROVIDER) {
+      throw new InvalidConnectionRecordError('provider');
+    }
     if (!NON_EMPTY(record.tenantBinding?.tenantId)) {
       throw new InvalidConnectionRecordError('tenantBinding.tenantId');
     }
@@ -313,10 +361,13 @@ export class MicrosoftEntraConnection {
     }
 
     this.connectionId = record.connectionId;
+    this.provider = record.provider;
     this.tenantBinding = { ...record.tenantBinding };
     this.secretReferences = { ...record.secretReferences };
     this.entityMetadataJson = record.entityMetadataJson;
-    this.scopes = [...record.scopes];
+    // Defensive copies of each entry too (F7): aliasing the caller's objects would let a
+    // post-construction mutation flip the security gate externally.
+    this.scopes = record.scopes.map((s) => ({ ...s }));
     this.authState = record.authState;
     this.readinessState = record.readinessState;
     this.consentState = record.consentState;
@@ -342,10 +393,10 @@ export class MicrosoftEntraConnection {
   snapshot(): MicrosoftConnectionSnapshot {
     return {
       connectionId: this.connectionId,
-      provider: 'microsoft_365',
+      provider: this.provider,
       tenantBinding: { ...this.tenantBinding },
       secretReferences: { ...this.secretReferences },
-      scopes: [...this.scopes],
+      scopes: this.scopes.map((s) => ({ ...s })),
       authState: this.authState,
       readinessState: this.readinessState,
       consentState: this.consentState,
@@ -364,7 +415,9 @@ export class MicrosoftEntraConnection {
    */
   writeLaneLifted(): boolean {
     if (this.revoked || this.authState !== 'authorized') return false;
-    if (this.consentState === 'admin_consent_required' || this.consentState === 'not_required') {
+    // Consent must be RESOLVED: unknown and admin-consent-pending states never lift a
+    // write; not_required (direct/app grants) and user_consented do.
+    if (this.consentState === 'admin_consent_required' || this.consentState === 'unknown') {
       return false;
     }
     return this.scopes.some((s) => s.kind === 'write' && s.granted);
@@ -374,17 +427,20 @@ export class MicrosoftEntraConnection {
 
   /** Begin one authorization transaction; the returned state binds the callback. */
   beginAuthorization(): { stateParameter: string } {
+    // Terminal revocation (F3 disposition): a revoked connection has no reauthorization
+    // path through this module; its rotated secret references make revival impossible.
+    if (this.revoked) throw new RevokedConnectionError();
     if (this.pending && !this.pending.consumed) {
       // Supersede an outstanding transaction (single outstanding binding).
       this.pending = null;
     }
-    const { stateParameter } = this.transport.beginAuthorization({
+    const { stateParameter, codeVerifier } = this.transport.beginAuthorization({
       connectionId: this.connectionId,
     });
     if (!NON_EMPTY(stateParameter)) {
       throw new CsrfStateMismatchError('missing');
     }
-    this.pending = { stateParameter, consumed: false };
+    this.pending = { stateParameter, codeVerifier, consumed: false };
     return { stateParameter };
   }
 
@@ -394,6 +450,8 @@ export class MicrosoftEntraConnection {
    * observed claims BEFORE any transition to authorized.
    */
   completeAuthorization(input: { stateParameter: string; code: string }): void {
+    // Terminal revocation (F3): no fresh authorization transaction on a revoked connection.
+    if (this.revoked) throw new RevokedConnectionError();
     // CSRF/state validation — missing, mismatched, or replayed states all reject.
     if (!input || !NON_EMPTY(input.stateParameter) || !this.pending) {
       this.lastCsrfFailure = input?.stateParameter ? 'replay' : 'missing';
@@ -409,24 +467,25 @@ export class MicrosoftEntraConnection {
     }
     this.pending.consumed = true;
 
+    // F2: the seam delivers the FULL exchange material — echoed authorization code plus
+    // the PKCE verifier issued at beginAuthorization — so a real transport can perform
+    // the complete authorization-code exchange without a later breaking interface change.
     const redemption = this.transport.redeemAuthorizationCode({
       stateParameter: input.stateParameter,
+      code: input.code,
+      codeVerifier: this.pending.codeVerifier,
     });
 
     // Tenant binding enforcement (R-010.2): the observed tenant claims from the redeemed
-    // token MUST match the binding; anything else fails closed and degrades.
+    // token MUST match the binding; anything else fails closed and degrades. Diagnostics
+    // always carry the OBSERVED TENANT value, never the issuer string (F5).
     if (
       redemption.observedTenantId !== this.tenantBinding.tenantId ||
       redemption.observedIssuer !== this.tenantBinding.issuerForm
     ) {
       this.authState = 'degraded';
       this.readinessState = 'degraded';
-      throw new TenantMismatchError(
-        this.tenantBinding.tenantId,
-        redemption.observedIssuer === this.tenantBinding.issuerForm
-          ? redemption.observedTenantId
-          : redemption.observedIssuer,
-      );
+      throw new TenantMismatchError(this.tenantBinding.tenantId, redemption.observedTenantId);
     }
 
     switch (redemption.outcome) {
@@ -446,9 +505,10 @@ export class MicrosoftEntraConnection {
         break;
       case 'error':
       default:
+        // F8: surfaced as a typed error, never a silent degradation.
         this.authState = 'degraded';
         this.readinessState = 'error';
-        break;
+        throw new AuthorizationRedemptionError();
     }
   }
 
@@ -474,14 +534,10 @@ export class MicrosoftEntraConnection {
       input.observedIssuer !== this.tenantBinding.issuerForm
     ) {
       // Cross-tenant attempt degrades the connection (fail-closed, never coerced).
+      // Diagnostics always carry the OBSERVED TENANT value, never the issuer string (F5).
       this.authState = 'degraded';
       this.readinessState = 'degraded';
-      throw new TenantMismatchError(
-        this.tenantBinding.tenantId,
-        input.observedIssuer === this.tenantBinding.issuerForm
-          ? input.observedTenantId
-          : input.observedIssuer,
-      );
+      throw new TenantMismatchError(this.tenantBinding.tenantId, input.observedTenantId);
     }
 
     const scopeGranted = this.scopes.some((s) => s.kind === input.operation && s.granted);
@@ -489,9 +545,10 @@ export class MicrosoftEntraConnection {
 
     if (input.operation === 'read') {
       // Reads act on the neutral auth state but still fail closed unless authorized.
+      // F4: the error type matches the ACTUAL state — revocation is checked above, so any
+      // remaining non-authorized state is degraded/unauthorized, not revoked.
       if (this.authState !== 'authorized') {
-        this.lastCsrfFailure = undefined;
-        throw new RevokedConnectionError();
+        throw new DegradedConnectionError(this.authState);
       }
       return;
     }
