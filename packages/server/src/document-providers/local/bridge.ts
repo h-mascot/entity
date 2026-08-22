@@ -153,7 +153,7 @@ export class LocalBridgeSecurity {
   }
 
   handshake(input: LocalBridgeHandshake): LocalBridgeHandshakeResult {
-    if (this.shutdownRevoked || !this.boundedHandshake(input)
+    if (this.shutdownRevoked || !this.isHandshakeInput(input) || !this.boundedHandshake(input)
       || input.protocolVersion !== LOCAL_BRIDGE_PROTOCOL_VERSION
       || !input.clientNonce || !this.options.allowedOrigins.includes(input.origin)
       || !this.verifyProof(input)) {
@@ -164,6 +164,7 @@ export class LocalBridgeSecurity {
       this.audit({ event: 'handshake', outcome: 'rejected', code: 'unavailable' });
       throw new LocalBridgeSecurityError('unauthorized', 'bridge is not ready');
     }
+    this.evictExpiredSessions();
     if (this.sessions.size >= LOCAL_BRIDGE_MAX_SESSIONS) {
       this.audit({ event: 'handshake', outcome: 'rejected', code: 'session_limit' });
       throw new LocalBridgeSecurityError('unauthorized', 'session limit reached');
@@ -193,6 +194,10 @@ export class LocalBridgeSecurity {
   }
 
   private async authorizeAsync(request: LocalBridgeRequest): Promise<AuthorizedLocalBridgeRequest> {
+    if (!this.isRequestInput(request) || !this.boundedRequest(request)) {
+      this.audit({ event: 'authorize', outcome: 'rejected', code: 'unauthorized' });
+      throw new LocalBridgeSecurityError('unauthorized', 'request rejected');
+    }
     if (this.shutdownRevoked) {
       this.audit({ event: 'authorize', outcome: 'rejected', code: 'shutdown' });
       throw new LocalBridgeSecurityError('unauthorized', 'bridge is shut down');
@@ -200,10 +205,6 @@ export class LocalBridgeSecurity {
     if (this.readiness !== 'ready') {
       this.audit({ event: 'authorize', outcome: 'rejected', code: 'unavailable', operation: request.operation });
       throw new LocalBridgeSecurityError('unauthorized', 'bridge is not ready');
-    }
-    if (!this.boundedRequest(request)) {
-      this.audit({ event: 'authorize', outcome: 'rejected', code: 'unauthorized' });
-      throw new LocalBridgeSecurityError('unauthorized', 'request rejected');
     }
     const session = this.sessions.get(request.sessionId);
     if (!session) throw new LocalBridgeSecurityError('unauthorized', 'unknown session');
@@ -251,7 +252,29 @@ export class LocalBridgeSecurity {
     let current: string;
     try { current = await realpath(canonical); } catch { throw new LocalBridgeSecurityError('path_outside_allowlist', 'managed file is unavailable'); }
     if (current !== canonical || !this.isUnderAllowedRoot(current)) throw new LocalBridgeSecurityError('path_outside_allowlist', 'managed path changed');
+    try {
+      const info = await lstat(current);
+      if (!info.isFile()) throw new LocalBridgeSecurityError('file_unavailable', 'managed target is not a regular file');
+    } catch (error) {
+      if (error instanceof LocalBridgeSecurityError) throw error;
+      throw new LocalBridgeSecurityError('file_unavailable', 'managed file is unavailable');
+    }
     return current;
+  }
+
+  private evictExpiredSessions(): void {
+    const now = this.now();
+    for (const [sessionId, session] of this.sessions) {
+      if (now >= session.expiresAt) this.sessions.delete(sessionId);
+    }
+  }
+
+  private isHandshakeInput(input: unknown): input is LocalBridgeHandshake {
+    return typeof input === 'object' && input !== null && !Array.isArray(input);
+  }
+
+  private isRequestInput(input: unknown): input is LocalBridgeRequest {
+    return typeof input === 'object' && input !== null && !Array.isArray(input);
   }
 
   private async safeRealpath(value: string): Promise<string> {

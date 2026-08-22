@@ -1,4 +1,4 @@
-import { mkdtemp, rename, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -98,6 +98,49 @@ describe('local bridge security skeleton', () => {
     await symlink(file, link);
     await expect(bridge.allowDocument({ documentRef: 'symlink', managedPath: link }))
       .rejects.toMatchObject({ code: 'symlink_forbidden' });
+  });
+
+  it('evicts expired sessions before enforcing the session cap', () => {
+    let now = 10_000;
+    const bridge = new LocalBridgeSecurity({
+      sharedSecret: 'cap-secret', allowedOrigins: ['http://localhost:3000'], allowedRoots: [],
+      sessionTtlMs: 10, now: () => now,
+    });
+    bridge.setReadiness('ready');
+    const makeHandshake = (clientNonce: string) => ({
+      protocolVersion: LOCAL_BRIDGE_PROTOCOL_VERSION, origin: 'http://localhost:3000', clientNonce,
+      proof: localBridgeHandshakeProof({ protocolVersion: LOCAL_BRIDGE_PROTOCOL_VERSION, origin: 'http://localhost:3000', clientNonce }, 'cap-secret'),
+    });
+    for (let index = 0; index < 128; index += 1) bridge.handshake(makeHandshake(`nonce-${index}`));
+    now += 11;
+    expect(bridge.handshake(makeHandshake('after-expiry')).sessionToken).toHaveLength(64);
+  });
+
+  it('rejects a registered directory after same-path replacement', async () => {
+    const { bridge, handshake, file } = await fixture();
+    const session = bridge.handshake(handshake);
+    const moved = `${file}.original`;
+    await rename(file, moved);
+    await mkdir(file);
+    await expect(bridge.authorize({ ...session, requestId: 'directory-swap', documentRef: 'doc-1', operation: 'open' }))
+      .rejects.toMatchObject({ code: 'file_unavailable' });
+    await rm(file, { recursive: true });
+    await rename(moved, file);
+    await expect(bridge.authorize({ ...session, requestId: 'directory-swap', documentRef: 'doc-1', operation: 'open' }))
+      .resolves.toMatchObject({ documentRef: 'doc-1' });
+  });
+
+  it('rejects malformed public handshake and authorization inputs with bridge errors', async () => {
+    const { bridge, handshake } = await fixture();
+    const malformedHandshakes: unknown[] = [null, undefined, 'handshake', 1, [], {}, { ...handshake, origin: 1 }];
+    for (const input of malformedHandshakes) {
+      expect(() => bridge.handshake(input as never)).toThrowError(LocalBridgeSecurityError);
+    }
+    const session = bridge.handshake(handshake);
+    const malformedRequests: unknown[] = [null, undefined, 'request', 1, [], {}, { ...session, requestId: 1 }];
+    for (const input of malformedRequests) {
+      await expect(bridge.authorize(input as never)).rejects.toBeInstanceOf(LocalBridgeSecurityError);
+    }
   });
 
   it('rejects symlink replacement during authorization without consuming the nonce', async () => {
