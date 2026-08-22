@@ -60,6 +60,23 @@ describe('LocalFileSourceAdapter metadata', () => {
     await expect(adapter.stat('linked-dir')).rejects.toThrow('Access outside source root is not allowed.');
   });
 
+  it('denies a source-root swap after containment validation', async () => {
+    const root = await makeTempRoot();
+    const outside = await makeTempRoot();
+    await fs.promises.writeFile(path.join(root, 'inside.md'), '# inside\\n', 'utf-8');
+    await fs.promises.writeFile(path.join(outside, 'inside.md'), '# outside\\n', 'utf-8');
+    const adapter = new LocalFileSourceAdapter(sourceFor(root));
+    const originalLstat = fs.promises.lstat;
+    vi.spyOn(fs.promises, 'lstat').mockImplementation(async (target) => {
+      await fs.promises.rename(root, `${root}-authorized`);
+      await fs.promises.symlink(outside, root, 'dir');
+      return originalLstat.call(fs.promises, target);
+    });
+
+    await expect(adapter.stat('inside.md')).rejects.toThrow('basePath changed during access');
+    await expect(fs.promises.readFile(path.join(outside, 'inside.md'), 'utf-8')).resolves.toBe('# outside\\n');
+  });
+
   it('rejects symlink escapes on read and write while allowing in-root files', async () => {
     const root = await makeTempRoot();
     const outside = await makeTempRoot();
