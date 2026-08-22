@@ -715,6 +715,19 @@ describe('T-003 operation-scoped creation idempotency (R-026)', () => {
     expect(repo.findDocumentOperation('workspace-2', 'idem-create-xyz')).toBeUndefined();
   });
 
+  it('rejects wrong-fingerprint and wrong-state durable completion attempts', async () => {
+    const db = trackDb(openFreshDb());
+    const { createDocumentIntegrationsRepository } = await import('./document-integrations');
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    repo.upsertDocumentOperation({ workspace_id: 'workspace-1', idempotency_key: 'idem-safe', provider: 'microsoft_365', artifact_type: 'document', operation_status: 'in_flight', request_fingerprint: 'fp-a' });
+    expect(() => repo.completeDocumentOperation('workspace-1', 'idem-safe', { request_fingerprint: 'fp-b', operation_status: 'completed', result_json: '{}' })).toThrow(/fingerprint/i);
+    expect(repo.findDocumentOperation('workspace-1', 'idem-safe')?.operation_status).toBe('in_flight');
+    repo.completeDocumentOperation('workspace-1', 'idem-safe', { request_fingerprint: 'fp-a', operation_status: 'completed', result_json: '{}' });
+    expect(() => repo.completeDocumentOperation('workspace-1', 'idem-safe', { request_fingerprint: 'fp-a', operation_status: 'completed', result_json: '{"forged":true}' })).toThrow(/transition/i);
+    expect(repo.findDocumentOperation('workspace-1', 'idem-safe')?.result_json).toBe('{}');
+  });
+
   it('late-fills provider_external_id and document_id once known (upsert + complete paths, idempotent)', async () => {
     const db = trackDb(openFreshDb());
     const { createDocumentIntegrationsRepository } = await import('./document-integrations');

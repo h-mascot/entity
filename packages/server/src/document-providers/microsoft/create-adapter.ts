@@ -182,6 +182,18 @@ function assertIdempotencyKey(key: unknown): asserts key is string {
   }
 }
 
+function assertCreatedArtifact(value: unknown): asserts value is MicrosoftCreatedArtifact {
+  if (!value || typeof value !== 'object') fail('IDEMPOTENCY_UNCERTAIN', 'persisted creation result is not an object', 'result_json');
+  const result = value as Partial<MicrosoftCreatedArtifact>;
+  if (result.provider !== 'microsoft_365' || !nonEmpty(result.providerIdentity) || !nonEmpty(result.providerUrl) || !nonEmpty(result.revision) ||
+      (result.creationStatus !== 'created' && result.creationStatus !== 'existing') || result.editorOpenProof !== 'unproven') {
+    fail('IDEMPOTENCY_UNCERTAIN', 'persisted creation result is malformed or semantically invalid', 'result_json');
+  }
+  try { if (new URL(result.providerUrl).protocol !== 'https:') throw new Error('unsafe'); } catch {
+    fail('IDEMPOTENCY_UNCERTAIN', 'persisted creation result has an unsafe provider URL', 'result_json');
+  }
+}
+
 function assertProviderResult(result: MicrosoftCreateTransportResult): void {
   if (!result || (result.outcome !== 'created' && result.outcome !== 'existing')) {
     fail('MALFORMED_PROVIDER_RESPONSE', 'provider response has no valid creation outcome');
@@ -222,7 +234,14 @@ export function createMicrosoftArtifact(
   });
   if (claim.kind === 'conflict') fail('IDEMPOTENCY_CONFLICT', 'idempotencyKey was already used for a different creation request', 'idempotencyKey');
   if (claim.kind === 'uncertain') fail('IDEMPOTENCY_UNCERTAIN', 'prior transport outcome is uncertain; reconciliation is required before retry', 'idempotencyKey');
-  if (claim.kind === 'completed' && claim.record.result_json) return JSON.parse(claim.record.result_json) as MicrosoftCreatedArtifact;
+  if (claim.kind === 'completed' && claim.record.result_json) {
+    let persisted: unknown;
+    try { persisted = JSON.parse(claim.record.result_json); } catch {
+      fail('IDEMPOTENCY_UNCERTAIN', 'persisted creation result is not valid JSON', 'result_json');
+    }
+    assertCreatedArtifact(persisted);
+    return persisted;
+  }
 
   let result: MicrosoftCreateTransportResult;
   try {
@@ -234,13 +253,13 @@ export function createMicrosoftArtifact(
       idempotencyKey: request.idempotencyKey,
     });
   } catch (_error) {
-    request.repository.completeDocumentOperation(request.workspaceId, request.idempotencyKey, { operation_status: 'uncertain' });
+    request.repository.completeDocumentOperation(request.workspaceId, request.idempotencyKey, { request_fingerprint: fingerprint, operation_status: 'uncertain' });
     throw new MicrosoftCreateError('IDEMPOTENCY_UNCERTAIN', 'provider outcome is uncertain; reconciliation is required before retry', 'idempotencyKey');
   }
   try {
     assertProviderResult(result);
   } catch (error) {
-    request.repository.completeDocumentOperation(request.workspaceId, request.idempotencyKey, { operation_status: 'uncertain' });
+    request.repository.completeDocumentOperation(request.workspaceId, request.idempotencyKey, { request_fingerprint: fingerprint, operation_status: 'uncertain' });
     throw error;
   }
   const created: MicrosoftCreatedArtifact = {
@@ -252,7 +271,7 @@ export function createMicrosoftArtifact(
     editorOpenProof: 'unproven',
   };
   request.repository.completeDocumentOperation(request.workspaceId, request.idempotencyKey, {
-    operation_status: 'completed', provider_external_id: created.providerIdentity, result_json: JSON.stringify(created),
+    request_fingerprint: fingerprint, operation_status: 'completed', provider_external_id: created.providerIdentity, result_json: JSON.stringify(created),
   });
   return created;
 }

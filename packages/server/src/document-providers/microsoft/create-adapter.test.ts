@@ -93,6 +93,17 @@ describe('T-022 Microsoft creation seam', () => {
     expect(injected.calls).toHaveLength(0);
   });
 
+  it.each(['not-json', JSON.stringify({ provider: 'microsoft_365' }), JSON.stringify({ provider: 'microsoft_365', providerIdentity: 'x', providerUrl: 'http://unsafe', revision: 'r', creationStatus: 'created', editorOpenProof: 'unproven' })])('fails closed on invalid persisted replay result', (result_json) => {
+    const injected = transport();
+    const first = createMicrosoftArtifact(injected, request(descriptors[0]!));
+    db.prepare('UPDATE document_operations SET result_json = ? WHERE workspace_id = ? AND idempotency_key = ?').run(result_json, 'workspace-a', 'idem-1');
+    const freshRepository = createDocumentIntegrationsRepository(db);
+    const replayTransport = transport();
+    expect(() => createMicrosoftArtifact(replayTransport, { ...request(descriptors[0]!), repository: freshRepository })).toThrow(expect.objectContaining({ code: 'IDEMPOTENCY_UNCERTAIN' }));
+    expect(replayTransport.calls).toHaveLength(0);
+    expect(first.providerIdentity).toBe('opaque-item');
+  });
+
   it('replays from a fresh repository/adapter instance without a provider call', () => {
     const firstTransport = transport();
     const first = createMicrosoftArtifact(firstTransport, request(descriptors[0]!));
