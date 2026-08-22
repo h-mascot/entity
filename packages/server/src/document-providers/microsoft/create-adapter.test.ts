@@ -57,11 +57,28 @@ describe('T-022 Microsoft creation seam', () => {
   it.each([
     ['tenant mismatch', { ...request(descriptors[0]!), tenantBinding: { tenantId: 'other', issuerForm: 'issuer-a' } }, 'TENANT_MISMATCH'],
     ['destination mismatch', { ...request(descriptors[0]!), destination: { ...destination, connectionId: 'other' } }, 'INVALID_DESTINATION'],
+    ['observed tenant mismatch', { ...request(descriptors[0]!), destination: { ...destination, observed: { ...destination.observed, observedTenantId: 'other' } } }, 'TENANT_MISMATCH'],
+    ['observed issuer mismatch', { ...request(descriptors[0]!), destination: { ...destination, observed: { ...destination.observed, observedIssuer: 'other' } } }, 'TENANT_MISMATCH'],
+    ['observed destination echo mismatch', { ...request(descriptors[0]!), destination: { ...destination, observed: { ...destination.observed, requestedDestinationId: 'other' } } }, 'INVALID_DESTINATION'],
+    ['observed identity mismatch', { ...request(descriptors[0]!), destination: { ...destination, observed: { ...destination.observed, observedIdentity: { ...permitted.identity, driveId: 'other' } } } }, 'INVALID_DESTINATION'],
     ['capability denied', { ...request(descriptors[0]!), connection: { ...connection, scopes: [] } }, 'CONNECTION_NOT_READY'],
     ['revoked', { ...request(descriptors[0]!), connection: { ...connection, revoked: true } }, 'CONNECTION_NOT_READY'],
+    ['degraded readiness', { ...request(descriptors[0]!), connection: { ...connection, readinessState: 'degraded' } }, 'CONNECTION_NOT_READY'],
+    ['unknown readiness', { ...request(descriptors[0]!), connection: { ...connection, readinessState: 'unknown' } }, 'CONNECTION_NOT_READY'],
   ] as const)('rejects %s before transport', (_name, input, code) => {
     const injected = transport();
     expect(() => createMicrosoftArtifact(injected, input)).toThrow(expect.objectContaining({ code }));
+    expect(injected.calls).toHaveLength(0);
+  });
+
+  it.each([
+    ['blank title', { ...descriptors[0]!, title: ' ' }],
+    ['empty content', { ...descriptors[0]!, content: new Uint8Array() }],
+    ['invalid key', { descriptor: descriptors[0]!, idempotencyKey: ' bad ' }],
+  ] as const)('rejects bounded input %s before transport', (_name, input) => {
+    const injected = transport();
+    const candidate = 'descriptor' in input ? { ...request(input.descriptor), idempotencyKey: input.idempotencyKey } : request(input);
+    expect(() => createMicrosoftArtifact(injected, candidate)).toThrow(expect.objectContaining({ code: 'INVALID_DESCRIPTOR' }));
     expect(injected.calls).toHaveLength(0);
   });
 
@@ -69,6 +86,21 @@ describe('T-022 Microsoft creation seam', () => {
     const injected = transport();
     expect(() => createMicrosoftArtifact(injected, request({ ...descriptors[0]!, format: 'xlsx' }))).toThrow(expect.objectContaining({ code: 'INVALID_DESCRIPTOR' }));
     expect(injected.calls).toHaveLength(0);
+  });
+
+  it('does not silently duplicate or accept conflicting reuse of an idempotency key', () => {
+    const injected = transport();
+    const first = createMicrosoftArtifact(injected, request(descriptors[0]!));
+    expect(createMicrosoftArtifact(injected, request(descriptors[0]!))).toEqual(first);
+    expect(() => createMicrosoftArtifact(injected, { ...request(descriptors[0]!), descriptor: descriptors[1]! })).toThrow(expect.objectContaining({ code: 'IDEMPOTENCY_CONFLICT' }));
+    expect(injected.calls).toHaveLength(1);
+  });
+
+  it('does not fabricate success after a transport throw that may have created remotely', () => {
+    const injected = { calls: [] as MicrosoftCreateTransportInput[], create(input: MicrosoftCreateTransportInput) { this.calls.push(input); throw new Error('provider uncertain'); } };
+    expect(() => createMicrosoftArtifact(injected, request(descriptors[0]!))).toThrow('provider uncertain');
+    expect(() => createMicrosoftArtifact(injected, request(descriptors[0]!))).toThrow(expect.objectContaining({ code: 'IDEMPOTENCY_UNCERTAIN' }));
+    expect(injected.calls).toHaveLength(1);
   });
 
   it.each([

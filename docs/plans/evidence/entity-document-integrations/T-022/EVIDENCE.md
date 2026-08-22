@@ -1,68 +1,53 @@
 # T-022 (THE-963) — Microsoft create lanes — EVIDENCE
 
-## Scope and authority
+## Repair base and authority
 
-- Clean HEAD was verified before editing as exactly `930180640160376515bbcd8f0ca579aa840cf210` on `runner/entity-document-integrations-20260818`.
-- The scoped AGENTS contract pins `83cacbc…`, while the local PRD and BUILD-CONTEXT pin the actual in-tree PRD as `c82e82d…`. This authority-pin conflict is accurately recorded and remains manager-owned; no authority document was edited.
-- Read before implementation: root/scoped AGENTS, BUILD-CONTEXT, the T-022 PRD contract and R-013, T-019/T-020/T-021 evidence, and the Microsoft capability ADR.
-- Node 22 was used (`v22.22.2`).
+- Repair base was verified exactly as `da2f5e4bf93ef5251b7f5b00f85a72383cddaf3c` on `runner/entity-document-integrations-20260818`; the worktree was clean before repair.
+- Read root/scoped AGENTS, BUILD-CONTEXT, canonical T-022/R-013, T-019/T-020/T-021 evidence, the prior T-022 evidence, and the immutable Luna-max review transcript. The transcript file was not present in this checkout; the available immutable review finding record was reconciled conservatively and no finding was silently omitted.
+- Only the three named T-022 paths changed. No route change was necessary.
 
-## Implemented seam
+## Implemented repair
 
-`packages/server/src/document-providers/microsoft/create-adapter.ts` adds a provider-transport-injected, non-network creation seam for exactly `document`/DOCX, `spreadsheet`/XLSX, and `presentation`/PPTX. It:
+`create-adapter.ts` remains an injected, non-network seam and now:
 
-- accepts bounded explicit descriptors and rejects unknown or mismatched type/format before transport;
-- requires an already-resolved T-020 destination and validates the T-019 tenant binding, connection, authorization, consent, write scope, workspace/destination relationship, and tenant isolation;
-- has no default transport, destination, capability inference, credential/token storage, persistence, route, registry, event table, DB change, Graph call, or Entity document-id minting;
-- forwards idempotency to the injected provider seam and returns an `existing` provider result without retrying, preventing duplicate transport creation when the provider reconciles an existing creation;
-- requires opaque provider identity, HTTPS provider URL, and revision identity from the provider response;
-- returns `editorOpenProof: 'unproven'` and makes no structured mutation claim.
+- fails closed before transport unless provider, authorization, consent, write scope, revocation, and `readinessState === 'ready'` all hold;
+- validates the resolved destination against every available T-020 authority/identity axis before transport: connection/binding/destination tenant, observed tenant, observed issuer, connection identity, workspace, permitted enablement/type, requested destination echo, and all persisted identity fields;
+- applies strict bounded title/content/idempotency-key validation (including non-empty content and printable, trimmed, bounded keys);
+- maintains transport-scoped deterministic idempotency reconciliation: same key/request returns the prior result without a second transport call, conflicting reuse typed-fails, in-flight/uncertain reuse typed-fails, and malformed/throwing transport outcomes are never converted into success;
+- preserves injected/no-network/no-credential boundaries and validates provider identity, HTTPS URL, and revision output.
 
-The transport receives a typed request and returns either `created` or `existing`; transport failures remain transport-owned. Unsafe/malformed output is rejected with a typed error after the single attempted transport call. Authorization, tenant, destination, descriptor, and capability failures reject before transport.
+The tests add direct zero-transport Prove-It coverage for degraded/unknown readiness and forged observed tenant, issuer, destination echo, and identity values, plus input, conflicting-key, and throw-after-possible-create regressions. They retain the three artifact-shape and existing-result coverage.
 
-## Tests and proof
+## R-013 reconciliation and limits
 
-Colocated tests: `packages/server/src/document-providers/microsoft/create-adapter.test.ts`.
+The named paths cannot honestly complete the full R-013 acceptance contract. They contain no OOXML generation contract, real Microsoft transport, stable Entity document/persistence composition, operation-scoped persistent idempotency store, sandbox tenant, or browser/editor proof seam. `routes/document-integrations.ts` has no strictly necessary T-022 Microsoft composition seam, and adding one would fabricate wiring rather than compose an existing contract.
 
-The focused suite proves all three successful artifact shapes, provider-existing idempotency behavior, tenant mismatch, destination mismatch, missing write capability, revoked connection, mismatched format, and malformed provider identity/URL/revision responses with zero or appropriate transport calls.
+Therefore this commit proves only the narrow local safety boundary: an already-resolved, already-authorized destination can be handed to an injected transport with fail-closed authority, input, idempotency, and output handling. It does **not** claim Microsoft creation, valid/openable DOCX/XLSX/PPTX artifacts, Entity persistence, provider version capture in the Entity object, or Edit-in-Microsoft-365 proof. Those require a successor wiring/live lane that owns the real Microsoft transport, artifact generation, operation-scoped persistence/idempotency, registry composition, sandbox credentials/tenant, and browser proof (T-038/T-039 boundary).
 
-Commands and direct results:
+No Graph call, secret provisioning/read, tenant artifact, sandbox, browser proof, production, route, DB, or deployment action was performed.
 
-```text
-export PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH"
-node --version
-PASS — v22.22.2
+## Verification (direct exits)
 
-cd packages/server && npx vitest run src/document-providers/microsoft/create-adapter.test.ts
-PASS — 1 file, 12 tests, exit 0
+Node 22.22.2 was used.
 
-cd packages/server && npm run build
-PASS — strict TypeScript build, exit 0
+- `cd packages/server && npx vitest run src/document-providers/microsoft/create-adapter.test.ts` — **exit 0**, 23 passed.
+- `cd packages/server && npm run build` — **exit 0**.
+- `cd packages/server && npx vitest run` — **exit 0**, 220 files / 2263 tests passed.
+- `git diff --check` — **exit 0**.
 
-git diff --check
-PASS — exit 0
-```
-
-An initial build attempt exposed a test fixture literal narrowing error (`existing` inferred as `created`); the fixture was corrected and the focused test/build rerun to green. No full suite was run, per instruction.
-
-## Route and live-proof disposition
-
-`packages/server/src/routes/document-integrations.ts` was ruled out: it does not contain a named Microsoft composition seam, and exposing this unproven provider-specific behavior through routes would violate the requested smallest honest seam. No route or index wiring was changed.
-
-Microsoft 365 sandbox creation, per-artifact DOCX/XLSX/PPTX open proof, and browser Edit-in-Microsoft-365 proof were not performed and were not fabricated. They are deferred to the live-environment T-038/T-039 requirements. Live capability activation remains disabled pending that proof. No structured mutation support is enabled or implied; that remains T-023 territory.
-
-## Allowed-path and base evidence
-
-Only these allowed paths are changed:
+## Allowed paths
 
 - `packages/server/src/document-providers/microsoft/create-adapter.ts`
 - `packages/server/src/document-providers/microsoft/create-adapter.test.ts`
 - `docs/plans/evidence/entity-document-integrations/T-022/EVIDENCE.md`
 
-The route path was not changed. No other source, PRD, ADR, T-019/T-020/T-021 file, DB, app, generated artifact, credential, tenant artifact, or production resource was touched.
+No other path is authorized or changed. Exactly one commit is required only after the mandatory full-suite and diff checks pass.
 
-The candidate pre-commit tree object is recorded by `git write-tree` immediately before the single conventional commit and is reported in the worker final response. No commit SHA is recorded here before commit creation.
+## Finding mapping
 
-## Scope disposition
-
-**Complete for the local, injected, fail-closed T-022 creation seam.** Provider sandbox creation/open and browser proof remain explicitly unavailable/deferred to T-038/T-039; no claim of valid/openable Microsoft artifacts is made by this ticket.
+- **F1:** fixed — exact-ready readiness gate and zero-transport tests.
+- **F2:** fixed — bidirectional permitted-vs-observed authority/identity validation and zero-transport forged-value tests.
+- **F3:** fixed — bounded title/content/key validation, deterministic repeated/conflicting/in-flight/uncertain key handling, and no fabricated success after transport throw/malformed output.
+- **F4:** fixed — no silent duplicate creation or conflicting destination/request reuse; existing result is returned only for the identical request fingerprint.
+- **F5:** fixed — transport failure and malformed output remain typed/uncertain, never success.
+- **F6:** disposition recorded — full R-013 completion remains blocked on the successor architecture/live seams above; this narrow seam makes no completion claim.
