@@ -524,7 +524,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
       ).toBe('InvalidDestinationRecordError');
     });
 
-    it('RED F1d: rediscovery binding diverging from the record rejects (TenantMismatchError)', () => {
+    it('coverage F1d: rediscovery binding diverging from the record rejects (TenantMismatchError)', () => {
       expect(
         catchName(() =>
           rediscoverDestination({
@@ -537,7 +537,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
       ).toBe('TenantMismatchError');
     });
 
-    it('RED F1e: rediscovery observed ISSUER mismatch rejects (TenantMismatchError)', () => {
+    it('coverage F1e: rediscovery observed ISSUER mismatch rejects (TenantMismatchError)', () => {
       const wrongIssuerTransport = fakeTransport({
         'drive-fixture-1': {
           requestedDestinationId: 'od-1',
@@ -659,7 +659,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
       ).toBe('DestinationAuthorityMismatchError');
     });
 
-    it('RED F3b: tenantBinding diverging from connection.tenantBinding rejects (TenantMismatchError)', () => {
+    it('coverage F3b: tenantBinding diverging from connection.tenantBinding rejects (DestinationAuthorityMismatchError)', () => {
       const transport = fakeTransport({
         'drive-fixture-1': observedFor('od-1', onedriveIdentity),
       });
@@ -674,7 +674,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
             tenantBinding: { tenantId: OTHER_TENANT, issuerForm: ISSUER },
           }),
         ),
-      ).toBe('TenantMismatchError');
+      ).toBe('DestinationAuthorityMismatchError');
     });
   });
 
@@ -770,7 +770,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
   });
 
   describe('F8: previously untested enforcement sites', () => {
-    it('RED F8a: permitted entry tenant != binding tenant rejects with TenantMismatchError', () => {
+    it('coverage F8a: permitted entry tenant != binding tenant rejects with TenantMismatchError', () => {
       const transport = fakeTransport({});
       const policy: MicrosoftWorkspaceDestinationPolicy = {
         workspaceId: WORKSPACE,
@@ -802,7 +802,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
       ).toBe('TenantMismatchError');
     });
 
-    it('RED F8b: onedrive entry without driveId rejects InvalidDestinationRecordError(identity.driveId)', () => {
+    it('coverage F8b: onedrive entry without driveId rejects InvalidDestinationRecordError(identity.driveId)', () => {
       const transport = fakeTransport({});
       const policy = policyWith([
         { id: 'od-1', identity: { ...onedriveIdentity, driveId: null } },
@@ -922,7 +922,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
   });
 
   describe('R3 Finding 2: retained axes are actually verified (option a)', () => {
-    it('RED R3-2a: creation-path observed ownerUserId drift rejects (ObservedIdentityMismatchError)', () => {
+    it('RED R3-2a: OneDrive observed ownerUserId drift rejects' , () => {
       const driftTransport = fakeTransport({
         'drive-fixture-1': observedFor('od-1', {
           ...onedriveIdentity,
@@ -944,7 +944,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
     });
   });
 
-  describe('R3 3b: SharePoint half of assertObservedIdentityMatches (rediscovery drift)', () => {
+  describe('R3 3b: persisted identity axes are exact on creation and rediscovery', () => {
     const base = {
       requestedDestinationId: 'sp-1',
       outcome: 'resolved' as const,
@@ -952,7 +952,59 @@ describe('T-020 microsoft destinations (R-011)', () => {
       observedIssuer: ISSUER,
     };
 
-    it('RED R3-3b-i: observed siteId drift rejects', () => {
+    it('RED R3-2b: SharePoint observed ownerUserId rejects before retention', () => {
+      const identity = { ...sharepointIdentity, ownerUserId: 'user-fixture-OTHER' };
+      const policy = policyWith([{ id: 'sp-1', identity: sharepointIdentity }]);
+      let retained: unknown = 'not-called';
+      expect(
+        catchName(() => {
+          const resolved = resolveCreationDestination({
+            transport: fakeTransport({ 'drive-fixture-2': observedFor('sp-1', identity) }),
+            policy,
+            connection: authorizedSnapshot(),
+            artifactType: 'document',
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          });
+          retained = retainDestinationRecord(resolved);
+        }),
+      ).toBe('ObservedIdentityMismatchError');
+      expect(retained).toBe('not-called');
+    });
+
+    it('RED R3-2c: OneDrive observed siteId rejects before retention', () => {
+      const identity = { ...onedriveIdentity, siteId: 'site-fixture-OTHER' };
+      const policy = policyWith([{ id: 'od-1', identity: onedriveIdentity }]);
+      expect(
+        catchName(() =>
+          resolveCreationDestination({
+            transport: fakeTransport({ 'drive-fixture-1': observedFor('od-1', identity) }),
+            policy,
+            connection: authorizedSnapshot(),
+            artifactType: 'document',
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('ObservedIdentityMismatchError');
+    });
+
+    it('RED R3-2d: SharePoint observed driveId rejects when retained driveId is null', () => {
+      const identity = { ...sharepointIdentity, driveId: 'drive-fixture-OTHER' };
+      const expected = { ...sharepointIdentity, driveId: null };
+      const policy = policyWith([{ id: 'sp-1', identity: expected }]);
+      expect(
+        catchName(() =>
+          resolveCreationDestination({
+            transport: fakeTransport({ '': observedFor('sp-1', identity) }),
+            policy,
+            connection: authorizedSnapshot(),
+            artifactType: 'document',
+            tenantBinding: { tenantId: TENANT, issuerForm: ISSUER },
+          }),
+        ),
+      ).toBe('ObservedIdentityMismatchError');
+    });
+
+    it('coverage R3-3b-i: observed siteId drift rejects on rediscovery', () => {
       const t = fakeTransport({
         'drive-fixture-2': {
           ...base,
@@ -971,7 +1023,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
       ).toBe('ObservedIdentityMismatchError');
     });
 
-    it('RED R3-3b-ii: observed libraryId drift rejects', () => {
+    it('coverage R3-3b-ii: observed libraryId drift rejects on rediscovery', () => {
       const t = fakeTransport({
         'drive-fixture-2': {
           ...base,
@@ -990,7 +1042,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
       ).toBe('ObservedIdentityMismatchError');
     });
 
-    it('RED R3-3b-iii: observed driveId drift rejects (SharePoint, driveId configured)', () => {
+    it('coverage R3-3b-iii: observed driveId drift rejects (SharePoint, driveId configured) on rediscovery', () => {
       const t = fakeTransport({
         'drive-fixture-2': {
           ...base,
@@ -1009,7 +1061,7 @@ describe('T-020 microsoft destinations (R-011)', () => {
       ).toBe('ObservedIdentityMismatchError');
     });
 
-    it('RED R3-3b-iv: observed kind drift rejects', () => {
+    it('coverage R3-3b-iv: observed kind drift rejects', () => {
       const t = fakeTransport({
         'drive-fixture-2': {
           ...base,
@@ -1029,8 +1081,8 @@ describe('T-020 microsoft destinations (R-011)', () => {
     });
   });
 
-  describe('R3 3c/3d: parity coverage (expected GREEN at base)', () => {
-    it('R3-3c: creation path, same tenantId / different issuerForm binding rejects (TenantMismatchError)', () => {
+  describe('R3 3c/3d: parity coverage (already enforced at base)', () => {
+    it('coverage R3-3c: creation path, same tenantId / different issuerForm binding rejects (DestinationAuthorityMismatchError)', () => {
       const transport = fakeTransport({
         'drive-fixture-1': observedFor('od-1', onedriveIdentity),
       });
@@ -1045,10 +1097,10 @@ describe('T-020 microsoft destinations (R-011)', () => {
             tenantBinding: { tenantId: TENANT, issuerForm: 'issuer-form-fixture/other' },
           }),
         ),
-      ).toBe('TenantMismatchError');
+      ).toBe('DestinationAuthorityMismatchError');
     });
 
-    it('R3-3d: requestedDestinationId naming a present-but-disabled entry reports policy_scope_mismatch', () => {
+    it('coverage R3-3d: requestedDestinationId naming a present-but-disabled entry reports policy_scope_mismatch', () => {
       const transport = fakeTransport({});
       const policy = policyWith([
         { id: 'od-1', identity: onedriveIdentity, enabled: false },

@@ -248,8 +248,16 @@ export class ObservedIdentityMismatchError extends Error {
  * mis-wired caller must never gate on connection A and receive a result attributed to B.
  */
 export class DestinationAuthorityMismatchError extends Error {
-  readonly axis: 'policy_connection_vs_connection' | 'binding_vs_connection';
-  constructor(axis: 'policy_connection_vs_connection' | 'binding_vs_connection') {
+  readonly axis:
+    | 'policy_connection_vs_connection'
+    | 'record_connection_vs_connection'
+    | 'binding_vs_connection';
+  constructor(
+    axis:
+      | 'policy_connection_vs_connection'
+      | 'record_connection_vs_connection'
+      | 'binding_vs_connection',
+  ) {
     super(
       `DESTINATION_AUTHORITY_MISMATCH: authority sources disagree (${axis}); ` +
         `blocked (fail closed)`,
@@ -285,24 +293,17 @@ function assertObservedIdentityMatches(
   observed: MicrosoftDestinationIdentity,
 ): void {
   if (expected.kind !== observed.kind) throw new ObservedIdentityMismatchError('identity.kind');
-  if (
-    expected.ownerUserId !== null &&
-    expected.ownerUserId !== observed.ownerUserId
-  ) {
+  if (expected.ownerUserId !== observed.ownerUserId) {
     throw new ObservedIdentityMismatchError('identity.ownerUserId');
   }
-  if (expected.kind === 'onedrive') {
-    if (expected.driveId !== observed.driveId) {
-      throw new ObservedIdentityMismatchError('identity.driveId');
-    }
-  } else {
-    if (expected.siteId !== observed.siteId) throw new ObservedIdentityMismatchError('identity.siteId');
-    if (expected.libraryId !== observed.libraryId) {
-      throw new ObservedIdentityMismatchError('identity.libraryId');
-    }
-    if (expected.driveId !== null && expected.driveId !== observed.driveId) {
-      throw new ObservedIdentityMismatchError('identity.driveId');
-    }
+  if (expected.siteId !== observed.siteId) {
+    throw new ObservedIdentityMismatchError('identity.siteId');
+  }
+  if (expected.libraryId !== observed.libraryId) {
+    throw new ObservedIdentityMismatchError('identity.libraryId');
+  }
+  if (expected.driveId !== observed.driveId) {
+    throw new ObservedIdentityMismatchError('identity.driveId');
   }
 }
 
@@ -325,7 +326,7 @@ function assertAuthoritiesAgree(input: {
     input.tenantBinding.tenantId !== connBinding.tenantId ||
     input.tenantBinding.issuerForm !== connBinding.issuerForm
   ) {
-    throw new TenantMismatchError(connBinding.tenantId, input.tenantBinding.tenantId);
+    throw new DestinationAuthorityMismatchError('binding_vs_connection');
   }
 }
 
@@ -583,7 +584,7 @@ export function rediscoverDestination(input: {
   // (both tenantId and issuerForm). A mis-wired caller must never re-resolve connection
   // A's destination under connection B's posture.
   if (record.connectionId !== input.connection.connectionId) {
-    throw new DestinationAuthorityMismatchError('policy_connection_vs_connection');
+    throw new DestinationAuthorityMismatchError('record_connection_vs_connection');
   }
   // Record-tenant mismatch is the most specific diagnosis — report it before parity axes.
   if (input.tenantBinding.tenantId !== record.tenantId) {

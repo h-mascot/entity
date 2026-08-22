@@ -197,3 +197,24 @@ New this session:
   shows only the 3 allowed paths). All error vocabulary reused or module-local exactly as in
   r2. PRD read-only; no OpenWiki regeneration; no network calls; no Linear/GitHub/deploy
   mutation. Finding-4 file split explicitly deferred (record-only carry above).
+
+# topology-reset-r1 addendum — THE-961 / LOOM-DOCS T-020
+
+Provenance: fresh continuation from exact committed base `8588704c3b5e4c651c96b59a61510814c98d9107`, addressing all surviving findings in the historical GLM 5.3 r3 verdict. No historical verdict file was present in this worktree; the disposition below follows the supplied r3 findings and the committed r3 evidence above. No commit SHA is recorded for this addendum.
+
+## Finding dispositions
+
+- **P0 correctness / retention honesty — FIXED.** `assertObservedIdentityMatches` now requires exact equality in both directions for all four persisted axes (`ownerUserId`, `siteId`, `libraryId`, `driveId`), in addition to `kind`. This applies on creation and rediscovery before a resolved value can be retained or returned as a rediscovery result. Prove-It coverage demonstrates fail-closed before retention for SharePoint observed `ownerUserId`, OneDrive observed `siteId`, and SharePoint expected-null/observed-non-null `driveId`.
+- **Consistency — FIXED.** Caller tenant-binding versus connection tenant-binding disagreement now uses `DestinationAuthorityMismatchError('binding_vs_connection')` consistently on creation and rediscovery. Rediscovery record-versus-connection mismatch uses the distinct truthful axis `record_connection_vs_connection`, rather than the policy-vs-connection vocabulary.
+- **Evidence/test accuracy — FIXED.** Tests that were already green at the relevant historical base are labeled `coverage`, while newly failing-before-fix checks retain `RED`. The R3 parity description now states that those checks were already enforced at base; the creation ordering/vocabulary claims now match the implementation.
+- **LOC split — ACCEPTED RECORD-ONLY CARRY.** No refactor or split was performed.
+
+## Focused proof (Node 22)
+
+| Command | Result |
+|---|---|
+| `export PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH"; cd packages/server && npx vitest run src/document-providers/microsoft/destinations.test.ts` | **47 passed (47)**, exit 0 |
+| `export PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH"; cd packages/server && npm run build` | **exit 0**, strict TypeScript build |
+| `git diff --check` | clean |
+
+Scope control: only the two Microsoft destination files and this evidence file are modified; no network, secrets, Linear, GitHub, deployment, production, main, queue selection, or forbidden source paths were touched.
