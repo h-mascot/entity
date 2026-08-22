@@ -83,18 +83,18 @@ export const MICROSOFT_CAPABILITY_MATRIX: readonly MicrosoftCapabilityEvidence[]
   {
     capability: 'version_history',
     artifactTypes: ['document', 'spreadsheet', 'presentation'],
-    status: 'supported',
-    defaultState: 'supported',
-    boundary: 'Provider versions can be listed; Entity must normalize opaque provider version IDs and preserve provider-specific limitations.',
+    status: 'conditional',
+    defaultState: 'unknown',
+    boundary: 'Microsoft documentation describes a versions surface, but no adapter, connection, destination, runtime, or policy evidence exists in this spike; Entity must keep this non-actionable until those lanes are proven.',
     evidence: [`${GRAPH}/api/driveitem-list-versions?view=graph-rest-1.0`],
     retrievalDate: '2026-08-22',
   },
   {
     capability: 'change_tracking',
     artifactTypes: ['document', 'spreadsheet', 'presentation'],
-    status: 'supported',
-    defaultState: 'supported',
-    boundary: 'Graph delta is provider change enumeration, not Word Track Changes or an author-level semantic diff.',
+    status: 'conditional',
+    defaultState: 'unknown',
+    boundary: 'Microsoft documentation describes a delta surface, but no adapter, connection, destination, runtime, or policy evidence exists in this spike; Entity must keep this non-actionable until those lanes are proven. It is not Word Track Changes or an author-level semantic diff.',
     evidence: [`${GRAPH}/api/driveitem-delta?view=graph-rest-1.0`],
     retrievalDate: '2026-08-22',
   },
@@ -139,8 +139,9 @@ export function microsoftCapabilityState(
 }
 
 /**
- * The mutation gate used by future wiring. Conditional, unsupported, degraded, and unknown
- * are all rejected; only a separately recorded supported disposition could pass.
+ * The mutation gate used by future wiring. This spike has no runtime/product authorization lane,
+ * so every current matrix mutation is rejected. A future adapter must provide independently
+ * resolved capability evidence before a supported mutation disposition could pass.
  */
 export function microsoftMutationAllowed(
   capability: Extract<CapabilityType, 'agent_text_mutation' | 'agent_range_mutation' | 'agent_slide_mutation'>,

@@ -1,7 +1,7 @@
 # T-021 evidence — Microsoft format capability spike / ADR
 
 - **Issue:** THE-962 / LOOM-DOCS T-021
-- **Base verified:** `714cf332ad1aeb731c9f34cff54c2661f5ea93d5`
+- **Clean base verified before repair:** `c111a2fed788cce37daca2501a7b7dea081d8459`
 - **Branch:** `runner/entity-document-integrations-20260818`
 - **Date:** 2026-08-22
 - **Scope:** only the four T-021 implementation/evidence paths; no provider calls, tenant data, credentials, deployment, GitHub, Linear, main, or queue operations.
@@ -20,14 +20,15 @@
 | Word structured mutation | `unsupported` | `microsoftMutationAllowed('agent_text_mutation','document') === false` |
 | Excel range mutation | `unsupported` | `microsoftMutationAllowed('agent_range_mutation','spreadsheet') === false` |
 | PowerPoint slide mutation | `unsupported` | `microsoftMutationAllowed('agent_slide_mutation','presentation') === false` |
-| Versions | `supported` as provider metadata, gated by later connection/destination/readiness | not semantic edit history |
-| Change tracking | `supported` as Graph delta enumeration | not Word Track Changes or semantic diff |
+| Versions | `unknown`; documentation metadata alone is non-actionable pending adapter/connection/destination/runtime/policy evidence | not semantic edit history |
+| Change tracking | `unknown`; documentation metadata alone is non-actionable pending adapter/connection/destination/runtime/policy evidence | not Word Track Changes or semantic diff |
 | Previews | Conditional; default `unknown` | unavailable must remain typed, no fabricated preview |
 | Open links | Conditional; default `unknown` | external open is distinct from embedded editor |
 | WOPI/editor eligibility | `unknown` | embedded editor never enabled without technical + licensing proof |
 
-No capability is wired into product routes or a registry by this ticket. The executable matrix
-intentionally does not claim Graph format mutation or WOPI eligibility.
+No capability is wired into product routes or a registry by this ticket. The executable matrix intentionally does not claim Graph format mutation or WOPI eligibility. All current
+claims are documentation/metadata only: no provider integration, tenant authorization, destination policy,
+runtime readiness, or product wiring is implemented. No current matrix entry can authorize a mutation.
 
 ## Primary current documentation evidence
 
@@ -51,26 +52,36 @@ No live or tenant artifact was added. `fixtures/README.md` mechanically specifie
 and PPTX sanitized fixture manifests plus required create/open/mutate/reopen proof. Upload-only
 round trips are explicitly rejected as mutation proof.
 
+## Authority note
+
+The scoped AGENTS contract pins `83cacbc…`, while the local canonical PRD/BUILD-CONTEXT pin
+`c82e82d…`. This repair follows the scoped AGENTS contract; reconciliation remains manager-owned,
+pending authority resolution. Canonical PRD, BUILD-CONTEXT, scoped AGENTS, and ISSUE-MAP were not edited.
+
 ## Proof commands and results
 
-Commands run with Node 22 path prepended where applicable:
+Commands and results run on the completed candidate tree before the single commit (Node 22.22.2):
 
 ```text
 export PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH"
-git status --short --branch
-PASS — clean at start; branch runner/entity-document-integrations-20260818
+node --version
+PASS — v22.22.2
 git rev-parse HEAD
-PASS — 714cf332ad1aeb731c9f34cff54c2661f5ea93d5
-git diff --check
-PASS
+PASS — c111a2fed788cce37daca2501a7b7dea081d8459 (clean base before repair)
+cd packages/server && npx vitest run src/document-providers/microsoft/capability-spike.test.ts
+PASS — focused capability-spike tests
 cd packages/server && npm run build
-PASS
-cd packages/server && npx vitest run src/document-providers/microsoft/connection.test.ts src/document-providers/microsoft/destinations.test.ts
+PASS — strict TypeScript server build
+cd packages/server && npx vitest run
+PASS — 219 files, 2239 tests
+git diff --check
 PASS
 ```
 
-The scoped Microsoft tests cover the adjacent T-019/T-020 contracts. The spike is pure TypeScript
-and has no external provider dependency; the strict server build is the focused type proof.
+The focused tests cover every matrix entry, unknown and wrong artifact/capability fallbacks, every
+mutation denial, and the applicable non-mutation denials. The full server gate is run before commit;
+this evidence intentionally does not record the final commit SHA. No provider integration, tenant
+authorization, destination policy, runtime readiness, or product wiring is implemented.
 
 ## Scope disposition
 
