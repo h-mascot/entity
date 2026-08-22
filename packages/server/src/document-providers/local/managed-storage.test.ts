@@ -3,72 +3,50 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FileSourceRecord, FileSourceRepository } from '../../../../db/src/file-sources';
-import {
-  ManagedLocalStorage,
-  createManagedLocalFileReference,
-  parseManagedLocalFileReference,
-} from './managed-storage';
+import type { DocumentRegistry } from '../registry';
+import { ManagedLocalStorage, createManagedLocalFileReference, parseManagedLocalFileReference } from './managed-storage';
 
 const roots: string[] = [];
-
-function source(root: string): FileSourceRecord {
-  return {
-    id: 'source-local', display_name: 'Managed Local', type: 'local', base_url: null,
-    base_path: root, auth_type: 'none', auth_ref: null, enabled: true, icon: null,
-    capabilities: '{}', health: 'ok', last_synced_at: null,
-    created_at: '2026-08-22T00:00:00.000Z', updated_at: '2026-08-22T00:00:00.000Z',
-  };
-}
-
-function repository(record: FileSourceRecord): FileSourceRepository {
-  return {
-    listSources: () => [record], getSource: (id) => id === record.id ? record : undefined,
-    createSource: () => record, updateSource: () => record, setEnabled: () => record,
-    deleteSource: () => false,
-  };
-}
-
-async function makeRoot(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'entity-managed-storage-'));
-  roots.push(root);
-  return root;
-}
+function source(root: string): FileSourceRecord { return { id: 'source-local', display_name: 'Managed Local', type: 'local', base_url: null, base_path: root, auth_type: 'none', auth_ref: null, enabled: true, icon: null, capabilities: '{}', health: 'ok', last_synced_at: null, created_at: '', updated_at: '' }; }
+function repository(record: FileSourceRecord): FileSourceRepository { return { listSources: () => [record], getSource: (id) => id === record.id ? record : undefined, createSource: () => record, updateSource: () => record, setEnabled: () => record, deleteSource: () => false }; }
+function documentRegistry(): DocumentRegistry { return { create: () => { throw new Error('unused'); }, register: (input, workspaceId) => ({ created: true, record: { id: `doc-${workspaceId}`, workspace_id: workspaceId, ...input, provider_connection_id: input.provider_connection_id ?? null, destination_id: null, external_id: input.external_id ?? null, provider_url: null, owner_summary: null, tenant_external_id: null, permissions_summary_json: null, sensitivity_label: null, degraded_reason_code: null, provider_modified_at: null, indexed_at: null, preview_state: 'not_requested', conflict_state: 'none', created_at: '', updated_at: '', deleted_at: null } } as never), get: () => undefined, findByProviderIdentity: () => undefined, update: () => undefined, rediscover: () => { throw new Error('unused'); } }; }
+async function makeRoot(): Promise<string> { const root = await fs.mkdtemp(path.join(os.tmpdir(), 'entity-managed-storage-')); roots.push(root); return root; }
 
 describe('ManagedLocalStorage', () => {
-  afterEach(async () => {
-    await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
-  });
-
-  it('registers through a File Source and never accepts an absolute client path', async () => {
-    const root = await makeRoot();
-    await fs.writeFile(path.join(root, 'brief.docx'), 'document');
-    const storage = new ManagedLocalStorage(repository(source(root)));
-
-    const registered = await storage.register({ sourceId: 'source-local', relativePath: 'brief.docx' });
-    expect(registered).toMatchObject({ sourceId: 'source-local', relativePath: 'brief.docx', status: 'ready' });
-    expect(registered.reference).toMatch(/^file-source:v1\./);
+  afterEach(async () => { await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))); });
+  it('registers through File Sources and the Entity document registry, rejecting raw absolute paths', async () => {
+    const root = await makeRoot(); await fs.writeFile(path.join(root, 'brief.docx'), 'document');
+    const storage = new ManagedLocalStorage(repository(source(root)), documentRegistry());
+    const registered = await storage.register({ sourceId: 'source-local', relativePath: 'brief.docx', workspaceId: 'workspace-a' });
+    expect(registered).toMatchObject({ sourceId: 'source-local', relativePath: 'brief.docx', status: 'ready', documentId: 'doc-workspace-a' });
+    await expect(storage.register({ sourceId: 'source-local', relativePath: 'nested/../brief.docx', workspaceId: 'workspace-a' })).resolves.toMatchObject({ status: 'ready' });
+    for (const relativePath of [path.join(root, 'brief.docx'), '/etc/passwd', 'C:\\Users\\Henry\\brief.docx', '\\\\server\\share\\brief.docx']) {
+      await expect(storage.register({ sourceId: 'source-local', relativePath, workspaceId: 'workspace-a' })).rejects.toThrow('source-relative');
+    }
     expect(() => parseManagedLocalFileReference(path.join(root, 'brief.docx'))).toThrow('Invalid managed local file reference');
   });
-
-  it('reports an external move or delete as unavailable without leaking a host error', async () => {
-    const root = await makeRoot();
-    const file = path.join(root, 'brief.docx');
-    await fs.writeFile(file, 'document');
-    const storage = new ManagedLocalStorage(repository(source(root)));
-    const reference = createManagedLocalFileReference({ sourceId: 'source-local', relativePath: 'brief.docx' });
-
-    await fs.rename(file, path.join(root, 'moved.docx'));
-    await expect(storage.refresh(reference)).resolves.toMatchObject({ status: 'unavailable', unavailableReason: 'file_unavailable' });
-    await fs.rm(path.join(root, 'moved.docx'));
-    await expect(storage.refresh(reference)).resolves.toMatchObject({ status: 'unavailable' });
-  });
-
-  it('re-resolves the managed source after a fresh storage instance (restart behavior)', async () => {
-    const root = await makeRoot();
-    await fs.writeFile(path.join(root, 'brief.docx'), 'document');
+  it('fails closed for disabled and mismatched sources without leaking details', async () => {
+    const root = await makeRoot(); await fs.writeFile(path.join(root, 'brief.docx'), 'document');
     const ref = createManagedLocalFileReference({ sourceId: 'source-local', relativePath: 'brief.docx' });
-    const first = await new ManagedLocalStorage(repository(source(root))).refresh(ref);
-    const restarted = await new ManagedLocalStorage(repository(source(root))).refresh(ref);
-    expect(restarted).toEqual(first);
+    const disabled = new ManagedLocalStorage(repository({ ...source(root), enabled: false }), documentRegistry());
+    expect(await disabled.refresh(ref)).toMatchObject({ status: 'unavailable', unavailableReason: 'source_unavailable' });
+    const mismatched = new ManagedLocalStorage(repository({ ...source(root), type: 'custom' }), documentRegistry());
+    expect(await mismatched.refresh(ref)).toMatchObject({ status: 'unavailable', unavailableReason: 'source_unavailable' });
+  });
+  it('reports move/delete as sanitized unavailable and recovers after restart', async () => {
+    const root = await makeRoot(); const file = path.join(root, 'brief.docx'); await fs.writeFile(file, 'document');
+    const ref = createManagedLocalFileReference({ sourceId: 'source-local', relativePath: 'brief.docx' });
+    const storage = new ManagedLocalStorage(repository(source(root)), documentRegistry());
+    expect(await storage.refresh(ref)).toMatchObject({ status: 'ready' });
+    const outside = path.join(root, '..', 'entity-managed-storage-outside.txt');
+    await fs.writeFile(outside, 'outside');
+    await fs.symlink(outside, path.join(root, 'escape.docx'));
+    const escape = createManagedLocalFileReference({ sourceId: 'source-local', relativePath: 'escape.docx' });
+    expect(await storage.refresh(escape)).toMatchObject({ status: 'unavailable', unavailableReason: 'file_unavailable' });
+    await fs.rm(outside, { force: true });
+    await fs.rename(file, path.join(root, 'moved.docx'));
+    expect(await storage.refresh(ref)).toMatchObject({ status: 'unavailable', unavailableReason: 'file_unavailable' });
+    await fs.rm(path.join(root, 'moved.docx'));
+    expect(await new ManagedLocalStorage(repository(source(root)), documentRegistry()).refresh(ref)).toMatchObject({ status: 'unavailable' });
   });
 });
