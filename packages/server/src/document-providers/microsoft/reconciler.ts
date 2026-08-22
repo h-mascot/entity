@@ -1,6 +1,7 @@
 /** T-024 — Microsoft provider revision/change reconciliation. Pure injected transport seam. */
 import { UNSAFE_REVISION_TOKEN_CHARACTERS } from '../revision-coordinator';
 import type { DocumentPreviewState } from '../../../../db/src/document-integrations';
+import { normalizeMicrosoftHttpsUrl } from './read-state';
 import type { MicrosoftProviderItemEvidence } from './read-state';
 
 export interface MicrosoftChangeSource {
@@ -63,10 +64,16 @@ export function createMicrosoftReconciler(deps: {
       if (!known) { outcomes.push({ kind: 'unknown-document', externalId: item.externalId }); continue; }
       if (!current || (known.currentRevision && deps.compareRevisions(current, known.currentRevision) < 0)) { outcomes.push({ kind: 'stale-discarded', externalId: item.externalId }); continue; }
       if (known.currentRevision === current) { outcomes.push({ kind: 'duplicate-ignored', externalId: item.externalId }); continue; }
+      const providerUrl = item.webUrl === undefined || item.webUrl === null
+        ? known.providerUrl
+        : normalizeMicrosoftHttpsUrl(item.webUrl) ?? known.providerUrl;
+      const changeToken = item.deltaLink === undefined || item.deltaLink === null
+        ? known.changeToken
+        : item.deltaLink;
       deps.registry.update(workspaceId, known.id, {
         currentRevision: current,
-        providerUrl: item.webUrl ?? null,
-        changeToken: item.deltaLink ?? null,
+        providerUrl,
+        changeToken,
       });
       outcomes.push({ kind: 'applied', externalId: item.externalId });
     }

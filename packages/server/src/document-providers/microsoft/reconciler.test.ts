@@ -15,8 +15,8 @@ const item = (overrides: Partial<MicrosoftProviderItemEvidence> = {}): Microsoft
   webUrl: 'https://provider.invalid/item-1', thumbnailUrl: 'https://provider.invalid/thumb-1',
   permissions: [{ type: 'user', scope: 'organization' }], ...overrides,
 });
-function registry(initial: { workspaceId: string; currentRevision: string | null }[]) {
-  const records = initial.map((record, index) => ({ ...record, id: `doc-${index}`, externalId: index ? 'other' : 'item-1', previewState: 'unsupported' as const, previewUrl: null, providerUrl: null, permissionsSummary: 'Unknown', changeToken: null }));
+function registry(initial: { workspaceId: string; currentRevision: string | null; providerUrl?: string | null; changeToken?: string | null }[]) {
+  const records = initial.map((record, index) => ({ ...record, id: `doc-${index}`, externalId: index ? 'other' : 'item-1', previewState: 'unsupported' as const, previewUrl: null, providerUrl: record.providerUrl ?? null, permissionsSummary: 'Unknown', changeToken: record.changeToken ?? null }));
   return { records, find(workspaceId: string, externalId: string) { return records.find((record) => record.workspaceId === workspaceId && record.externalId === externalId); }, update(_workspaceId: string, id: string, patch: Record<string, unknown>) { const record = records.find((candidate) => candidate.id === id); if (record) Object.assign(record, patch); } };
 }
 
@@ -37,6 +37,19 @@ describe('T-024 Microsoft versions/permissions/open/change state', () => {
     const store = registry([{ workspaceId: 'workspace-a', currentRevision: '1' }, { workspaceId: 'workspace-b', currentRevision: '9' }]);
     const result = await createMicrosoftReconciler({ source: { async poll() { return { items: [item({ eTag: '2' }), item({ externalId: 'other', eTag: '10' })], watchActive: true }; } }, registry: store, compareRevisions: (a, b) => Number(a) - Number(b) }).reconcile('workspace-a');
     expect(result.applied).toBe(1); expect(store.records[0]!.currentRevision).toBe('2'); expect(store.records[1]!.currentRevision).toBe('9');
+  });
+  it('preserves optional metadata when forward evidence omits it', async () => {
+    const store = registry([{ workspaceId: 'workspace-a', currentRevision: '1', providerUrl: 'https://provider.invalid/old', changeToken: 'delta-old' }]);
+    const result = await createMicrosoftReconciler({ source: { async poll() { return { items: [item({ eTag: '2', webUrl: undefined, deltaLink: undefined })], watchActive: true }; } }, registry: store, compareRevisions: (a, b) => Number(a) - Number(b) }).reconcile('workspace-a');
+    expect(result.applied).toBe(1);
+    expect(store.records[0]).toMatchObject({ currentRevision: '2', providerUrl: 'https://provider.invalid/old', changeToken: 'delta-old' });
+  });
+  it('rejects unsafe provider URLs without persisting them', async () => {
+    const store = registry([{ workspaceId: 'workspace-a', currentRevision: '1' }]);
+    const result = await createMicrosoftReconciler({ source: { async poll() { return { items: [item({ eTag: '2', webUrl: 'http://unsafe.invalid/item-1' })], watchActive: true }; } }, registry: store, compareRevisions: (a, b) => Number(a) - Number(b) }).reconcile('workspace-a');
+    expect(result.applied).toBe(1);
+    expect(store.records[0]!.providerUrl).toBeNull();
+    expect(store.records[0]!.providerUrl).not.toBe('http://unsafe.invalid/item-1');
   });
   it('degrades on unavailable change tracking and never writes', async () => {
     const store = registry([{ workspaceId: 'workspace-a', currentRevision: '1' }]);
