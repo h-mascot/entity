@@ -715,16 +715,44 @@ describe('T-003 operation-scoped creation idempotency (R-026)', () => {
     expect(repo.findDocumentOperation('workspace-2', 'idem-create-xyz')).toBeUndefined();
   });
 
-  it('rejects wrong-fingerprint and wrong-state durable completion attempts', async () => {
+  it('rejects same-fingerprint generic overwrites and completion from a wrong predecessor state', async () => {
     const db = trackDb(openFreshDb());
     const { createDocumentIntegrationsRepository } = await import('./document-integrations');
     const repo = createDocumentIntegrationsRepository(db);
     repo.ensureSchema();
-    repo.upsertDocumentOperation({ workspace_id: 'workspace-1', idempotency_key: 'idem-safe', provider: 'microsoft_365', artifact_type: 'document', operation_status: 'in_flight', request_fingerprint: 'fp-a' });
-    expect(() => repo.completeDocumentOperation('workspace-1', 'idem-safe', { request_fingerprint: 'fp-b', operation_status: 'completed', result_json: '{}' })).toThrow(/fingerprint/i);
+
+    repo.upsertDocumentOperation({
+      workspace_id: 'workspace-1', idempotency_key: 'idem-safe', provider: 'microsoft_365',
+      artifact_type: 'document', operation_status: 'in_flight', request_fingerprint: 'fp-a',
+    });
+    expect(() => repo.upsertDocumentOperation({
+      workspace_id: 'workspace-1', idempotency_key: 'idem-safe', provider: 'microsoft_365',
+      artifact_type: 'document', operation_status: 'completed', request_fingerprint: 'fp-a',
+      result_json: '{"forged":true}', document_id: 'forged-doc',
+    })).toThrow(/generic upsert|mutated/i);
+    expect(repo.findDocumentOperation('workspace-1', 'idem-safe')).toMatchObject({
+      operation_status: 'in_flight', result_json: null, document_id: null,
+    });
+
+    expect(() => repo.completeDocumentOperation('workspace-1', 'idem-safe', {
+      request_fingerprint: 'fp-b', operation_status: 'completed', result_json: '{}',
+    })).toThrow(/fingerprint/i);
     expect(repo.findDocumentOperation('workspace-1', 'idem-safe')?.operation_status).toBe('in_flight');
+
+    // A fingerprinted row in a non-claim predecessor state cannot be completed.
+    repo.upsertDocumentOperation({
+      workspace_id: 'workspace-1', idempotency_key: 'idem-wrong-predecessor', provider: 'microsoft_365',
+      artifact_type: 'document', operation_status: 'requested', request_fingerprint: 'fp-r',
+    });
+    expect(() => repo.completeDocumentOperation('workspace-1', 'idem-wrong-predecessor', {
+      request_fingerprint: 'fp-r', operation_status: 'completed', result_json: '{}',
+    })).toThrow(/in_flight|predecessor|transition/i);
+    expect(repo.findDocumentOperation('workspace-1', 'idem-wrong-predecessor')).toMatchObject({
+      operation_status: 'requested', result_json: null,
+    });
+
     repo.completeDocumentOperation('workspace-1', 'idem-safe', { request_fingerprint: 'fp-a', operation_status: 'completed', result_json: '{}' });
-    expect(() => repo.completeDocumentOperation('workspace-1', 'idem-safe', { request_fingerprint: 'fp-a', operation_status: 'completed', result_json: '{"forged":true}' })).toThrow(/transition/i);
+    expect(() => repo.completeDocumentOperation('workspace-1', 'idem-safe', { request_fingerprint: 'fp-a', operation_status: 'completed', result_json: '{"forged":true}' })).toThrow(/transition|in_flight/i);
     expect(repo.findDocumentOperation('workspace-1', 'idem-safe')?.result_json).toBe('{}');
   });
 

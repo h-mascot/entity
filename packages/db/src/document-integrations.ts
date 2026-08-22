@@ -898,15 +898,16 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
       if (!input.request_fingerprint || input.request_fingerprint !== existing.request_fingerprint) {
         throw new Error('document operation fingerprint mismatch');
       }
+      // A fingerprinted row is adapter-owned. Once claimed, its lifecycle and result
+      // are changed only by the claim/completion primitives, never by this generic
+      // upsert path. Terminal rows may be replayed only as an exact no-op.
       if (existing.operation_status === 'completed' || existing.operation_status === 'uncertain') {
         if (input.operation_status !== existing.operation_status || input.result_json !== undefined || input.provider_external_id !== undefined || input.document_id !== undefined) {
           throw new Error(`document operation cannot transition from ${existing.operation_status}`);
         }
         return existing;
       }
-      if (input.operation_status === 'completed' || input.operation_status === 'uncertain') {
-        throw new Error('document operation completion requires completeDocumentOperation');
-      }
+      throw new Error(`document operation cannot be mutated by generic upsert from ${existing.operation_status}`);
     }
     const now = nowIso();
     db.prepare(`
@@ -977,9 +978,9 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     }
     const nextStatus = fields.operation_status;
     if (existing.request_fingerprint &&
-        (existing.operation_status === 'completed' || existing.operation_status === 'uncertain' ||
+        (existing.request_fingerprint !== fields.request_fingerprint || existing.operation_status !== 'in_flight' ||
          (nextStatus !== 'completed' && nextStatus !== 'uncertain'))) {
-      throw new Error(`document operation cannot transition from ${existing.operation_status}`);
+      throw new Error(`document operation completion requires matching in_flight claim (stored state: ${existing.operation_status})`);
     }
     const result = db.prepare(`
       UPDATE document_operations SET
