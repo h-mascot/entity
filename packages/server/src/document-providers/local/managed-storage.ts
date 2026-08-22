@@ -168,6 +168,9 @@ export class ManagedLocalStorage {
       await assertAllowedLocalSourceBasePath(source.base_path);
       const adapter = createFileSourceAdapter(source);
       const metadata = await adapter.stat?.(parsed.relativePath);
+      // Re-authorize after adapter access as well as before it. This closes the
+      // source-root replacement window between the pre-check and filesystem use.
+      await assertAllowedLocalSourceBasePath(source.base_path);
       if (!metadata || metadata.kind !== 'file') return unavailable(reference, parsed);
       return {
         reference,

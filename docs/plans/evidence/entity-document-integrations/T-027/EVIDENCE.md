@@ -1,45 +1,43 @@
 # T-027 Evidence — Local managed storage / File Sources
 
 - Ticket: Linear THE-968 / LOOM-DOCS T-027
-- Exact base HEAD: `43633e5a14ac7915a77f40423300f16c020023fe`
-- Focused implementation commit before evidence amendment: `005f45fdf82d67230dfb0543589fc5d798573d77`
-- Final HEAD is the amended version of that same single focused commit (reported by the final `git rev-parse HEAD` closeout command).
+- Exact base HEAD: `9a22f072402d9030ed9d292cd89aee8c7511c7b5`
+- Exact final HEAD: `43a3cd11a40acfcee92201c2226db829dcd62861`
 - Exactly one focused commit; no reset/revert, push, merge, production, deployment, external calls, routes, migrations, watcher/T-028 behavior, or Linear mutation.
 
 ## Changed paths and reasons
 
 - `packages/server/src/document-providers/local/managed-storage.ts`
-  - Persists a previously registered unavailable managed reference as `readiness_state: degraded` through the existing `DocumentRegistry`, preserving its canonical identity and prior metadata/history.
-  - Rejects local File Sources whose persisted health is not `ok` before adapter resolution, failing closed with sanitized unavailable state.
-  - Enforces the existing `assertAllowedLocalSourceBasePath` allowlist before any adapter filesystem access.
-- `packages/server/src/document-providers/local/managed-storage.test.ts`
-  - Colocated focused proof for raw absolute-reference rejection, degraded/error source health, pre-adapter allowlist rejection, truthful degraded registry state after delete, and real-registry workspace isolation.
+  - Re-checks the existing managed-source allowlist after adapter filesystem access, closing the pre-check-to-access source-root replacement window and preserving sanitized unavailable behavior.
+- `packages/server/src/fs/adapters/local.ts`
+  - **Authorized scope expansion:** indispensable access-time hardening. Captures the source root realpath at adapter creation and verifies it is unchanged immediately before and after `stat`; an untrusted root replacement therefore fails closed rather than allowing adapter containment to succeed against an outside target.
+- `packages/server/src/fs/adapters/local.test.ts`
+  - **Authorized scope expansion:** colocated deterministic regression for the root-swap bypass. It swaps the source root during adapter access, proves sanitized denial, and proves the outside file remains unchanged.
+- `docs/plans/evidence/entity-document-integrations/T-027/EVIDENCE.md`
+  - Updated after the implementation commit with exact base/final SHAs and verification results.
 
-No other paths were changed; the existing File Source repository, local adapter, allowlist helper, and DocumentRegistry were composed without new persistence, roots, routes, or namespaces.
+No roots, routes, migrations, credentials, external calls, or new persistence were added.
 
-## B1–B4 mapping
+## B3-security mapping
 
-- **B1 PASS:** after a previously registered managed file is deleted, `register` returns `unavailable` and updates the existing canonical record to `readiness_state: degraded` with `degraded_reason_code: file_unavailable`; the canonical id remains stable and prior revision metadata is preserved. No new record is minted.
-- **B2 PASS:** `sourceFor` requires `type: local`, `enabled: true`, and `health: ok`; `degraded` and `error` sources resolve to sanitized `source_unavailable` and cannot register/retain a ready canonical state.
-- **B3 PASS:** `assertAllowedLocalSourceBasePath(source.base_path)` runs before `createFileSourceAdapter` and `stat`; an unallowlisted source is sanitized to `file_unavailable` without adapter filesystem access.
-- **B4 PASS:** the real in-memory SQLite `DocumentRegistry` proves the same managed identity cannot register into another workspace, while the unavailable update is scoped to the original workspace and does not mutate or expose a cross-workspace record.
+- **B3-security CLOSED:** managed storage still performs the pre-adapter allowlist check, while the local adapter now binds access to the real source root captured at construction and revalidates that identity around filesystem `stat`. A replacement of the authorized source root with a symlink to an outside directory is rejected with a sanitized unavailable result; no host path or filesystem error is returned. Valid in-root files remain readable and register successfully.
 
 ## Verification
 
-All commands were run from the repository root under Node 22.22.2 (required for the installed better-sqlite3 native binding):
+All commands ran from the repository root under Node 22.22.2:
 
 ```sh
-source /Users/enterprise/.nvm/nvm.sh && nvm use 22 >/dev/null && cd packages/server && npx vitest run src/document-providers/local/managed-storage.test.ts
-# exit 0 — 1 file, 5 tests passed
+source .nvm/nvm.sh && nvm use 22 >/dev/null && cd packages/server && npx vitest run src/document-providers/local/managed-storage.test.ts src/fs/adapters/local.test.ts
+# exit 0 — 2 files, 11 tests passed
 
-source /Users/enterprise/.nvm/nvm.sh && nvm use 22 >/dev/null && cd packages/server && npm run build
+source .nvm/nvm.sh && nvm use 22 >/dev/null && cd packages/server && npm run build
 # exit 0 — TypeScript build completed
 
 git diff --check
 # exit 0 — no whitespace errors
 
 git status --short
-# exit 0 — clean after the evidence amendment
+# exit 0 after the final evidence amendment — clean
 ```
 
-The implementation was committed once as `fix(local): close managed storage security seam blockers`; the evidence update is an amendment of that same commit, not a second focused commit.
+The root-swap regression is deterministic: the test replaces the source root at the adapter's `lstat` boundary, then asserts `basePath changed during access` and confirms the outside fixture remains unchanged. The focused managed-storage test also preserves valid allowed-source success.

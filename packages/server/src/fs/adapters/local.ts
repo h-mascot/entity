@@ -83,9 +83,27 @@ function toNode(sourceId: string, rootPath: string, entryName: string, stats: fs
 export class LocalFileSourceAdapter implements FileSourceAdapter {
   readonly key = 'local';
   private readonly source: FileSourceRecord;
+  private readonly authorizedRootRealpath: string;
 
   constructor(source: FileSourceRecord) {
     this.source = source;
+    try {
+      this.authorizedRootRealpath = fs.realpathSync(path.resolve(source.base_path?.trim() ?? ''));
+    } catch {
+      throw new Error('Local source basePath is unavailable.');
+    }
+  }
+
+  private async assertAuthorizedRootUnchanged(): Promise<void> {
+    let currentRootRealpath: string;
+    try {
+      currentRootRealpath = await fs.promises.realpath(path.resolve(this.source.base_path?.trim() ?? ''));
+    } catch {
+      throw new Error('Local source basePath is unavailable.');
+    }
+    if (currentRootRealpath !== this.authorizedRootRealpath) {
+      throw new Error('Local source basePath changed during access.');
+    }
   }
 
   async validate(source: FileSourceRecord): Promise<void> {
@@ -166,8 +184,10 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
 
     const normalizedRelative = normalizeSourceRelativePath(relativePath);
     const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    await this.assertAuthorizedRootUnchanged();
     await assertRealpathContained(basePath, absolutePath);
     const stats = await fs.promises.lstat(absolutePath);
+    await this.assertAuthorizedRootUnchanged();
     const name = normalizedRelative ? path.posix.basename(normalizedRelative) : path.basename(absolutePath);
     const kind = toKind(stats);
     return {
