@@ -1,6 +1,7 @@
 import { createFileSourceAdapter } from '../../fs/adapters/registry';
 import type { SourcePathMetadata } from '../../fs/adapters/types';
 import { normalizeSourceRelativePath } from '../../fs/security';
+import { assertAllowedLocalSourceBasePath } from '../../fs/source-root-guard';
 import { createDocumentRegistry, type DocumentRegistry } from '../registry';
 import { getEntityDatabase } from '../../../../db/src/entity-db';
 import {
@@ -95,7 +96,7 @@ function revisionFor(metadata: SourcePathMetadata): string {
 
 function sourceFor(repository: FileSourceRepository, sourceId: string): FileSourceRecord {
   const source = repository.getSource(sourceId);
-  if (!source || source.type !== 'local' || !source.enabled) {
+  if (!source || source.type !== 'local' || !source.enabled || source.health !== 'ok') {
     throw new ManagedStorageReferenceError('Managed local file source is unavailable.');
   }
   return source;
@@ -132,7 +133,13 @@ export class ManagedLocalStorage {
     const reference = createManagedLocalFileReference(input);
     const document = await this.refresh(reference);
     if (document.status !== 'ready') {
-      return document;
+      const existing = this.documentRegistry.findByProviderIdentity(null, reference, input.workspaceId);
+      if (!existing) return document;
+      const updated = this.documentRegistry.update(existing.id, input.workspaceId, {
+        readiness_state: 'degraded',
+        degraded_reason_code: document.unavailableReason ?? 'file_unavailable',
+      });
+      return updated ? { ...document, documentId: updated.id } : document;
     }
     const record = this.documentRegistry.register({
       provider: 'local_office',
@@ -155,9 +162,11 @@ export class ManagedLocalStorage {
     } catch {
       return unavailable(reference, parsed, 'source_unavailable');
     }
-    const adapter = createFileSourceAdapter(source);
-
     try {
+      // The adapter also enforces containment, but this boundary must enforce the
+      // persisted File Source root allowlist before any adapter filesystem use.
+      await assertAllowedLocalSourceBasePath(source.base_path);
+      const adapter = createFileSourceAdapter(source);
       const metadata = await adapter.stat?.(parsed.relativePath);
       if (!metadata || metadata.kind !== 'file') return unavailable(reference, parsed);
       return {

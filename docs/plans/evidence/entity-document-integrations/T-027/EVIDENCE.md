@@ -1,48 +1,45 @@
 # T-027 Evidence — Local managed storage / File Sources
 
 - Ticket: Linear THE-968 / LOOM-DOCS T-027
-- Candidate/base requested: `af4c3caaa9a06653edba8183f5b3eee81af6b2a2`
-- Final HEAD: `65a2f8c328467f6d4ae58b4bc9fd7677d95c0519`
-- Exactly one focused commit: `fix(local): close managed storage security seam blockers`
-- No routes, UI, credentials, external calls, deployment, production action, or Linear mutation.
+- Exact base HEAD: `43633e5a14ac7915a77f40423300f16c020023fe`
+- Focused implementation commit before evidence amendment: `005f45fdf82d67230dfb0543589fc5d798573d77`
+- Final HEAD is the amended version of that same single focused commit (reported by the final `git rev-parse HEAD` closeout command).
+- Exactly one focused commit; no reset/revert, push, merge, production, deployment, external calls, routes, migrations, watcher/T-028 behavior, or Linear mutation.
 
-## Changed paths
+## Changed paths and reasons
 
 - `packages/server/src/document-providers/local/managed-storage.ts`
-  - Rejects raw POSIX, Windows-drive, and UNC absolute paths before slash normalization.
-  - Keeps opaque source-relative File Source references and re-resolves them through the existing local adapter.
-  - Registers ready managed local references into the existing Entity `DocumentRegistry` as `local_office` canonical document objects, using the managed reference as `external_id`, current adapter metadata as revision, and caller workspace scope.
-  - Keeps source disabled/type mismatch, missing/moved files, and adapter containment failures unavailable with sanitized output.
+  - Persists a previously registered unavailable managed reference as `readiness_state: degraded` through the existing `DocumentRegistry`, preserving its canonical identity and prior metadata/history.
+  - Rejects local File Sources whose persisted health is not `ok` before adapter resolution, failing closed with sanitized unavailable state.
+  - Enforces the existing `assertAllowedLocalSourceBasePath` allowlist before any adapter filesystem access.
 - `packages/server/src/document-providers/local/managed-storage.test.ts`
-  - Focused register-path security and seam tests for absolute-path forms, normalized relative input, traversal/containment symlink threat, disabled/type-mismatched sources, move/delete, restart recovery, and canonical document registration.
-- `docs/plans/evidence/entity-document-integrations/T-027/EVIDENCE.md`
-  - This proof record.
+  - Colocated focused proof for raw absolute-reference rejection, degraded/error source health, pre-adapter allowlist rejection, truthful degraded registry state after delete, and real-registry workspace isolation.
+
+No other paths were changed; the existing File Source repository, local adapter, allowlist helper, and DocumentRegistry were composed without new persistence, roots, routes, or namespaces.
 
 ## B1–B4 mapping
 
-- **B1 PASS:** `register` calls the pre-normalization absolute-path guard. POSIX, drive, UNC, and host-absolute paths are rejected with the generic source-relative error; no raw path is included in the error or evidence. `nested/../brief.docx` remains safe and resolves to the managed file.
-- **B2 PASS:** The existing File Source repository/local adapter seam now feeds the existing `DocumentRegistry.register` contract. No parallel store, namespace, route, root, migration, credential flow, external call, or client-path API was added. The canonical `external_id` is the opaque managed reference and workspace isolation is delegated to the existing registry.
-- **B3 PASS:** T-027 registration/recovery is revision-aware at the existing seam: adapter `stat` metadata (`updatedAt:size`) is returned as the canonical document `current_revision`; every refresh re-resolves the source and file, so restart and move/delete behavior is explicit and fail-closed. The canonical PRD assigns the watcher/dedupe/crash-injection coordinator acceptance to T-028; no watcher implementation is claimed here.
-- **B4 PASS:** Tests exercise traversal/normalized-relative handling, raw normalized-absolute rejection, disabled and type-mismatched source rejection, symlink containment escape, move/delete, and sanitized unavailable states. Failures fail closed and expose only typed status/reason codes.
+- **B1 PASS:** after a previously registered managed file is deleted, `register` returns `unavailable` and updates the existing canonical record to `readiness_state: degraded` with `degraded_reason_code: file_unavailable`; the canonical id remains stable and prior revision metadata is preserved. No new record is minted.
+- **B2 PASS:** `sourceFor` requires `type: local`, `enabled: true`, and `health: ok`; `degraded` and `error` sources resolve to sanitized `source_unavailable` and cannot register/retain a ready canonical state.
+- **B3 PASS:** `assertAllowedLocalSourceBasePath(source.base_path)` runs before `createFileSourceAdapter` and `stat`; an unallowlisted source is sanitized to `file_unavailable` without adapter filesystem access.
+- **B4 PASS:** the real in-memory SQLite `DocumentRegistry` proves the same managed identity cannot register into another workspace, while the unavailable update is scoped to the original workspace and does not mutate or expose a cross-workspace record.
 
 ## Verification
 
-Commands run from repository root:
+All commands were run from the repository root under Node 22.22.2 (required for the installed better-sqlite3 native binding):
 
 ```sh
-cd packages/server && npx vitest run src/document-providers/local/managed-storage.test.ts src/fs/adapters/local.test.ts
-```
+source /Users/enterprise/.nvm/nvm.sh && nvm use 22 >/dev/null && cd packages/server && npx vitest run src/document-providers/local/managed-storage.test.ts
+# exit 0 — 1 file, 5 tests passed
 
-Result: **PASS** — 2 files, 8 tests.
+source /Users/enterprise/.nvm/nvm.sh && nvm use 22 >/dev/null && cd packages/server && npm run build
+# exit 0 — TypeScript build completed
 
-```sh
-cd packages/server && npm run build
-```
-
-Result: **PASS** — TypeScript build completed successfully.
-
-```sh
 git diff --check
+# exit 0 — no whitespace errors
+
+git status --short
+# exit 0 — clean after the evidence amendment
 ```
 
-Result: **PASS** — no whitespace errors.
+The implementation was committed once as `fix(local): close managed storage security seam blockers`; the evidence update is an amendment of that same commit, not a second focused commit.
