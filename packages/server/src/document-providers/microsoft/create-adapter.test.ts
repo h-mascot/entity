@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createDocumentIntegrationsRepository, type DocumentIntegrationsRepository } from '../../../../db/src/document-integrations';
 import type { MicrosoftConnectionSnapshot } from './connection';
 import type { MicrosoftPermittedDestination, ResolvedMicrosoftDestination } from './destinations';
 import {
@@ -35,8 +37,11 @@ function transport(result: { outcome: 'created' | 'existing'; providerIdentity: 
   const calls: MicrosoftCreateTransportInput[] = [];
   return { calls, create(input: MicrosoftCreateTransportInput) { calls.push(input); return result; } };
 }
+let db: Database.Database;
+let repository: DocumentIntegrationsRepository;
+beforeEach(() => { db?.close(); db = new Database(':memory:'); repository = createDocumentIntegrationsRepository(db); repository.ensureSchema(); });
 function request(descriptor: MicrosoftArtifactDescriptor) {
-  return { descriptor, connection, tenantBinding: binding, destination, idempotencyKey: 'idem-1' };
+  return { descriptor, connection, tenantBinding: binding, destination, idempotencyKey: 'idem-1', workspaceId: 'workspace-a', repository };
 }
 
 describe('T-022 Microsoft creation seam', () => {
@@ -88,6 +93,25 @@ describe('T-022 Microsoft creation seam', () => {
     expect(injected.calls).toHaveLength(0);
   });
 
+  it('replays from a fresh repository/adapter instance without a provider call', () => {
+    const firstTransport = transport();
+    const first = createMicrosoftArtifact(firstTransport, request(descriptors[0]!));
+    const freshRepository = createDocumentIntegrationsRepository(db);
+    const secondTransport = transport();
+    const replay = createMicrosoftArtifact(secondTransport, { ...request(descriptors[0]!), repository: freshRepository });
+    expect(replay).toEqual(first);
+    expect(secondTransport.calls).toHaveLength(0);
+  });
+
+  it('isolates identical keys across workspaces', () => {
+    const firstTransport = transport();
+    createMicrosoftArtifact(firstTransport, request(descriptors[0]!));
+    const otherTransport = transport();
+    const other = createMicrosoftArtifact(otherTransport, { ...request(descriptors[0]!), workspaceId: 'workspace-b' });
+    expect(other.providerIdentity).toBe('opaque-item');
+    expect(otherTransport.calls).toHaveLength(1);
+  });
+
   it('does not silently duplicate or accept conflicting reuse of an idempotency key', () => {
     const injected = transport();
     const first = createMicrosoftArtifact(injected, request(descriptors[0]!));
@@ -98,9 +122,12 @@ describe('T-022 Microsoft creation seam', () => {
 
   it('does not fabricate success after a transport throw that may have created remotely', () => {
     const injected = { calls: [] as MicrosoftCreateTransportInput[], create(input: MicrosoftCreateTransportInput) { this.calls.push(input); throw new Error('provider uncertain'); } };
-    expect(() => createMicrosoftArtifact(injected, request(descriptors[0]!))).toThrow('provider uncertain');
     expect(() => createMicrosoftArtifact(injected, request(descriptors[0]!))).toThrow(expect.objectContaining({ code: 'IDEMPOTENCY_UNCERTAIN' }));
+    const freshTransport = transport();
+    const freshRepository = createDocumentIntegrationsRepository(db);
+    expect(() => createMicrosoftArtifact(freshTransport, { ...request(descriptors[0]!), repository: freshRepository })).toThrow(expect.objectContaining({ code: 'IDEMPOTENCY_UNCERTAIN' }));
     expect(injected.calls).toHaveLength(1);
+    expect(freshTransport.calls).toHaveLength(0);
   });
 
   it.each([
@@ -110,6 +137,10 @@ describe('T-022 Microsoft creation seam', () => {
   ] as const)('rejects malformed provider %s response after one transport call', (_name, result) => {
     const injected = transport({ outcome: 'created', ...result });
     expect(() => createMicrosoftArtifact(injected, request(descriptors[0]!))).toThrow(expect.objectContaining({ code: 'MALFORMED_PROVIDER_RESPONSE' }));
+    const freshTransport = transport();
+    const freshRepository = createDocumentIntegrationsRepository(db);
+    expect(() => createMicrosoftArtifact(freshTransport, { ...request(descriptors[0]!), repository: freshRepository })).toThrow(expect.objectContaining({ code: 'IDEMPOTENCY_UNCERTAIN' }));
     expect(injected.calls).toHaveLength(1);
+    expect(freshTransport.calls).toHaveLength(0);
   });
 });
