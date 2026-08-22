@@ -1,7 +1,7 @@
 # T-021 evidence — Microsoft format capability spike / ADR
 
 - **Issue:** THE-962 / LOOM-DOCS T-021
-- **Clean base verified before repair:** `d32112e973529653bf05a01b3f28516502c78c62`
+- **Clean base verified before repair:** `0637e70a3a4aeb78b6acbe6b887f996a4a269171`
 - **Branch:** `runner/entity-document-integrations-20260818`
 - **Date:** 2026-08-22
 - **Scope:** only the four T-021 implementation/evidence paths; no provider calls, tenant data, credentials, deployment, GitHub, Linear, main, or queue operations.
@@ -67,18 +67,28 @@ export PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH"
 node --version
 PASS — v22.22.2
 cd packages/server && npx vitest run src/document-providers/microsoft/capability-spike.test.ts
-PASS — 1 test file, 4 tests
+PASS — 1 test file, 5 tests
 cd packages/server && npm run build
 PASS — tsc (strict server build/typecheck)
 git diff --check
 PASS
 ```
 
-The focused tests cover every matrix entry, every wrong artifact/capability pair, unknown capability
-fallback, every mutation denial across all artifact types, and every applicable non-mutation
-behaviour. The evidence intentionally distinguishes the clean base identification above from the
-commands run on the completed candidate tree and does not record a final commit SHA. No provider
-integration, tenant authorization, destination policy, runtime readiness, or product wiring is implemented.
+The focused tests cover the supported-metadata normalization branch directly, prove its public
+state is `unknown`, prove mutation remains denied, every matrix entry, every wrong
+artifact/capability pair, unknown capability fallback, every mutation denial across all artifact
+types, and every applicable non-mutation behaviour. The evidence intentionally distinguishes the
+clean base identification above from the completed candidate tree. The exact completed candidate
+identity is the pre-commit tree below; the final commit SHA is intentionally not known until the
+single commit is created.
+
+```text
+git write-tree
+899a59478dbd9e346d86d6604f18160ad9a0da9d
+```
+
+No provider integration, tenant authorization, destination policy, runtime readiness, or product
+wiring is implemented.
 
 ## Scope disposition
 
