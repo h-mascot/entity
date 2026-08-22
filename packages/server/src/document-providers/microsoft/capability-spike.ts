@@ -127,6 +127,11 @@ export const MICROSOFT_CAPABILITY_MATRIX: readonly MicrosoftCapabilityEvidence[]
   },
 ];
 
+/** Internal normalization seam; metadata never authorizes a product capability. */
+export function normalizeMicrosoftCapabilityState(defaultState: CapabilityState): CapabilityState {
+  return defaultState === 'supported' ? 'unknown' : defaultState;
+}
+
 /** Capabilities not named by the matrix are unknown, never inferred from provider identity. */
 export function microsoftCapabilityState(
   capability: CapabilityType,
@@ -138,7 +143,7 @@ export function microsoftCapabilityState(
   // Evidence metadata is never a runtime authorization source. Even if a future
   // catalogue entry records `supported`, this spike must remain fail-closed until
   // an independently wired provider capability lane exists.
-  return evidence?.defaultState === 'supported' ? 'unknown' : evidence?.defaultState ?? 'unknown';
+  return evidence ? normalizeMicrosoftCapabilityState(evidence.defaultState) : 'unknown';
 }
 
 /**

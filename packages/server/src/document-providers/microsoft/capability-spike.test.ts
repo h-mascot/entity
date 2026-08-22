@@ -5,6 +5,7 @@ import {
   MICROSOFT_CAPABILITY_MATRIX,
   microsoftCapabilityState,
   microsoftMutationAllowed,
+  normalizeMicrosoftCapabilityState,
 } from './capability-spike';
 import type { CapabilityType } from '../types';
 
@@ -16,6 +17,11 @@ const MUTATIONS: readonly CapabilityType[] = [
 ];
 
 describe('Microsoft capability spike', () => {
+  it('normalizes a supported metadata branch to unknown and still denies mutation', () => {
+    expect(normalizeMicrosoftCapabilityState('supported')).toBe('unknown');
+    expect(microsoftMutationAllowed('agent_text_mutation', 'document')).toBe(false);
+  });
+
   it('keeps every current matrix entry non-actionable from documentation metadata alone', () => {
     for (const entry of MICROSOFT_CAPABILITY_MATRIX) {
       expect(['unknown', 'unsupported']).toContain(entry.defaultState);
