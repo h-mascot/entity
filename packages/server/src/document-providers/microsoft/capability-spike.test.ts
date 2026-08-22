@@ -18,6 +18,7 @@ const MUTATIONS: readonly CapabilityType[] = [
 describe('Microsoft capability spike', () => {
   it('keeps every current matrix entry non-actionable from documentation metadata alone', () => {
     for (const entry of MICROSOFT_CAPABILITY_MATRIX) {
+      expect(['unknown', 'unsupported']).toContain(entry.defaultState);
       for (const artifactType of entry.artifactTypes) {
         expect(['unknown', 'unsupported']).toContain(
           microsoftCapabilityState(entry.capability, artifactType),
@@ -26,13 +27,15 @@ describe('Microsoft capability spike', () => {
     }
   });
 
-  it('falls back to unknown for unknown capabilities and artifact/capability mismatches', () => {
+  it('falls back to unknown for unknown capabilities and every wrong artifact/capability pair', () => {
     expect(microsoftCapabilityState('permission_read', 'document')).toBe('unknown');
-    expect(microsoftCapabilityState('version_history', 'document')).toBe('unknown');
-    expect(microsoftCapabilityState('change_tracking', 'presentation')).toBe('unknown');
-    expect(microsoftCapabilityState('agent_text_mutation', 'spreadsheet')).toBe('unknown');
-    expect(microsoftCapabilityState('agent_range_mutation', 'presentation')).toBe('unknown');
-    expect(microsoftCapabilityState('agent_slide_mutation', 'document')).toBe('unknown');
+    for (const entry of MICROSOFT_CAPABILITY_MATRIX) {
+      for (const artifactType of ARTIFACT_TYPES) {
+        if (!entry.artifactTypes.includes(artifactType)) {
+          expect(microsoftCapabilityState(entry.capability, artifactType)).toBe('unknown');
+        }
+      }
+    }
   });
 
   it('denies every mutation lane for every artifact type', () => {
@@ -48,10 +51,12 @@ describe('Microsoft capability spike', () => {
     }
   });
 
-  it('does not authorize non-mutation behavior from documentation-only entries', () => {
-    for (const capability of ['create', 'read', 'version_history', 'change_tracking', 'preview', 'open_external', 'embed_editor'] as const) {
-      for (const artifactType of ARTIFACT_TYPES) {
-        expect(microsoftCapabilityState(capability, artifactType)).toBe('unknown');
+  it('keeps every applicable non-mutation disposition unknown', () => {
+    for (const entry of MICROSOFT_CAPABILITY_MATRIX) {
+      if (!MUTATIONS.includes(entry.capability)) {
+        for (const artifactType of entry.artifactTypes) {
+          expect(microsoftCapabilityState(entry.capability, artifactType)).toBe('unknown');
+        }
       }
     }
   });

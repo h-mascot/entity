@@ -1,7 +1,7 @@
 # T-021 evidence — Microsoft format capability spike / ADR
 
 - **Issue:** THE-962 / LOOM-DOCS T-021
-- **Clean base verified before repair:** `c111a2fed788cce37daca2501a7b7dea081d8459`
+- **Clean base verified before repair:** `d32112e973529653bf05a01b3f28516502c78c62`
 - **Branch:** `runner/entity-document-integrations-20260818`
 - **Date:** 2026-08-22
 - **Scope:** only the four T-021 implementation/evidence paths; no provider calls, tenant data, credentials, deployment, GitHub, Linear, main, or queue operations.
@@ -66,22 +66,19 @@ Commands and results run on the completed candidate tree before the single commi
 export PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH"
 node --version
 PASS — v22.22.2
-git rev-parse HEAD
-PASS — c111a2fed788cce37daca2501a7b7dea081d8459 (clean base before repair)
 cd packages/server && npx vitest run src/document-providers/microsoft/capability-spike.test.ts
-PASS — focused capability-spike tests
+PASS — 1 test file, 4 tests
 cd packages/server && npm run build
-PASS — strict TypeScript server build
-cd packages/server && npx vitest run
-PASS — 219 files, 2239 tests
+PASS — tsc (strict server build/typecheck)
 git diff --check
 PASS
 ```
 
-The focused tests cover every matrix entry, unknown and wrong artifact/capability fallbacks, every
-mutation denial, and the applicable non-mutation denials. The full server gate is run before commit;
-this evidence intentionally does not record the final commit SHA. No provider integration, tenant
-authorization, destination policy, runtime readiness, or product wiring is implemented.
+The focused tests cover every matrix entry, every wrong artifact/capability pair, unknown capability
+fallback, every mutation denial across all artifact types, and every applicable non-mutation
+behaviour. The evidence intentionally distinguishes the clean base identification above from the
+commands run on the completed candidate tree and does not record a final commit SHA. No provider
+integration, tenant authorization, destination policy, runtime readiness, or product wiring is implemented.
 
 ## Scope disposition
 
