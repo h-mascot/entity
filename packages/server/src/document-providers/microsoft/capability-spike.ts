@@ -135,7 +135,10 @@ export function microsoftCapabilityState(
   const evidence = MICROSOFT_CAPABILITY_MATRIX.find(
     (entry) => entry.capability === capability && entry.artifactTypes.includes(artifactType),
   );
-  return evidence?.defaultState ?? 'unknown';
+  // Evidence metadata is never a runtime authorization source. Even if a future
+  // catalogue entry records `supported`, this spike must remain fail-closed until
+  // an independently wired provider capability lane exists.
+  return evidence?.defaultState === 'supported' ? 'unknown' : evidence?.defaultState ?? 'unknown';
 }
 
 /**
@@ -147,7 +150,9 @@ export function microsoftMutationAllowed(
   capability: Extract<CapabilityType, 'agent_text_mutation' | 'agent_range_mutation' | 'agent_slide_mutation'>,
   artifactType: DocumentArtifactType,
 ): boolean {
-  return microsoftCapabilityState(capability, artifactType) === 'supported';
+  // This spike has no runtime/product authorization lane. Documentation metadata
+  // can never authorize a mutation here, including unknown matrix pairs.
+  return false;
 }
 
 export const MICROSOFT_CAPABILITY_SPIKE_RULES = Object.freeze({
