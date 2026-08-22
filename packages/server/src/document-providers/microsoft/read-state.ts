@@ -58,7 +58,7 @@ export interface MicrosoftReadState {
   changeToken: string | null;
 }
 
-function httpsUrl(value: unknown): string | null {
+export function normalizeMicrosoftHttpsUrl(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
   try {
     const url = new URL(value);
@@ -91,13 +91,13 @@ export function normalizeMicrosoftReadState(input: {
   const { capabilityReport, item } = input;
   const documentAvailable = Boolean(nonEmpty(item.externalId));
   const previewCapability = capabilityAllowsActionForKey(capabilityReport, 'preview');
-  const previewUrl = previewCapability ? httpsUrl(item.thumbnailUrl) : null;
+  const previewUrl = previewCapability ? normalizeMicrosoftHttpsUrl(item.thumbnailUrl) : null;
   const preview: DocumentPreviewState = !documentAvailable
     ? 'failed'
     : previewUrl ? 'ready'
       : capabilityReport.preview?.state === 'unsupported' ? 'unsupported' : 'failed';
   const openCapability = capabilityAllowsActionForKey(capabilityReport, 'open_external');
-  const openUrl = documentAvailable && openCapability ? httpsUrl(item.sharedUrl) ?? httpsUrl(item.webUrl) : null;
+  const openUrl = documentAvailable && openCapability ? normalizeMicrosoftHttpsUrl(item.sharedUrl) ?? normalizeMicrosoftHttpsUrl(item.webUrl) : null;
   const versions = capabilityAllowsActionForKey(capabilityReport, 'version_history')
     ? (item.versions ?? []).flatMap((version) => {
       const id = nonEmpty(version.id); if (!id) return [];
