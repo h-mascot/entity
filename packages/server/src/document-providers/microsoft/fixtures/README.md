@@ -12,7 +12,7 @@ round-trip proof.
 | `docx` minimal document | create/upload, open in Microsoft 365, mutate a text node, reopen and compare | Not present; `agent_text_mutation=unsupported` |
 | `xlsx` minimal workbook | create/upload, mutate a named range/cell, reopen and compare workbook semantics | Not present; `agent_range_mutation=unsupported` |
 | `pptx` minimal presentation | create/upload, mutate a slide element, reopen and compare package semantics | Not present; `agent_slide_mutation=unsupported` |
-| provider version/change sample | item identity, opaque version IDs, delta token, rename/move behavior | T-024 scope; no live sample here |
+| provider version/change sample | item identity, opaque version IDs, delta token, rename/move behavior | T-024 scope; documentation metadata only; no live sample or actionable capability here |
 | preview/open sample | thumbnail availability and provider web URL, including unavailable branch | T-024 scope; no live sample here |
 
 A file upload or download round trip proves storage only. It does **not** prove format-aware
