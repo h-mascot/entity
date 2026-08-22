@@ -6,7 +6,8 @@
  * The returned status proves provider creation only; Office-editor opening remains
  * explicitly unproven until the live T-038/T-039 lanes.
  */
-import type { DocumentArtifactType } from '../../../../db/src/document-integrations';
+import { createHash } from 'crypto';
+import type { DocumentArtifactType, DocumentIntegrationsRepository } from '../../../../db/src/document-integrations';
 import type { MicrosoftConnectionSnapshot, MicrosoftTenantBinding } from './connection';
 import type { ResolvedMicrosoftDestination } from './destinations';
 
@@ -22,13 +23,6 @@ const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 const IDEMPOTENCY_KEY_PATTERN = /^[\x21-\x7e]+$/;
 
-type IdempotencyLedgerEntry =
-  | { state: 'in_flight'; fingerprint: string }
-  | { state: 'completed'; fingerprint: string; result: MicrosoftCreatedArtifact }
-  | { state: 'uncertain'; fingerprint: string };
-
-const idempotencyLedgers = new WeakMap<MicrosoftCreateTransport, Map<string, IdempotencyLedgerEntry>>();
-
 export interface MicrosoftArtifactDescriptor {
   artifactType: DocumentArtifactType;
   format: MicrosoftArtifactFormat;
@@ -42,6 +36,8 @@ export interface MicrosoftCreateRequest {
   tenantBinding: MicrosoftTenantBinding;
   destination: ResolvedMicrosoftDestination;
   idempotencyKey: string;
+  workspaceId: string;
+  repository: DocumentIntegrationsRepository;
 }
 
 export interface MicrosoftCreateTransportInput {
@@ -169,7 +165,7 @@ function assertBinding(request: MicrosoftCreateRequest): void {
 
 function descriptorFingerprint(request: MicrosoftCreateRequest): string {
   const bytes = Buffer.from(request.descriptor.content).toString('base64');
-  return JSON.stringify({
+  return createHash('sha256').update(JSON.stringify({
     artifactType: request.descriptor.artifactType,
     format: request.descriptor.format,
     title: request.descriptor.title,
@@ -177,7 +173,7 @@ function descriptorFingerprint(request: MicrosoftCreateRequest): string {
     destinationId: request.destination.destination.destinationId,
     tenantId: request.tenantBinding.tenantId,
     connectionId: request.connection.connectionId,
-  });
+  })).digest('hex');
 }
 
 function assertIdempotencyKey(key: unknown): asserts key is string {
@@ -219,23 +215,14 @@ export function createMicrosoftArtifact(
   assertBinding(request);
 
   const fingerprint = descriptorFingerprint(request);
-  let ledger = idempotencyLedgers.get(transport);
-  if (!ledger) {
-    ledger = new Map();
-    idempotencyLedgers.set(transport, ledger);
-  }
-  const prior = ledger.get(request.idempotencyKey);
-  if (prior && prior.fingerprint !== fingerprint) {
-    fail('IDEMPOTENCY_CONFLICT', 'idempotencyKey was already used for a different creation request', 'idempotencyKey');
-  }
-  if (prior?.state === 'completed') return prior.result;
-  if (prior?.state === 'in_flight') {
-    fail('IDEMPOTENCY_UNCERTAIN', 'creation is already in flight for this idempotency key; reconciliation is required before retry', 'idempotencyKey');
-  }
-  if (prior?.state === 'uncertain') {
-    fail('IDEMPOTENCY_UNCERTAIN', 'prior transport outcome is uncertain; reconciliation is required before retry', 'idempotencyKey');
-  }
-  ledger.set(request.idempotencyKey, { state: 'in_flight', fingerprint });
+  const claim = request.repository.claimDocumentOperation({
+    workspace_id: request.workspaceId, idempotency_key: request.idempotencyKey,
+    provider: 'microsoft_365', artifact_type: request.descriptor.artifactType,
+    destination_id: request.destination.destination.destinationId, request_fingerprint: fingerprint,
+  });
+  if (claim.kind === 'conflict') fail('IDEMPOTENCY_CONFLICT', 'idempotencyKey was already used for a different creation request', 'idempotencyKey');
+  if (claim.kind === 'uncertain') fail('IDEMPOTENCY_UNCERTAIN', 'prior transport outcome is uncertain; reconciliation is required before retry', 'idempotencyKey');
+  if (claim.kind === 'completed' && claim.record.result_json) return JSON.parse(claim.record.result_json) as MicrosoftCreatedArtifact;
 
   let result: MicrosoftCreateTransportResult;
   try {
@@ -246,16 +233,14 @@ export function createMicrosoftArtifact(
       connectionId: request.connection.connectionId,
       idempotencyKey: request.idempotencyKey,
     });
-  } catch (error) {
-    // A synchronous throw may follow a provider-side create. Never retry or fabricate a
-    // successful artifact; require an explicit provider reconciliation before reuse.
-    ledger.set(request.idempotencyKey, { state: 'uncertain', fingerprint });
-    throw error;
+  } catch (_error) {
+    request.repository.completeDocumentOperation(request.workspaceId, request.idempotencyKey, { operation_status: 'uncertain' });
+    throw new MicrosoftCreateError('IDEMPOTENCY_UNCERTAIN', 'provider outcome is uncertain; reconciliation is required before retry', 'idempotencyKey');
   }
   try {
     assertProviderResult(result);
   } catch (error) {
-    ledger.set(request.idempotencyKey, { state: 'uncertain', fingerprint });
+    request.repository.completeDocumentOperation(request.workspaceId, request.idempotencyKey, { operation_status: 'uncertain' });
     throw error;
   }
   const created: MicrosoftCreatedArtifact = {
@@ -266,6 +251,8 @@ export function createMicrosoftArtifact(
     creationStatus: result.outcome,
     editorOpenProof: 'unproven',
   };
-  ledger.set(request.idempotencyKey, { state: 'completed', fingerprint, result: created });
+  request.repository.completeDocumentOperation(request.workspaceId, request.idempotencyKey, {
+    operation_status: 'completed', provider_external_id: created.providerIdentity, result_json: JSON.stringify(created),
+  });
   return created;
 }

@@ -224,6 +224,8 @@ export interface DocumentOperationRecord {
   document_id: string | null;
   created_at: string;
   updated_at: string;
+  request_fingerprint: string;
+  result_json: string | null;
 }
 
 export interface UpsertDocumentOperationInput {
@@ -238,6 +240,23 @@ export interface UpsertDocumentOperationInput {
   provider_external_id?: string | null;
   /** Late-filled once the resulting Entity document is persisted. */
   document_id?: string | null;
+  request_fingerprint?: string;
+  result_json?: string | null;
+}
+
+export type DocumentOperationClaim =
+  | { kind: 'new'; record: DocumentOperationRecord }
+  | { kind: 'completed'; record: DocumentOperationRecord }
+  | { kind: 'uncertain'; record: DocumentOperationRecord }
+  | { kind: 'conflict'; record: DocumentOperationRecord };
+
+export interface ClaimDocumentOperationInput {
+  workspace_id: string;
+  idempotency_key: string;
+  provider: DocumentProvider;
+  artifact_type: DocumentArtifactType;
+  destination_id?: string | null;
+  request_fingerprint: string;
 }
 
 /** Result of ensuring the additive unified schema exists. */
@@ -383,6 +402,8 @@ CREATE TABLE IF NOT EXISTS document_operations (
   document_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL DEFAULT '',
+  result_json TEXT,
   UNIQUE (workspace_id, idempotency_key)
 );
 `;
@@ -426,13 +447,10 @@ export function detectDocumentIntegrationsCollisions(
     // Compare column set only (the observable schema), not formatting.
     const existingCols = extractColumnNamesFromSql(present);
     const expectedCols = extractColumnNamesFromSql(ourSql.get(name) ?? '');
-    if (existingCols.length !== expectedCols.length) {
+    const additive = name === 'document_operations' ? new Set(['request_fingerprint', 'result_json']) : new Set<string>();
+    const missing = expectedCols.filter((col) => !existingCols.includes(col));
+    if (missing.some((col) => !additive.has(col)) || existingCols.some((col) => !expectedCols.includes(col))) {
       return { ok: false, table: name, detail: `existing table has incompatible column set (${existingCols.join(', ')})` };
-    }
-    for (const col of expectedCols) {
-      if (!existingCols.includes(col)) {
-        return { ok: false, table: name, detail: `existing table is missing column '${col}'` };
-      }
     }
     alreadyCompatible.push(name);
   }
@@ -468,13 +486,15 @@ export interface DocumentIntegrationsRepository {
   listVersionRecords(documentId: string): DocumentVersionRecord[];
   appendEvent(input: CreateDocumentIntegrationEventInput): DocumentIntegrationEventRecord;
   listEvents(documentId: string): DocumentIntegrationEventRecord[];
+  /** R-026: atomically reserve or classify a workspace-scoped creation operation. */
+  claimDocumentOperation(input: ClaimDocumentOperationInput): DocumentOperationClaim;
   /** R-026: create-or-complete an operation-scoped creation-idempotency record. */
   upsertDocumentOperation(input: UpsertDocumentOperationInput): DocumentOperationRecord;
   /** R-026 late-fill: record the resulting provider external id / Entity document id once known. */
   completeDocumentOperation(
     workspaceId: string,
     idempotencyKey: string,
-    fields: { operation_status?: string; provider_external_id?: string | null; document_id?: string | null },
+    fields: { operation_status?: string; provider_external_id?: string | null; document_id?: string | null; result_json?: string | null },
   ): DocumentOperationRecord | undefined;
   findDocumentOperation(workspaceId: string, idempotencyKey: string): DocumentOperationRecord | undefined;
 }
@@ -497,6 +517,10 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
       );
     }
     db.exec(DOCUMENT_INTEGRATIONS_SCHEMA_SQL);
+    const operationColumns = db.prepare('PRAGMA table_info(document_operations)').all() as Array<{ name: string }>;
+    const columns = new Set(operationColumns.map((column) => column.name));
+    if (!columns.has('request_fingerprint')) db.exec("ALTER TABLE document_operations ADD COLUMN request_fingerprint TEXT NOT NULL DEFAULT ''");
+    if (!columns.has('result_json')) db.exec('ALTER TABLE document_operations ADD COLUMN result_json TEXT');
     // Report only the tables actually created now; tables that were already present
     // with a compatible schema come from the collision detector, not this apply.
     const newlyEnsured = EXPECTED_UNIFIED_TABLES.filter(
@@ -873,10 +897,10 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     db.prepare(`
       INSERT INTO document_operations (
         id, workspace_id, idempotency_key, provider, artifact_type, destination_id,
-        operation_status, provider_external_id, document_id, created_at, updated_at
+        operation_status, provider_external_id, document_id, created_at, updated_at, request_fingerprint, result_json
       ) VALUES (
         @id, @workspace_id, @idempotency_key, @provider, @artifact_type, @destination_id,
-        @operation_status, @provider_external_id, @document_id, @created_at, @updated_at
+        @operation_status, @provider_external_id, @document_id, @created_at, @updated_at, @request_fingerprint, @result_json
       )
       ON CONFLICT(workspace_id, idempotency_key) DO UPDATE SET
         provider = excluded.provider,
@@ -885,6 +909,8 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
         operation_status = excluded.operation_status,
         provider_external_id = COALESCE(excluded.provider_external_id, document_operations.provider_external_id),
         document_id = COALESCE(excluded.document_id, document_operations.document_id),
+        request_fingerprint = CASE WHEN excluded.request_fingerprint <> '' THEN excluded.request_fingerprint ELSE document_operations.request_fingerprint END,
+        result_json = COALESCE(excluded.result_json, document_operations.result_json),
         updated_at = excluded.updated_at
     `).run({
       id: input.id ?? randomUUID(),
@@ -896,6 +922,8 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
       operation_status: input.operation_status,
       provider_external_id: input.provider_external_id ?? null,
       document_id: input.document_id ?? null,
+      request_fingerprint: input.request_fingerprint ?? '',
+      result_json: input.result_json ?? null,
       created_at: now,
       updated_at: now,
     });
@@ -906,10 +934,26 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     return record;
   }
 
+  function claimDocumentOperation(input: ClaimDocumentOperationInput): DocumentOperationClaim {
+    const inserted = db.prepare(`
+      INSERT OR IGNORE INTO document_operations (
+        id, workspace_id, idempotency_key, provider, artifact_type, destination_id,
+        operation_status, created_at, updated_at, request_fingerprint
+      ) VALUES (?, ?, ?, ?, ?, ?, 'in_flight', ?, ?, ?)
+    `).run(randomUUID(), input.workspace_id, input.idempotency_key, input.provider, input.artifact_type,
+      input.destination_id ?? null, nowIso(), nowIso(), input.request_fingerprint);
+    const record = findDocumentOperation(input.workspace_id, input.idempotency_key);
+    if (!record) throw new Error('document operation claim failed');
+    if (inserted.changes === 1) return { kind: 'new', record };
+    if (record.request_fingerprint !== input.request_fingerprint) return { kind: 'conflict', record };
+    if (record.operation_status === 'completed' && record.result_json) return { kind: 'completed', record };
+    return { kind: 'uncertain', record };
+  }
+
   function completeDocumentOperation(
     workspaceId: string,
     idempotencyKey: string,
-    fields: { operation_status?: string; provider_external_id?: string | null; document_id?: string | null },
+    fields: { operation_status?: string; provider_external_id?: string | null; document_id?: string | null; result_json?: string | null },
   ): DocumentOperationRecord | undefined {
     // R-026 late-fill: record the resulting provider external id / Entity document id
     // once known, without requiring an Entity document id to look the row up.
@@ -919,6 +963,7 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
           operation_status = COALESCE(@operation_status, operation_status),
           provider_external_id = COALESCE(@provider_external_id, provider_external_id),
           document_id = COALESCE(@document_id, document_id),
+          result_json = COALESCE(@result_json, result_json),
           updated_at = @now
         WHERE workspace_id = @workspace_id AND idempotency_key = @idempotency_key
       `)
@@ -928,6 +973,7 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
         operation_status: fields.operation_status ?? null,
         provider_external_id: fields.provider_external_id ?? null,
         document_id: fields.document_id ?? null,
+        result_json: fields.result_json ?? null,
         now: nowIso(),
       });
     if (result.changes === 0) {
@@ -949,6 +995,7 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
     listVersionRecords,
     appendEvent,
     listEvents,
+    claimDocumentOperation,
     upsertDocumentOperation,
     completeDocumentOperation,
     findDocumentOperation,

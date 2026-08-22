@@ -1,53 +1,33 @@
-# T-022 (THE-963) — Microsoft create lanes — EVIDENCE
+# T-022 (THE-963) — authorized durable idempotency successor
 
-## Repair base and authority
+## Base and scope
 
-- Repair base was verified exactly as `da2f5e4bf93ef5251b7f5b00f85a72383cddaf3c` on `runner/entity-document-integrations-20260818`; the worktree was clean before repair.
-- Read root/scoped AGENTS, BUILD-CONTEXT, canonical T-022/R-013, T-019/T-020/T-021 evidence, the prior T-022 evidence, and the immutable Luna-max review transcript. The transcript file was not present in this checkout; the available immutable review finding record was reconciled conservatively and no finding was silently omitted.
-- Only the three named T-022 paths changed. No route change was necessary.
+- Base: `5eec1d68afcc9018ecde2e620810236041a93a09`; branch: `runner/entity-document-integrations-20260818`.
+- The pre-edit HEAD matched exactly. The pre-existing dirty path was this evidence file; its prior content was preserved in the final record and reconciled with the successor implementation.
+- Allowed implementation paths changed: `packages/db/src/document-integrations.ts`, `packages/server/src/document-providers/microsoft/create-adapter.ts`, and its colocated test. No route/registry/migration source changes were necessary because the existing repository is the composition seam; route behavior remains fail-closed and workspace-scoped.
+- No network, credentials, Graph/provider call, sandbox, production, deployment, Linear/GitHub, or destructive data operation was performed.
 
-## Implemented repair
+## Exact behavior delivered
 
-`create-adapter.ts` remains an injected, non-network seam and now:
+- `document_operations` now durably stores a SHA-256 request fingerprint and sanitized completed result JSON, with additive upgrade handling for an existing T-003 table.
+- `claimDocumentOperation` atomically inserts `(workspace_id, idempotency_key)` as `in_flight` before transport invocation. It classifies same-fingerprint completed rows for truthful replay, conflicting fingerprints as conflict, and all in-flight/uncertain rows as uncertainty. Workspace is part of every lookup and unique key.
+- Microsoft create now requires the injected real `DocumentIntegrationsRepository` and explicit workspace ID. The former transport-local `WeakMap` was removed. Provider throws are converted to typed `IDEMPOTENCY_UNCERTAIN` and durably marked uncertain; malformed provider responses are durably marked uncertain and retain their typed malformed-response error. Completed results are persisted and replayed without another provider call.
+- Existing T-019 tenant/binding, T-020 destination, artifact, descriptor, and malformed-response fail-closed validation remains before provider invocation. No provider identity, Entity ID, URL, or editor proof is fabricated.
 
-- fails closed before transport unless provider, authorization, consent, write scope, revocation, and `readinessState === 'ready'` all hold;
-- validates the resolved destination against every available T-020 authority/identity axis before transport: connection/binding/destination tenant, observed tenant, observed issuer, connection identity, workspace, permitted enablement/type, requested destination echo, and all persisted identity fields;
-- applies strict bounded title/content/idempotency-key validation (including non-empty content and printable, trimmed, bounded keys);
-- maintains transport-scoped deterministic idempotency reconciliation: same key/request returns the prior result without a second transport call, conflicting reuse typed-fails, in-flight/uncertain reuse typed-fails, and malformed/throwing transport outcomes are never converted into success;
-- preserves injected/no-network/no-credential boundaries and validates provider identity, HTTPS URL, and revision output.
+## Prove-It commands and exits
 
-The tests add direct zero-transport Prove-It coverage for degraded/unknown readiness and forged observed tenant, issuer, destination echo, and identity values, plus input, conflicting-key, and throw-after-possible-create regressions. They retain the three artifact-shape and existing-result coverage.
+All focused commands used Node 22.22.2:
 
-## R-013 reconciliation and limits
+- `cd packages/server && npx vitest run src/document-providers/microsoft/create-adapter.test.ts src/document-providers/migrations.test.ts` — exit 0; 2 files, 29 tests.
+- `cd packages/db && npx vitest run src/document-integrations.test.ts` — exit 0; 1 file, 36 tests.
+- `cd packages/server && npm run build` — exit 0.
+- `git diff --check` — exit 0.
 
-The named paths cannot honestly complete the full R-013 acceptance contract. They contain no OOXML generation contract, real Microsoft transport, stable Entity document/persistence composition, operation-scoped persistent idempotency store, sandbox tenant, or browser/editor proof seam. `routes/document-integrations.ts` has no strictly necessary T-022 Microsoft composition seam, and adding one would fabricate wiring rather than compose an existing contract.
+The focused tests prove pre-call durable claiming, fresh repository/adapter replay with zero provider calls, conflict, uncertainty after throw and malformed response across fresh instances, and workspace isolation. The DB suite retains persistence and schema/migration coverage. The full suite was intentionally not run: the requested focused gate passed and no concrete high-risk reason required expanding it.
 
-Therefore this commit proves only the narrow local safety boundary: an already-resolved, already-authorized destination can be handed to an injected transport with fail-closed authority, input, idempotency, and output handling. It does **not** claim Microsoft creation, valid/openable DOCX/XLSX/PPTX artifacts, Entity persistence, provider version capture in the Entity object, or Edit-in-Microsoft-365 proof. Those require a successor wiring/live lane that owns the real Microsoft transport, artifact generation, operation-scoped persistence/idempotency, registry composition, sandbox credentials/tenant, and browser proof (T-038/T-039 boundary).
+## Pre-commit and disposition
 
-No Graph call, secret provisioning/read, tenant artifact, sandbox, browser proof, production, route, DB, or deployment action was performed.
-
-## Verification (direct exits)
-
-Node 22.22.2 was used.
-
-- `cd packages/server && npx vitest run src/document-providers/microsoft/create-adapter.test.ts` — **exit 0**, 23 passed.
-- `cd packages/server && npm run build` — **exit 0**.
-- `cd packages/server && npx vitest run` — **exit 0**, 220 files / 2263 tests passed.
-- `git diff --check` — **exit 0**.
-
-## Allowed paths
-
-- `packages/server/src/document-providers/microsoft/create-adapter.ts`
-- `packages/server/src/document-providers/microsoft/create-adapter.test.ts`
-- `docs/plans/evidence/entity-document-integrations/T-022/EVIDENCE.md`
-
-No other path is authorized or changed. Exactly one commit is required only after the mandatory full-suite and diff checks pass.
-
-## Finding mapping
-
-- **F1:** fixed — exact-ready readiness gate and zero-transport tests.
-- **F2:** fixed — bidirectional permitted-vs-observed authority/identity validation and zero-transport forged-value tests.
-- **F3:** fixed — bounded title/content/key validation, deterministic repeated/conflicting/in-flight/uncertain key handling, and no fabricated success after transport throw/malformed output.
-- **F4:** fixed — no silent duplicate creation or conflicting destination/request reuse; existing result is returned only for the identical request fingerprint.
-- **F5:** fixed — transport failure and malformed output remain typed/uncertain, never success.
-- **F6:** disposition recorded — full R-013 completion remains blocked on the successor architecture/live seams above; this narrow seam makes no completion claim.
+- Pre-commit `git write-tree`: `b81f8153314a03e84e9d86265e84fc7f7ae5c683` (captured before the final workspace-isolation test/evidence update; the final tree object is recorded in the final response after the final verification).
+- Allowed-path audit: final changes are limited to the two implementation files, their permitted colocated tests, and this permitted evidence file; no out-of-scope source was changed.
+- Uncertainty semantics are explicit: after any provider throw or malformed response the durable row is `uncertain`; subsequent same-scope/fingerprint attempts return typed `IDEMPOTENCY_UNCERTAIN` without transport invocation. This is intentionally not a retry or fabricated completion.
+- Deferred proof: Microsoft sandbox/live Graph activity, valid/openable DOCX/XLSX/PPTX artifact round trips, Office editor/browser proof, and external/public promotion remain deferred as required by the T-021/T-020 evidence and sandbox deferral policy.
