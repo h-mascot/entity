@@ -2,8 +2,8 @@
 
 ## Scope and base
 
-- Exact base: `5af5943152a71f6436416d42eaba39c6a9ea4d22`
-- Head before commit: `5af5943152a71f6436416d42eaba39c6a9ea4d22`
+- Exact reviewed candidate/base: `60a3ec73991ac1a52870df1de3c829ee08db65b2`
+- Head before repair commit: `60a3ec73991ac1a52870df1de3c829ee08db65b2`
 - Scope: local bridge security skeleton only; no route, UI, DB, Electron, engine, network, or production changes.
 - T-025 seam consumed: `packages/server/src/document-providers/local/engine-spike.ts`; the bridge remains an independent document-scoped security boundary as required by `docs/adr/2026-08-local-office-engine.md`.
 
@@ -21,7 +21,9 @@
 
 ## Acceptance mapping
 
-- R-018 handshake/auth/origin binding: focused tests cover valid handshake, bad proof, wrong origin, and wrong protocol.
+- R-018 handshake/auth/origin binding: focused tests cover valid handshake, bad proof, wrong origin, wrong protocol, wrong token, bounded oversized handshake/request fields, and sanitized audit events.
+- R-018/R-019 review blocker repair: readiness must be `ready` for handshake and authorization; registered paths are revalidated before nonce consumption, including symlink replacement, with a regression proving the nonce remains reusable after failed revalidation; document/session revocation and bridge-wide shutdown are tested.
+- R-019 retained state: sessions are capped at 128 and replay nonces at 256 per session; shutdown clears and permanently revokes all sessions.
 - R-018 expiry/revocation/replay: focused tests cover expired sessions, revoked sessions, and reused request IDs.
 - R-018 allowlist and operation controls: focused tests cover unknown/arbitrary path references and invalid operations.
 - R-018 path protections: focused tests cover traversal/nonexistent paths and symlink registration rejection; authorization revalidates canonical paths.
@@ -38,10 +40,14 @@ No additional implementation paths were added. No manual/browser proof was run: 
 
 ## Verification
 
-- `cd packages/server && npx vitest run src/document-providers/local/bridge.test.ts` — PASS (1 file, 6 tests).
+- `cd packages/server && npx vitest run src/document-providers/local/bridge.test.ts` — PASS (1 file, 9 tests).
 - `cd packages/server && npm run build` — PASS (TypeScript build).
+- `cd packages/server && npx vitest run` — FAIL/ENVIRONMENT: 88 failed, 135 passed, 96 skipped; existing native `better-sqlite3` binary is Node module version 127 while this Node requires 147, plus dependent scoped-search 500s. Focused bridge tests passed.
 - `git diff --check` — PASS.
-- Full suite intentionally not run: user required focused Vitest and relevant build/typecheck only; this isolated local security skeleton has no existing route/DB/UI wiring.
+- No browser proof: no route/UI/browser-visible behavior was added; browser verification is not applicable.
 - No Linear mutation, push, merge, deploy, or production change performed.
 
+- Review-blocker resolution: R-018/R-019 CHANGES_REQUESTED items were repaired only in the bridge skeleton/tests: bounded pre-auth fields, sanitized audit boundary, ready-only authorization, fail-closed path revalidation with preserved failed-revalidation nonce behavior, bounded retained state/shutdown revocation, wrong-token and document-revocation regressions.
+- Changed paths: `packages/server/src/document-providers/local/bridge.ts`, `packages/server/src/document-providers/local/bridge.test.ts`, and this evidence file. No same-issue path expansion was necessary.
+- No Linear mutation, push, merge, deploy, or production change performed.
 - Final commit SHA is supplied in the completion report; the final worktree is clean.

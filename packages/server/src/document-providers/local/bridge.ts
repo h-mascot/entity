@@ -32,12 +32,33 @@ export interface LocalBridgeDocument {
   managedPath: string;
 }
 
+export const LOCAL_BRIDGE_FIELD_LIMITS = {
+  origin: 512,
+  clientNonce: 256,
+  proof: 128,
+  sessionId: 128,
+  sessionToken: 128,
+  requestId: 256,
+  documentRef: 256,
+} as const;
+export const LOCAL_BRIDGE_MAX_SESSIONS = 128;
+export const LOCAL_BRIDGE_MAX_REPLAY_NONCES = 256;
+
+export interface LocalBridgeAuditEvent {
+  event: 'handshake' | 'authorize' | 'shutdown';
+  outcome: 'accepted' | 'rejected';
+  code?: string;
+  operation?: LocalBridgeOperation;
+  readiness: LocalBridgeReadiness;
+}
+
 export interface LocalBridgeOptions {
   sharedSecret: string;
   allowedOrigins: readonly string[];
   allowedRoots: readonly string[];
   sessionTtlMs?: number;
   now?: () => number;
+  audit?: (event: LocalBridgeAuditEvent) => void;
 }
 
 export interface LocalBridgeHandshake {
@@ -98,6 +119,7 @@ export class LocalBridgeSecurity {
   private readonly now: () => number;
   private readiness: LocalBridgeReadiness = 'bridge_not_running';
   private readonly ttlMs: number;
+  private shutdownRevoked = false;
 
   constructor(private readonly options: LocalBridgeOptions) {
     if (!options.sharedSecret) throw new Error('local bridge secret is required');
@@ -131,10 +153,20 @@ export class LocalBridgeSecurity {
   }
 
   handshake(input: LocalBridgeHandshake): LocalBridgeHandshakeResult {
-    if (input.protocolVersion !== LOCAL_BRIDGE_PROTOCOL_VERSION
+    if (this.shutdownRevoked || !this.boundedHandshake(input)
+      || input.protocolVersion !== LOCAL_BRIDGE_PROTOCOL_VERSION
       || !input.clientNonce || !this.options.allowedOrigins.includes(input.origin)
       || !this.verifyProof(input)) {
+      this.audit({ event: 'handshake', outcome: 'rejected', code: 'invalid_handshake' });
       throw new LocalBridgeSecurityError('invalid_handshake', 'handshake rejected');
+    }
+    if (this.readiness !== 'ready') {
+      this.audit({ event: 'handshake', outcome: 'rejected', code: 'unavailable' });
+      throw new LocalBridgeSecurityError('unauthorized', 'bridge is not ready');
+    }
+    if (this.sessions.size >= LOCAL_BRIDGE_MAX_SESSIONS) {
+      this.audit({ event: 'handshake', outcome: 'rejected', code: 'session_limit' });
+      throw new LocalBridgeSecurityError('unauthorized', 'session limit reached');
     }
     const sessionId = randomUUID();
     const sessionToken = randomBytes(32).toString('hex');
@@ -142,6 +174,7 @@ export class LocalBridgeSecurity {
     this.sessions.set(sessionId, {
       tokenHash: this.hash(sessionToken), expiresAt, seenRequests: new Set(),
     });
+    this.audit({ event: 'handshake', outcome: 'accepted' });
     return { sessionId, sessionToken, expiresAt, readiness: this.readiness };
   }
 
@@ -153,7 +186,25 @@ export class LocalBridgeSecurity {
     this.sessions.delete(sessionId);
   }
 
+  shutdown(): void {
+    this.sessions.clear();
+    this.shutdownRevoked = true;
+    this.audit({ event: 'shutdown', outcome: 'accepted' });
+  }
+
   private async authorizeAsync(request: LocalBridgeRequest): Promise<AuthorizedLocalBridgeRequest> {
+    if (this.shutdownRevoked) {
+      this.audit({ event: 'authorize', outcome: 'rejected', code: 'shutdown' });
+      throw new LocalBridgeSecurityError('unauthorized', 'bridge is shut down');
+    }
+    if (this.readiness !== 'ready') {
+      this.audit({ event: 'authorize', outcome: 'rejected', code: 'unavailable', operation: request.operation });
+      throw new LocalBridgeSecurityError('unauthorized', 'bridge is not ready');
+    }
+    if (!this.boundedRequest(request)) {
+      this.audit({ event: 'authorize', outcome: 'rejected', code: 'unauthorized' });
+      throw new LocalBridgeSecurityError('unauthorized', 'request rejected');
+    }
     const session = this.sessions.get(request.sessionId);
     if (!session) throw new LocalBridgeSecurityError('unauthorized', 'unknown session');
     if (this.now() >= session.expiresAt) {
@@ -171,9 +222,19 @@ export class LocalBridgeSecurity {
     }
     const managedPath = this.documents.get(request.documentRef);
     if (!managedPath) throw new LocalBridgeSecurityError('unknown_document', 'document is not allowlisted');
-    session.seenRequests.add(request.requestId);
-    const canonicalPath = await this.verifyManagedPath(managedPath);
-    return { sessionId: request.sessionId, documentRef: request.documentRef, operation: request.operation, canonicalPath };
+    try {
+      const canonicalPath = await this.verifyManagedPath(managedPath);
+      if (session.seenRequests.size >= LOCAL_BRIDGE_MAX_REPLAY_NONCES) {
+        const oldest = session.seenRequests.values().next().value;
+        if (oldest) session.seenRequests.delete(oldest);
+      }
+      session.seenRequests.add(request.requestId);
+      this.audit({ event: 'authorize', outcome: 'accepted', operation: request.operation });
+      return { sessionId: request.sessionId, documentRef: request.documentRef, operation: request.operation, canonicalPath };
+    } catch (error) {
+      this.audit({ event: 'authorize', outcome: 'rejected', code: error instanceof LocalBridgeSecurityError ? error.code : 'file_unavailable', operation: request.operation });
+      throw error;
+    }
   }
 
   private async canonicalizeManagedPath(managedPath: string): Promise<string> {
@@ -202,6 +263,27 @@ export class LocalBridgeSecurity {
       const relative = path.relative(root, candidate);
       return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
     });
+  }
+
+  private boundedHandshake(input: LocalBridgeHandshake): boolean {
+    return this.hasLength(input.origin, LOCAL_BRIDGE_FIELD_LIMITS.origin)
+      && this.hasLength(input.clientNonce, LOCAL_BRIDGE_FIELD_LIMITS.clientNonce)
+      && this.hasLength(input.proof, LOCAL_BRIDGE_FIELD_LIMITS.proof);
+  }
+
+  private boundedRequest(request: LocalBridgeRequest): boolean {
+    return this.hasLength(request.sessionId, LOCAL_BRIDGE_FIELD_LIMITS.sessionId)
+      && this.hasLength(request.sessionToken, LOCAL_BRIDGE_FIELD_LIMITS.sessionToken)
+      && this.hasLength(request.requestId, LOCAL_BRIDGE_FIELD_LIMITS.requestId)
+      && this.hasLength(request.documentRef, LOCAL_BRIDGE_FIELD_LIMITS.documentRef);
+  }
+
+  private hasLength(value: unknown, max: number): value is string {
+    return typeof value === 'string' && value.length > 0 && value.length <= max;
+  }
+
+  private audit(event: Omit<LocalBridgeAuditEvent, 'readiness'>): void {
+    this.options.audit?.({ ...event, readiness: this.readiness });
   }
 
   private verifyProof(input: LocalBridgeHandshake): boolean {
