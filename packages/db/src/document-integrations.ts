@@ -494,7 +494,7 @@ export interface DocumentIntegrationsRepository {
   completeDocumentOperation(
     workspaceId: string,
     idempotencyKey: string,
-    fields: { operation_status?: string; provider_external_id?: string | null; document_id?: string | null; result_json?: string | null },
+    fields: { request_fingerprint?: string; operation_status?: string; provider_external_id?: string | null; document_id?: string | null; result_json?: string | null },
   ): DocumentOperationRecord | undefined;
   findDocumentOperation(workspaceId: string, idempotencyKey: string): DocumentOperationRecord | undefined;
 }
@@ -893,6 +893,21 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
   }
 
   function upsertDocumentOperation(input: UpsertDocumentOperationInput): DocumentOperationRecord {
+    const existing = findDocumentOperation(input.workspace_id, input.idempotency_key);
+    if (existing?.request_fingerprint) {
+      if (!input.request_fingerprint || input.request_fingerprint !== existing.request_fingerprint) {
+        throw new Error('document operation fingerprint mismatch');
+      }
+      if (existing.operation_status === 'completed' || existing.operation_status === 'uncertain') {
+        if (input.operation_status !== existing.operation_status || input.result_json !== undefined || input.provider_external_id !== undefined || input.document_id !== undefined) {
+          throw new Error(`document operation cannot transition from ${existing.operation_status}`);
+        }
+        return existing;
+      }
+      if (input.operation_status === 'completed' || input.operation_status === 'uncertain') {
+        throw new Error('document operation completion requires completeDocumentOperation');
+      }
+    }
     const now = nowIso();
     db.prepare(`
       INSERT INTO document_operations (
@@ -953,32 +968,37 @@ export function createDocumentIntegrationsRepository(db: Database.Database): Doc
   function completeDocumentOperation(
     workspaceId: string,
     idempotencyKey: string,
-    fields: { operation_status?: string; provider_external_id?: string | null; document_id?: string | null; result_json?: string | null },
+    fields: { request_fingerprint?: string; operation_status?: string; provider_external_id?: string | null; document_id?: string | null; result_json?: string | null },
   ): DocumentOperationRecord | undefined {
-    // R-026 late-fill: record the resulting provider external id / Entity document id
-    // once known, without requiring an Entity document id to look the row up.
-    const result = db
-      .prepare(`
-        UPDATE document_operations SET
-          operation_status = COALESCE(@operation_status, operation_status),
-          provider_external_id = COALESCE(@provider_external_id, provider_external_id),
-          document_id = COALESCE(@document_id, document_id),
-          result_json = COALESCE(@result_json, result_json),
-          updated_at = @now
-        WHERE workspace_id = @workspace_id AND idempotency_key = @idempotency_key
-      `)
-      .run({
-        workspace_id: workspaceId,
-        idempotency_key: idempotencyKey,
-        operation_status: fields.operation_status ?? null,
-        provider_external_id: fields.provider_external_id ?? null,
-        document_id: fields.document_id ?? null,
-        result_json: fields.result_json ?? null,
-        now: nowIso(),
-      });
-    if (result.changes === 0) {
-      return undefined;
+    const existing = findDocumentOperation(workspaceId, idempotencyKey);
+    if (!existing) return undefined;
+    if (existing.request_fingerprint && fields.request_fingerprint !== existing.request_fingerprint) {
+      throw new Error('document operation fingerprint mismatch');
     }
+    const nextStatus = fields.operation_status;
+    if (existing.request_fingerprint &&
+        (existing.operation_status === 'completed' || existing.operation_status === 'uncertain' ||
+         (nextStatus !== 'completed' && nextStatus !== 'uncertain'))) {
+      throw new Error(`document operation cannot transition from ${existing.operation_status}`);
+    }
+    const result = db.prepare(`
+      UPDATE document_operations SET
+        operation_status = COALESCE(@operation_status, operation_status),
+        provider_external_id = COALESCE(@provider_external_id, provider_external_id),
+        document_id = COALESCE(@document_id, document_id),
+        result_json = COALESCE(@result_json, result_json),
+        updated_at = @now
+      WHERE workspace_id = @workspace_id AND idempotency_key = @idempotency_key
+        AND (request_fingerprint = '' OR request_fingerprint = @request_fingerprint)
+        AND operation_status NOT IN ('completed', 'uncertain')
+    `).run({
+      workspace_id: workspaceId, idempotency_key: idempotencyKey,
+      request_fingerprint: fields.request_fingerprint ?? '',
+      operation_status: fields.operation_status ?? null,
+      provider_external_id: fields.provider_external_id ?? null,
+      document_id: fields.document_id ?? null, result_json: fields.result_json ?? null, now: nowIso(),
+    });
+    if (result.changes === 0) throw new Error('document operation transition rejected');
     return findDocumentOperation(workspaceId, idempotencyKey);
   }
 
