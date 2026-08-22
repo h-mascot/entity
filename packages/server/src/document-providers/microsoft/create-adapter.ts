@@ -19,6 +19,15 @@ const FORMAT_BY_TYPE: Readonly<Record<DocumentArtifactType, MicrosoftArtifactFor
 };
 const MAX_TITLE_LENGTH = 200;
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
+const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
+const IDEMPOTENCY_KEY_PATTERN = /^[\x21-\x7e]+$/;
+
+type IdempotencyLedgerEntry =
+  | { state: 'in_flight'; fingerprint: string }
+  | { state: 'completed'; fingerprint: string; result: MicrosoftCreatedArtifact }
+  | { state: 'uncertain'; fingerprint: string };
+
+const idempotencyLedgers = new WeakMap<MicrosoftCreateTransport, Map<string, IdempotencyLedgerEntry>>();
 
 export interface MicrosoftArtifactDescriptor {
   artifactType: DocumentArtifactType;
@@ -70,6 +79,8 @@ export class MicrosoftCreateError extends Error {
     | 'INVALID_DESTINATION'
     | 'CONNECTION_NOT_READY'
     | 'TENANT_MISMATCH'
+    | 'IDEMPOTENCY_CONFLICT'
+    | 'IDEMPOTENCY_UNCERTAIN'
     | 'MALFORMED_PROVIDER_RESPONSE';
   readonly field?: string;
 
@@ -85,6 +96,10 @@ function nonEmpty(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+function exactString(value: unknown): value is string {
+  return nonEmpty(value) && value.trim() === value;
+}
+
 function fail(code: MicrosoftCreateError['code'], message: string, field?: string): never {
   throw new MicrosoftCreateError(code, message, field);
 }
@@ -96,11 +111,11 @@ function assertDescriptor(descriptor: MicrosoftArtifactDescriptor): void {
   if (FORMAT_BY_TYPE[descriptor.artifactType] !== descriptor.format) {
     fail('INVALID_DESCRIPTOR', 'format does not match artifactType', 'format');
   }
-  if (!nonEmpty(descriptor.title) || descriptor.title.length > MAX_TITLE_LENGTH) {
-    fail('INVALID_DESCRIPTOR', 'title is empty or exceeds the bounded length', 'title');
+  if (!exactString(descriptor.title) || descriptor.title.length > MAX_TITLE_LENGTH) {
+    fail('INVALID_DESCRIPTOR', 'title must be a trimmed, bounded non-empty string', 'title');
   }
-  if (!(descriptor.content instanceof Uint8Array) || descriptor.content.byteLength > MAX_CONTENT_BYTES) {
-    fail('INVALID_DESCRIPTOR', 'content must be bounded Uint8Array data', 'content');
+  if (!(descriptor.content instanceof Uint8Array) || descriptor.content.byteLength === 0 || descriptor.content.byteLength > MAX_CONTENT_BYTES) {
+    fail('INVALID_DESCRIPTOR', 'content must be non-empty bounded Uint8Array data', 'content');
   }
 }
 
@@ -109,8 +124,13 @@ function assertBinding(request: MicrosoftCreateRequest): void {
   if (!nonEmpty(tenantBinding.tenantId) || !nonEmpty(tenantBinding.issuerForm)) {
     fail('INVALID_BINDING', 'tenant binding is required', 'tenantBinding');
   }
-  if (connection.provider !== 'microsoft_365' || connection.revoked || connection.authState !== 'authorized') {
-    fail('CONNECTION_NOT_READY', 'Microsoft connection is not authorized for creation');
+  if (
+    connection.provider !== 'microsoft_365' ||
+    connection.revoked ||
+    connection.authState !== 'authorized' ||
+    connection.readinessState !== 'ready'
+  ) {
+    fail('CONNECTION_NOT_READY', 'Microsoft connection is not exactly ready and authorized for creation');
   }
   if (connection.consentState !== 'not_required' && connection.consentState !== 'user_consented') {
     fail('CONNECTION_NOT_READY', 'Microsoft consent is not resolved for creation');
@@ -121,16 +141,48 @@ function assertBinding(request: MicrosoftCreateRequest): void {
   if (
     connection.tenantBinding.tenantId !== tenantBinding.tenantId ||
     connection.tenantBinding.issuerForm !== tenantBinding.issuerForm ||
-    destination.tenantId !== tenantBinding.tenantId
+    destination.tenantId !== tenantBinding.tenantId ||
+    destination.observed.observedTenantId !== tenantBinding.tenantId ||
+    destination.observed.observedIssuer !== tenantBinding.issuerForm
   ) {
-    fail('TENANT_MISMATCH', 'connection, binding, and destination tenant authorities disagree');
+    fail('TENANT_MISMATCH', 'connection, binding, destination, and observed tenant authorities disagree');
   }
+  const permitted = destination.destination;
+  const observed = destination.observed;
+  const identityMatches = Object.entries(permitted.identity).every(([axis, value]) =>
+    observed.observedIdentity[axis as keyof typeof observed.observedIdentity] === value,
+  );
   if (
     destination.connectionId !== connection.connectionId ||
-    !nonEmpty(destination.destination.destinationId) ||
-    destination.destination.workspaceId !== destination.workspaceId
+    destination.workspaceId !== permitted.workspaceId ||
+    !exactString(permitted.destinationId) ||
+    permitted.tenantId !== tenantBinding.tenantId ||
+    permitted.connectionId !== connection.connectionId ||
+    observed.requestedDestinationId !== permitted.destinationId ||
+    !permitted.enabled ||
+    !permitted.artifactTypes.has(request.descriptor.artifactType) ||
+    !identityMatches
   ) {
     fail('INVALID_DESTINATION', 'destination is not an exact resolved permitted destination');
+  }
+}
+
+function descriptorFingerprint(request: MicrosoftCreateRequest): string {
+  const bytes = Buffer.from(request.descriptor.content).toString('base64');
+  return JSON.stringify({
+    artifactType: request.descriptor.artifactType,
+    format: request.descriptor.format,
+    title: request.descriptor.title,
+    content: bytes,
+    destinationId: request.destination.destination.destinationId,
+    tenantId: request.tenantBinding.tenantId,
+    connectionId: request.connection.connectionId,
+  });
+}
+
+function assertIdempotencyKey(key: unknown): asserts key is string {
+  if (!exactString(key) || key.length > MAX_IDEMPOTENCY_KEY_LENGTH || !IDEMPOTENCY_KEY_PATTERN.test(key)) {
+    fail('INVALID_DESCRIPTOR', 'idempotencyKey must be a bounded printable non-whitespace string', 'idempotencyKey');
   }
 }
 
@@ -163,20 +215,50 @@ export function createMicrosoftArtifact(
     fail('MALFORMED_PROVIDER_RESPONSE', 'an injected creation transport is required', 'transport');
   }
   assertDescriptor(request.descriptor);
-  if (!nonEmpty(request.idempotencyKey)) fail('INVALID_DESCRIPTOR', 'idempotencyKey is required', 'idempotencyKey');
+  assertIdempotencyKey(request.idempotencyKey);
   assertBinding(request);
 
-  // The transport owns idempotency reconciliation. An `existing` result is returned
-  // without retrying, so this seam cannot duplicate a provider-side creation.
-  const result = transport.create({
-    descriptor: request.descriptor,
-    destinationId: request.destination.destination.destinationId,
-    tenantId: request.tenantBinding.tenantId,
-    connectionId: request.connection.connectionId,
-    idempotencyKey: request.idempotencyKey,
-  });
-  assertProviderResult(result);
-  return {
+  const fingerprint = descriptorFingerprint(request);
+  let ledger = idempotencyLedgers.get(transport);
+  if (!ledger) {
+    ledger = new Map();
+    idempotencyLedgers.set(transport, ledger);
+  }
+  const prior = ledger.get(request.idempotencyKey);
+  if (prior && prior.fingerprint !== fingerprint) {
+    fail('IDEMPOTENCY_CONFLICT', 'idempotencyKey was already used for a different creation request', 'idempotencyKey');
+  }
+  if (prior?.state === 'completed') return prior.result;
+  if (prior?.state === 'in_flight') {
+    fail('IDEMPOTENCY_UNCERTAIN', 'creation is already in flight for this idempotency key; reconciliation is required before retry', 'idempotencyKey');
+  }
+  if (prior?.state === 'uncertain') {
+    fail('IDEMPOTENCY_UNCERTAIN', 'prior transport outcome is uncertain; reconciliation is required before retry', 'idempotencyKey');
+  }
+  ledger.set(request.idempotencyKey, { state: 'in_flight', fingerprint });
+
+  let result: MicrosoftCreateTransportResult;
+  try {
+    result = transport.create({
+      descriptor: request.descriptor,
+      destinationId: request.destination.destination.destinationId,
+      tenantId: request.tenantBinding.tenantId,
+      connectionId: request.connection.connectionId,
+      idempotencyKey: request.idempotencyKey,
+    });
+  } catch (error) {
+    // A synchronous throw may follow a provider-side create. Never retry or fabricate a
+    // successful artifact; require an explicit provider reconciliation before reuse.
+    ledger.set(request.idempotencyKey, { state: 'uncertain', fingerprint });
+    throw error;
+  }
+  try {
+    assertProviderResult(result);
+  } catch (error) {
+    ledger.set(request.idempotencyKey, { state: 'uncertain', fingerprint });
+    throw error;
+  }
+  const created: MicrosoftCreatedArtifact = {
     provider: 'microsoft_365',
     providerIdentity: result.providerIdentity,
     providerUrl: result.providerUrl,
@@ -184,4 +266,6 @@ export function createMicrosoftArtifact(
     creationStatus: result.outcome,
     editorOpenProof: 'unproven',
   };
+  ledger.set(request.idempotencyKey, { state: 'completed', fingerprint, result: created });
+  return created;
 }
