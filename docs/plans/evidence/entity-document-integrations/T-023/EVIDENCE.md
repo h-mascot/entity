@@ -1,5 +1,12 @@
 # T-023 (THE-964) — Evidence disposition: no Microsoft structured mutation enabled
 
+## Review target
+
+- **Candidate reviewed:** `393cb57f44cf7c392277859e87e002825e93654c`
+- **Exact review range:** `a05028e7516ffd1d549221eec8f22b0212a705a2..393cb57f44cf7c392277859e87e002825e93654c`
+
+The focused test, build, and diff-check results below are the results recorded for this exact candidate and review range.
+
 ## Disposition
 
 **Blocked by governing evidence; no product-source implementation is warranted.** The governing T-021 ADR (`docs/adr/2026-08-microsoft-document-capabilities.md`) explicitly records all three structured Microsoft mutation lanes as unsupported:
@@ -14,11 +21,11 @@ The T-022 create adapter is intentionally a creation seam only: it returns `edit
 
 ## Fail-closed and stale-revision proof
 
-- `cd packages/server && npx vitest run src/document-providers/microsoft/capability-spike.test.ts src/document-providers/revision-coordinator.test.ts` — exit 0; **2 files, 27 tests passed**.
+- `cd packages/server && npx vitest run src/document-providers/microsoft/capability-spike.test.ts src/document-providers/revision-coordinator.test.ts` — exit 0 for candidate `393cb57f44cf7c392277859e87e002825e93654c`; **2 files, 27 tests passed**.
   - The capability spike tests cover all three mutation lanes across applicable and wrong artifact types, unknown fallback, and denial.
   - The revision coordinator tests cover pre-mutation stale rejection and no-concurrency-token fail-closed behavior for the shared mutation contract. Since no Microsoft lane is enabled, there is no enabled lane requiring a separate stale-revision adapter test.
-- `cd packages/server && npm run build` — exit 0.
-- `git diff --check` — exit 0.
+- `cd packages/server && npm run build` — exit 0 for candidate `393cb57f44cf7c392277859e87e002825e93654c`.
+- `git diff --check` — exit 0 for the exact review range and evidence-only correction.
 
 No provider calls, credentials, secrets, tenant data, document contents, or external network behavior were used.
 
@@ -33,4 +40,4 @@ No provider calls, credentials, secrets, tenant data, document contents, or exte
 
 ## Scope and delivery
 
-Bounded scope expansion: evidence-only disposition at this required path because the governing ADR makes implementation impossible without new provider/engine proof. No product-source files were changed. One focused evidence commit is required; no deploy, push, merge, Linear mutation, or provider call was performed.
+Bounded scope expansion: evidence-only disposition at this required path because the governing ADR makes implementation impossible without new provider/engine proof. No product-source files were changed. This correction is one focused evidence-only commit; no deploy, push, merge, Linear mutation, or provider call was performed.
