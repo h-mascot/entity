@@ -1,5 +1,39 @@
 # T-027 Evidence — Local managed storage / File Sources
 
+## N3 — LocalFileSourceAdapter integration
+
+N3 integrates every managed filesystem operation (`stat`, `read`, `readRaw`, `write`, `writeExclusive`, `mkdir`, and `list`) through `ManagedStorageBrokerClient` operations. The adapter does not resolve filesystem pathnames, perform Node root authorization/realpath checks, or provide a Node fs fallback. The broker startup root is bound once by the client; adapter operation requests contain only normalized broker-relative paths.
+
+The missing-root contract is preserved: construction is synchronous and non-throwing even when the root is absent; `validate()` asks the broker to `stat('.')` and maps the typed `not_found` broker error to `Error('Local source path does not exist.')`. Other broker operation errors remain typed and are not rewritten. Validation uses the adapter's broker binding rather than a caller-supplied replacement `base_path`.
+
+Focused N3 tests use a controlled broker double and prove delegation, no root override, construction with an absent root, the exact unavailable validation message, and typed operation error preservation.
+
+## N3 verification
+
+Commands run from the assigned worktree:
+
+```sh
+node scripts/build-managed-storage-broker.mjs
+# PASS (exit 0): native core and IPC entrypoint compile/direct tests passed
+
+cd packages/server && npx vitest run src/fs/adapters/local.test.ts src/fs/managed-storage-broker.test.ts
+# BLOCKED (exit 1): dependencies are absent; vitest/config could not be resolved; no network installation attempted
+
+cd packages/server && npm run build
+# BLOCKED (exit 127): dependencies are absent; tsc not found; no network installation attempted
+
+git diff --check
+# PASS (exit 0)
+```
+
+The focused server tests and typecheck could not execute due to the dependency-free worktree; the native build and whitespace gate passed. The single focused commit is `0ee7dfcdcc07e7d7110cd42303638a8c6452c894`.
+
+Changed paths for N3:
+
+- `packages/server/src/fs/adapters/local.ts` — broker-only adapter implementation.
+- `packages/server/src/fs/adapters/local.test.ts` — focused controlled-broker integration and missing-root contract tests.
+- `docs/plans/evidence/entity-document-integrations/T-027/EVIDENCE.md` — N3 evidence.
+
 - Ticket: Linear THE-968 / LOOM-DOCS T-027
 - N2 baseline HEAD: `be0caf14edda761be31e94a8c8a0b8435d74e35c`
 - N2 scope: thin Node line-oriented IPC client plus native broker IPC entrypoint; no LocalFileSourceAdapter integration, root authorization, fallback Node fs, routes, or persistence.
