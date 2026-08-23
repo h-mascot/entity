@@ -6,8 +6,10 @@
 static void hex_decode(const char *s, unsigned char *out) { size_t i; for (i = 0; s[i]; i += 2) sscanf(s + i, "%2hhx", out + i / 2); }
 static void respond_error(int rc) { const char *name = rc == MSB_NOT_FOUND ? "not_found" : rc == MSB_EXISTS ? "exists" : rc == MSB_LIMIT ? "limit" : rc == MSB_INVALID ? "invalid" : "io"; printf("err\t%s\n", name); fflush(stdout); }
 int main(int argc, char **argv) {
-  msb_broker broker = {.root_fd = -1}; char *line = NULL; size_t cap = 0;
-  if (argc != 2 || msb_open(&broker, argv[1]) != MSB_OK) return 2;
+  msb_broker broker = {.root_fd = -1}; char *line = NULL; size_t cap = 0; int startup_rc;
+  if (argc != 2) return 2;
+  startup_rc = msb_open(&broker, argv[1]);
+  if (startup_rc != MSB_OK) { respond_error(startup_rc); return 0; }
   while (getline(&line, &cap, stdin) >= 0) {
     char *op = strtok(line, "\t\n"), *path_hex = strtok(NULL, "\t\n"), *arg = strtok(NULL, "\t\n");
     unsigned char path[MSB_MAX_PATH + 1U], data[MSB_MAX_IO]; size_t path_len = path_hex ? strlen(path_hex) / 2U : 0, data_len = arg ? strlen(arg) / 2U : 0; int rc;

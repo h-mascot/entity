@@ -40,7 +40,10 @@ function normalizePath(relativePath: string): string {
 }
 
 function unavailable(error: unknown, message: string): Error {
+  // A broker whose startup root cannot be opened exits before it can emit a
+  // typed response. Keep the public validation contract explicit in that case.
   if (error instanceof ManagedStorageBrokerError && error.code === 'not_found') return new Error(message);
+  if (error instanceof Error && error.message === 'managed storage broker exited') return new Error(message);
   return error instanceof Error ? error : new Error(message);
 }
 
@@ -64,6 +67,9 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     try {
       stats = await this.broker.stat('.');
     } catch (error) {
+      if (error instanceof ManagedStorageBrokerError && error.code === 'invalid') {
+        throw new Error('Local source basePath must be a directory.');
+      }
       throw unavailable(error, 'Local source path does not exist.');
     }
     if (!stats.isDirectory) throw new Error('Local source basePath must be a directory.');
