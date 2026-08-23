@@ -154,6 +154,14 @@
 <td>Title/path snippets and preview/open actions are suppressed rather than leaking content</td>
 </tr>
 <tr>
+<td><code>http-markdown</code> source without a manifest</td>
+<td>Exact-path reads still work, but list/search stay disabled and the source is reported as exact-read-only</td>
+</tr>
+<tr>
+<td><code>http-markdown</code> source with a valid same-origin manifest</td>
+<td>Source tree, sync, and search can use manifest-listed markdown files while writes remain disabled</td>
+</tr>
+<tr>
 <td>Legacy workspace path inside nested read-only local source</td>
 <td>Workspace writes, creates, deletes, and moves are rejected; reads remain available</td>
 </tr>
