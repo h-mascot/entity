@@ -63,6 +63,15 @@ describe('LocalFileSourceAdapter managed-storage integration', () => {
     await expect(adapter.validate(sourceFor('/missing/root'))).rejects.toThrow('Local source path does not exist.');
   });
 
+  it('reports an existing file root as a directory error', async () => {
+    const broker = controlledBroker();
+    broker.stat.mockResolvedValue({ size: 12, mode: 0o644, isDirectory: false });
+    const adapter = new LocalFileSourceAdapter(sourceFor('/existing-file'), { brokerClient: broker });
+
+    expect(adapter).toBeDefined();
+    await expect(adapter.validate(sourceFor('/existing-file'))).rejects.toThrow('Local source basePath must be a directory.');
+  });
+
   it('preserves broker errors for operations while translating only missing-root validation', async () => {
     const broker = controlledBroker();
     broker.read.mockRejectedValue(new ManagedStorageBrokerError('io'));
