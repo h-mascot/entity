@@ -1,26 +1,19 @@
-# Entity late Geordi review closure
+# T-029 — Local DOCX milestone
 
-**Base:** `ea07eb334a1aebcc44b975ced8d9ea9dfcd33791`
-**Production:** forbidden without explicit approval.
+**Base:** `0b6e4a746116e04463329782c24d400bfb36ff3d`
+**Status:** IN PROGRESS
+**Canonical plan:** `docs/plans/2026-08-23-t029-local-docx-milestone-plan.md`
 
 ## Plan
 
-- [x] Add RED boundary/config tests for the file-index hard safety ceiling.
-  - Verify: focused `index-runner.test.ts` fails for unsafe overrides.
-- [x] Add RED Services tests for Host independence, stale revalidation state, and force refresh.
-  - Verify: focused `routes.test.ts` fails on all three contracts.
-- [x] Implement minimal fixes in index runner, Services route/UI, and deploy runtime-env wiring.
-  - Verify: focused tests green.
-- [x] Run server/app/build/CTRL gates and adversarial review.
-  - Verify: all gates green and review approved.
-- [ ] Commit, push, merge after CI, deploy exact merge SHA to sandbox.
-  - Verify: immutable identity, 49 tasks, API/browser/runtime stability.
-- [ ] Supersede closeout and Entity LIVE context.
-
-## Files touched
-
-Track in `git diff --name-only`.
+- [x] Map canonical T-029 acceptance and accepted T-025–T-028 seams.
+- [x] RED→GREEN DOCX create/open/human-save/reopen fixture workflow.
+- [x] RED→GREEN structured mutation, revision, version/activity, receipt, and stable-link workflow.
+- [x] RED→GREEN invalid/malicious OOXML defenses and full fixture gate.
+- [x] Focused, native/local, server build/typecheck/regression, and diff/artifact gates; record broader blockers.
+- [ ] Codex/two-axis/adversarial review closure and one focused commit.
 
 ## Resume
 
-Continue from the first unchecked item. Do not touch production.
+Read the canonical plan, inspect `git status`/`git diff`, and continue from the first
+unchecked item. Do not touch main, other worktrees, deployments, Linear, or runner state.

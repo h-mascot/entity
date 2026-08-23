@@ -13,10 +13,28 @@ export type EngineReadinessState = 'ready' | 'degraded' | 'unavailable';
 
 export interface LocalOfficeEngine {
   probe(): Promise<EngineReadiness>;
+  create(input: CreateArtifactInput): Promise<CreateArtifactResult>;
   open(input: OpenArtifactInput): Promise<OpenArtifactResult>;
   inspect(input: InspectArtifactInput): Promise<ArtifactStructure>;
   mutate(input: MutateArtifactInput): Promise<MutationResult>;
   save(input: SaveArtifactInput): Promise<SaveResult>;
+}
+
+export type LocalDocumentActor =
+  | { actorClass: 'agent'; actorId: string | null; receipt: import('../../receipt-writer').CompletionReceiptResult }
+  | { actorClass: 'human' | 'local_external_actor' | 'system'; actorId: string | null };
+
+export interface CreateArtifactInput extends OpenArtifactInput {
+  document: unknown;
+  idempotencyKey: string;
+  actor: LocalDocumentActor;
+}
+
+export interface CreateArtifactResult {
+  documentId: string;
+  documentRef: string;
+  entityUrl: string;
+  revision: string;
 }
 
 export interface OpenArtifactInput {
@@ -31,10 +49,18 @@ export interface OpenArtifactResult {
 
 export interface InspectArtifactInput extends OpenArtifactInput {}
 export interface MutateArtifactInput extends OpenArtifactInput {
-  operation: string;
+  documentId: string;
+  expectedRevision: string;
+  mutation: import('../types').AdapterMutation;
+  idempotencyKey: string;
+  actor: LocalDocumentActor;
 }
 export interface SaveArtifactInput extends OpenArtifactInput {
+  documentId: string;
+  candidate: Buffer;
   expectedRevision: string;
+  idempotencyKey: string;
+  actor: LocalDocumentActor;
 }
 export interface ArtifactStructure {
   format: LocalOfficeFormat;

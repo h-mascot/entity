@@ -1,0 +1,17 @@
+{
+  "title": "Entity DOCX fixture",
+  "blocks": [
+    { "kind": "heading", "level": 1, "text": "Quarterly brief" },
+    { "kind": "paragraph", "text": "A plain paragraph with <XML> & Unicode: café — 東京." },
+    { "kind": "paragraph", "text": "Bold and italic survive a semantic round trip.", "bold": true, "italic": true },
+    { "kind": "list-item", "text": "First governed item" },
+    { "kind": "list-item", "text": "Second governed item" },
+    {
+      "kind": "table",
+      "rows": [
+        ["Capability", "Status"],
+        ["DOCX", "Local"]
+      ]
+    }
+  ]
+}
