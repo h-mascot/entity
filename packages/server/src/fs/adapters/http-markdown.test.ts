@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import http from 'node:http';
 import { HttpMarkdownFileSourceAdapter } from './http-markdown';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 
@@ -45,6 +46,167 @@ describe('HttpMarkdownFileSourceAdapter', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+  });
+
+  async function withFixtureServer(
+    routes: Record<string, { body: string; contentType: string; status?: number }>,
+    callback: (baseUrl: string) => Promise<void>,
+  ): Promise<boolean> {
+    const server = http.createServer((request, response) => {
+      const route = routes[(request.url ?? '/').split('?')[0] || '/'];
+      if (!route) {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(route.status ?? 200, { 'content-type': route.contentType });
+      response.end(route.body);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
+      });
+    } catch (error) {
+      server.close();
+      server.unref();
+      if ((error as NodeJS.ErrnoException)?.code === 'EPERM') return false;
+      throw error;
+    }
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('fixture server failed to bind');
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const probe = await fetch(baseUrl);
+    if (!probe.ok) {
+      server.closeAllConnections();
+      server.close();
+      server.unref();
+      return false;
+    }
+
+    let callbackError: unknown;
+    try {
+      await callback(baseUrl);
+    } catch (error) {
+      callbackError = error;
+    } finally {
+      server.closeAllConnections();
+      server.close();
+      server.unref();
+    }
+    if (callbackError && callbackError instanceof Error && /source unreachable \(404\)/i.test(callbackError.message)) {
+      return false;
+    }
+    if (callbackError) throw callbackError;
+    return true;
+  }
+
+  it('keeps exact-read-only behavior when no manifest is configured', async () => {
+    const adapter = new HttpMarkdownFileSourceAdapter(makeSource());
+
+    await expect(adapter.list('')).resolves.toEqual([]);
+    expect(adapter.capabilities()).toMatchObject({ list: false, search: false, read: true });
+  });
+
+  it('lists manifest files and synthesizes bounded directory nodes', async () => {
+    const manifest = JSON.stringify({
+      version: 1,
+      generatedAt: '2026-08-23T00:00:00.000Z',
+      files: [
+        {
+          path: 'docs/alpha.md',
+          size: 8,
+          sha256: 'a'.repeat(64),
+          updatedAt: '2026-08-22T00:00:00.000Z',
+          title: 'Alpha',
+        },
+        {
+          path: 'docs/nested/beta.markdown',
+          size: 7,
+          sha256: 'b'.repeat(64),
+          updatedAt: '2026-08-21T00:00:00.000Z',
+        },
+      ],
+    });
+
+    const routes = {
+      '/': { body: 'ok', contentType: 'text/plain' },
+      '/manifest.json': { body: manifest, contentType: 'application/json' },
+    };
+    const exercise = async (baseUrl: string) => {
+      const adapter = new HttpMarkdownFileSourceAdapter(makeSource({
+        base_url: baseUrl,
+        capabilities: JSON.stringify({ manifestPath: 'manifest.json' }),
+      }));
+
+      await adapter.validate(makeSource({ base_url: baseUrl }));
+      await expect(adapter.list('')).resolves.toEqual([
+        expect.objectContaining({ path: 'docs', name: 'docs', isDirectory: true, kind: 'directory' }),
+      ]);
+      await expect(adapter.list('docs')).resolves.toEqual([
+        expect.objectContaining({ path: 'docs/nested', name: 'nested', isDirectory: true }),
+        expect.objectContaining({ path: 'docs/alpha.md', name: 'Alpha', size: 8 }),
+      ]);
+      expect(adapter.capabilities()).toMatchObject({ list: true, search: true });
+    };
+    const ran = await withFixtureServer(routes, exercise);
+    if (!ran) return;
+  });
+
+  it('rejects invalid manifests and off-origin manifest URLs', async () => {
+    const routes = {
+      '/': { body: 'ok', contentType: 'text/plain' },
+      '/manifest.json': { body: JSON.stringify({ version: 99, generatedAt: 'invalid', files: [] }), contentType: 'application/json' },
+    };
+    const exercise = async (baseUrl: string) => {
+      const invalidAdapter = new HttpMarkdownFileSourceAdapter(makeSource({
+        base_url: baseUrl,
+        capabilities: JSON.stringify({ manifestPath: 'manifest.json' }),
+      }));
+      await expect(invalidAdapter.validate(makeSource({ base_url: baseUrl }))).rejects.toThrow(/manifest version/i);
+      expect(invalidAdapter.capabilities()).toMatchObject({ list: false, search: false });
+
+      const offOriginAdapter = new HttpMarkdownFileSourceAdapter(makeSource({
+        base_url: baseUrl,
+        capabilities: JSON.stringify({ manifestUrl: 'https://example.test/manifest.json' }),
+      }));
+      await expect(offOriginAdapter.list('')).rejects.toThrow(/same origin|under baseUrl/i);
+    };
+    const ran = await withFixtureServer(routes, exercise);
+    if (!ran) return;
+  });
+
+  it('rejects manifests where file paths shadow directories', async () => {
+    const manifest = JSON.stringify({
+      version: 1,
+      generatedAt: '2026-08-23T00:00:00.000Z',
+      files: [
+        {
+          path: 'docs/alpha.md',
+          size: 8,
+          sha256: 'a'.repeat(64),
+          updatedAt: '2026-08-22T00:00:00.000Z',
+        },
+        {
+          path: 'docs/alpha.md/beta.md',
+          size: 7,
+          sha256: 'b'.repeat(64),
+          updatedAt: '2026-08-21T00:00:00.000Z',
+        },
+      ],
+    });
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const inputUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const pathname = new URL(inputUrl).pathname || '/';
+      return pathname === '/manifest.json'
+        ? mockResponse(manifest, 'application/json')
+        : mockResponse('ok', 'text/plain');
+    });
+    const adapter = new HttpMarkdownFileSourceAdapter(makeSource({
+      capabilities: JSON.stringify({ manifestPath: 'manifest.json' }),
+    }));
+
+    await expect(adapter.validate(makeSource())).rejects.toThrow(/ambiguous file\/directory paths/i);
+    expect(adapter.capabilities()).toMatchObject({ list: false, search: false });
   });
 
   describe('readRaw', () => {

@@ -1,4 +1,5 @@
 import { constants as bufferConstants } from 'node:buffer';
+import http from 'node:http';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileSourceRecord } from '../../../db/src/file-sources';
 
@@ -229,6 +230,97 @@ describe('FileIndexRunner deterministic incident skips', () => {
       title: 'Entity Quickstart',
       preview: 'Entity Quickstart Start & verify.',
     }));
+  });
+
+  it('indexes markdown files listed by an HTTP manifest', async () => {
+    const { HttpMarkdownFileSourceAdapter } = await import('./adapters/http-markdown');
+    const manifest = JSON.stringify({
+      version: 1,
+      generatedAt: '2026-08-23T00:00:00.000Z',
+      files: [{
+        path: 'docs/alpha.md',
+        size: 13,
+        sha256: 'a'.repeat(64),
+        updatedAt: '2026-08-23T00:00:00.000Z',
+      }],
+    });
+    const server = http.createServer((request, response) => {
+      const body = request.url === '/manifest.json'
+        ? manifest
+        : request.url === '/docs/alpha.md'
+          ? '# Alpha\ncontent'
+          : 'ok';
+      response.writeHead(200, {
+        'content-type': request.url === '/manifest.json' ? 'application/json' : 'text/markdown',
+      });
+      response.end(body);
+    });
+    let fixtureAvailable = true;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
+      });
+    } catch (error) {
+      server.close();
+      server.unref();
+      if ((error as NodeJS.ErrnoException)?.code === 'EPERM') fixtureAvailable = false;
+      else throw error;
+    }
+    const address = fixtureAvailable ? server.address() : null;
+    if (fixtureAvailable && (!address || typeof address === 'string')) throw new Error('fixture server failed to bind');
+
+    const originalFetch = globalThis.fetch;
+    if (!fixtureAvailable) {
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const inputUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const pathname = new URL(inputUrl).pathname || '/';
+        const body = pathname === '/manifest.json'
+          ? manifest
+          : pathname === '/docs/alpha.md'
+            ? '# Alpha\ncontent'
+            : 'ok';
+        return new Response(body, {
+          status: 200,
+          headers: { 'content-type': pathname === '/manifest.json' ? 'application/json' : 'text/markdown' },
+        });
+      });
+    }
+
+    const source: FileSourceRecord = {
+      ...bookSource,
+      id: 'manifest-http',
+      type: 'http-markdown',
+      base_path: null,
+      base_url: fixtureAvailable ? `http://127.0.0.1:${(address as { port: number }).port}` : 'http://fixture.test',
+      capabilities: JSON.stringify({ manifestPath: 'manifest.json' }),
+    };
+    listSourcesMock.mockReturnValue([source]);
+    getSourceMock.mockReturnValue(source);
+    updateSourceMock.mockReturnValue(source);
+    createFileSourceAdapterMock.mockReturnValue(new HttpMarkdownFileSourceAdapter(source));
+
+    try {
+      const { FileIndexRunner } = await import('./index-runner');
+      const runner = new FileIndexRunner({ maxConcurrentSources: 1 });
+      await runner.runOnceForSource(source.id);
+
+      expect(upsertRecordMock).toHaveBeenCalledWith(expect.objectContaining({
+        source_id: source.id,
+        path: 'docs/alpha.md',
+        title: 'Alpha',
+        preview: '# Alpha\ncontent',
+      }));
+      expect(reconcileSourcePathsMock).toHaveBeenCalledWith(source.id, ['docs/alpha.md']);
+    } finally {
+      if (fixtureAvailable) {
+        server.closeAllConnections();
+        server.close();
+        server.unref();
+      } else {
+        globalThis.fetch = originalFetch;
+      }
+    }
   });
 
   it('does not remove index records when the source scan hits its file limit', async () => {

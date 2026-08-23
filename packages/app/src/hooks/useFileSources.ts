@@ -19,6 +19,7 @@ interface CreateFileSourceInput {
   type: FileSource['type'];
   baseUrl?: string;
   basePath?: string;
+  manifestPath?: string;
   icon?: string;
 }
 
@@ -27,6 +28,7 @@ interface UpdateFileSourceInput {
   type?: FileSource['type'];
   baseUrl?: string;
   basePath?: string;
+  manifestPath?: string;
   icon?: string;
   enabled?: boolean;
 }

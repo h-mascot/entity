@@ -126,6 +126,7 @@ function toCapabilities(source: EntityConfig['fileSources'][number]): string {
     source: 'entity.config.yaml',
     agentBindings: source.agentBindings,
     readOnly: source.readOnly,
+    ...(source.manifestPath ? { manifestPath: source.manifestPath } : {}),
   });
 }
 
