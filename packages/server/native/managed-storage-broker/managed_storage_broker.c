@@ -10,6 +10,7 @@ static int valid_path(const char *path) {
   size_t n;
   const char *p;
   if (!path || path[0] == '/' || path[0] == '\0') return 0;
+  if (!strcmp(path, ".")) return 1;
   n = strnlen(path, MSB_MAX_PATH + 1U);
   if (n == 0 || n > MSB_MAX_PATH || path[n] != '\0') return 0;
   p = path;
@@ -38,6 +39,7 @@ static int parent_fd(const msb_broker *broker, const char *path, char *leaf) {
   cursor = copy;
   fd = dup(broker->root_fd);
   if (fd < 0) return MSB_IO;
+  if (!strcmp(path, ".")) { strcpy(leaf, "."); return fd; }
   for (;;) {
     char *slash = strchr(cursor, '/');
     if (!slash) { strcpy(leaf, cursor); return fd; }

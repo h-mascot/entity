@@ -1,5 +1,31 @@
 # T-027 Evidence — Local managed storage / File Sources
 
+## N4 — Integrated adversarial proof
+
+N4 adds the colocated `local.integration.test.ts` seam, exercising the actual native broker executable through the Node IPC client and `LocalFileSourceAdapter`. Controlled temporary fixtures cover parent and child symlink escapes across `stat`, `read`, `readRaw`, `write`, `writeExclusive`, `mkdir`, and `list`; outside sentinels are checked unchanged and no outside target is created. The same route covers successful metadata/read/write/exclusive-create/mkdir/list behavior, then verifies a deleted managed target returns the typed `not_found` error while the previously returned metadata remains unchanged. Construction remains non-throwing and validation distinguishes unavailable missing roots from existing file roots.
+
+The broker IPC entrypoint now emits a typed startup `not_found` response before exit when its configured root is absent. The adapter maps that startup exit to the existing unavailable validation message, while an invalid existing file root maps to the existing directory contract. No Node filesystem fallback, authority redesign, routes, persistence, provider, or UI paths were added.
+
+## N4 verification
+
+Commands run from the assigned worktree:
+
+```sh
+node scripts/build-managed-storage-broker.mjs
+# PASS (exit 0): native core and IPC entrypoint compile/direct adversarial tests passed
+
+git diff --check
+# PASS (exit 0)
+
+cd packages/server && npx vitest run src/fs/adapters/local.integration.test.ts src/fs/adapters/local.test.ts src/fs/managed-storage-broker.test.ts
+# BLOCKED (exit 1): dependency-free worktree; vitest/config unavailable; no network installation attempted
+
+cd packages/server && npm run build
+# BLOCKED (exit 127): dependency-free worktree; tsc unavailable; no network installation attempted
+```
+
+The focused integration and typecheck commands were attempted but could not execute because this assigned worktree has no installed Node dependencies. The native build/direct tests and whitespace gate passed. Final commit SHA: `687fc464d1ff44189737141575c7d94df4af6c44`.
+
 ## N3 — LocalFileSourceAdapter integration
 
 N3 integrates every managed filesystem operation (`stat`, `read`, `readRaw`, `write`, `writeExclusive`, `mkdir`, and `list`) through `ManagedStorageBrokerClient` operations. The adapter does not resolve filesystem pathnames, perform Node root authorization/realpath checks, or provide a Node fs fallback. The broker startup root is bound once by the client; adapter operation requests contain only normalized broker-relative paths.
