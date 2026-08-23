@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback } from '../../lib/http';
+import ProviderSettings, { type ProviderSettingsModel } from '../document-integrations/ProviderSettings';
 
 interface DocIntelligenceSettingsView {
   enabled: boolean;
@@ -141,13 +142,38 @@ export default function DocsSettings({ apiBase, onOpenTaskMasterSettings }: Docs
     setWriteGate((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  // R-005: the admin write gate is only "armed" when every independent gate is explicitly
-  // satisfied — admin authorization ON, a non-disabled write mode, AND at least one enabled
-  // approved destination. Any missing gate keeps the lane fail-closed.
-  const writeGateArmed =
-    writeGate.adminWriteAuthorized &&
-    writeGate.writeMode !== 'disabled' &&
-    writeGate.approvedDestinations.some((d) => d.enabled);
+  // This surface is intentionally not an activation control: live authorization is not proven or
+  // persisted here, so the UI remains fail-closed even if staged fields are toggled.
+  const writeGateArmed = false;
+
+  const providerSettings: ProviderSettingsModel = {
+    provider: 'Google Workspace',
+    connectionState: 'configuration_required',
+    writeMode: writeGate.writeMode,
+    adminWriteAuthorized: writeGate.adminWriteAuthorized,
+    writeAuthorizationProven: false,
+    confirmationPolicy: writeGate.confirmationPolicy,
+    destinations: writeGate.approvedDestinations,
+    diagnostics: ['The staged admin policy is not persisted to a live provider endpoint.'],
+  };
+
+  // Local Office is intentionally explicit even before bridge integration is live. An absent
+  // readiness fact must not be presented as usable local editing.
+  const localOfficeSettings: ProviderSettingsModel = {
+    provider: 'Local Office',
+    connectionState: 'configuration_required',
+    writeMode: 'disabled',
+    adminWriteAuthorized: false,
+    writeAuthorizationProven: false,
+    confirmationPolicy: 'not_required',
+    destinations: [],
+    localReadiness: 'bridge_not_installed',
+    policyControlsEnabled: false,
+    diagnostics: [
+      'Local Office editing is unavailable until the Entity desktop bridge is installed and running.',
+      'No local file activation or filesystem path is exposed by this settings surface.',
+    ],
+  };
 
   return (
     <div className="space-y-4 p-4">
@@ -229,6 +255,19 @@ export default function DocsSettings({ apiBase, onOpenTaskMasterSettings }: Docs
 
         {error ? <div className="text-xs text-[var(--error)]">{error}</div> : null}
       </section>
+
+      {/* T-034 provider administration: health, policy, destination, diagnostics, readiness. */}
+      <ProviderSettings
+        model={providerSettings}
+        onChange={(patch) => updateWriteGate({
+          ...(patch.adminWriteAuthorized === undefined ? {} : { adminWriteAuthorized: patch.adminWriteAuthorized }),
+          ...(patch.writeMode === undefined ? {} : { writeMode: patch.writeMode }),
+          ...(patch.confirmationPolicy === undefined ? {} : { confirmationPolicy: patch.confirmationPolicy }),
+          ...(patch.destinations === undefined ? {} : { approvedDestinations: patch.destinations }),
+        })}
+      />
+
+      <ProviderSettings model={localOfficeSettings} onChange={() => undefined} />
 
       {/* T-013 — Google administrator write gate + destination UX (R-005/R-007, Phase E §14.5). */}
       <section className="mc-shell-card space-y-4 border border-[var(--border-secondary)] p-4">
@@ -334,20 +373,9 @@ export default function DocsSettings({ apiBase, onOpenTaskMasterSettings }: Docs
               ))}
             </ul>
           )}
-          <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-[var(--text-secondary)]">
-            <input
-              type="checkbox"
-              checked={writeGate.approvedDestinations.some((d) => d.enabled)}
-              onChange={(event) => {
-                const enabled = event.target.checked;
-                updateWriteGate({
-                  approvedDestinations: writeGate.approvedDestinations.map((d) => ({ ...d, enabled })),
-                });
-              }}
-              aria-label="Approve the configured Google destination"
-            />
-            Approve the configured Google destination
-          </label>
+          <div className="mt-2 text-[10px] text-[var(--text-muted)]">
+            Destination approval is only effective when an exact, scope-matched destination exists. There is no wildcard or fallback destination.
+          </div>
         </div>
 
         {/* Fail-closed readout + pending-decision disclosures (no invented defaults). */}
