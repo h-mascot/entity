@@ -9,6 +9,8 @@ The canonical named paths did not exist in this worktree. The following indispen
 - `packages/server/src/document-providers/local/safe-save.test.ts` — required colocated watcher dedupe, stale-save, authority, recovery, and crash-injection proof.
 - `docs/plans/evidence/entity-document-integrations/T-028/EVIDENCE.md` — required evidence receipt for this workstream.
 
+Bounded same-issue repair expansion (reviewer blockers): `packages/server/src/document-providers/local/safe-save.ts` and its colocated test were modified to require a server-resolved managed target (`canonicalPath` + `approvedRoot` + workspace/tenant), perform a final revision compare immediately before replacement, and serialize coordinator saves per managed target. This was strictly necessary to repair target isolation and stale-write race blockers; no new routes, schemas, providers, or architecture were added.
+
 No unrelated providers, routes, schemas, UI, production configuration, Linear, main, merge, push, or deployment were touched.
 
 ## Implementation proof
@@ -35,6 +37,19 @@ cd packages/server && npm run build
 
 git diff --check
 # PASS (exit 0)
+
+Focused repair tests and build were re-run after the blocker repair:
+
+```sh
+cd packages/server && npx vitest run src/document-providers/local/safe-save.test.ts
+# BLOCKED (exit 1): vitest/config could not resolve because this worktree has no installed dependencies; no installation or network fetch attempted.
+
+cd packages/server && npm run build
+# BLOCKED (exit 127): tsc not found because this worktree has no installed dependencies; no installation or network fetch attempted.
+
+git diff --check
+# PASS (exit 0)
+```
 ```
 
 The focused proof is committed only after the reproducible implementation review and whitespace gate; dependency-blocked commands are recorded exactly and are not represented as passing tests.
