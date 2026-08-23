@@ -69,16 +69,18 @@ describe('local engine spike decision seam', () => {
     const calls: string[] = [];
     const fake: LocalOfficeEngine = {
       async probe() { calls.push('probe'); return readiness; },
+      async create(input) { calls.push(`create:${input.idempotencyKey}`); return { documentId: 'doc-1', documentRef: input.documentRef, entityUrl: '/documents/doc-1', revision: 'r1' }; },
       async open(input) { calls.push(`open:${input.documentRef}`); return { opened: true, readiness: readiness.state }; },
       async inspect(input) { calls.push(`inspect:${input.documentRef}`); return { format: input.format, valid: true }; },
-      async mutate(input) { calls.push(`mutate:${input.operation}`); return { changed: true, revision: 'r2' }; },
+      async mutate(input) { calls.push(`mutate:${input.mutation.kind}`); return { changed: true, revision: 'r2' }; },
       async save(input) { calls.push(`save:${input.expectedRevision}`); return { saved: true, revision: 'r2' }; },
     };
     expect(await fake.probe()).toEqual(readiness);
+    expect(await fake.create({ documentRef: 'doc-1', format: 'docx', document: {}, idempotencyKey: 'create-1', actor: { actorClass: 'human', actorId: 'human-1' } })).toMatchObject({ documentId: 'doc-1', revision: 'r1' });
     expect(await fake.open({ documentRef: 'doc-1', format: 'docx' })).toEqual({ opened: true, readiness: 'ready' });
     expect(await fake.inspect({ documentRef: 'doc-1', format: 'docx' })).toEqual({ format: 'docx', valid: true });
-    expect(await fake.mutate({ documentRef: 'doc-1', format: 'docx', operation: 'replace-title' })).toEqual({ changed: true, revision: 'r2' });
-    expect(await fake.save({ documentRef: 'doc-1', format: 'docx', expectedRevision: 'r2' })).toEqual({ saved: true, revision: 'r2' });
-    expect(calls).toEqual(['probe', 'open:doc-1', 'inspect:doc-1', 'mutate:replace-title', 'save:r2']);
+    expect(await fake.mutate({ documentId: 'doc-1', documentRef: 'doc-1', format: 'docx', expectedRevision: 'r1', mutation: { kind: 'text', text: 'Hello' }, idempotencyKey: 'mutation-1', actor: { actorClass: 'agent', actorId: 'agent-1', receipt: {} as never } })).toEqual({ changed: true, revision: 'r2' });
+    expect(await fake.save({ documentId: 'doc-1', documentRef: 'doc-1', format: 'docx', candidate: Buffer.from('candidate'), expectedRevision: 'r2', idempotencyKey: 'save-1', actor: { actorClass: 'human', actorId: 'human-1' } })).toEqual({ saved: true, revision: 'r2' });
+    expect(calls).toEqual(['probe', 'create:create-1', 'open:doc-1', 'inspect:doc-1', 'mutate:text', 'save:r2']);
   });
 });

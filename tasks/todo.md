@@ -31,3 +31,16 @@ integrates without a new parallel navigation model.
 visible, actions enabled, focus restored, and the sticky player clear of
 content; template selection and nested Back behavior are explicit and
 frictionless.
+
+## THE-970 / T-029 — Local DOCX milestone
+
+- [x] Map the canonical T-029 contract and accepted T-025–T-028 seams.
+- [x] Prove create/open/human save/reopen with semantic DOCX fixtures.
+- [x] Prove bounded agent mutation, revision/version/activity/receipt, and stable link.
+- [x] Prove hostile/invalid OOXML fails closed under explicit limits.
+- [x] Run focused/local/server/build/diff gates and record evidence, including unchanged broader failures.
+- [ ] Commit one focused change on the isolated detached worktree.
+
+### Review
+
+Pending implementation and proof.
