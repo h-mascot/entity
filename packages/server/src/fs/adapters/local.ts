@@ -60,12 +60,13 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
   async validate(source: FileSourceRecord): Promise<void> {
     const basePath = source.base_path?.trim();
     if (!basePath) throw new Error('Local source basePath is not configured.');
+    let stats;
     try {
-      const stats = await this.broker.stat('.');
-      if (!stats.isDirectory) throw new Error('Local source basePath must be a directory.');
+      stats = await this.broker.stat('.');
     } catch (error) {
       throw unavailable(error, 'Local source path does not exist.');
     }
+    if (!stats.isDirectory) throw new Error('Local source basePath must be a directory.');
   }
 
   private assertWritable(): void {
