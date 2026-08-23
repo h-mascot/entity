@@ -24,6 +24,8 @@ interface SourcePayload {
   type?: string;
   baseUrl?: string;
   basePath?: string;
+  manifestPath?: string;
+  manifestUrl?: string;
   authType?: string;
   authRef?: string;
   enabled?: unknown;
@@ -96,12 +98,18 @@ function parseHealth(value: string | undefined): FileSourceHealth | null {
 }
 
 function toSourceResponse(source: FileSourceRecord) {
+  const capabilities = parseCapabilities(source.capabilities);
+  const manifestConfigured = source.type === 'http-markdown'
+    && (typeof capabilities.manifestPath === 'string' || typeof capabilities.manifestUrl === 'string');
   return {
     id: source.id,
     displayName: source.display_name,
     type: source.type,
     baseUrl: source.base_url,
     basePath: source.base_path,
+    searchability: source.type === 'http-markdown'
+      ? manifestConfigured ? 'manifest-backed' : 'exact-read-only'
+      : 'adapter-defined',
     authType: source.auth_type,
     authRef: source.auth_ref,
     enabled: source.enabled,
@@ -112,6 +120,27 @@ function toSourceResponse(source: FileSourceRecord) {
     createdAt: source.created_at,
     updatedAt: source.updated_at,
   };
+}
+
+function withManifestCapability(
+  rawCapabilities: unknown,
+  manifestPath: string | undefined,
+  manifestUrl: string | undefined,
+): string | undefined {
+  if (typeof rawCapabilities !== 'string' && typeof manifestPath === 'undefined' && typeof manifestUrl === 'undefined') {
+    return undefined;
+  }
+
+  const capabilities = parseCapabilities(rawCapabilities);
+  if (typeof manifestPath !== 'undefined') {
+    if (manifestPath.trim()) capabilities.manifestPath = manifestPath.trim();
+    else delete capabilities.manifestPath;
+  }
+  if (typeof manifestUrl !== 'undefined') {
+    if (manifestUrl.trim()) capabilities.manifestUrl = manifestUrl.trim();
+    else delete capabilities.manifestUrl;
+  }
+  return JSON.stringify(capabilities);
 }
 
 function parseCapabilities(value: unknown): Record<string, unknown> {
@@ -222,6 +251,15 @@ function parsePayload(body: SourcePayload): { ok: true; value: SourcePayload } |
     return { ok: false, error: 'capabilities must be a JSON string.' };
   }
 
+  for (const [name, value] of [
+    ['manifestPath', body.manifestPath],
+    ['manifestUrl', body.manifestUrl],
+  ] as const) {
+    if (typeof value !== 'undefined' && (typeof value !== 'string' || value.length > 2048)) {
+      return { ok: false, error: `${name} must be a string of 2048 characters or fewer.` };
+    }
+  }
+
   return { ok: true, value: body };
 }
 
@@ -271,7 +309,7 @@ export function registerSourceRoutes(app: Express): void {
         icon: payload.icon?.trim() || undefined,
         capabilities: capabilitiesForStorage(
           type,
-          payload.capabilities,
+          withManifestCapability(payload.capabilities, payload.manifestPath, payload.manifestUrl),
           basePath,
           undefined,
           type === 'local' && Boolean(basePath) && localSourceOverlapsReadOnlyRoot(basePath!, repo.listSources(true)),
@@ -316,7 +354,8 @@ export function registerSourceRoutes(app: Express): void {
         ? await assertAllowedLocalSourceBasePath(payload.basePath ?? existing.base_path)
         : payload.basePath;
       const storageBasePath = nextType === 'local' ? basePath ?? existing.base_path : basePath;
-      const shouldUpdateCapabilities = nextType === 'local' || typeof payload.capabilities === 'string';
+      const manifestCapabilities = withManifestCapability(payload.capabilities, payload.manifestPath, payload.manifestUrl);
+      const shouldUpdateCapabilities = nextType === 'local' || typeof manifestCapabilities === 'string';
       const updated = repo.updateSource(id, {
         display_name: payload.displayName,
         type: payload.type ? nextType : undefined,
@@ -329,7 +368,7 @@ export function registerSourceRoutes(app: Express): void {
         capabilities: shouldUpdateCapabilities
           ? capabilitiesForStorage(
               nextType,
-              payload.capabilities,
+              manifestCapabilities,
               storageBasePath,
               existing.capabilities,
               nextType === 'local' &&

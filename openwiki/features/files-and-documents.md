@@ -79,6 +79,8 @@ The broader [runtime and data architecture](../architecture/runtime-and-data.md)
 | Missing document ID, source ID, or Documents credential | Collaboration controls degrade even if ordinary file editing works |
 | Network/source failure with cache | Cached source tree or file content may be shown with cache metadata/age |
 | Restricted search result | Title/path snippets and preview/open actions are suppressed rather than leaking content |
+| `http-markdown` source without a manifest | Exact-path reads still work, but list/search stay disabled and the source is reported as exact-read-only |
+| `http-markdown` source with a valid same-origin manifest | Source tree, sync, and search can use manifest-listed markdown files while writes remain disabled |
 | Legacy workspace path inside nested read-only local source | Workspace writes, creates, deletes, and moves are rejected; reads remain available |
 | External Google reference lacks auth/scope or is deleted/restricted | Preview and link-out are reduced or hidden; external documents remain intentionally read-only |
 | Read-only source in the convert dialog | Document conversion is blocked and the UI explains that the source is read-only |

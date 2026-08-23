@@ -13,6 +13,7 @@ interface SourceFormState {
   type: FileSource['type'];
   baseUrl: string;
   basePath: string;
+  manifestPath: string;
   icon: string;
 }
 
@@ -21,6 +22,7 @@ const INITIAL_FORM: SourceFormState = {
   type: 'local',
   baseUrl: '',
   basePath: '',
+  manifestPath: '',
   icon: '',
 };
 
@@ -48,6 +50,7 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
         type: form.type,
         baseUrl: form.baseUrl.trim() || undefined,
         basePath: form.basePath.trim() || undefined,
+        manifestPath: form.type === 'http-markdown' ? form.manifestPath.trim() || undefined : undefined,
         icon: form.icon.trim() || undefined,
       });
       setForm(INITIAL_FORM);
@@ -165,6 +168,14 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
             className="mc-shell-input px-2 py-1 text-xs"
             placeholder="Base URL (remote)"
           />
+          {form.type === 'http-markdown' && (
+            <input
+              value={form.manifestPath}
+              onChange={(event) => setForm((prev) => ({ ...prev, manifestPath: event.target.value }))}
+              className="mc-shell-input px-2 py-1 text-xs"
+              placeholder="Manifest path under base URL (optional)"
+            />
+          )}
           <input
             value={form.icon}
             onChange={(event) => setForm((prev) => ({ ...prev, icon: event.target.value }))}
@@ -211,6 +222,13 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
               <div className="mt-1 text-[10px] text-[var(--text-muted)]">
                 {source.type} • {source.basePath || source.baseUrl || 'No location'}
               </div>
+              {source.type === 'http-markdown' && (
+                <div className="mt-1 text-[10px] text-[var(--text-muted)]">
+                  {source.searchability === 'manifest-backed'
+                    ? 'Manifest-backed search (test to validate)'
+                    : 'Exact-read only; configure a manifest for search'}
+                </div>
+              )}
               <div className="mt-2 flex flex-wrap gap-1">
                 <button
                   type="button"

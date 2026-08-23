@@ -12,6 +12,7 @@ export interface FileSource {
   enabled: boolean;
   icon: string | null;
   capabilities: string;
+  searchability?: 'exact-read-only' | 'manifest-backed' | 'adapter-defined';
   health: FileSourceHealth;
   lastSyncedAt: string | null;
   createdAt: string;
