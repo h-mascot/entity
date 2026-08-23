@@ -1,7 +1,7 @@
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { detectContentType } from '../../file-types';
-import { ManagedStorageBrokerClient, ManagedStorageBrokerError } from '../managed-storage-broker';
+import { ManagedStorageBrokerClient, ManagedStorageBrokerError, resolveManagedStorageBrokerExecutable } from '../managed-storage-broker';
 import { isBasePathAllowlisted } from '../source-root-guard';
 import { normalizeSourceRelativePath } from '../security';
 import { SourceReadLimitError } from './bounded-read';
@@ -55,7 +55,7 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
   constructor(source: FileSourceRecord, options: LocalFileSourceAdapterOptions = {}) {
     this.source = source;
     this.broker = options.brokerClient ?? new ManagedStorageBrokerClient({
-      executable: options.brokerExecutable ?? process.env.MANAGED_STORAGE_BROKER_EXECUTABLE ?? path.resolve(process.cwd(), 'packages/server/native/managed-storage-broker/.build/broker'),
+      executable: options.brokerExecutable ?? resolveManagedStorageBrokerExecutable(),
       root: source.base_path?.trim() ?? '',
     });
   }

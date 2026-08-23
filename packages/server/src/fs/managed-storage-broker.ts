@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 
 export type BrokerErrorCode = 'invalid' | 'not_found' | 'io' | 'exists' | 'limit';
@@ -9,6 +11,7 @@ export type BrokerRequest =
   | { op: 'read'; path: string }
   | { op: 'write'; path: string; data: Uint8Array }
   | { op: 'exclusive-create'; path: string; data: Uint8Array }
+  | { op: 'replace-if-equal'; path: string; recoveryPath: string; expected: Uint8Array; data: Uint8Array }
   | { op: 'mkdir'; path: string; mode: number }
   | { op: 'list'; path: string };
 
@@ -21,6 +24,15 @@ type BrokerResponse =
 const ERROR_CODES = new Set<BrokerErrorCode>(['invalid', 'not_found', 'io', 'exists', 'limit']);
 const MAX_LINE = 1024 * 1024 * 2;
 const encode = (data: Uint8Array | string) => Buffer.from(data).toString('hex');
+
+export function resolveManagedStorageBrokerExecutable(configured = process.env.MANAGED_STORAGE_BROKER_EXECUTABLE): string {
+  if (configured?.trim()) return configured.trim();
+  const candidates = [
+    path.resolve(__dirname, '../../native/managed-storage-broker/.build/broker'),
+    path.resolve(__dirname, '../../../../native/managed-storage-broker/.build/broker'),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
+}
 
 export class ManagedStorageBrokerError extends Error {
   constructor(readonly code: BrokerErrorCode) { super(`managed storage broker: ${code}`); }
@@ -49,6 +61,7 @@ export class ManagedStorageBrokerClient {
   async read(path: string): Promise<Uint8Array> { return this.request({ op: 'read', path }).then((r) => this.expect(r, 'data').data); }
   async write(path: string, data: Uint8Array): Promise<void> { await this.request({ op: 'write', path, data }).then((r) => this.expect(r, 'ok')); }
   async exclusiveCreate(path: string, data: Uint8Array): Promise<void> { await this.request({ op: 'exclusive-create', path, data }).then((r) => this.expect(r, 'ok')); }
+  async replaceIfEqual(path: string, recoveryPath: string, expected: Uint8Array, data: Uint8Array): Promise<void> { await this.request({ op: 'replace-if-equal', path, recoveryPath, expected, data }).then((r) => this.expect(r, 'ok')); }
   async mkdir(path: string, mode = 0o700): Promise<void> { await this.request({ op: 'mkdir', path, mode }).then((r) => this.expect(r, 'ok')); }
   async list(path: string): Promise<string[]> { return this.request({ op: 'list', path }).then((r) => Buffer.from(this.expect(r, 'data').data).toString('utf8').split('\n').filter(Boolean)); }
 
@@ -63,8 +76,10 @@ export class ManagedStorageBrokerClient {
     if (this.closed) return Promise.reject(new Error('managed storage broker is closed'));
     const fields = request.op === 'stat' || request.op === 'read' || request.op === 'list'
       ? [request.op, encode(request.path)]
-      : request.op === 'mkdir' ? [request.op, encode(request.path), String(request.mode)]
-      : [request.op === 'exclusive-create' ? 'create' : request.op, encode(request.path), encode(request.data)];
+      : request.op === 'mkdir' ? [request.op, encode(request.path), request.mode.toString(8)]
+      : request.op === 'replace-if-equal'
+        ? [request.op, encode(request.path), encode(request.recoveryPath), encode(request.expected), encode(request.data)]
+        : [request.op === 'exclusive-create' ? 'create' : request.op, encode(request.path), encode(request.data)];
     return new Promise((resolve, reject) => {
       this.pending.push({ resolve, reject });
       this.child.stdin.write(`${fields.join('\t')}\n`);

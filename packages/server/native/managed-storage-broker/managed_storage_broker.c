@@ -2,6 +2,8 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/file.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -28,6 +30,14 @@ static int map_errno(void) {
   if (errno == EEXIST) return MSB_EXISTS;
   if (errno == ELOOP || errno == ENOTDIR || errno == EINVAL || errno == EACCES) return MSB_INVALID;
   return MSB_IO;
+}
+
+static int root_lock(const msb_broker *broker, int operation) {
+  if (!broker || broker->root_fd < 0) return MSB_INVALID;
+  while (flock(broker->root_fd, operation) < 0) {
+    if (errno != EINTR) return map_errno();
+  }
+  return MSB_OK;
 }
 
 static int parent_fd(const msb_broker *broker, const char *path, char *leaf) {
@@ -76,7 +86,7 @@ int msb_read(const msb_broker *broker, const char *path, uint8_t *out, size_t ca
   if (n < 0) return map_errno(); *length = (size_t)n; return ((uint64_t)n == (uint64_t)st.st_size) ? MSB_OK : MSB_IO;
 }
 
-int msb_write(const msb_broker *broker, const char *path, const uint8_t *data, size_t length, int exclusive) {
+static int write_unlocked(const msb_broker *broker, const char *path, const uint8_t *data, size_t length, int exclusive) {
   char leaf[MSB_MAX_PATH + 1U]; int fd = parent_fd(broker, path, leaf); int flags = O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW; int file; ssize_t n;
   if (fd < 0 || (!data && length) || length > MSB_MAX_IO) { if (fd >= 0) close(fd); return MSB_INVALID; }
   if (exclusive) flags |= O_EXCL;
@@ -86,7 +96,103 @@ int msb_write(const msb_broker *broker, const char *path, const uint8_t *data, s
   return n < 0 ? map_errno() : ((size_t)n == length ? MSB_OK : MSB_IO);
 }
 
-int msb_mkdir(const msb_broker *broker, const char *path, mode_t mode) { char leaf[MSB_MAX_PATH + 1U]; int fd = parent_fd(broker, path, leaf); int rc; if (fd < 0) return fd; rc = mkdirat(fd, leaf, mode); close(fd); return rc < 0 ? map_errno() : MSB_OK; }
+int msb_write(const msb_broker *broker, const char *path, const uint8_t *data, size_t length, int exclusive) {
+  int rc = root_lock(broker, LOCK_EX);
+  if (rc != MSB_OK) return rc;
+  rc = write_unlocked(broker, path, data, length, exclusive);
+  { int unlock_rc = root_lock(broker, LOCK_UN); if (rc == MSB_OK && unlock_rc != MSB_OK) rc = unlock_rc; }
+  return rc;
+}
+
+int msb_replace_if_equal(const msb_broker *broker, const char *path, const char *recovery_path,
+                         const uint8_t *expected, size_t expected_length,
+                         const uint8_t *replacement, size_t replacement_length) {
+  char leaf[MSB_MAX_PATH + 1U], recovery_leaf[MSB_MAX_PATH + 1U], temporary[MSB_MAX_PATH + 1U];
+  uint8_t current[MSB_MAX_IO];
+  int parent = -1, recovery_parent = -1, file = -1, recovery = -1, rc = MSB_IO, locked = 0;
+  size_t current_length = 0;
+  ssize_t n;
+  static unsigned long sequence = 0;
+  struct stat st;
+
+  if ((!expected && expected_length) || (!replacement && replacement_length) ||
+      expected_length > MSB_MAX_IO || replacement_length > MSB_MAX_IO) return MSB_INVALID;
+  rc = root_lock(broker, LOCK_EX);
+  if (rc != MSB_OK) return rc;
+  locked = 1;
+  parent = parent_fd(broker, path, leaf);
+  if (parent < 0) { rc = parent; goto done; }
+  recovery_parent = parent_fd(broker, recovery_path, recovery_leaf);
+  if (recovery_parent < 0) { rc = recovery_parent; goto done; }
+
+  file = openat(parent, leaf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (file < 0) { rc = map_errno(); goto done; }
+  if (fstat(file, &st) < 0) { rc = map_errno(); goto done; }
+  if (!S_ISREG(st.st_mode) || st.st_size < 0 || (uint64_t)st.st_size > MSB_MAX_IO) { rc = MSB_LIMIT; goto done; }
+  while (current_length < (size_t)st.st_size) {
+    n = read(file, current + current_length, (size_t)st.st_size - current_length);
+    if (n <= 0) { rc = MSB_IO; goto done; }
+    current_length += (size_t)n;
+  }
+  close(file); file = -1;
+  if (current_length != expected_length || memcmp(current, expected, expected_length) != 0) {
+    rc = MSB_EXISTS; /* The typed protocol maps this to a stale precondition. */
+    goto done;
+  }
+
+  recovery = openat(recovery_parent, recovery_leaf, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+  if (recovery < 0) { rc = map_errno(); goto done; }
+  if (ftruncate(recovery, 0) < 0 || lseek(recovery, 0, SEEK_SET) < 0) { rc = map_errno(); goto done; }
+  n = write(recovery, current, current_length);
+  if (n < 0 || (size_t)n != current_length || fsync(recovery) < 0) { rc = MSB_IO; goto done; }
+  close(recovery); recovery = -1;
+
+  if (snprintf(temporary, sizeof temporary, ".entity-save-%ld-%lu", (long)getpid(), ++sequence) < 0) {
+    rc = MSB_IO; goto done;
+  }
+  file = openat(parent, temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+  if (file < 0) { rc = map_errno(); goto done; }
+  n = write(file, replacement, replacement_length);
+  if (n < 0 || (size_t)n != replacement_length || fsync(file) < 0) { rc = MSB_IO; goto cleanup_temp; }
+  if (close(file) < 0) { file = -1; rc = MSB_IO; goto cleanup_temp; }
+  file = -1;
+  if (broker->before_replace) broker->before_replace(broker->before_replace_context);
+
+  /*
+   * The broker serializes participating writes at the bound root, compares exact
+   * bytes, then renames the prepared inode while still holding that operation lock.
+   * Generic external filesystem writers do not participate in this portable contract.
+   */
+  if (renameat(parent, temporary, parent, leaf) < 0) { rc = map_errno(); goto cleanup_temp; }
+  if (fsync(parent) < 0) { rc = MSB_IO; goto done; }
+  rc = MSB_OK;
+  goto done;
+
+cleanup_temp:
+  if (file >= 0) { close(file); file = -1; }
+  unlinkat(parent, temporary, 0);
+done:
+  if (file >= 0) close(file);
+  if (recovery >= 0) close(recovery);
+  if (recovery_parent >= 0) close(recovery_parent);
+  if (parent >= 0) close(parent);
+  if (locked) {
+    int unlock_rc = root_lock(broker, LOCK_UN);
+    if (rc == MSB_OK && unlock_rc != MSB_OK) rc = unlock_rc;
+  }
+  return rc;
+}
+
+int msb_mkdir(const msb_broker *broker, const char *path, mode_t mode) {
+  char leaf[MSB_MAX_PATH + 1U];
+  int fd, rc = root_lock(broker, LOCK_EX);
+  if (rc != MSB_OK) return rc;
+  fd = parent_fd(broker, path, leaf);
+  if (fd < 0) rc = fd;
+  else { rc = mkdirat(fd, leaf, mode) < 0 ? map_errno() : MSB_OK; close(fd); }
+  { int unlock_rc = root_lock(broker, LOCK_UN); if (rc == MSB_OK && unlock_rc != MSB_OK) rc = unlock_rc; }
+  return rc;
+}
 
 int msb_list(const msb_broker *broker, const char *path, msb_listing *out) {
   char leaf[MSB_MAX_PATH + 1U]; int pfd = parent_fd(broker, path, leaf); int dfd; DIR *dir; struct dirent *entry; size_t used = 0;
