@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -453,4 +453,38 @@ test("deploy-sandbox invokes the exact-SHA release check and must never target p
   // The sandbox lane stays sandbox-gated and never routes through a prod lane.
   assert.match(scriptSource, /ENTITY_SANDBOX_/);
   assert.doesNotMatch(scriptSource, /promote:prod/);
+});
+
+// T-038 blocker 2: the deployment path must self-contain the native managed-storage
+// broker — compile/test it and install the executable to the deployed runtime path
+// before restart — so a sandbox/gateway never crash-loops on a missing broker.
+
+test("deploy self-contains the native managed-storage broker build and runtime install (T-038 blocker 2)", () => {
+  const deploySource = readFileSync(deployScript, "utf8");
+  const buildSource = readFileSync(join(scriptsDirectory, "build-managed-storage-broker.mjs"), "utf8");
+  // deploy.sh must invoke the native broker build during the server build, before
+  // the built files are synced, so a broken broker lane fails closed pre-sync.
+  assert.match(deploySource, /build-managed-storage-broker\.mjs/);
+  const buildInvoked = deploySource.indexOf("build-managed-storage-broker.mjs");
+  const serverBuild = deploySource.indexOf("npm --prefix packages/server run build");
+  const syncBegins = deploySource.indexOf("Syncing built files to configured target");
+  assert.ok(serverBuild !== -1 && buildInvoked > serverBuild, "broker build must run after the server TS build");
+  assert.ok(buildInvoked < syncBegins, "broker build must complete before the server-dist sync");
+  // The build/install tool must place the executable at the deployed runtime path
+  // the compiled server resolves (dist/server/native/.../.build/broker).
+  assert.match(buildSource, /packages\/server\/dist\/server\/native\/managed-storage-broker\/\.build\/broker/);
+  assert.match(buildSource, /copyFileSync/);
+});
+
+test("native managed-storage broker build installs an executable at the deployed runtime path (T-038 blocker 2)", () => {
+  const buildScript = join(scriptsDirectory, "build-managed-storage-broker.mjs");
+  const result = spawnSync(process.execPath, [buildScript], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(`${result.stdout}\n${result.stderr}`, /compile and direct tests passed/);
+  const runtimeBroker = join(scriptsDirectory, "..", "packages/server/dist/server/native/managed-storage-broker/.build/broker");
+  assert.equal(existsSync(runtimeBroker), true, "deployed runtime broker executable must be installed");
+  // Fail-closed: the installed artifact must be an executable file, not an empty/absent stub.
+  assert.ok(lstatSync(runtimeBroker).isFile(), "installed broker must be a regular file");
+  assert.notEqual(lstatSync(runtimeBroker).size, 0, "installed broker must not be empty");
+  assert.notEqual(lstatSync(runtimeBroker).mode & 0o111, 0, "installed broker must be executable");
 });

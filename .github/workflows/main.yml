@@ -34,7 +34,12 @@ jobs:
             echo "EXACT_SHA_MISMATCH: CI checkout ${SOURCE_SHA} != evaluated ${{ github.sha }}" >&2
             exit 1
           fi
-          echo "ENTITY_RELEASE_SHA=${SOURCE_SHA}" >> "$GITHUB_ENV"
+          # The candidate SHA is scoped to this gate step only: it is passed to
+          # the shared release-info gate inline via --sha, and is deliberately NOT
+          # persisted to $GITHUB_ENV. A job-wide ENTITY_RELEASE_SHA would leak into
+          # the later `node --test` steps and contaminate the temporary-repository
+          # deploy regression test with a spurious SHA mismatch before its intended
+          # branch-mismatch assertion (T-038 blocker 1).
           RECEIPT="$(mktemp -d)"
           node scripts/entity-release-info.mjs --root "${RECEIPT}" --sha "${SOURCE_SHA}" --branch "${GITHUB_REF_NAME}" --write
           node scripts/entity-release-info.mjs --check --root "${RECEIPT}" --expected "${SOURCE_SHA}"
