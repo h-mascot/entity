@@ -1,0 +1,27 @@
+{
+  "title": "Entity T-031 PPTX full-fidelity fixture",
+  "slides": [
+    {
+      "id": "slide_1",
+      "elements": [
+        { "id": "title", "kind": "title", "text": "Quarterly Strategy Review" },
+        { "id": "subtitle", "kind": "subtitle", "text": "Entity — local PPTX milestone" }
+      ]
+    },
+    {
+      "id": "slide_2",
+      "elements": [
+        { "id": "title", "kind": "title", "text": "Revenue & <Growth> — Q&A ✓" },
+        { "id": "body", "kind": "body", "text": "First governed bullet with Unicode: 向导 功能 — résumé." },
+        { "id": "notes", "kind": "notes", "text": "Speaker note: images not claimed in this gate." }
+      ]
+    },
+    {
+      "id": "slide_3",
+      "elements": [
+        { "id": "title", "kind": "title", "text": "Outlook" },
+        { "id": "body", "kind": "body", "text": "Closing statement maintained across slide ordering." }
+      ]
+    }
+  ]
+}
