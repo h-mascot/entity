@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
-import { ManagedStorageBrokerError } from '../managed-storage-broker';
+import { ManagedStorageBrokerError, managedStorageBrokerPoolStats, resetManagedStorageBrokerPool } from '../managed-storage-broker';
+import { createFileSourceAdapter } from './registry';
 import { LocalFileSourceAdapter } from './local';
 
 const brokerExecutable = path.resolve(process.cwd(), 'native/managed-storage-broker/.build/broker');
@@ -82,5 +83,38 @@ describe('LocalFileSourceAdapter through the native broker IPC route', () => {
     expect(missingAdapter).toBeDefined();
     await expect(missingAdapter.validate(sourceFor(missing))).rejects.toThrow('Local source path does not exist.');
     await rm(fixture, { recursive: true, force: true });
+  });
+
+  it('keeps broker child count bounded across repeated route/index-style adapter operations and tears down', async () => {
+    // Route handlers, index scans, and document providers create an adapter per
+    // operation through createFileSourceAdapter. Each construction must draw the
+    // same pooled broker child for one source root, never a fresh process.
+    const fixture = await mkdtemp(path.join(os.tmpdir(), 'entity-t027-'));
+    const managed = path.join(fixture, 'managed');
+    await (await import('node:fs/promises')).mkdir(managed);
+    await writeFile(path.join(managed, 'guide.md'), '# guide\n');
+
+    const baseline = managedStorageBrokerPoolStats().created;
+    try {
+      for (let i = 0; i < 30; i += 1) {
+        const adapter = createFileSourceAdapter(sourceFor(managed));
+        await expect(adapter.stat!('.')).resolves.toMatchObject({ kind: 'directory' });
+        await expect(adapter.list('.')).resolves.toEqual(expect.arrayContaining([
+          expect.objectContaining({ path: 'guide.md', kind: 'file' }),
+        ]));
+      }
+      const after = managedStorageBrokerPoolStats();
+      // One new pooled child for this source; it is reused, not respawned.
+      expect(after.created - baseline).toBe(1);
+      // Scanning again neither grows the pool nor respawns the child.
+      const stable = managedStorageBrokerPoolStats().created;
+      for (let i = 0; i < 30; i += 1) {
+        await createFileSourceAdapter(sourceFor(managed)).stat!('.');
+      }
+      expect(managedStorageBrokerPoolStats().created).toBe(stable);
+    } finally {
+      await resetManagedStorageBrokerPool();
+      await rm(fixture, { recursive: true, force: true });
+    }
   });
 });

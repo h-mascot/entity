@@ -4,6 +4,8 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 
+type SpawnFn = typeof spawn;
+
 export type BrokerErrorCode = 'invalid' | 'not_found' | 'io' | 'exists' | 'limit';
 export type BrokerStat = { size: number; mode: number; isDirectory: boolean };
 export type BrokerRequest =
@@ -41,17 +43,49 @@ export class ManagedStorageBrokerError extends Error {
   }
 }
 
-export class ManagedStorageBrokerClient {
-  private readonly child: ChildProcessWithoutNullStreams;
-  private readonly lines: Interface;
-  private readonly pending: Array<{ resolve: (response: BrokerResponse) => void; reject: (error: Error) => void }> = [];
-  private closed = false;
+/**
+ * A broker child could not be launched (missing/unexecutable executable, i.e.
+ * spawn ENOENT/EACCES). It is a typed broker error (code `io`) so adapters and
+ * route layers keep their existing typed-broker mapping and error paths, while
+ * remaining distinguishable for fail-closed messaging.
+ */
+export class ManagedStorageBrokerSpawnError extends ManagedStorageBrokerError {
+  constructor(message = 'managed storage broker could not be launched') {
+    super('io', message);
+    this.name = 'ManagedStorageBrokerSpawnError';
+  }
+}
 
-  constructor(options: { executable: string; root: string; spawn?: typeof spawn }) {
+export class ManagedStorageBrokerClient {
+  private readonly child: ChildProcessWithoutNullStreams | undefined;
+  private readonly lines: Interface | undefined;
+  private readonly pending: Array<{ resolve: (response: BrokerResponse) => void; reject: (error: Error) => void }> = [];
+  private readonly spawnError: Error | undefined;
+  private closed = false;
+  private failed = false;
+
+  constructor(options: { executable: string; root: string; spawn?: SpawnFn }) {
     // root is startup configuration only. It is never included in an operation request.
     const launcher = options.spawn ?? spawn;
-    this.child = launcher(options.executable, [options.root], { stdio: ['pipe', 'pipe', 'pipe'] });
-    this.lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
+    let child: ChildProcessWithoutNullStreams | undefined;
+    try {
+      child = launcher(options.executable, [options.root], { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (error) {
+      // spawn can throw synchronously on some platforms for ENOENT/EACCES. Fail
+      // closed: keep construction non-throwing so the owning adapter surfaces a
+      // typed request failure on use instead of crashing the server.
+      this.failed = true;
+      this.closed = true;
+      this.child = undefined;
+      this.lines = undefined;
+      this.spawnError = new ManagedStorageBrokerSpawnError(
+        error instanceof Error ? `managed storage broker could not be launched: ${error.message}` : undefined,
+      );
+      return;
+    }
+    this.child = child;
+    this.lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    this.spawnError = undefined;
     this.lines.on('line', (line) => {
       const pending = this.pending.shift();
       if (!pending) return;
@@ -61,12 +95,33 @@ export class ManagedStorageBrokerClient {
     // is still in flight; the write then fails with EPIPE on stdin. Reject the
     // affected pending request(s) here so the error surfaces on their Promises
     // instead of becoming an unhandled stream 'error'.
-    this.child.stdin.on('error', () => this.failPending(new Error('managed storage broker input failed')));
-    this.child.once('exit', () => {
+    child.stdin.on('error', () => this.failPending(new Error('managed storage broker input failed')));
+    // Spawn failure is signalled asynchronously through the child 'error' event
+    // (ENOENT/EACCES). Without a listener that is an unhandled event and crashes
+    // the server. Fail closed: settle all pending/current requests with a typed
+    // broker error and never let the event escape. failPending is idempotent, so
+    // the eventual 'exit' (if any) cannot double-settle the same requests.
+    child.once('error', (error) => {
+      this.failed = true;
+      this.closed = true;
+      this.failPending(new ManagedStorageBrokerSpawnError(
+        error instanceof Error ? `managed storage broker could not be launched: ${error.message}` : undefined,
+      ));
+      this.lines?.close();
+    });
+    child.once('exit', () => {
       this.closed = true;
       this.failPending(new Error('managed storage broker exited'));
-      this.lines.close();
+      this.lines?.close();
     });
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  get isFailed(): boolean {
+    return this.failed;
   }
 
   async stat(path: string): Promise<BrokerStat> { return this.request({ op: 'stat', path }).then((r) => this.expect(r, 'stat')); }
@@ -79,11 +134,21 @@ export class ManagedStorageBrokerClient {
 
   async close(): Promise<void> {
     if (this.closed) return;
+    if (!this.child) {
+      // Spawn failed synchronously; there is no process to signal.
+      this.closed = true;
+      return;
+    }
+    const child = this.child;
     // Closing the stdin gracefully signals EOF; EPIPE races during close are
     // already routed to pending requests through the shared stdin error path.
-    this.child.stdin.end();
-    await once(this.child, 'exit');
-    this.lines.close();
+    child.stdin.end();
+    // A child that failed to spawn emits 'error' but not 'exit' (Node semantics),
+    // so wait on whichever settles first to avoid hanging shutdown on a broker
+    // that can never exit.
+    await Promise.race([once(child, 'exit'), once(child, 'error')]);
+    this.closed = true;
+    this.lines?.close();
   }
 
   /**
@@ -96,7 +161,9 @@ export class ManagedStorageBrokerClient {
   }
 
   private request(request: BrokerRequest): Promise<BrokerResponse> {
+    if (this.failed) return Promise.reject(this.spawnError ?? new ManagedStorageBrokerSpawnError());
     if (this.closed) return Promise.reject(new Error('managed storage broker is closed'));
+    if (!this.child) return Promise.reject(new ManagedStorageBrokerSpawnError());
     const fields = request.op === 'stat' || request.op === 'read' || request.op === 'list'
       ? [request.op, encode(request.path)]
       : request.op === 'mkdir' ? [request.op, encode(request.path), request.mode.toString(8)]
@@ -108,7 +175,7 @@ export class ManagedStorageBrokerClient {
       const entry = { resolve, reject };
       this.pending.push(entry);
       try {
-        this.child.stdin.write(payload);
+        this.child!.stdin.write(payload);
       } catch (error) {
         // Synchronous write failure (e.g. write-after-end): reject this request
         // through its Promise, not by throwing an unhandled EPIPE.
@@ -124,6 +191,95 @@ export class ManagedStorageBrokerClient {
     if (response.kind !== kind) throw new Error(`unexpected managed storage response: ${response.kind}`);
     return response as Extract<BrokerResponse, { kind: T }>;
   }
+}
+
+/**
+ * Reuses one broker child per { executable, root } so repeated local-source
+ * operations (route requests, index scans) do not spawn a fresh long-lived
+ * broker process each time. The broker is stateless between line-based
+ * requests for the same root, and concurrent requests on one client are
+ * already serialized by the pending queue, so reuse is safe and keeps the
+ * child-process count bounded by the number of distinct local sources.
+ */
+export class ManagedStorageBrokerClientPool {
+  private readonly clients = new Map<string, ManagedStorageBrokerClient>();
+  private spawn: SpawnFn | undefined;
+  private totalClients = 0;
+
+  constructor(options: { spawn?: SpawnFn } = {}) {
+    this.spawn = options.spawn;
+  }
+
+  /** Test-only: replace the launcher used for subsequently acquired clients. */
+  setTestSpawn(spawn: SpawnFn | undefined): void {
+    this.spawn = spawn;
+  }
+
+  /** Count of client children ever created, for bounded-process proofs. */
+  get createdCount(): number {
+    return this.totalClients;
+  }
+
+  /** Number of live (cached) clients currently held. */
+  get size(): number {
+    return this.clients.size;
+  }
+
+  acquire(options: { executable: string; root: string }): ManagedStorageBrokerClient {
+    const key = `${options.executable}\u0000${options.root}`;
+    const existing = this.clients.get(key);
+    if (existing && !existing.isFailed && !existing.isClosed) {
+      return existing;
+    }
+    if (existing) {
+      // A cached child failed (spawn error) or exited; evict it so a later
+      // operation gets a fresh child rather than a dead one.
+      this.clients.delete(key);
+    }
+    const client = new ManagedStorageBrokerClient({
+      executable: options.executable,
+      root: options.root,
+      ...(this.spawn ? { spawn: this.spawn } : {}),
+    });
+    this.clients.set(key, client);
+    this.totalClients += 1;
+    return client;
+  }
+
+  async close(): Promise<void> {
+    const clients = [...this.clients.values()];
+    this.clients.clear();
+    await Promise.allSettled(clients.map((client) => client.close()));
+  }
+}
+
+/**
+ * Default per-process pool shared by every LocalFileSourceAdapter that does not
+ * inject its own broker client. Closed on server shutdown via
+ * `closeManagedStorageBrokerPool()`.
+ */
+const defaultPool = new ManagedStorageBrokerClientPool();
+
+export function acquireManagedStorageBrokerClient(options: { executable: string; root: string }): ManagedStorageBrokerClient {
+  return defaultPool.acquire(options);
+}
+
+export function closeManagedStorageBrokerPool(): Promise<void> {
+  return defaultPool.close();
+}
+
+export function managedStorageBrokerPoolStats(): { created: number; size: number } {
+  return { created: defaultPool.createdCount, size: defaultPool.size };
+}
+
+/**
+ * Test-only helper: close and clear the per-process pool, optionally replacing
+ * the client launcher for tests that want deterministic/controllable children.
+ */
+export function resetManagedStorageBrokerPool(spawn?: SpawnFn): Promise<void> {
+  const closed = defaultPool.close();
+  defaultPool.setTestSpawn(spawn);
+  return closed;
 }
 
 function parseResponse(line: string): BrokerResponse {

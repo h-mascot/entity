@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { spawn as spawnType } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
-import { ManagedStorageBrokerError } from '../managed-storage-broker';
+import { ManagedStorageBrokerClientPool, ManagedStorageBrokerError } from '../managed-storage-broker';
 import { LocalFileSourceAdapter } from './local';
 
 function sourceFor(basePath: string, overrides: Partial<FileSourceRecord> = {}): FileSourceRecord {
@@ -106,5 +110,44 @@ describe('LocalFileSourceAdapter managed-storage integration', () => {
     await expect(adapter.read('oversized.bin')).rejects.toThrow(
       'Source file exceeds the configured read limit of 16777216 bytes.',
     );
+  });
+});
+
+// A fake broker child that mimics a real process: closing stdin (EOF) exits it,
+// so ManagedStorageBrokerClient.close() resolves instead of hanging.
+function liveControllableChild(): ChildProcessWithoutNullStreams {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const child = Object.assign(new EventEmitter(), { stdin, stdout }) as unknown as ChildProcessWithoutNullStreams;
+  stdin.on('finish', () => child.emit('exit', 0, null));
+  return child;
+}
+
+describe('LocalFileSourceAdapter broker lifecycle (reuse bounds children)', () => {
+  it('reuses one broker client across many adapter constructions for the same source root and closes on teardown', async () => {
+    let spawned = 0;
+    const spawnMock = (() => {
+      spawned += 1;
+      return liveControllableChild();
+    }) as unknown as typeof spawnType;
+    const pool = new ManagedStorageBrokerClientPool({ spawn: spawnMock });
+
+    // Repeated adapter construction is what every route handler and index scan
+    // does. All constructions for one root must draw the same pooled client.
+    const adapters: LocalFileSourceAdapter[] = [];
+    for (let i = 0; i < 50; i += 1) {
+      adapters.push(new LocalFileSourceAdapter(sourceFor('/managed/root'), { brokerPool: pool }));
+    }
+    expect(spawned).toBe(1);
+    expect(pool.createdCount).toBe(1);
+
+    // A second source root is isolated with its own child (tenant/source isolation).
+    new LocalFileSourceAdapter(sourceFor('/other/root'), { brokerPool: pool });
+    expect(pool.createdCount).toBe(2);
+
+    // Teardown closes every pooled child; repeated close is idempotent and safe.
+    await pool.close();
+    await pool.close();
+    expect(pool.size).toBe(0);
   });
 });

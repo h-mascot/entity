@@ -45,6 +45,7 @@ import {
 import { getEntityDatabase } from "../../db/src/entity-db";
 import { createFileSourceRepository } from "../../db/src/file-sources";
 import { registerFileSystemRoutes } from "./fs";
+import { closeManagedStorageBrokerPool } from "./fs/managed-storage-broker";
 import { registerEditorModule } from "./editor";
 import { createSearchRouter } from "./routes/search";
 import {
@@ -726,6 +727,7 @@ function shutdown(reason: string, exitCode = 0) {
   clearInterval(agentStatusInterval);
   taskAgentScheduler.stop();
   closeDocumentsDatabase();
+  void closeManagedStorageBrokerPool();
   console.log(`[Server] Shutting down (${reason})`);
   wss.close(() => {
     server.close(() => {

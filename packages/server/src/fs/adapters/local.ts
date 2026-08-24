@@ -1,7 +1,7 @@
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { detectContentType } from '../../file-types';
-import { ManagedStorageBrokerClient, ManagedStorageBrokerError, resolveManagedStorageBrokerExecutable, type BrokerStat } from '../managed-storage-broker';
+import { ManagedStorageBrokerClient, ManagedStorageBrokerClientPool, ManagedStorageBrokerError, acquireManagedStorageBrokerClient, resolveManagedStorageBrokerExecutable, type BrokerStat } from '../managed-storage-broker';
 import { isBasePathAllowlisted } from '../source-root-guard';
 import { normalizeSourceRelativePath } from '../security';
 import { DEFAULT_SOURCE_READ_LIMIT_BYTES, SourceReadLimitError } from './bounded-read';
@@ -12,6 +12,11 @@ type ManagedStorageOperations = Pick<ManagedStorageBrokerClient, 'stat' | 'read'
 export type LocalFileSourceAdapterOptions = {
   brokerClient?: ManagedStorageOperations;
   brokerExecutable?: string;
+  /**
+   * Broker client pool to draw from (defaults to the per-process pool). Use to
+   * bound child-process creation and to close pooled clients in tests.
+   */
+  brokerPool?: ManagedStorageBrokerClientPool;
 };
 
 function sourceIsReadOnly(source: FileSourceRecord): boolean {
@@ -73,10 +78,18 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
 
   constructor(source: FileSourceRecord, options: LocalFileSourceAdapterOptions = {}) {
     this.source = source;
-    this.broker = options.brokerClient ?? new ManagedStorageBrokerClient({
-      executable: options.brokerExecutable ?? resolveManagedStorageBrokerExecutable(),
-      root: source.base_path?.trim() ?? '',
-    });
+    // Reuse a pooled broker child (per executable+root) unless a specific client
+    // was injected, so repeated adapter construction for the same source does not
+    // spawn a fresh long-lived broker process each time.
+    this.broker = options.brokerClient
+      ?? options.brokerPool?.acquire({
+        executable: options.brokerExecutable ?? resolveManagedStorageBrokerExecutable(),
+        root: source.base_path?.trim() ?? '',
+      })
+      ?? acquireManagedStorageBrokerClient({
+        executable: options.brokerExecutable ?? resolveManagedStorageBrokerExecutable(),
+        root: source.base_path?.trim() ?? '',
+      });
   }
 
   async validate(source: FileSourceRecord): Promise<void> {

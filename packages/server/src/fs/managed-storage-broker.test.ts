@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { ManagedStorageBrokerClient, ManagedStorageBrokerError, resolveManagedStorageBrokerExecutable } from './managed-storage-broker';
+import { ManagedStorageBrokerClient, ManagedStorageBrokerClientPool, ManagedStorageBrokerError, ManagedStorageBrokerSpawnError, resolveManagedStorageBrokerExecutable } from './managed-storage-broker';
 
 function controllableChild(): { child: ChildProcessWithoutNullStreams; stdin: PassThrough; stdout: PassThrough } {
   // A fake broker child whose stdio we drive directly, so the EPIPE/exit races
@@ -15,6 +15,16 @@ function controllableChild(): { child: ChildProcessWithoutNullStreams; stdin: Pa
   const stdin = new PassThrough();
   const stdout = new PassThrough();
   const child = Object.assign(new EventEmitter(), { stdin, stdout }) as unknown as ChildProcessWithoutNullStreams;
+  return { child, stdin, stdout };
+}
+
+// A fake broker child that mimics a real process: closing stdin (EOF) makes it
+// exit, so ManagedStorageBrokerClient.close() resolves instead of hanging.
+function liveChild(): { child: ChildProcessWithoutNullStreams; stdin: PassThrough; stdout: PassThrough } {
+  const { child, stdin, stdout } = controllableChild();
+  // 'finish' fires when the writable side of stdin is ended (flush completes)
+  // and does not require a reader, unlike 'end'.
+  stdin.on('finish', () => child.emit('exit', 0, null));
   return { child, stdin, stdout };
 }
 
@@ -113,6 +123,90 @@ describe('managed storage broker IPC client', () => {
     // Queued requests issued after the child has gone are rejected immediately.
     await expect(client.read('c.txt')).rejects.toThrow('closed');
     await client.close();
+    stdout.destroy();
+  });
+});
+
+describe('managed storage broker client pool lifecycle', () => {
+  it('reuses one client across repeated acquires for the same executable+root and bounds creation', async () => {
+    let spawned = 0;
+    const spawnMock = (() => {
+      spawned += 1;
+      return liveChild().child;
+    }) as unknown as typeof spawnType;
+    const pool = new ManagedStorageBrokerClientPool({ spawn: spawnMock });
+
+    // Acquire dozens of times (mimicking one adapter per route/index operation).
+    const first = pool.acquire({ executable: 'n/a', root: '/bound/root' });
+    for (let i = 0; i < 60; i += 1) {
+      expect(pool.acquire({ executable: 'n/a', root: '/bound/root' })).toBe(first);
+    }
+    expect(pool.createdCount).toBe(1);
+    expect(spawned).toBe(1);
+    expect(pool.size).toBe(1);
+
+    // A different root gets its own isolated child.
+    const other = pool.acquire({ executable: 'n/a', root: '/other/root' });
+    expect(other).not.toBe(first);
+    expect(pool.createdCount).toBe(2);
+
+    await pool.close();
+    expect(pool.size).toBe(0);
+    expect(first.isClosed).toBe(true);
+    expect(other.isClosed).toBe(true);
+  });
+
+  it('rejects with a typed broker spawn error when the child reports a spawn failure, without an unhandled event', async () => {
+    const spawnMock = (() => {
+      const { child, stdout } = controllableChild();
+      // Signal ENOENT/EACCES asynchronously via the child 'error' event.
+      setImmediate(() => child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })));
+      // Keep stdout referenced so the client's readline does not warn.
+      void stdout;
+      return child;
+    }) as unknown as typeof spawnType;
+    const pool = new ManagedStorageBrokerClientPool({ spawn: spawnMock });
+
+    const client = pool.acquire({ executable: 'n/a', root: '/bound/root' });
+    await expect(client.read('a.txt')).rejects.toBeInstanceOf(ManagedStorageBrokerSpawnError);
+    await expect(client.read('a.txt')).rejects.toMatchObject({ code: 'io' });
+    expect(client.isFailed).toBe(true);
+
+    // close() on a failed-to-spawn child must not hang on a never-emitted exit.
+    await expect(client.close()).resolves.toBeUndefined();
+    await pool.close();
+  });
+
+  it('fails closed and typed when spawn throws synchronously, keeping construction non-throwing', async () => {
+    const spawnMock = (() => {
+      throw Object.assign(new Error('spawn EACCES'), { code: 'EACCES' });
+    }) as unknown as typeof spawnType;
+    const pool = new ManagedStorageBrokerClientPool({ spawn: spawnMock });
+
+    const client = pool.acquire({ executable: 'n/a', root: '/bound/root' });
+    await expect(client.stat('.')).rejects.toBeInstanceOf(ManagedStorageBrokerSpawnError);
+    await expect(client.stat('.')).rejects.toMatchObject({ code: 'io' });
+    expect(client.isFailed).toBe(true);
+    // A synchronous spawn failure yields no process; close must resolve cleanly.
+    await expect(client.close()).resolves.toBeUndefined();
+  });
+
+  it('does not double-settle requests when a spawn error and exit race, and close still resolves', async () => {
+    const { child, stdin, stdout } = controllableChild();
+    const pool = new ManagedStorageBrokerClientPool({ spawn: (() => child) as unknown as typeof spawnType });
+    const client = pool.acquire({ executable: 'n/a', root: '/bound/root' });
+
+    const inFlight = client.read('a.txt');
+    const after = client.read('b.txt');
+    // Error fires while requests are pending, then exit fires afterwards.
+    child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+    child.emit('exit', 0, null);
+
+    await expect(inFlight).rejects.toBeInstanceOf(ManagedStorageBrokerSpawnError);
+    await expect(after).rejects.toBeInstanceOf(ManagedStorageBrokerSpawnError);
+    // No request is settled twice and later requests fail closed rather than hang.
+    await expect(client.read('c.txt')).rejects.toMatchObject({ code: 'io' });
+    await expect(client.close()).resolves.toBeUndefined();
     stdout.destroy();
   });
 });
