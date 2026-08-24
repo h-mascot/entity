@@ -35,7 +35,10 @@ export function resolveManagedStorageBrokerExecutable(configured = process.env.M
 }
 
 export class ManagedStorageBrokerError extends Error {
-  constructor(readonly code: BrokerErrorCode) { super(`managed storage broker: ${code}`); }
+  constructor(readonly code: BrokerErrorCode, message?: string) {
+    super(message ?? `managed storage broker: ${code}`);
+    this.name = 'ManagedStorageBrokerError';
+  }
 }
 
 export class ManagedStorageBrokerClient {
@@ -54,7 +57,16 @@ export class ManagedStorageBrokerClient {
       if (!pending) return;
       try { pending.resolve(parseResponse(line)); } catch (error) { pending.reject(error instanceof Error ? error : new Error('malformed managed storage response')); }
     });
-    this.child.once('exit', () => { this.closed = true; while (this.pending.length) this.pending.shift()!.reject(new Error('managed storage broker exited')); });
+    // A child can disappear between two requests (or mid-batch) while a write
+    // is still in flight; the write then fails with EPIPE on stdin. Reject the
+    // affected pending request(s) here so the error surfaces on their Promises
+    // instead of becoming an unhandled stream 'error'.
+    this.child.stdin.on('error', () => this.failPending(new Error('managed storage broker input failed')));
+    this.child.once('exit', () => {
+      this.closed = true;
+      this.failPending(new Error('managed storage broker exited'));
+      this.lines.close();
+    });
   }
 
   async stat(path: string): Promise<BrokerStat> { return this.request({ op: 'stat', path }).then((r) => this.expect(r, 'stat')); }
@@ -67,9 +79,20 @@ export class ManagedStorageBrokerClient {
 
   async close(): Promise<void> {
     if (this.closed) return;
+    // Closing the stdin gracefully signals EOF; EPIPE races during close are
+    // already routed to pending requests through the shared stdin error path.
     this.child.stdin.end();
     await once(this.child, 'exit');
     this.lines.close();
+  }
+
+  /**
+   * Reject every queued request exactly once. Called from the stdin write-error
+   * path and the child exit path; both are safe to invoke repeatedly because
+   * the queue is drained, so no request is ever settled twice.
+   */
+  private failPending(error: Error): void {
+    while (this.pending.length) this.pending.shift()!.reject(error);
   }
 
   private request(request: BrokerRequest): Promise<BrokerResponse> {
@@ -80,9 +103,19 @@ export class ManagedStorageBrokerClient {
       : request.op === 'replace-if-equal'
         ? [request.op, encode(request.path), encode(request.recoveryPath), encode(request.expected), encode(request.data)]
         : [request.op === 'exclusive-create' ? 'create' : request.op, encode(request.path), encode(request.data)];
+    const payload = `${fields.join('\t')}\n`;
     return new Promise((resolve, reject) => {
-      this.pending.push({ resolve, reject });
-      this.child.stdin.write(`${fields.join('\t')}\n`);
+      const entry = { resolve, reject };
+      this.pending.push(entry);
+      try {
+        this.child.stdin.write(payload);
+      } catch (error) {
+        // Synchronous write failure (e.g. write-after-end): reject this request
+        // through its Promise, not by throwing an unhandled EPIPE.
+        const index = this.pending.indexOf(entry);
+        if (index !== -1) this.pending.splice(index, 1);
+        reject(error instanceof Error ? error : new Error('managed storage broker write failed'));
+      }
     });
   }
 

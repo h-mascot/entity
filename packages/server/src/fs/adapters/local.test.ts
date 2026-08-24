@@ -79,4 +79,32 @@ describe('LocalFileSourceAdapter managed-storage integration', () => {
 
     await expect(adapter.read('guide.md')).rejects.toMatchObject({ code: 'io' });
   });
+
+  it('re-surfaces broker not_found reads as the public 404 missing-path message', async () => {
+    const broker = controlledBroker();
+    broker.stat.mockRejectedValue(new ManagedStorageBrokerError('not_found'));
+    const adapter = new LocalFileSourceAdapter(sourceFor('/managed/root'), { brokerClient: broker });
+
+    await expect(adapter.read('deleted.md')).rejects.toThrow('ENOENT: no such file or directory');
+    await expect(adapter.readRaw('deleted.md')).rejects.toThrow('ENOENT: no such file or directory');
+  });
+
+  it('translates broker invalid (symlink escape) reads to the 403 source-root message', async () => {
+    const broker = controlledBroker();
+    broker.stat.mockRejectedValue(new ManagedStorageBrokerError('invalid'));
+    const adapter = new LocalFileSourceAdapter(sourceFor('/managed/root'), { brokerClient: broker });
+
+    await expect(adapter.read('read-link.md')).rejects.toThrow('Access outside source root is not allowed.');
+    await expect(adapter.readRaw('read-link.md')).rejects.toThrow('Access outside source root is not allowed.');
+  });
+
+  it('applies the default 16 MiB read ceiling to oversized local reads without an explicit maxBytes', async () => {
+    const broker = controlledBroker();
+    broker.stat.mockResolvedValue({ size: (16 * 1024 * 1024) + 1, mode: 0o644, isDirectory: false });
+    const adapter = new LocalFileSourceAdapter(sourceFor('/managed/root'), { brokerClient: broker });
+
+    await expect(adapter.read('oversized.bin')).rejects.toThrow(
+      'Source file exceeds the configured read limit of 16777216 bytes.',
+    );
+  });
 });

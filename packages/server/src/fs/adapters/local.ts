@@ -1,10 +1,10 @@
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { detectContentType } from '../../file-types';
-import { ManagedStorageBrokerClient, ManagedStorageBrokerError, resolveManagedStorageBrokerExecutable } from '../managed-storage-broker';
+import { ManagedStorageBrokerClient, ManagedStorageBrokerError, resolveManagedStorageBrokerExecutable, type BrokerStat } from '../managed-storage-broker';
 import { isBasePathAllowlisted } from '../source-root-guard';
 import { normalizeSourceRelativePath } from '../security';
-import { SourceReadLimitError } from './bounded-read';
+import { DEFAULT_SOURCE_READ_LIMIT_BYTES, SourceReadLimitError } from './bounded-read';
 import type { FileSourceAdapter, SourceCapability, SourceNode, SourcePathMetadata, SourceReadOptions } from './types';
 
 type ManagedStorageOperations = Pick<ManagedStorageBrokerClient, 'stat' | 'read' | 'write' | 'exclusiveCreate' | 'mkdir' | 'list'>;
@@ -45,6 +45,25 @@ function unavailable(error: unknown, message: string): Error {
   if (error instanceof ManagedStorageBrokerError && error.code === 'not_found') return new Error(message);
   if (error instanceof Error && error.message === 'managed storage broker exited') return new Error(message);
   return error instanceof Error ? error : new Error(message);
+}
+
+// The broker describes failures with a small typed error-code vocabulary. The
+// route layer, however, maps HTTP statuses from human-readable error messages.
+// Re-surface the broker's typed failures as ManagedStorageBrokerError with the
+// same typed code but a message the routes already recognize, so the public
+// status codes and bodies are preserved without losing the typed code:
+//   - not_found -> 404 (missing file), via the "no such file" contract.
+//   - invalid   -> 403 (symlink/invalid descriptor-relative target), fail-closed.
+function translateBrokerReadError(error: unknown): Error {
+  if (error instanceof ManagedStorageBrokerError) {
+    if (error.code === 'not_found') return new ManagedStorageBrokerError('not_found', 'ENOENT: no such file or directory');
+    if (error.code === 'invalid') return new ManagedStorageBrokerError('invalid', 'Access outside source root is not allowed.');
+  }
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function unboundedReadLimit(): number {
+  return DEFAULT_SOURCE_READ_LIMIT_BYTES;
 }
 
 export class LocalFileSourceAdapter implements FileSourceAdapter {
@@ -105,11 +124,27 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
   private async readBytes(relativePath: string, options?: SourceReadOptions): Promise<{ content: Buffer; size: number }> {
     const normalized = normalizePath(relativePath);
     if (!normalized) throw new Error('Path is required.');
-    const stats = await this.broker.stat(normalized);
+    let stats: BrokerStat;
+    try {
+      stats = await this.broker.stat(normalized);
+    } catch (error) {
+      throw translateBrokerReadError(error);
+    }
     if (stats.isDirectory) throw new Error('Target path is not a file.');
-    if (options?.maxBytes !== undefined && stats.size > options.maxBytes) throw new SourceReadLimitError(options.maxBytes);
-    const content = Buffer.from(await this.broker.read(normalized));
-    return { content, size: stats.size };
+    // Enforce the same shared hard ceiling the unbounded route path guarantees,
+    // so an oversized local read yields 413 (not a broker 500) with the standard
+    // read-limit message when no explicit maxBytes is supplied.
+    const maxBytes = options?.maxBytes === undefined || !Number.isFinite(options.maxBytes) || options.maxBytes < 1
+      ? unboundedReadLimit()
+      : Math.min(Math.floor(options.maxBytes), unboundedReadLimit());
+    if (stats.size > maxBytes) throw new SourceReadLimitError(maxBytes);
+    let content: Uint8Array;
+    try {
+      content = await this.broker.read(normalized);
+    } catch (error) {
+      throw translateBrokerReadError(error);
+    }
+    return { content: Buffer.from(content), size: stats.size };
   }
 
   async read(relativePath: string, options?: SourceReadOptions) {

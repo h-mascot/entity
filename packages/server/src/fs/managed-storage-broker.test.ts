@@ -1,8 +1,30 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { spawn as spawnType } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { ManagedStorageBrokerClient, ManagedStorageBrokerError, resolveManagedStorageBrokerExecutable } from './managed-storage-broker';
+
+function controllableChild(): { child: ChildProcessWithoutNullStreams; stdin: PassThrough; stdout: PassThrough } {
+  // A fake broker child whose stdio we drive directly, so the EPIPE/exit races
+  // are reproduced deterministically with real Node streams (no real subprocess
+  // timing). The client's contract requires stdin and stdout only.
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const child = Object.assign(new EventEmitter(), { stdin, stdout }) as unknown as ChildProcessWithoutNullStreams;
+  return { child, stdin, stdout };
+}
+
+function controlledClient(child: ChildProcessWithoutNullStreams): ManagedStorageBrokerClient {
+  return new ManagedStorageBrokerClient({
+    executable: 'n/a',
+    root: '/bound/root',
+    spawn: (() => child) as unknown as typeof spawnType,
+  });
+}
 
 function fake(body: string, log?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'msb-ipc-'));
@@ -63,5 +85,34 @@ describe('managed storage broker IPC client', () => {
     const client = new ManagedStorageBrokerClient({ executable: fake(response), root: '/bound/root' });
     await expect(client.read('a')).rejects.toThrow('malformed managed storage response');
     await client.close();
+  });
+
+  it('rejects the exact pending request when a stdin write races a broken pipe, without an unhandled EPIPE', async () => {
+    const { child, stdin, stdout } = controllableChild();
+    const client = controlledClient(child);
+    // Simulate the broker child dying so the pipe to its stdin breaks. The
+    // request writes into that broken pipe; its failure must surface on the
+    // request Promise (not as an unhandled stream 'error').
+    stdin.destroy(new Error('write EPIPE'));
+    await expect(client.read('a.txt')).rejects.toThrow('managed storage broker input failed');
+    // Emitting exit afterwards is a no-op (no double settlement); closed is set
+    // here so any later request is rejected cleanly.
+    child.emit('exit', 1, null);
+    await expect(client.read('b.txt')).rejects.toThrow('closed');
+    stdout.destroy();
+  });
+
+  it('rejects pending requests once and only once when the child exits, preserving order and close behaviour', async () => {
+    const { child, stdin, stdout } = controllableChild();
+    const client = controlledClient(child);
+    const a = client.read('a.txt');
+    const b = client.read('b.txt');
+    child.emit('exit', 0, null);
+    await expect(a).rejects.toThrow('managed storage broker exited');
+    await expect(b).rejects.toThrow('managed storage broker exited');
+    // Queued requests issued after the child has gone are rejected immediately.
+    await expect(client.read('c.txt')).rejects.toThrow('closed');
+    await client.close();
+    stdout.destroy();
   });
 });
