@@ -8,6 +8,25 @@ import { createCuracelOperationsRouter } from './curacel-operations';
 const servers: http.Server[] = [];
 const databases: Database.Database[] = [];
 
+// Luna-high F3: org/team existence is resolved through an authoritative
+// workspace repository seam (mirrors the production workspace repo).
+function createWorkspaceStub() {
+  const orgs = new Map([
+    ['org-a', { teams: ['claims', 'finance', 'ai-ops'] }],
+    ['org-b', { teams: ['ops-b'] }],
+  ]);
+  const nowIso = '2026-07-29T12:00:00.000Z';
+  return {
+    getOrg: (id: string) => orgs.has(id)
+      ? { id, name: id, slug: id, status: 'active', deployment_mode: 'saas', mission: null,
+          domains_json: '[]', blueprint_json: null, created_at: nowIso, updated_at: nowIso }
+      : undefined,
+    getTeam: ({ orgId }: { orgId: string }, id: string) => orgs.get(orgId)?.teams.includes(id)
+      ? { id, org_id: orgId, name: id, slug: id, status: 'active', created_at: nowIso, updated_at: nowIso }
+      : undefined,
+  };
+}
+
 async function setup() {
   const db = new Database(':memory:');
   databases.push(db);
@@ -18,6 +37,7 @@ async function setup() {
   app.use(express.json());
   app.use('/api', createCuracelOperationsRouter({
     operationsRepo: repo,
+    workspaceRepo: createWorkspaceStub(),
     now: () => new Date('2026-07-29T12:00:00.000Z'),
     skipAdminAuth: true,
   }));
@@ -236,6 +256,121 @@ describe('Curacel operations routes', () => {
       `/orgs/org-a/curacel/connectors/${connectorId}/deliver`,
       json('POST', {}),
     )).status).toBe(404);
+  });
+
+  // Luna-high F3: org existence and team membership are validated through the
+  // authoritative workspace repository BEFORE any mutation or
+  // execution-sample write; phantom orgs and cross-org teams must leave zero
+  // rows behind.
+  it('rejects phantom organizations before any policy, connector, dashboard, or sample write', async () => {
+    const context = await setup();
+    const ghost = 'org-ghost';
+
+    const policy = await context.request(
+      `/orgs/${ghost}/curacel/review-policies/internal_ops`,
+      json('PUT', { reviewRequired: false, approverRoles: ['owner'] }),
+    );
+    expect(policy.status).toBe(404);
+    expect(policy.body).toMatchObject({ code: 'CURACEL_ORG_NOT_FOUND' });
+
+    const connector = await context.request(
+      `/orgs/${ghost}/curacel/connectors/gmail`,
+      json('PUT', { name: 'Ghost Gmail', credentialRef: 'vault://curacel/ghost' }),
+    );
+    expect(connector.status).toBe(404);
+    expect(connector.body).toMatchObject({ code: 'CURACEL_ORG_NOT_FOUND' });
+
+    const dashboard = await context.request(
+      `/orgs/${ghost}/curacel/team-dashboards/claims`,
+      json('PUT', {
+        teamType: 'claims',
+        queueLabel: 'Ghost queue',
+        approvalSlaMinutes: 30,
+        policies: {},
+        agentPermissions: [],
+      }),
+    );
+    expect(dashboard.status).toBe(404);
+    expect(dashboard.body).toMatchObject({ code: 'CURACEL_ORG_NOT_FOUND' });
+
+    const sample = await context.request(
+      `/orgs/${ghost}/curacel/execution-samples`,
+      json('POST', { agentId: 'atlas', outcome: 'success', latencyMs: 10 }),
+    );
+    expect(sample.status).toBe(404);
+    expect(sample.body).toMatchObject({ code: 'CURACEL_ORG_NOT_FOUND' });
+
+    // Zero rows created for the phantom org on every surface.
+    expect(context.repo.resolveReviewPolicy({ org_id: ghost, action: 'internal_ops' }).id).toBeNull();
+    expect(context.repo.listConnectors(ghost)).toEqual([]);
+    expect(context.repo.listTeamDashboards(ghost)).toEqual([]);
+    expect(context.repo.getUsageReport({ org_id: ghost })).toEqual([]);
+    expect(context.repo.listAudit({ org_id: ghost, limit: 100 })).toEqual([]);
+  });
+
+  it('rejects teams that belong to another organization before any mutation', async () => {
+    const context = await setup();
+    // 'ops-b' exists — but only in org-b.
+
+    const policy = await context.request(
+      '/orgs/org-a/curacel/review-policies/internal_ops',
+      json('PUT', { reviewRequired: false, approverRoles: ['owner'], teamId: 'ops-b' }),
+    );
+    expect(policy.status).toBe(404);
+    expect(policy.body).toMatchObject({ code: 'CURACEL_TEAM_NOT_FOUND' });
+
+    const connector = await context.request(
+      '/orgs/org-a/curacel/connectors/gmail',
+      json('PUT', { name: 'Cross Gmail', credentialRef: 'vault://curacel/x', teamId: 'ops-b' }),
+    );
+    expect(connector.status).toBe(404);
+    expect(connector.body).toMatchObject({ code: 'CURACEL_TEAM_NOT_FOUND' });
+
+    const dashboard = await context.request(
+      '/orgs/org-a/curacel/team-dashboards/ops-b',
+      json('PUT', {
+        teamType: 'claims',
+        queueLabel: 'Cross queue',
+        approvalSlaMinutes: 30,
+        policies: {},
+        agentPermissions: [],
+      }),
+    );
+    expect(dashboard.status).toBe(404);
+    expect(dashboard.body).toMatchObject({ code: 'CURACEL_TEAM_NOT_FOUND' });
+
+    const sample = await context.request(
+      '/orgs/org-a/curacel/execution-samples',
+      json('POST', { agentId: 'atlas', outcome: 'success', latencyMs: 10, teamId: 'ops-b' }),
+    );
+    expect(sample.status).toBe(404);
+    expect(sample.body).toMatchObject({ code: 'CURACEL_TEAM_NOT_FOUND' });
+
+    const configured = await context.request(
+      '/orgs/org-a/curacel/connectors/email',
+      json('PUT', { name: 'Email', credentialRef: 'vault://curacel/email' }),
+    );
+    expect(configured.status).toBe(200);
+    const draft = await context.request(
+      `/orgs/org-a/curacel/connectors/${configured.body.connector.id}/drafts`,
+      json('POST', { targetRef: 'claim-1', payload: {}, teamId: 'ops-b' }, { 'idempotency-key': 'cross-team-draft' }),
+    );
+    expect(draft.status).toBe(404);
+    expect(draft.body).toMatchObject({ code: 'CURACEL_TEAM_NOT_FOUND' });
+
+    // Zero rows created or updated for org-a from any rejected request (the
+    // only persisted row is the legitimate org-scoped email connector and its
+    // single configuration audit entry).
+    expect(context.repo.resolveReviewPolicy({ org_id: 'org-a', team_id: 'ops-b', action: 'internal_ops' }).id).toBeNull();
+    expect(context.repo.listConnectors('org-a')).toEqual([
+      expect.objectContaining({ org_id: 'org-a', team_id: null }),
+    ]);
+    expect(context.repo.listTeamDashboards('org-a')).toEqual([]);
+    expect(context.repo.getUsageReport({ org_id: 'org-a' })).toEqual([]);
+    expect(context.repo.listConnectorDrafts('org-a')).toEqual([]);
+    expect(context.repo.listAudit({ org_id: 'org-a', limit: 100 })).toEqual([
+      expect.objectContaining({ action: 'connector.configured' }),
+    ]);
   });
 
   it('aggregates per-agent reliability metrics and review outcomes', async () => {

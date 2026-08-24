@@ -8,6 +8,7 @@ import {
   type CuracelOperationsRepository,
   type CuracelTeamType,
 } from '../../../db/src/curacel-operations';
+import { createWorkspaceScopeRepository, type WorkspaceScopeRepository } from '../../../db/src';
 import { createRequireAdminPrincipal } from '../middleware/admin-auth';
 import { resolveRequestActorId } from '../principals/request-context';
 import { readDefaultOrgId } from '../config/admin-runtime';
@@ -16,6 +17,8 @@ export interface CuracelOperationsRouterDependencies {
   /** Test seam: skip the admin-principal gate (focused logic tests). */
   skipAdminAuth?: boolean;
   operationsRepo?: CuracelOperationsRepository;
+  /** Authoritative org/team existence source (Luna-high F3). */
+  workspaceRepo?: Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam'>;
   now?: () => Date;
 }
 
@@ -256,8 +259,31 @@ export function createCuracelOperationsRouter(
 ): Router {
   const router = Router();
   const operations = dependencies.operationsRepo ?? createCuracelOperationsRepository();
+  const workspace = dependencies.workspaceRepo ?? createWorkspaceScopeRepository();
   const now = dependencies.now ?? (() => new Date());
   const requireAdmin = createOperationsAdminGuard(Boolean(dependencies.skipAdminAuth));
+
+  // Luna-high F3: every mutation and execution-sample write must first prove
+  // the organization exists in the authoritative workspace repository and that
+  // every supplied team belongs to that organization. Phantom orgs and
+  // cross-org team references are rejected before any row is created or
+  // updated.
+  const requireOrgTeamScope = (orgId: string, teamId?: string): void => {
+    if (!workspace.getOrg(orgId)) {
+      throw new OperationsRouteError(
+        404,
+        'CURACEL_ORG_NOT_FOUND',
+        `Organization ${orgId} does not exist.`,
+      );
+    }
+    if (teamId && !workspace.getTeam({ orgId }, teamId)) {
+      throw new OperationsRouteError(
+        404,
+        'CURACEL_TEAM_NOT_FOUND',
+        `Team ${teamId} does not belong to organization ${orgId}.`,
+      );
+    }
+  };
 
   router.get('/curacel/operations', requireAdmin, (req, res) => {
     try {
@@ -334,9 +360,12 @@ export function createCuracelOperationsRouter(
     try {
       const body = record(req.body, 'body');
       const action = safeId(req.params.action, 'action').toLowerCase();
+      const orgId = safeId(req.params.orgId, 'organization id');
+      const teamId = bodyTeamId(body);
+      requireOrgTeamScope(orgId, teamId);
       const policy = operations.upsertReviewPolicy({
-        org_id: safeId(req.params.orgId, 'organization id'),
-        team_id: bodyTeamId(body),
+        org_id: orgId,
+        team_id: teamId,
         action,
         review_required: boolean(body.reviewRequired ?? body.review_required, 'review required', true),
         approver_roles: stringArray(body.approverRoles ?? body.approver_roles, 'approver roles'),
@@ -362,9 +391,12 @@ export function createCuracelOperationsRouter(
       const body = record(req.body, 'body');
       rejectSecretFields(body);
       const type = enumValue(req.params.type, 'connector type', CURACEL_CONNECTOR_TYPES);
+      const orgId = safeId(req.params.orgId, 'organization id');
+      const teamId = bodyTeamId(body);
+      requireOrgTeamScope(orgId, teamId);
       const connector = operations.upsertConnector({
-        org_id: safeId(req.params.orgId, 'organization id'),
-        team_id: bodyTeamId(body),
+        org_id: orgId,
+        team_id: teamId,
         type,
         name: optionalString(body.name, 'connector name') ?? `${type} draft`,
         credential_ref: stringValue(
@@ -403,6 +435,13 @@ export function createCuracelOperationsRouter(
         'Idempotency-Key',
         200,
       );
+      const targetRef = stringValue(body.targetRef ?? body.target_ref, 'target reference', 500);
+      const payload = record(body.payload, 'draft payload');
+      const agentId = optionalSafeId(body.agentId ?? body.agent_id, 'agent id') ?? 'connector-draft';
+      const teamId = optionalSafeId(body.teamId ?? body.team_id, 'team id');
+      const taskIdValue = body.taskId ?? body.task_id;
+      const taskId = taskIdValue == null ? null : integer(taskIdValue, 'task id', 1);
+      requireOrgTeamScope(orgId, teamId);
       const existing = operations.listConnectorDrafts(orgId)
         .find((draft) => draft.idempotency_key === idempotencyKey);
       if (existing && existing.connector_id !== connectorId) {
@@ -412,12 +451,6 @@ export function createCuracelOperationsRouter(
           'Idempotency-Key was already used for a different connector.',
         );
       }
-      const targetRef = stringValue(body.targetRef ?? body.target_ref, 'target reference', 500);
-      const payload = record(body.payload, 'draft payload');
-      const agentId = optionalSafeId(body.agentId ?? body.agent_id, 'agent id') ?? 'connector-draft';
-      const teamId = optionalSafeId(body.teamId ?? body.team_id, 'team id');
-      const taskIdValue = body.taskId ?? body.task_id;
-      const taskId = taskIdValue == null ? null : integer(taskIdValue, 'task id', 1);
       const latencyMs = integer(body.latencyMs ?? body.latency_ms ?? 0, 'latency', 0);
       const retries = integer(body.retries ?? 0, 'retries', 0);
       const muted = boolean(body.muted, 'muted', false);
@@ -489,9 +522,12 @@ export function createCuracelOperationsRouter(
   router.put('/orgs/:orgId/curacel/team-dashboards/:teamId', requireAdmin, (req, res) => {
     try {
       const body = record(req.body, 'body');
+      const orgId = safeId(req.params.orgId, 'organization id');
+      const teamId = safeId(req.params.teamId, 'team id');
+      requireOrgTeamScope(orgId, teamId);
       const dashboard = operations.upsertTeamDashboard({
-        org_id: safeId(req.params.orgId, 'organization id'),
-        team_id: safeId(req.params.teamId, 'team id'),
+        org_id: orgId,
+        team_id: teamId,
         team_type: enumValue(body.teamType ?? body.team_type, 'team type', CURACEL_TEAM_TYPES),
         queue_label: stringValue(body.queueLabel ?? body.queue_label, 'queue label'),
         approval_sla_minutes: integer(
@@ -531,6 +567,7 @@ export function createCuracelOperationsRouter(
         ? null
         : integer(body.taskId ?? body.task_id, 'task id', 1);
       const outcome = enumValue(body.outcome, 'execution outcome', ['success', 'error']);
+      requireOrgTeamScope(orgId, teamId);
       const latencyMs = integer(body.latencyMs ?? body.latency_ms, 'latency', 0);
       const reviewOutcome = enumValue(
         body.reviewOutcome ?? body.review_outcome ?? 'not_required',
