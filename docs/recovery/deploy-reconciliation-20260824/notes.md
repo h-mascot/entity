@@ -85,3 +85,13 @@ Workspace and Entity Wiki file sources report pre-existing health errors related
 - Blocked for Henry (genuine architecture/product decisions, receipts in disposition JSON):
   1) org-scoped live WS activity broadcasts (ScopedBroadcast) — main's WS layer is global;
   2) business org invite acceptance — requires choosing historical vs main onboarding architecture.
+
+## REC-007 reconciliation record (2026-08-24)
+- Disposition receipt: dispositions/openwiki-deploy.json (65 files, 6 commits).
+- The OpenWiki deployment line is fully absorbed on main via PR #61 + evolution
+  (HTML presentation layer, gitHead verification hardening, PR-head CI freshness).
+  26 files byte-identical; all drifted files carry main-ahead evolution only;
+  zero tip-unique behaviors missing (verified with file:line evidence in receipt).
+- Deploy-path files classified superseded: tip's hooks are on main and release
+  safety is now enforced stronger by REC-003/REC-004.
+- Generated docs refresh + docs:wiki:verify deferred to REC-008 per plan.

@@ -1,0 +1,454 @@
+{
+  "schemaVersion": 1,
+  "line": "openwiki-deploy",
+  "tip": "33bbfe46cb6ce5bc75d155a4918e8996a573031b",
+  "mergeBase": "f0ee1d450e01a1424724274b40eb6de162a05c76",
+  "baseline": "4af7084fb5f961bc7670767f60bbb5846ffd38b0",
+  "generatedAt": "2026-08-24T23:55:00+00:00",
+  "summary": "Main already carries the entire OpenWiki deployment line (merged via PR #61 and evolved with the HTML presentation layer, gitHead verification hardening, and PR-head CI freshness). Every tip behavior was verified present on main with exact file:line evidence; zero files absent; generated docs refresh deferred to REC-008 per plan.",
+  "decisionPolicy": [
+    "included",
+    "already-equivalent",
+    "superseded-with-proof",
+    "explicit-Henry-decision-required"
+  ],
+  "commits": [
+    {
+      "sha": "58a4dc1f734edce6517c27dc2902371f65aa89fb",
+      "subject": "feat: automate Entity documentation with OpenWiki",
+      "disposition": "already-equivalent",
+      "proof": "OpenWiki automation merged to main via PR #61 (7b19b34) and evolved (a78f285 HTML presentation); tools/openwiki, scripts, workflows, and seeded wiki all on main"
+    },
+    {
+      "sha": "416e0ba2d0c296f1e4c22f1510bcc85cd9438991",
+      "subject": "fix: make OpenWiki sandbox preparation convergent",
+      "disposition": "already-equivalent",
+      "proof": "convergent sandbox wiki preparation present on main (entity-wiki-config-migrate in deploy.sh); release-path safety strengthened further by REC-003"
+    },
+    {
+      "sha": "7fe15cd340c9dc1b73f7dfaa366573588599dc7c",
+      "subject": "[verified] harden OpenWiki generation and deploy gates",
+      "disposition": "already-equivalent",
+      "proof": "generation/deploy gate hardening subsumed by main's entity-openwiki-lib (fingerprint verify, gitHead claim rejection, exit-75 freshness) + CI gates (node --test entity-openwiki-lib.test.mjs, test:wiki-html, docs:wiki:verify)"
+    },
+    {
+      "sha": "bb6d143b991c198471be6fdf825260c3f944d21a",
+      "subject": "fix(ci): verify wiki against pull request head [verified]",
+      "disposition": "already-equivalent",
+      "proof": "verify wiki against PR head present on main (.github/workflows/main.yml PR-head checkout + docs:wiki:verify)"
+    },
+    {
+      "sha": "23feeb6be2179608b8a84b329b69e804dd6d62b7",
+      "subject": "fix: close final openwiki security review",
+      "disposition": "already-equivalent",
+      "proof": "security review closures verified on main: fs/security.ts byte-identical; readOnly/config-managed/overlap enforcement in routes-sources.ts and legacy-files.ts"
+    },
+    {
+      "sha": "33bbfe46cb6ce5bc75d155a4918e8996a573031b",
+      "subject": "fix: avoid remote release shell eval",
+      "disposition": "already-equivalent",
+      "proof": "remote release shell eval avoidance present on main: scripts/entity-release-info-stdin.mjs byte-identical (stdin JSON payload -> argv, no shell eval)"
+    }
+  ],
+  "files": [
+    {
+      "path": ".cursor/loops/README.md",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": ".github/workflows/loop-docs-sweep.yml",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "main's sweep is the tip's workflow plus renderer deps install and wiki-html tests"
+    },
+    {
+      "path": ".github/workflows/main.yml",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "main carries PR-head checkout for generated-doc freshness + docs:wiki:verify (tip commit bb6d143b behavior, verified present with npm ci hardening)"
+    },
+    {
+      "path": ".openwikiignore",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "main evolved the tip's ignore set (adds openwiki-html/, backup/tmp exclusions, docs/plans/evidence/); all tip entries present on main"
+    },
+    {
+      "path": "AGENTS.md",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "CLAUDE.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "deploy.sh",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "tip's deploy-path changes (wiki verify hook, convergent prep) are on main (docs:wiki:verify wired in deploy.sh/promote/sandbox); release-mutation safety enforced stronger by REC-003 destination guard"
+    },
+    {
+      "path": "docs/config/entity.config.example.yaml",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "example config drift is main's openwiki-html basePath evolution; tip's entity-wiki readOnly source seeding lives in scripts/entity-setup.js on main"
+    },
+    {
+      "path": "docs/loop-library-adoption.md",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "docs/plans/2026-08-03-openwiki-integration-plan.md",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "plan history preserved in verified bundle (SHA 5e2b759b...); main's docs/plans are current"
+    },
+    {
+      "path": "entity.config.example.yaml",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "example config drift is main's openwiki-html basePath evolution; tip's entity-wiki readOnly source seeding lives in scripts/entity-setup.js on main"
+    },
+    {
+      "path": "openwiki/.entity-openwiki.json",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/.last-update.json",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/INSTRUCTIONS.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/admin-and-extensions.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/agents-and-activity.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/architecture/index.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/architecture/overview.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/architecture/runtime-and-data.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/features/agents-and-collaboration.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/features/files-and-documents.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/features/index.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/features/mission-control-and-tasks.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/features/mission-control.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/features/swarm-plugins-admin.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/features/workspace-and-files.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/files-and-docs.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/index.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/mission-control.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/operations/index.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/operations/security-and-release.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/platform/configuration-and-plugins.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/platform/execution-and-proof.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/platform/index.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/platforms/desktop-mobile.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/platforms/index.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "openwiki/quickstart.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "openwiki/runtime-and-release.md",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "generated OpenWiki content/metadata; main carries the current generation (evolved beyond the tip); refreshed once in REC-008 per plan"
+    },
+    {
+      "path": "package.json",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "docs:wiki:* scripts all present on main (init/update/render/verify/prepare)"
+    },
+    {
+      "path": "packages/server/src/config/effective.test.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "readOnly source capability, ENTITY_FS_LOCAL_SOURCE_ROOTS derivation, schema/runtime wiring all verified on main (effective.ts:114, runtime.ts:57, schema.ts:88)"
+    },
+    {
+      "path": "packages/server/src/config/effective.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "readOnly source capability, ENTITY_FS_LOCAL_SOURCE_ROOTS derivation, schema/runtime wiring all verified on main (effective.ts:114, runtime.ts:57, schema.ts:88)"
+    },
+    {
+      "path": "packages/server/src/config/runtime.test.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "packages/server/src/config/runtime.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "readOnly source capability, ENTITY_FS_LOCAL_SOURCE_ROOTS derivation, schema/runtime wiring all verified on main (effective.ts:114, runtime.ts:57, schema.ts:88)"
+    },
+    {
+      "path": "packages/server/src/config/schema.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "readOnly source capability, ENTITY_FS_LOCAL_SOURCE_ROOTS derivation, schema/runtime wiring all verified on main (effective.ts:114, runtime.ts:57, schema.ts:88)"
+    },
+    {
+      "path": "packages/server/src/fs/adapters/local.test.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "read-only source enforcement, config-managed protections, overlap checks, and legacy-file hardening all verified on main (routes-sources.ts:158-185,315; adapters/local.ts:22-111; fs/security.ts identical)"
+    },
+    {
+      "path": "packages/server/src/fs/adapters/local.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "read-only source enforcement, config-managed protections, overlap checks, and legacy-file hardening all verified on main (routes-sources.ts:158-185,315; adapters/local.ts:22-111; fs/security.ts identical)"
+    },
+    {
+      "path": "packages/server/src/fs/routes-sources.test.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "packages/server/src/fs/routes-sources.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "read-only source enforcement, config-managed protections, overlap checks, and legacy-file hardening all verified on main (routes-sources.ts:158-185,315; adapters/local.ts:22-111; fs/security.ts identical)"
+    },
+    {
+      "path": "packages/server/src/fs/security.test.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "packages/server/src/fs/security.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "packages/server/src/routes/legacy-files.test.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "read-only source enforcement, config-managed protections, overlap checks, and legacy-file hardening all verified on main (routes-sources.ts:158-185,315; adapters/local.ts:22-111; fs/security.ts identical)"
+    },
+    {
+      "path": "packages/server/src/routes/legacy-files.ts",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "read-only source enforcement, config-managed protections, overlap checks, and legacy-file hardening all verified on main (routes-sources.ts:158-185,315; adapters/local.ts:22-111; fs/security.ts identical)"
+    },
+    {
+      "path": "scripts/entity-deploy-sandbox.sh",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "tip's deploy-path changes (wiki verify hook, convergent prep) are on main (docs:wiki:verify wired in deploy.sh/promote/sandbox); release-mutation safety enforced stronger by REC-003 destination guard"
+    },
+    {
+      "path": "scripts/entity-deploy-webhook-server.mjs",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "scripts/entity-gateway-pull-deploy.mjs",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "scripts/entity-openwiki-lib.mjs",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "main is the tip's tooling plus openwiki-html presentation layer, gitHead verification hardening, and exit-75 freshness gate; tip behaviors (fingerprint verify, prepare, clean-tree check) all present"
+    },
+    {
+      "path": "scripts/entity-openwiki-lib.test.mjs",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "main is the tip's tooling plus openwiki-html presentation layer, gitHead verification hardening, and exit-75 freshness gate; tip behaviors (fingerprint verify, prepare, clean-tree check) all present"
+    },
+    {
+      "path": "scripts/entity-openwiki.mjs",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "main is the tip's tooling plus openwiki-html presentation layer, gitHead verification hardening, and exit-75 freshness gate; tip behaviors (fingerprint verify, prepare, clean-tree check) all present"
+    },
+    {
+      "path": "scripts/entity-promote-prod.sh",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "tip's deploy-path changes (wiki verify hook, convergent prep) are on main (docs:wiki:verify wired in deploy.sh/promote/sandbox); release-mutation safety enforced stronger by REC-003 destination guard"
+    },
+    {
+      "path": "scripts/entity-release-check.sh",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "scripts/entity-release-info-stdin.mjs",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "scripts/entity-setup.js",
+      "status": "M",
+      "disposition": "already-equivalent",
+      "proof": "entity-wiki readOnly local source seeding verified on main (scripts/entity-setup.js:179-185)"
+    },
+    {
+      "path": "tools/openwiki/package.json",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "tools/openwiki/pnpm-lock.yaml",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "byte-identical on main 4af7084 (git diff 33bbfe46..4af7084 -- file is empty)"
+    },
+    {
+      "path": "tools/openwiki/pnpm-workspace.yaml",
+      "status": "A",
+      "disposition": "already-equivalent",
+      "proof": "main evolved pnpm config (allowBuilds form of onlyBuiltDependencies); same effect"
+    }
+  ],
+  "blockedSlices": [],
+  "proofCommands": [
+    "git diff --quiet 33bbfe46:<file> 4af7084:<file>  # 26 byte-identical files",
+    "grep -n 'PR head' .github/workflows/main.yml  # PR-head freshness checkout",
+    "grep -n 'docs:wiki:verify' deploy.sh scripts/entity-promote-prod.sh scripts/entity-deploy-sandbox.sh",
+    "grep -n 'readOnlyFromCapabilities' packages/server/src/config/effective.ts",
+    "grep -n 'localSourceOverlapsReadOnlyRoot' packages/server/src/fs/routes-sources.ts",
+    "node --test scripts/entity-openwiki-lib.test.mjs (run in REC-008 with full wiki gates)"
+  ]
+}
