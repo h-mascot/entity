@@ -144,8 +144,29 @@ export function createChatHistoryAccessRouter(deps: ChatHistoryRouterDependencie
       if (teamId && !deps.workspaceRepo.getTeam({ orgId }, teamId)) {
         throw new HistoryAccessError(404, 'TEAM_NOT_FOUND', 'Team not found.');
       }
-      if (!deps.chatRepo.getChannel(channelId)) {
+      const channel = deps.chatRepo.getChannel(channelId);
+      if (!channel) {
         throw new HistoryAccessError(404, 'CHANNEL_NOT_FOUND', 'Channel not found.');
+      }
+      // Luna-high F5: the channel's own org/team ownership is authoritative.
+      // A channel owned by another organization can never be scoped here, and
+      // a team-scoped channel can only carry its exact team (never a sibling
+      // team, never org-wide). Unowned legacy channels (null org) remain
+      // adoptable — first scope row wins and later foreign claims are blocked
+      // by the existing-scope check below.
+      if (channel.org_id && channel.org_id !== orgId) {
+        throw new HistoryAccessError(
+          403,
+          'CHAT_HISTORY_SCOPE_FORBIDDEN',
+          'Channel belongs to another organization.',
+        );
+      }
+      if (channel.team_id && channel.team_id !== teamId) {
+        throw new HistoryAccessError(
+          403,
+          'CHAT_HISTORY_SCOPE_FORBIDDEN',
+          'Channel is scoped to a different team.',
+        );
       }
       const existing = access.getChannelScope(channelId);
       if (existing && existing.org_id !== orgId) {

@@ -118,6 +118,12 @@ function createFixture() {
   const channels = new Map([
     ['channel-a', { id: 'channel-a', name: 'Channel A' }],
     ['channel-b', { id: 'channel-b', name: 'Channel B' }],
+    // Luna-high F5: org-owned channels carry their authoritative association.
+    // 'channel-org-b' is owned by org-b/team-b; 'channel-team-b' is owned by
+    // org-a but team-scoped to team-b (a team of org-b in this fixture's
+    // workspace stub — i.e. not team-a).
+    ['channel-org-b', { id: 'channel-org-b', name: 'Org B Channel', org_id: 'org-b', team_id: 'team-b' }],
+    ['channel-team-b', { id: 'channel-team-b', name: 'Org A Team B Channel', org_id: 'org-a', team_id: 'team-b' }],
   ]);
   const threads = new Map([
     ['thread-a', { id: 'thread-a', channel_id: 'channel-a', title: 'Thread A' }],
@@ -388,5 +394,53 @@ describe('chat history access routes', () => {
     expect(missingChannel.body).toEqual(unauthorizedChannel.body);
     expect(missingThread.body).toEqual(unauthorizedThread.body);
     expect(missingChannel.body).toEqual(missingThread.body);
+  });
+
+  // Luna-high F5: the channel-to-org/team association is authoritative chat
+  // ownership. A scope may not be claimed over another organization's channel,
+  // nor may a team-scoped channel be re-scoped — rejection happens before
+  // upsertChannelScope, so no scope row is mutated.
+  it('rejects scoping another organization’s channel without mutating any scope', async () => {
+    const ctx = await setup();
+    const crossOrg = await ctx.request('/orgs/org-a/chat-history/channels/channel-org-b/scope', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ teamId: 'team-a' }),
+    });
+    expect(crossOrg.status).toBe(403);
+    expect(crossOrg.body).toMatchObject({ code: 'CHAT_HISTORY_SCOPE_FORBIDDEN' });
+
+    // No scope row exists for the foreign channel under any org.
+    expect(ctx.accessRepo.getChannelScope('channel-org-b')).toBeUndefined();
+    expect(ctx.accessRepo.listChannelScopes({ org_id: 'org-a' })).toEqual([]);
+
+    // And the follow-on grant path stays closed for that channel.
+    const grant = await ctx.request('/orgs/org-a/chat-history/channels/channel-org-b/agents/agent-a', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ teamId: 'team-a' }),
+    });
+    expect(grant.status).toBe(404);
+  });
+
+  it('rejects re-scoping a team-owned channel to a different team or to org-wide', async () => {
+    const ctx = await setup();
+    const crossTeam = await ctx.request('/orgs/org-a/chat-history/channels/channel-team-b/scope', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ teamId: 'team-a' }),
+    });
+    expect(crossTeam.status).toBe(403);
+    expect(crossTeam.body).toMatchObject({ code: 'CHAT_HISTORY_SCOPE_FORBIDDEN' });
+
+    const widened = await ctx.request('/orgs/org-a/chat-history/channels/channel-team-b/scope', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(widened.status).toBe(403);
+    expect(widened.body).toMatchObject({ code: 'CHAT_HISTORY_SCOPE_FORBIDDEN' });
+
+    expect(ctx.accessRepo.getChannelScope('channel-team-b')).toBeUndefined();
   });
 });
