@@ -74,6 +74,21 @@ describe("createApiAuthMiddleware", () => {
     expect(status).toHaveBeenCalledWith(401);
   });
 
+  it.each(["/notifications", "/notifications/notice-1", "/worktype-registry"])(
+    "rejects omitted unprefixed API route %s without a token",
+    (path) => {
+      const mw = createApiAuthMiddleware();
+      const req = makeReq(path);
+      const { res, status } = makeRes();
+      const next = vi.fn();
+
+      mw(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(status).toHaveBeenCalledWith(401);
+    },
+  );
+
   it("allows an unprefixed legacy route with a valid bearer token", () => {
     const mw = createApiAuthMiddleware();
     const req = makeReq("/tasks", `Bearer ${TOKEN}`);

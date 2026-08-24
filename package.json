@@ -15,7 +15,9 @@
     "test:unit": "npm run test --workspaces --if-present",
     "test:live": "node scripts/ctrl-live-smoke.mjs",
     "test:deploy": "bash scripts/ctrl-deploy-path-check.sh",
-    "test:docker": "npm run test:deploy",
+    "test:container": "node scripts/ctrl-container-contract-check.mjs && node docker/bootstrap-principals.test.cjs",
+    "test:container:smoke": "bash scripts/ctrl-container-smoke.sh",
+    "test:docker": "npm run test:container && npm run test:container:smoke",
     "ctrl:gate": "bash scripts/ctrl-gate-runner.sh",
     "ctrl:full": "npm run ctrl:gate && npm run test:live && npm run test:deploy",
     "proof:phase2:first-session": "node scripts/proof/entity-phase-2-first-session-spine.mjs",
@@ -50,6 +52,7 @@
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
+    "path-to-regexp": "0.1.13",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -64,5 +67,9 @@
   },
   "ctrl": {
     "mode": "mvp"
+  },
+  "overrides": {
+    "path-to-regexp": "0.1.13",
+    "brace-expansion": "5.0.9"
   }
 }

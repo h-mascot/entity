@@ -1,0 +1,86 @@
+services:
+  entity-curacel:
+    image: ${ENTITY_IMAGE:?set immutable registry digest or unique Git-SHA tag}
+    pull_policy: ${ENTITY_PULL_POLICY:-if_not_present}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 127.0.0.1
+      PORT: 3000
+      ENTITY_CONFIG: /app/entity.config.yaml
+      ENTITY_DB_MODE: LOCAL
+      ENTITY_TASK_DB_PATH: /data/entity.sqlite
+      ENTITY_DOCUMENTS_DB_PATH: /data/documents.sqlite
+      WORKSPACE: /workspace
+      ENTITY_FS_MULTISOURCE: "true"
+      ENTITY_FS_INDEXER_ENABLED: "false"
+      ENTITY_AGENT_ENABLED: "false"
+      ENTITY_AGENT_NATIVE_EDITOR: "false"
+      ENTITY_CLICKCLACK_SIDECAR: "0"
+      ENTITY_CHAT_CLICKCLACK_BRIDGE: "0"
+      ENTITY_WORKSPACE_ORG_ID: curacel
+      ENTITY_WORKSPACE_TEAM_ID: pilot
+      ENTITY_API_PRINCIPAL_ID: curacel-deployment-admin
+      ENTITY_API_TOKEN: ${ENTITY_API_TOKEN:?set transport bearer token}
+      ENTITY_DEFAULT_DOCUMENTS_TOKEN: ${ENTITY_DEFAULT_DOCUMENTS_TOKEN:?set documents token}
+      ENTITY_CUSTOMER_ACCESS_TOKEN: ${ENTITY_CUSTOMER_ACCESS_TOKEN:?set scoped customer token}
+      ENTITY_BASIC_AUTH_USER: ${ENTITY_BASIC_AUTH_USER:-curacel}
+      ENTITY_BASIC_AUTH_HASH: ${ENTITY_BASIC_AUTH_HASH:?set Caddy bcrypt hash}
+      ENTITY_PUBLIC_BASE_URL: https://${ENTITY_DOMAIN:?set public hostname}
+      ENTITY_CLOUD_API_BASE: https://${ENTITY_DOMAIN}
+      VITE_MC_ORIGIN: https://${ENTITY_DOMAIN}
+      VITE_ENTITY_API_BASE: https://${ENTITY_DOMAIN}
+      VITE_ENTITY_WS_URL: wss://${ENTITY_DOMAIN}
+      DOCS_OUTPUT_ROOT: /workspace/output
+      DOCS_MEMORY_ROOT: /workspace/memory
+      DOCS_WORKSPACE_ROOT: /workspace
+    volumes:
+      - entity-data:/data
+      - entity-workspace:/workspace
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 6G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    networks:
+      - coolify
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=coolify
+      - traefik.http.middlewares.entity-curacel-gzip.compress=true
+      - traefik.http.middlewares.entity-curacel-https.redirectscheme.scheme=https
+      - traefik.http.routers.entity-curacel-http.entrypoints=http
+      - traefik.http.routers.entity-curacel-http.rule=Host(`${ENTITY_DOMAIN}`)
+      - traefik.http.routers.entity-curacel-http.middlewares=entity-curacel-https
+      - traefik.http.routers.entity-curacel.entrypoints=https
+      - traefik.http.routers.entity-curacel.rule=Host(`${ENTITY_DOMAIN}`)
+      - traefik.http.routers.entity-curacel.middlewares=entity-curacel-gzip
+      - traefik.http.routers.entity-curacel.tls=true
+      - traefik.http.routers.entity-curacel.tls.certresolver=letsencrypt
+      - traefik.http.services.entity-curacel.loadbalancer.server.port=8080
+
+volumes:
+  entity-data:
+    name: entity-curacel-data
+  entity-workspace:
+    name: entity-curacel-workspace
+
+networks:
+  coolify:
+    external: true

@@ -45,12 +45,11 @@ describe('route-classifier (R1 data-plane invariant)', () => {
       expect(isControlPlanePath('/api/documents')).toBe(false);
     });
 
-    it('unprefixed routes outside the protected surface are public (consistent with transport auth)', () => {
-      // /worktype-registry (unprefixed) is not in api-auth's protected surface,
-      // so it is public to both layers. /api/worktype-registry remains
-      // data-plane (asserted below). This pairing mirrors transport auth.
-      expect(classifyRoute('/worktype-registry')).toBe<'public'>('public');
-      expect(isControlPlanePath('/worktype-registry')).toBe(false);
+    it('protected unprefixed API mirrors remain data-plane', () => {
+      for (const path of ['/worktype-registry', '/notifications']) {
+        expect(classifyRoute(path), path).toBe<'data-plane'>('data-plane');
+        expect(isControlPlanePath(path), path).toBe(false);
+      }
     });
   });
 

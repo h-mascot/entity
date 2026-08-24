@@ -1,0 +1,15 @@
+{
+  admin off
+  auto_https off
+}
+
+:8080 {
+  basic_auth {
+    {$ENTITY_BASIC_AUTH_USER} {$ENTITY_BASIC_AUTH_HASH}
+  }
+
+  reverse_proxy 127.0.0.1:3000 {
+    header_up Authorization "Bearer {$ENTITY_API_TOKEN}"
+    header_up X-Entity-Access-Token "{$ENTITY_CUSTOMER_ACCESS_TOKEN}"
+  }
+}

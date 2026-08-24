@@ -108,10 +108,12 @@ const PROTECTED_UNPREFIXED_ROOTS: readonly string[] = [
   "/db-mode",
   "/doc-intelligence",
   "/documents",
+  "/notifications",
   "/projects",
   "/roadmaps",
   "/roadmap-items",
   "/runtime",
+  "/worktype-registry",
 ];
 
 /**

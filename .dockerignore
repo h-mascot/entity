@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+data
+workspace
+output
+.tmp
+coverage
+**/dist
+npm-debug.log*
+.DS_Store

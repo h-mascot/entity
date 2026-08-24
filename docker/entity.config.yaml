@@ -1,0 +1,71 @@
+version: 1
+profile:
+  displayName: Curacel Entity
+  ownerName: Curacel AI Operations
+server:
+  host: 127.0.0.1
+  port: 3000
+  workspaceRoot: /workspace
+  publicBaseUrl: https://entity-curacel.example.invalid
+  apiBaseUrl: https://entity-curacel.example.invalid
+  wsBaseUrl: wss://entity-curacel.example.invalid
+  databasePath: /data/entity.sqlite
+  logPath: /workspace/logs/entity.log
+docs:
+  allowedExtensions:
+    - md
+    - markdown
+    - txt
+    - log
+    - json
+    - jsonl
+    - yaml
+    - yml
+    - csv
+    - tsv
+agents: []
+fileSources:
+  - id: curacel-workspace
+    displayName: Curacel Workspace
+    type: local
+    basePath: /workspace
+    baseUrl: null
+    enabled: true
+    icon: folder
+    agentBindings: []
+tasks:
+  columns:
+    - backlog
+    - todo
+    - doing
+    - review
+    - done
+  priorities:
+    - P1
+    - P2
+    - P3
+    - P4
+  defaultAssignee: Curacel Ops
+  assigneesFromAgents: false
+  projects:
+    - Curacel Pilot
+services: []
+providers: {}
+plugins:
+  entity-services:
+    settings:
+      entityBaseUrl: https://entity-curacel.example.invalid
+      externalAdminUrl: ""
+      externalAdminName: External Admin
+      services: []
+      discoverGatewayServices: false
+      discoverMacServices: false
+voice:
+  defaultProvider: browser
+  providers: {}
+deploy:
+  mode: local
+  preserveDatabase: true
+  dryRunByDefault: true
+terminal:
+  targets: []
