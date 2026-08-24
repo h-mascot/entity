@@ -649,8 +649,10 @@
     },
     {
       "id": "REC-008",
-      "proof": [],
-      "status": "todo",
+      "proof": [
+        "implementation-summary.md: builds pass; server vitest 2544/2544; db 214/214; app 524/524; ctrl:gate pass; docs:wiki:prepare+verify pass (fingerprint a6be0e49, 24 pages, commit c54d3b7); scan:private-defaults exit 0 baseline; test:release-deploy 57/57; ctrl-live-smoke 1/1; git status clean; production untouched"
+      ],
+      "status": "done",
       "title": "Run cross-feature tests, generated-doc refresh, and full CTRL"
     },
     {
@@ -667,5 +669,5 @@
     }
   ],
   "schemaVersion": 1,
-  "updatedAt": "2026-08-24T22:48:16.424490+00:00"
+  "updatedAt": "2026-08-24T22:53:52.001335+00:00"
 }

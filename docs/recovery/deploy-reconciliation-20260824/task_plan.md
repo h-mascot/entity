@@ -26,7 +26,7 @@ Preserve every historically deployed code line, reconcile every unique still-val
 - [x] Phase 3: Reconcile Admin navigation behavior and tests.
 - [x] Phase 4: Reconcile Curacel readiness unique behavior and tests.
 - [x] Phase 5: Reconcile OpenWiki deployment unique behavior and tests.
-- [ ] Phase 6: Cross-feature integration, generated docs, full CTRL, and exact-diff review.
+- [x] Phase 6: Cross-feature integration, generated docs, full CTRL, and exact-diff review.
 - [ ] Phase 7: Push PR, require CI, merge when clean, immutable sandbox deploy, browser/API proof.
 - [ ] Phase 8: Close receipts, update Entity LIVE context, and leave production pending approval.
 
@@ -64,4 +64,4 @@ Preserve every historically deployed code line, reconcile every unique still-val
 - Historical sandbox had 11 mutated release identities; root cause is manual rsync through `current` plus weak verification/controller cache.
 
 ## Status
-**Phase 6 next** — REC-007 complete: openwiki-deploy line fully verified already-equivalent on main (dispositions/openwiki-deploy.json: 65 files — 61 already-equivalent, 4 superseded; 6/6 commits; 26 files byte-identical; wiki lib tests 32/32; wiki-html tests 15/15). Generated-doc refresh deferred to REC-008.
+**Implementation complete (REC-002..REC-008)** — see implementation-summary.md. All gates green: server 2544/2544, db 214/214, app 524/524, ctrl:gate pass, docs:wiki:verify pass (fingerprint a6be0e49…), scan:private-defaults exit 0, test:release-deploy 57/57, clean status. Two blocked slices await Henry (WS tenant scoping, invite acceptance). Manager owns REC-009/REC-010.
