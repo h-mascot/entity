@@ -24,7 +24,13 @@ type BrokerResponse =
   | { kind: 'error'; code: BrokerErrorCode };
 
 const ERROR_CODES = new Set<BrokerErrorCode>(['invalid', 'not_found', 'io', 'exists', 'limit']);
-const MAX_LINE = 1024 * 1024 * 2;
+// The native read ceiling (16 MiB) matches DEFAULT_SOURCE_READ_LIMIT_BYTES and
+// MSB_MAX_READ. A read response hex payload is 2 hex chars per byte (32 MiB) plus
+// framing ("ok\tdata\t") and trailing newline. This bound safely fits the largest
+// legal hex payload while staying finite so a stray/oversized line is still
+// rejected as malformed rather than buffered without limit.
+const MAX_READ_BYTES = 16 * 1024 * 1024;
+const MAX_LINE = MAX_READ_BYTES * 2 + 64;
 const encode = (data: Uint8Array | string) => Buffer.from(data).toString('hex');
 
 export function resolveManagedStorageBrokerExecutable(configured = process.env.MANAGED_STORAGE_BROKER_EXECUTABLE): string {

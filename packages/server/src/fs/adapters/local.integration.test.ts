@@ -4,10 +4,13 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { ManagedStorageBrokerError, managedStorageBrokerPoolStats, resetManagedStorageBrokerPool } from '../managed-storage-broker';
+import { SourceReadLimitError } from './bounded-read';
 import { createFileSourceAdapter } from './registry';
 import { LocalFileSourceAdapter } from './local';
 
 const brokerExecutable = path.resolve(process.cwd(), 'native/managed-storage-broker/.build/broker');
+// Must stay aligned with MSB_MAX_READ and DEFAULT_SOURCE_READ_LIMIT_BYTES.
+const READ_LIMIT = 16 * 1024 * 1024;
 
 function sourceFor(basePath: string): FileSourceRecord {
   return {
@@ -47,6 +50,44 @@ describe('LocalFileSourceAdapter through the native broker IPC route', () => {
     await expect(readFile(path.join(outside, 'new.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(path.join(outside, 'new-exclusive.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(import('node:fs/promises').then(({ stat }) => stat(path.join(outside, 'new-dir')))).rejects.toMatchObject({ code: 'ENOENT' });
+    await rm(fixture, { recursive: true, force: true });
+  });
+
+  it('reads local files through 16 MiB inclusive and rejects over-limit files with SourceReadLimitError', async () => {
+    const fixture = await mkdtemp(path.join(os.tmpdir(), 'entity-t027-'));
+    const managed = path.join(fixture, 'managed');
+    await (await import('node:fs/promises')).mkdir(managed);
+
+    // The native write cap (1 MiB) is narrower than the read cap (16 MiB), so
+    // seed the larger fixtures directly through the host filesystem.
+    const pattern = (size: number, seed: number) => {
+      const body = Buffer.alloc(size, seed & 0xff);
+      body[0] = seed; body[size - 1] = (seed + 1) & 0xff;
+      return body;
+    };
+    const oneMiB = 1024 * 1024;
+    const sizes = [
+      { name: 'exact-1m.bin', size: oneMiB, seed: 0x11 },
+      { name: 'mid-1p5m.bin', size: oneMiB + oneMiB / 2, seed: 0x22 },
+      { name: 'exact-16m.bin', size: READ_LIMIT, seed: 0x33 },
+    ];
+    for (const { name, size, seed } of sizes) {
+      await writeFile(path.join(managed, name), pattern(size, seed));
+      const adapter = new LocalFileSourceAdapter(sourceFor(managed), { brokerExecutable });
+      const raw = await adapter.readRaw(name);
+      expect(raw.size).toBe(size);
+      expect(raw.content.length).toBe(size);
+      expect(raw.content[0]).toBe(seed);
+      expect(raw.content[size - 1]).toBe((seed + 1) & 0xff);
+    }
+
+    // Over 16 MiB: rejected with the typed read-limit error before a successful
+    // broker read is surfaced (mapped to HTTP 413 by the route layer).
+    const tooBig = pattern(READ_LIMIT + 1, 0x44);
+    await writeFile(path.join(managed, 'over-16m.bin'), tooBig);
+    await expect(new LocalFileSourceAdapter(sourceFor(managed), { brokerExecutable }).readRaw('over-16m.bin'))
+      .rejects.toBeInstanceOf(SourceReadLimitError);
+
     await rm(fixture, { recursive: true, force: true });
   });
 

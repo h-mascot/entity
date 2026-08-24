@@ -83,10 +83,10 @@ int msb_stat_path(const msb_broker *broker, const char *path, msb_stat *out) {
 
 int msb_read(const msb_broker *broker, const char *path, uint8_t *out, size_t capacity, size_t *length) {
   char leaf[MSB_MAX_PATH + 1U]; int fd = parent_fd(broker, path, leaf); ssize_t n; struct stat st;
-  if (fd < 0 || !out || !length || capacity > MSB_MAX_IO) { if (fd >= 0) close(fd); return MSB_INVALID; }
+  if (fd < 0 || !out || !length || capacity > MSB_MAX_READ) { if (fd >= 0) close(fd); return MSB_INVALID; }
   if (fstatat(fd, leaf, &st, AT_SYMLINK_NOFOLLOW) < 0) { close(fd); return map_errno(); }
   if (S_ISLNK(st.st_mode)) { close(fd); return MSB_INVALID; }
-  if (!S_ISREG(st.st_mode) || st.st_size < 0 || (uint64_t)st.st_size > capacity || (uint64_t)st.st_size > MSB_MAX_IO) { close(fd); return MSB_LIMIT; }
+  if (!S_ISREG(st.st_mode) || st.st_size < 0 || (uint64_t)st.st_size > capacity || (uint64_t)st.st_size > MSB_MAX_READ) { close(fd); return MSB_LIMIT; }
   { int file = openat(fd, leaf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW); close(fd); if (file < 0) return map_errno(); n = read(file, out, capacity); close(file); }
   if (n < 0) { return map_errno(); }
   *length = (size_t)n;

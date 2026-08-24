@@ -85,6 +85,21 @@ describe('managed storage broker IPC client', () => {
     }
   });
 
+  it('native broker maps oversized local reads to a limit error, never a generic io', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'msb-ipc-native-'));
+    const executable = join(process.cwd(), 'native/managed-storage-broker/.build/broker');
+    const readLimit = 16 * 1024 * 1024;
+    // Seed a file just past the read ceiling directly (the write cap is lower).
+    writeFileSync(join(root, 'over.bin'), Buffer.alloc(readLimit + 1, 0x5a));
+    const client = new ManagedStorageBrokerClient({ executable, root });
+    try {
+      await expect(client.read('over.bin')).rejects.toMatchObject({ code: 'limit' });
+    } finally {
+      await client.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('propagates typed broker errors', async () => {
     const client = new ManagedStorageBrokerClient({ executable: fake('err\tnot_found'), root: '/bound/root' });
     await expect(client.read('missing')).rejects.toMatchObject({ code: 'not_found' } satisfies Partial<ManagedStorageBrokerError>);

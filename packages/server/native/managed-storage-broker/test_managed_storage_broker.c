@@ -22,6 +22,53 @@ static void pause_before_replace(void *context) {
   must(read(barrier->release_fd, &byte, 1) == 1);
 }
 
+static void write_root_file(const char *root, const char *name, const uint8_t *data, size_t len) {
+  char full[512]; int f;
+  snprintf(full, sizeof full, "%s/%s", root, name);
+  f = open(full, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+  must(f >= 0);
+  must(write(f, data, len) == (ssize_t)len);
+  must(close(f) == 0);
+}
+
+/* Read-boundary coverage. Files are seeded directly on the host filesystem
+ * because the write cap (MSB_MAX_IO) is deliberately narrower than the read cap
+ * (MSB_MAX_READ); a 16 MiB file can only be exercised through the read path. */
+static void test_read_limits(const msb_broker *broker, const char *root) {
+  uint8_t *buf = malloc(MSB_MAX_READ + 1U);
+  size_t observed = 0;
+  must(buf != NULL);
+  memset(buf, 0x5a, MSB_MAX_READ + 1U);
+
+  /* Exact 1 MiB read: succeeds and round-trips. */
+  write_root_file(root, "l1m.bin", buf, MSB_MAX_IO);
+  must(msb_read(broker, "l1m.bin", buf, MSB_MAX_READ, &observed) == MSB_OK);
+  must(observed == MSB_MAX_IO && buf[0] == 0x5a && buf[MSB_MAX_IO - 1U] == 0x5a);
+
+  /* 1.5 MiB read: previously mis-mapped to io (500); now succeeds. */
+  { size_t sz = MSB_MAX_IO + MSB_MAX_IO / 2U;
+    write_root_file(root, "l1p5m.bin", buf, sz);
+    must(msb_read(broker, "l1p5m.bin", buf, MSB_MAX_READ, &observed) == MSB_OK);
+    must(observed == sz && buf[0] == 0x5a && buf[sz - 1U] == 0x5a); }
+
+  /* Exact 16 MiB read: succeeds. */
+  write_root_file(root, "l16m.bin", buf, MSB_MAX_READ);
+  must(msb_read(broker, "l16m.bin", buf, MSB_MAX_READ, &observed) == MSB_OK);
+  must(observed == MSB_MAX_READ && buf[0] == 0x5a && buf[MSB_MAX_READ - 1U] == 0x5a);
+
+  /* Over 16 MiB read: MSB_LIMIT, never err/io. A valid capacity (16 MiB) sees
+   * the oversized file rejected as MSB_LIMIT; supplying a capacity above the
+   * native ceiling is itself rejected as MSB_INVALID (the read API is bounded). */
+  write_root_file(root, "over.bin", buf, MSB_MAX_READ + 1U);
+  must(msb_read(broker, "over.bin", buf, MSB_MAX_READ, &observed) == MSB_LIMIT);
+  must(msb_read(broker, "over.bin", buf, MSB_MAX_READ + 1U, &observed) == MSB_INVALID);
+
+  /* Write/replace caps are preserved: a payload over 1 MiB is rejected. */
+  must(msb_write(broker, "too-big2", buf, MSB_MAX_IO + 1U, 1) == MSB_INVALID);
+
+  free(buf);
+}
+
 static void test_replace_holds_operation_lock(const msb_broker *broker, const char *root) {
   char recovery[512], target[512], byte;
   uint8_t *replacement = malloc(MSB_MAX_IO);
@@ -102,6 +149,7 @@ int main(void) {
   msb_broker b = {.root_fd = -1}; msb_stat st; msb_listing list = {0}; uint8_t buf[32]; size_t n;
   must(mkdtemp(root) != NULL); must(mkdtemp(outside) != NULL); snprintf(path, sizeof path, "%s/secret", outside); { int f = open(path, O_CREAT|O_WRONLY, 0600); must(f >= 0); must(write(f, "OUT", 3) == 3); close(f); }
   must(msb_open(&b, root) == MSB_OK);
+  test_read_limits(&b, root);
   must(msb_write(&b, "a.txt", (const uint8_t *)"hello", 5, 1) == MSB_OK);
   must(msb_stat_path(&b, "a.txt", &st) == MSB_OK && st.size == 5 && !st.is_directory);
   must(msb_read(&b, "a.txt", buf, sizeof buf, &n) == MSB_OK && n == 5 && !memcmp(buf, "hello", 5));
@@ -149,6 +197,12 @@ int main(void) {
   snprintf(path, sizeof path, "%s/dir", root); rmdir(path);
   snprintf(path, sizeof path, "%s/.recovery/a.txt", root); unlink(path);
   snprintf(path, sizeof path, "%s/.recovery", root); rmdir(path);
+  /* read-limit fixtures (must be removed before rmdir(root)) */
+  snprintf(path, sizeof path, "%s/l1m.bin", root); unlink(path);
+  snprintf(path, sizeof path, "%s/l1p5m.bin", root); unlink(path);
+  snprintf(path, sizeof path, "%s/l16m.bin", root); unlink(path);
+  snprintf(path, sizeof path, "%s/over.bin", root); unlink(path);
+  snprintf(path, sizeof path, "%s/too-big2", root); unlink(path);
   snprintf(path, sizeof path, "%s/a.txt", root); unlink(path); rmdir(root);
   snprintf(path, sizeof path, "%s/secret", outside); unlink(path); rmdir(outside);
   return 0;

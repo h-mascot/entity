@@ -6,7 +6,14 @@
 #include <sys/stat.h>
 
 #define MSB_MAX_PATH 4096U
+/* Per-operation write/replace payload ceiling (1 MiB). Preserved for the write
+ * and replace-if-equal paths; these remain advisory-precondition caps. */
 #define MSB_MAX_IO (1024U * 1024U)
+/* Read ceiling: local files through 16 MiB inclusive are memory-safe to stream.
+ * This must stay aligned with DEFAULT_SOURCE_READ_LIMIT_BYTES so local reads
+ * succeed below the cap and fail with MSB_LIMIT (never a generic io) above it.
+ * Over 16 MiB the host adapter rejects before issuing a broker read (413). */
+#define MSB_MAX_READ (16U * 1024U * 1024U)
 
 typedef void (*msb_before_replace_fn)(void *context);
 typedef struct {
