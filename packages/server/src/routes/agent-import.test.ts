@@ -157,7 +157,18 @@ async function setup() {
     moduleRegistryRepo: moduleRepo,
     workspaceRepo: createWorkspaceRepo(),
     chatRepo: {
-      getChannel: (id: string) => id === 'operations' ? { id } : undefined,
+      // Luna-high F4: the route must resolve channels through the org-scoped
+      // (authoritative) lookup — 'operations' is org-a's, 'channel-b' belongs
+      // to org-b, 'team-z-channel' is org-a but team-scoped outside team-a.
+      getChannel: (id: string, orgId?: string) => {
+        const channels: Record<string, { id: string; org_id: string | null; team_id: string | null }> = {
+          operations: { id: 'operations', org_id: 'org-a', team_id: null },
+          'channel-b': { id: 'channel-b', org_id: 'org-b', team_id: 'team-b' },
+          'team-z-channel': { id: 'team-z-channel', org_id: 'org-a', team_id: 'team-z' },
+        };
+        const channel = channels[id];
+        return channel && (orgId === undefined || channel.org_id === orgId) ? channel : undefined;
+      },
     },
   }));
   const server = http.createServer(app);
@@ -571,6 +582,60 @@ describe('agent import routes', () => {
     });
     expect(credential.status).toBe(400);
     expect(credential.body.error).toMatch(/unsupported fields/i);
+    await close();
+  });
+
+  // Luna-high F4: channel references must resolve through the authoritative
+  // org/team-aware lookup. A channel owned by another organization (or scoped
+  // to a team outside the import) must be rejected before any mapping, grant,
+  // or receipt exists — zero side effects.
+  it('rejects channels owned by another organization with zero side effects', async () => {
+    const { agentRepo, importRepo, grants, post, close } = await setup();
+    const rejected = await post('cross-tenant-channel', {
+      source: 'runtime-fleet',
+      agents: [{
+        externalId: 'runtime-agent-77',
+        name: 'Cross Channel Agent',
+        slug: 'cross-channel-agent',
+        teamIds: ['team-a'],
+        moduleIds: ['mission-control'],
+        channelIds: ['operations', 'channel-b'],
+        reviewPolicy: { required: false, humanGateRequired: false },
+      }],
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatch(/channel/);
+
+    // Zero side effects: no agents, mappings, grants, or receipts.
+    expect(agentRepo.listAgents()).toEqual([]);
+    expect(importRepo.listMappings('org-a')).toEqual([]);
+    expect(importRepo.listMappings('org-b')).toEqual([]);
+    expect(grants).toEqual([]);
+    expect(importRepo.getLatestReceipt('org-a')).toBeUndefined();
+    expect(importRepo.getReceiptByIdempotencyKey('org-a', 'cross-tenant-channel')).toBeUndefined();
+    await close();
+  });
+
+  it('rejects same-org channels scoped to a team outside the import with zero side effects', async () => {
+    const { agentRepo, importRepo, grants, post, close } = await setup();
+    const rejected = await post('cross-team-channel', {
+      source: 'runtime-fleet',
+      agents: [{
+        externalId: 'runtime-agent-78',
+        name: 'Cross Team Agent',
+        slug: 'cross-team-agent',
+        teamIds: ['team-a'],
+        moduleIds: [],
+        channelIds: ['team-z-channel'],
+        reviewPolicy: { required: false, humanGateRequired: false },
+      }],
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatch(/channel/);
+    expect(agentRepo.listAgents()).toEqual([]);
+    expect(importRepo.listMappings('org-a')).toEqual([]);
+    expect(grants).toEqual([]);
+    expect(importRepo.getLatestReceipt('org-a')).toBeUndefined();
     await close();
   });
 

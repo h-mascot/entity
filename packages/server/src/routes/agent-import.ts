@@ -10,12 +10,18 @@ import {
 import { createRequireAdminPrincipal } from '../middleware/admin-auth';
 import { resolveRequestActorId } from '../principals/request-context';
 
+interface ImportableChatChannel {
+  org_id: string | null;
+  team_id: string | null;
+}
+
 interface AgentImportRouterDependencies {
   importRepo?: AgentImportRepository;
   agentRegistryRepo: AgentRegistryRepository;
   moduleRegistryRepo: ModuleRegistryRepository;
   workspaceRepo: Pick<WorkspaceScopeRepository, 'getOrg' | 'listTeams' | 'getTeam'>;
-  chatRepo: { getChannel: (id: string) => unknown };
+  /** Authoritative org-scoped channel lookup (Luna-high F4). */
+  chatRepo: { getChannel: (id: string, orgId?: string) => ImportableChatChannel | undefined };
   /** Test seam: skip the admin-principal gate (focused logic tests). */
   skipAdminAuth?: boolean;
 }
@@ -267,8 +273,25 @@ export function createAgentImportRouter(deps: AgentImportRouterDependencies): Ro
           return canonicalId;
         }).sort();
         for (const channelId of agent.channelIds) {
-          if (!deps.chatRepo.getChannel(channelId)) {
+          // Luna-high F4: resolve the channel through the authoritative
+          // org-scoped lookup — a channel owned by another org (or an unowned
+          // legacy channel) must not resolve for this organization, and the
+          // failure is indistinguishable from a missing channel (no oracle).
+          const channel = deps.chatRepo.getChannel(channelId, orgId);
+          if (!channel) {
             throw new AgentImportError(400, `channel reference does not exist: ${channelId}`);
+          }
+          // A team-scoped channel is referenceable only by an import that
+          // includes that team in its own team set.
+          if (
+            channel.team_id
+            && agent.teamIds.length > 0
+            && !agent.teamIds.includes(channel.team_id)
+          ) {
+            throw new AgentImportError(
+              400,
+              `channel is scoped to a team outside this import: ${channelId}`,
+            );
           }
         }
       }
