@@ -1,110 +1,126 @@
 # T-038 — Exact-SHA CI and Sandbox Deployment Proof
 
-**Status:** READY FOR SUPERVISOR COMMIT — required focused gates green; pending manager-owned
-gates explicitly not run yet.
-**Runner:** T-038 Runner Local continuation worker / Citadel `daystrom/deepseek` (sole worker).
-**Reviewed input SHA:** `487799360d29edf255be7a0e88f28f5807bb1f28` (immutable base HEAD).
-**Prior WIP:** preserved uncommitted diff from the interrupted prior DSH session (19/19
-`test:release-deploy` RED→GREEN); this continuation did not modify the three release/deploy
-scripts.
+**Status:** READY FOR SUPERVISOR COMMIT — repair diff is coherent and all required focused
+gates are green; manager-owned reruns (CI, sandbox deploy) are explicitly NOT claimed here.
+**Runner:** T-038 pinned Runner Local implementation worker / Citadel `daystrom/deepseek`.
+**Clean base:** `81bd88041c3b17b912570b389288bfb9c90b4052` (exact clean base this worker started
+at; working tree was clean before these edits).
+**Final commit SHA:** NOT recorded here — the supervisor commits and records it; no commit/push/
+CI/deploy rerun was performed by this worker.
 
-## Acceptance disposition
+## Scope of this repair (T-038)
 
-- [x] **A1 — CI exact-SHA wiring** — `.github/workflows/main.yml` `ctrl-gate` now records the
-      checked-out exact SHA (`git rev-parse HEAD`), fails closed if it differs from the SHA this
-      run evaluates (`github.sha`), exports it as `ENTITY_RELEASE_SHA`, writes a release receipt at
-      that exact SHA, and invokes the shared `entity-release-info.mjs --check --expected <sha>`
-      exact-SHA gate fail-closed against that same SHA. The shared primitive is the same one the
-      sandbox-deploy readback path uses, so CI and deploy resolve to one reviewed candidate.
-      Existing CI behavior and the no-production gate are preserved: the `deploy` job remains a
-      handoff record only and never deploys.
-- [x] **A2 — OpenWiki batch refresh** — `npm run docs:wiki:update` produced the single coherent
-      generated output. Because the mandated evidence file is itself part of the OpenWiki source
-      fingerprint (`docs/plans/evidence/**` is hashed; only `docs/internal/` is excluded), each
-      time the frozen evidence text was corrected the recorded fingerprint went stale, so the batch
-      was re-run to settle — 5 runs total, ending the moment the evidence text froze (see Commands;
-      the final run was churn-free). Only generated `openwiki/**` and `openwiki-html/**`
-      config/index/page output changed. Followed by `npm run test:wiki-html` (15/15) and
-      `npm run docs:wiki:verify` (exit 0).
-- [x] **A3 — Evidence log** — this file.
+One scoped repair after live CI + sandbox proof surfaced **two material blockers**. This diff
+repairs exactly those blockers, plus the tightly-coupled post-restart readiness assumption, and
+adds focused deterministic proof. Production config, DBs, and product features are untouched.
 
-## Changed files (single coherent diff)
+- **Blocker 1 — exact-SHA ambient leak.** GitHub Actions run **32730583420** failed because the
+  workflow wrote `ENTITY_RELEASE_SHA` to `GITHUB_ENV`. That ambient value leaked into the later
+  `entity-openwiki-lib.test.mjs` temporary-repository deploy test, where `deploy.sh` aborted on a
+  spurious `ENTITY_RELEASE_SHA ... does not match configured source checkout` mismatch **before**
+  reaching the intended branch-mismatch assertion. Reproduced deterministically at base by
+  running the openwiki test with an ambient `ENTITY_RELEASE_SHA` set to the repo HEAD SHA: the
+  `deploy rejects source subdirectories, dirty bypasses, and branch mismatches` test failed with
+  `ENTITY_RELEASE_SHA ... does not match configured source checkout ...` instead of
+  `does not match configured source branch`.
+  - **Repair:** the exact-SHA gate stays **fail-closed** (`SOURCE_SHA` must equal `github.sha`,
+    `exit 1` on mismatch), but the candidate SHA is now scoped to the gate step by removing the
+    `>> "$GITHUB_ENV"` write. The value is passed inline to the shared
+    `entity-release-info.mjs --check --expected <sha>` gate and is no longer emitted as a
+    job-wide ambient variable, so unrelated later `node --test` steps are not contaminated.
+  - **Regression proof:** new test `exact-SHA gate stays fail-closed without leaking
+    ENTITY_RELEASE_SHA to later steps` asserts the fail-closed gate is present **and** that
+    `ENTITY_RELEASE_SHA` is not written to `$GITHUB_ENV` (no `ENTITY_RELEASE_SHA ... GITHUB_ENV`
+    in the workflow). Green with and without an ambient `ENTITY_RELEASE_SHA`.
 
-Release/deploy proof (prior session, preserved):
-- `scripts/entity-release-info.mjs` — shared exact-SHA check (`--expected`), `SOURCE_DRIFT`
-  fail-closed, enriched `--check` output.
-- `scripts/entity-deploy-sandbox.sh` — resolve/export `ENTITY_RELEASE_SHA`, deploy flag,
-  exact-SHA readback against the shared check.
-- `scripts/entity-release-info.test.mjs` — exact-SHA proof tests + sandbox-lane wiring assertions.
+- **Blocker 2 — native managed-storage broker omitted from deploy.** The allowed exact-SHA
+  sandbox deploy built and synced the TypeScript server but did not compile/sync the required
+  native managed-storage broker. The runtime crash-looped with **ENOENT** at
+  `packages/server/dist/server/native/managed-storage-broker/.build/broker` (the path the compiled
+  server resolves via `__dirname/../../native` from `dist/server/src/fs`). The manager manually
+  built and installed the broker to restore sandbox health — a manual mitigation, not a durable
+  deploy path.
+  - **Repair:** the deployment path is now self-contained. `deploy.sh` invokes
+    `scripts/build-managed-storage-broker.mjs` during the server build (before the server-dist
+    sync), which compiles the native broker, runs its direct C tests, and **installs the
+    executable to the runtime path** `packages/server/dist/server/native/managed-storage-broker/
+    .build/broker`, which the existing server-dist rsync carries to the deployed runtime before
+    restart. It fails closed on any compile/test/install error rather than shipping a broken lane.
+  - **Deploy-contract coverage:** two new tests in `entity-release-info.test.mjs` —
+    (1) `deploy self-contains the native managed-storage broker build and runtime install`
+    asserts `deploy.sh` invokes the build after the server TS build and before the sync, and that
+    the build tool installs the executable at the runtime path; (2) `native managed-storage broker
+    build installs an executable at the deployed runtime path` actually runs the build and asserts
+    the installed runtime artifact exists, is non-empty, and is executable (fail-closed).
 
-CI wiring (this continuation):
-- `.github/workflows/main.yml` — exact-SHA record + shared fail-closed gate in `ctrl-gate`.
+- **Blocker 3 — blind post-restart assumption.** The `sleep 4` + single `/api/tasks` curl after
+  restart produced a false `TASK COUNT DROPPED`/zero-task failure whenever a normal startup ran
+  long, and masked the true crash reason. It is now a **bounded readiness poll** (default 20
+  attempts × 2 s, `ENTITY_DEPLOY_READY_ATTEMPTS` overridable) against `/api/tasks`; it reports a
+  real ready-timeout failure when the runtime never comes up (e.g. the missing-broker crash-loop),
+  and does not produce a false zero-task failure on a normal slow startup. Task-count
+  non-regression (`NEW_COUNT < TASK_COUNT` still aborts) and the exact-SHA readback remain
+  fail-closed.
 
-OpenWiki generated output (this continuation, `docs:wiki:update` only; regenerated
-`openwiki/**` markdown and `openwiki-html/**` HTML presentation, plus the config/index
-metadata `.entity-openwiki.json`, `.last-update.json`, `.entity-openwiki-html.json`):
-- `openwiki/*.md`: `quickstart.md`, `admin-and-extensions.md`, `files-and-docs.md`,
-  `runtime-and-release.md`, plus `features/index.md`, `features/files-and-documents.md`,
-  `platform/index.md`, `platform/configuration-and-plugins.md` (renamed/kept canonical pages;
-  the batch also refreshed the corresponding `openwiki-html/**/*.html` rendered pages and
-  `openwiki-html/**/index.html` index pages across architecture, features, mission-control,
-  operations, platform, and platforms, matching `docs:wiki:update` regeneration for the
-  now-included source/evidence tree).
+## Changed files (single coherent uncommitted diff — all in authorized scope)
 
-Evidence log (this continuation):
-- `docs/plans/evidence/entity-document-integrations/T-038/EVIDENCE.md`
+- `.github/workflows/main.yml` — exact-SHA gate stays fail-closed; `ENTITY_RELEASE_SHA` is no
+  longer written to `$GITHUB_ENV` (blocker 1).
+- `deploy.sh` — build/install the native broker during the server build; bounded readiness poll
+  replacing the blind sleep (blockers 2, 3).
+- `scripts/build-managed-storage-broker.mjs` — compile+test the native broker and install the
+  executable to the deployed runtime path (blocker 2).
+- `packages/server/native/managed-storage-broker/.gitignore` — new: ignores the compiled `.build/`
+  source-tree output so build artifacts are not committed.
+- `scripts/entity-openwiki-lib.test.mjs` — new deterministic regression test for the ambient-leak
+  fix (blocker 1).
+- `scripts/entity-release-info.test.mjs` — new deploy-contract coverage proving the native broker
+  build/sync is present and fail-closed (blocker 2).
+- `docs/plans/evidence/entity-document-integrations/T-038/EVIDENCE.md` — this truthful log.
 
-## RED→GREEN history (real, from prior session + verification)
+No production config, DB files, or product features were modified. `packages/server/native/
+managed-storage-broker/.build/` is a gitignored (never-committed) build artifact.
 
-- Prior DSH session implemented the exact-SHA checks in the three scripts and drove them,
-  fail-closed, so the previously-passing manual check semantics moved to an enforced
-  `--check --expected` gate. `npm run test:release-deploy` went from a failing/partial state to
-  **19/19 pass** (the RED→GREEN transition). The 19 tests now include the exact-SHA
-  pass/mismatch/disagreement/source-drift cases and the sandbox-lane wiring assertion.
-- This continuation did NOT modify those three files, so the proven **19/19** result is cited
-  (not re-run, per acceptance rule). A syntax check (`node --check` ×2, `bash -n`) and a live
-  fail-closed mismatch probe confirmed the pending check still behaves correctly.
+## RED→GREEN / proof (real, this worker)
 
-## Commands executed (this continuation) — real results
+- **Blocker 1 reproduced** at base: `ENTITY_RELEASE_SHA="$(git rev-parse HEAD)" node --test
+  scripts/entity-openwiki-lib.test.mjs` → the temporary-repo deploy test FAILED with the spurious
+  `ENTITY_RELEASE_SHA ... does not match configured source checkout ...` (not the intended
+  branch-mismatch assertion). After the fix, the same suite is **32/32 pass** both with and without
+  the ambient variable (the regression test now asserts the workflow no longer emits it).
+- `node --test scripts/entity-openwiki-lib.test.mjs` → **32/32 pass (exit 0)**.
+- `npm run test:release-deploy` → **21/21 pass (exit 0)** — includes the two new blocker-2
+  deploy-contract tests (the running one compiled the native broker, ran its direct C tests, and
+  asserted the runtime install).
+- Native broker build/direct tests: `node scripts/build-managed-storage-broker.mjs` → **exit 0**,
+  `managed-storage-broker native core and IPC entrypoint: compile and direct tests passed`, and
+  installed executable at `packages/server/dist/server/native/managed-storage-broker/.build/broker`
+  (verified: regular file, non-empty, executable).
+- `npm run test:wiki-html` → **15/15 pass (exit 0)**.
+- Syntax checks: `bash -n deploy.sh`, `bash -n scripts/entity-deploy-sandbox.sh`,
+  `node --check scripts/build-managed-storage-broker.mjs`, `node --test ...` all **exit 0**.
+- `git diff --check` → **clean (exit 0)**.
 
-Environment: fresh `npm ci` deps in place; Node `v26.5.0`.
+## Pending manager-owned rerun gates — NOT run/claimed in this worker
 
-- `npm run test:release-deploy` — **cited prior 19/19** (files unchanged in this continuation).
-- `npm run docs:wiki:update` → **exit 0** each run; OpenWiki source batch run **5 times total**.
-  The OpenWiki source fingerprint includes `docs/plans/evidence/**` (only `docs/internal/` is
-  excluded), so the mandated evidence file is part of the hashed source; because the fingerprint
-  is a function of this file's own content, the recorded fingerprint went stale each time the
-  evidence text was corrected, requiring a re-run to settle the single coherent generated output
-  and keep `docs:wiki:verify` green for CI. The final run confirmed the wiki was already settled
-  (churn-free). 24 HTML pages. Only generated `openwiki/**` and `openwiki-html/**` config/index/
-  pages changed (verified via `git status --porcelain`).
-- `npm run test:wiki-html` → **15/15 pass (exit 0)** (re-run after the final sync).
-- `npm run docs:wiki:verify` → **[entity-openwiki] verified source fingerprint against the
-  current tree and 24 HTML pages (exit 0)** — confirms the recorded source fingerprint matches
-  the committed tree, so CI's generated-doc freshness step will pass.
-- `git rev-parse HEAD` → `487799360d29edf255be7a0e88f28f5807bb1f28` (matches reviewed input SHA).
-- Exact-SHA gate simulation (write receipt at recorded SHA, `--check --expected <same SHA>`) →
-  **exit 0 (`ok: true`)**.
-- Exact-SHA fail-closed probe (`--check --expected <different SHA>`) → **exit 1, `ok: false`,
-  `EXACT_SHA_MISMATCH`** reported for both `RELEASE.json.gitSha` and `VERSION`.
-- `node --check scripts/entity-release-info.mjs` → **exit 0**.
-- `bash -n scripts/entity-deploy-sandbox.sh` → **exit 0**.
-- `node --check scripts/entity-release-info.test.mjs` → **exit 0**.
-- `git diff --check` over the full diff → **clean (exit 0)**.
-
-## Pending manager-owned gates — NOT run in this worker
-
-These were never executed here and are explicitly not claimed:
-- **Fresh GLM review** of the full diff (repository-level review gate) — pending, supervisor-owned.
-- **Push + GitHub Actions CI exact-SHA run** — pending; the workflow change is committed by the
-  supervisor, not this worker.
-- **Sandbox deploy + readback** — pending; `scripts/entity-deploy-sandbox.sh` performs the live
-  `test:live` only in a real sandbox, which this worker does not deploy.
+- **Push + GitHub Actions CI rerun** of the repaired workflow (must confirm the failing run
+  #32730583420 case now passes) — pending, supervisor-owned after commit.
+- **Sandbox deploy + exact-SHA readback + `test:live`** rerun proving the self-contained broker
+  lands at the runtime path and the sandbox serves a healthy task count without manual broker
+  install — pending, supervisor-owned.
+- **Fresh GLM review** of the full diff — pending, supervisor-owned.
 
 ## Limitations / notes
 
-- No git metadata was mutated (`git add`/`commit`/`push`/`merge`) per DSH policy; the supervisor
-  commits after verification.
-- No production/sandbox deploy and no Linear calls were made.
+- No git metadata was mutated (`git add`/`commit`/`push`/`merge`) — the supervisor commits the one
+  coherent uncommitted diff.
+- No production/sandbox deploy, no DB write, and no Linear call was made by this worker.
+- **Supervisor OpenWiki reconciliation:** the worker correctly left the generated wiki stale after
+  changing fingerprinted release/deploy sources. Before commit, the manager expanded same-issue T-038
+  scope to the required generated `openwiki/**` and `openwiki-html/**` outputs, ran one final
+  `npm run docs:wiki:update`, then proved `test:wiki-html` **15/15** and
+  `docs:wiki:verify` **exit 0**. After this evidence correction, the manager reran the update once
+  more so the immutable external verifier receipt—not this source-controlled file—binds the final
+  source fingerprint. This is the final CI-freshness reconciliation for the repaired source tree, not a worker claim.
 - The final exact SHA of the resulting commit is recorded by the supervisor, not self-referentially
-  here.
+  here; CI/deploy reruns are not claimed because they were not performed.

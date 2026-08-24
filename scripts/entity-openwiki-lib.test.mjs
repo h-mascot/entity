@@ -258,6 +258,21 @@ test("pull request CI verifies generated docs against the PR head after merge-tr
   assert.ok(prHeadCheckout < prHeadInstall);
   assert.ok(prHeadInstall < docsVerify);
 });
+test("exact-SHA gate stays fail-closed without leaking ENTITY_RELEASE_SHA to later steps (T-038 blocker 1)", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/main.yml", import.meta.url), "utf8");
+  // The exact-SHA gate remains fail-closed: the checked-out SHA must equal the
+  // evaluated GitHub SHA, and any mismatch aborts the gate.
+  assert.match(workflow, /SOURCE_SHA="\$\(git rev-parse HEAD\)"/);
+  assert.match(workflow, /if \[ "\$\{SOURCE_SHA\}" != "\$\{\{ github\.sha \}\}" \]/);
+  assert.match(workflow, /EXACT_SHA_MISMATCH/);
+  assert.match(workflow, /\[ "\$\{SOURCE_SHA\}" != "\$\{\{ github\.sha \}\}" \][\s\S]*exit 1/);
+  // The candidate SHA must stay scoped to the gate step. Persisting it to
+  // $GITHUB_ENV would leak into the later `node --test` steps and contaminate the
+  // temporary-repository deploy regression test with a spurious SHA mismatch.
+  assert.doesNotMatch(workflow, /ENTITY_RELEASE_SHA=.*>> "\$GITHUB_ENV"/);
+  assert.doesNotMatch(workflow, /ENTITY_RELEASE_SHA.*GITHUB_ENV/);
+});
+
 test("OpenWiki runner uses and removes an isolated credential-file home", async () => {
   const runner = await readFile(new URL("./entity-openwiki.mjs", import.meta.url), "utf8");
   assert.match(runner, /mkdtemp\(path\.join\(os\.tmpdir\(\), "entity-openwiki-home-"\)\)/);
