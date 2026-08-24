@@ -5,6 +5,7 @@ export type MobileTab = 'files' | 'agents' | 'tasks' | 'services' | 'chat' | 'ac
 interface MobileBottomNavProps {
   activeTab: MobileTab;
   onChange: (tab: MobileTab) => void;
+  visibleTabs?: readonly MobileTab[];
 }
 
 type IconProps = { className?: string };
@@ -185,11 +186,25 @@ const PRIMARY_ITEMS: Array<{
   { id: 'agents', label: 'Agents', Icon: BotIcon },
 ];
 
-const MORE_TABS: MobileTab[] = ['services', 'activity', 'admin'];
+const MORE_ITEMS: Array<{
+  id: MobileTab;
+  label: string;
+  Icon: (props: IconProps) => JSX.Element;
+}> = [
+  { id: 'services', label: 'Services', Icon: SatelliteIcon },
+  { id: 'activity', label: 'Activity', Icon: PulseIcon },
+  { id: 'admin', label: 'Admin', Icon: GearIcon },
+];
 
-export default function MobileBottomNav({ activeTab, onChange }: MobileBottomNavProps) {
+export default function MobileBottomNav({
+  activeTab,
+  onChange,
+  visibleTabs = [...PRIMARY_ITEMS.map((item) => item.id), ...MORE_ITEMS.map((item) => item.id)],
+}: MobileBottomNavProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
-  const moreActive = MORE_TABS.includes(activeTab);
+  const primaryItems = PRIMARY_ITEMS.filter((item) => visibleTabs.includes(item.id));
+  const moreItems = MORE_ITEMS.filter((item) => visibleTabs.includes(item.id));
+  const moreActive = moreItems.some((item) => item.id === activeTab);
 
   useEffect(() => {
     if (!sheetOpen) return;
@@ -217,7 +232,7 @@ export default function MobileBottomNav({ activeTab, onChange }: MobileBottomNav
           WebkitBackdropFilter: 'blur(12px)',
         }}
       >
-        {PRIMARY_ITEMS.map((item) => {
+        {primaryItems.map((item) => {
           const active = item.id === activeTab;
           const Icon = item.Icon;
           return (
@@ -280,60 +295,25 @@ export default function MobileBottomNav({ activeTab, onChange }: MobileBottomNav
             style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}
           >
             <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--border-primary)]" />
-            <button
-              type="button"
-              onClick={() => selectMore('services')}
-              aria-current={activeTab === 'services' ? 'page' : undefined}
-              className={`flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-left transition-colors ${
-                activeTab === 'services'
-                  ? 'text-[var(--text-primary)]'
-                  : 'text-[var(--text-secondary)]'
-              }`}
-              style={
-                activeTab === 'services'
-                  ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)' }
-                  : undefined
-              }
-            >
-              <SatelliteIcon className="h-6 w-6 shrink-0" />
-              <span className="text-[15px] font-medium">Services</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => selectMore('activity')}
-              aria-current={activeTab === 'activity' ? 'page' : undefined}
-              className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-left transition-colors ${
-                activeTab === 'activity'
-                  ? 'text-[var(--text-primary)]'
-                  : 'text-[var(--text-secondary)]'
-              }`}
-              style={
-                activeTab === 'activity'
-                  ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)' }
-                  : undefined
-              }
-            >
-              <PulseIcon className="h-6 w-6 shrink-0" />
-              <span className="text-[15px] font-medium">Activity</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => selectMore('admin')}
-              aria-current={activeTab === 'admin' ? 'page' : undefined}
-              className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-left transition-colors ${
-                activeTab === 'admin'
-                  ? 'text-[var(--text-primary)]'
-                  : 'text-[var(--text-secondary)]'
-              }`}
-              style={
-                activeTab === 'admin'
-                  ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)' }
-                  : undefined
-              }
-            >
-              <GearIcon className="h-6 w-6 shrink-0" />
-              <span className="text-[15px] font-medium">Admin</span>
-            </button>
+            {moreItems.map((item, index) => {
+              const Icon = item.Icon;
+              const active = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => selectMore(item.id)}
+                  aria-current={active ? 'page' : undefined}
+                  className={`${index > 0 ? 'mt-1 ' : ''}flex w-full items-center gap-3 rounded-xl px-3 py-3.5 text-left transition-colors ${
+                    active ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
+                  }`}
+                  style={active ? { background: 'color-mix(in srgb, var(--accent) 18%, transparent)' } : undefined}
+                >
+                  <Icon className="h-6 w-6 shrink-0" />
+                  <span className="text-[15px] font-medium">{item.label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       ) : null}

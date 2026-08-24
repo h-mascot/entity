@@ -15,6 +15,7 @@ interface AdminSettingsFormProps {
   section: string;
   apiBase?: string;
   fields: FieldSpec[];
+  onSettingsChange?: (settings: Record<string, unknown>) => void;
 }
 
 function apiPath(apiBase: string | undefined, path: string): string {
@@ -27,6 +28,7 @@ export default function AdminSettingsForm({
   section,
   apiBase = '',
   fields,
+  onSettingsChange,
 }: AdminSettingsFormProps) {
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [draft, setDraft] = useState<Record<string, unknown>>({});
@@ -44,12 +46,13 @@ export default function AdminSettingsForm({
       const body = await res.json() as { settings: Record<string, unknown> };
       setSettings(body.settings);
       setDraft(body.settings);
+      onSettingsChange?.(body.settings);
     } catch (err) {
       setError(toErrorMessage(err, 'Failed to load settings.'));
     } finally {
       setLoading(false);
     }
-  }, [apiBase, section]);
+  }, [apiBase, onSettingsChange, section]);
 
   useEffect(() => {
     void load();
@@ -69,8 +72,10 @@ export default function AdminSettingsForm({
       }));
       const body = await res.json().catch(() => ({})) as { settings?: Record<string, unknown>; detail?: string; error?: string };
       if (!res.ok) throw new Error(body.detail ?? body.error ?? `Save failed (${res.status})`);
-      setSettings(body.settings ?? draft);
-      setDraft(body.settings ?? draft);
+      const nextSettings = body.settings ?? draft;
+      setSettings(nextSettings);
+      setDraft(nextSettings);
+      onSettingsChange?.(nextSettings);
       clearAdminRuntimeSettingsCache();
       setSuccess('Settings saved.');
     } catch (err) {
@@ -93,6 +98,7 @@ export default function AdminSettingsForm({
       if (!res.ok) throw new Error(`Reset failed (${res.status})`);
       setSettings(body.settings);
       setDraft(body.settings);
+      onSettingsChange?.(body.settings);
       clearAdminRuntimeSettingsCache();
       setSuccess('Settings reset to defaults.');
     } catch (err) {

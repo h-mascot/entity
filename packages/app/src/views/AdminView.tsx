@@ -16,6 +16,7 @@ const AdminSettingsForm = lazy(() => import('../components/settings/AdminSetting
 type AdminSection =
   | 'general'
   | 'profile'
+  | 'navigation'
   | 'accessControl'
   | 'businessOnboarding'
   | 'missionControl'
@@ -47,6 +48,7 @@ type DocsTtsProviderOption = {
 
 interface AdminViewProps {
   adminSection: AdminSection;
+  onNavigationSettingsChange: (settings: Record<string, unknown>) => void;
   enterpriseFrameNonce: number;
   enterpriseFrameSrc: string;
   enterpriseFrameReady: boolean;
@@ -225,6 +227,7 @@ function LazyTaskMasterSettings(props: { apiBase: string }) {
 
 export default function AdminView({
   adminSection,
+  onNavigationSettingsChange,
   enterpriseFrameNonce,
   enterpriseFrameSrc,
   enterpriseFrameReady,
@@ -325,6 +328,29 @@ export default function AdminView({
   return (
     <div className="min-h-0 flex-1 overflow-auto p-4 lg:p-6">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-3">
+        {adminSection === 'navigation' && (
+          <div className="grid gap-3">
+            <LazyAdminSettingsForm
+              apiBase={apiBase}
+              section="navigation"
+              title="Workspace modules"
+              description="Choose which modules appear in Entity. This controls navigation visibility, not user permissions. Admin always remains available."
+              onSettingsChange={onNavigationSettingsChange}
+              fields={[
+                { kind: 'boolean', key: 'files', label: 'Files', hint: 'Document and multi-source file workspace.' },
+                { kind: 'boolean', key: 'tasks', label: 'Tasks', hint: 'Mission Control boards and workplanes.' },
+                { kind: 'boolean', key: 'agents', label: 'Agents', hint: 'Crew monitoring and agent detail.' },
+                { kind: 'boolean', key: 'services', label: 'Services', hint: 'Operational services registry.' },
+                { kind: 'boolean', key: 'chat', label: 'Chat', hint: 'Workspace channels and conversations.' },
+                { kind: 'boolean', key: 'terminal', label: 'Terminal', hint: 'Bottom terminal panel across workspace views.' },
+              ]}
+            />
+            <div className="border-t border-[var(--border-secondary)] pt-3 text-xs text-[var(--text-muted)]">
+              Module visibility is presentation-only. Use Users &amp; Access to control who can read, write, or administer workspace resources.
+            </div>
+          </div>
+        )}
+
         {adminSection === 'general' && (
           <>
             <div className="grid gap-3 md:grid-cols-2">

@@ -625,8 +625,10 @@
     },
     {
       "id": "REC-005",
-      "proof": [],
-      "status": "todo",
+      "proof": [
+        "app tests 516/516; server config tests 40/40 (incl. new navigation schema/store tests); tsc+vite build clean; local browser proof 14/14 (groups render, subnav, Modules form, hide-chat round-trip)"
+      ],
+      "status": "done",
       "title": "Recover grouped Workspace/Work/Team/Admin navigation"
     },
     {
@@ -661,5 +663,5 @@
     }
   ],
   "schemaVersion": 1,
-  "updatedAt": "2026-08-24T22:12:03.144343+00:00"
+  "updatedAt": "2026-08-24T22:19:54.794903+00:00"
 }

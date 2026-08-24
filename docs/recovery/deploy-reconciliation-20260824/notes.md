@@ -51,3 +51,21 @@
 
 ## Current runtime caveat
 Workspace and Entity Wiki file sources report pre-existing health errors related to managed storage broker/indexing. Track separately; do not misattribute to reconciliation unless before/after evidence changes.
+
+## REC-005 reconciliation record (2026-08-24)
+- Recovered from tip e538991: workspaceNavigation lib + tests (verbatim port),
+  admin.navigation settings key/schema/defaults/routes + tests, AdminSettingsForm
+  onSettingsChange, MobileView Modules/Users&Access sections + visibleMobileTabs,
+  MobileBottomNav visibleTabs filtering, App.tsx grouped top nav
+  (Workspace/Work/Team/Admin) + per-group subnav + hidden-module enforcement +
+  grouped admin sidebar (Workspace/People/Work/Content/System) + Modules section,
+  AdminView navigation section.
+- Preserved from current main (historical had removed): enterprise/Openclaw
+  admin section, iframe branch, props, and state (kept reachable under System
+  group + mini rail). ENTERPRISE_ADMIN_URL is '' on main, so the removed
+  quick-link buttons were dead UI; capability retained.
+- Goal-text discrepancy: no audited tip contains the labels "AI & Agents",
+  "Execution", or "System & Data" (verified via git log -S across all refs).
+  The actual historical admin groupings are Workspace/People/Work/Content/System.
+  Restored the historical truth; flagged for manager summary.
+- OpenWiki doc regeneration from e538991 deliberately deferred to REC-008 per plan.

@@ -23,7 +23,7 @@ Preserve every historically deployed code line, reconcile every unique still-val
 - [x] Phase 0: Preserve all 78 audited SHAs in two verified bundles.
 - [x] Phase 1: Create plan, reconciliation matrix, state machine, manager, and proof contract.
 - [x] Phase 2: Fix manual/automatic deployment split and add anti-overwrite regression tests.
-- [ ] Phase 3: Reconcile Admin navigation behavior and tests.
+- [x] Phase 3: Reconcile Admin navigation behavior and tests.
 - [ ] Phase 4: Reconcile Curacel readiness unique behavior and tests.
 - [ ] Phase 5: Reconcile OpenWiki deployment unique behavior and tests.
 - [ ] Phase 6: Cross-feature integration, generated docs, full CTRL, and exact-diff review.
@@ -64,4 +64,4 @@ Preserve every historically deployed code line, reconcile every unique still-val
 - Historical sandbox had 11 mutated release identities; root cause is manual rsync through `current` plus weak verification/controller cache.
 
 ## Status
-**Phase 2 next** — REC-002 complete: matrix validated against live Git (4 lines, tips/merge-bases/ahead-behind/files/commits all match) via `docs/recovery/deploy-reconciliation-20260824/validate_matrix.py`.
+**Phase 4 next** — REC-005 complete: grouped navigation recovered from e538991 (Workspace/Work/Team/Admin top nav + Workspace/People/Work/Content/System admin groups + Modules settings + hidden-module enforcement), enterprise/Openclaw section preserved from main. Browser proof 14/14 on local dev server.
