@@ -83,6 +83,241 @@ export interface Phase2DiagnosticLogEvent {
   counts: Record<string, number>;
 }
 
+import type {
+  DocumentArtifactType,
+  DocumentProvider,
+} from '../../db/src/document-integrations';
+
+/* =============================================================================
+ * T-035 — provider-neutral observability, redaction, and fault classification.
+ *
+ * Source of truth: docs/loom/entity-document-integrations/phase2-canonical-prd.md
+ *   - R-031 "Secrets and credentials": raw tokens/tenant secrets/document contents
+ *     never appear in logs, diagnostics, API/error snapshots, fixtures, or receipts.
+ *   - R-033 "Rate limiting and provider resilience": bounded retries, backoff/jitter,
+ *     Retry-After, concurrency bounds, idempotency, and retry classification. Stale
+ *     revision, authorization denial, unsupported capability, and invalid request are
+ *     NEVER classified/retried as transient.
+ *   - R-038 "Telemetry and diagnostics": telemetry distinguishes provider, artifact
+ *     type, operation, success/failure, latency, retry count, conflict, auth failure,
+ *     quota/throttling, preview failure, indexing failure, bridge readiness, and
+ *     reconciliation lag where evidence exists; telemetry never contains document
+ *     bodies or secrets by default.
+ *
+ * This is the shared observability/classification seam this ticket owns. It composes
+ * the canonical R-001 provider/artifact vocabulary (DocumentProvider,
+ * DocumentArtifactType) from ../../../db/src/document-integrations with NO competing
+ * registry, store, event table, or transport.
+ * =============================================================================
+ */
+
+/**
+ * Operator-specific absolute path prefixes that must never surface in logs, telemetry,
+ * or receipts (R-031). Value redaction, independent of any key name.
+ */
+const ABSOLUTE_PATH_PATTERN =
+  /\/(?:Users\/enterprise|home\/henrymascot|home\/jamify)\b/i;
+
+/** Unsafe revision tokens carry version/ETag/change-token text that is not evidence. */
+const REVISION_TOKEN_PATTERN =
+  /\b(?:revision|etag|change[_ ]?token|versionid)\b\s*[:=]\s*[A-Za-z0-9._-]{8,}/i;
+
+/** Fatal redaction markers for free-form provider fault/context text. */
+export const REDACTED_MARKER = 'redacted';
+
+export type ProviderTelemetryOutcome = 'success' | 'failure';
+
+/**
+ * R-038 structured non-sensitive telemetry dimensions. Every key is an allow-listed
+ * landmark; free-form secret/document/path text is never a valid field.
+ */
+export interface ProviderTelemetryEvent {
+  provider: DocumentProvider | 'unknown';
+  artifact_type: DocumentArtifactType | 'unknown';
+  operation: string;
+  outcome: ProviderTelemetryOutcome;
+  latency_ms?: number;
+  retry_count?: number;
+  retry_after_ms?: number;
+  conflict?: boolean;
+  auth_failure?: boolean;
+  throttled?: boolean;
+  preview_failure?: boolean;
+  indexing_failure?: boolean;
+  bridge_ready?: boolean;
+  reconciliation_lag_ms?: number;
+}
+
+export interface ProviderTelemetryInput {
+  provider: DocumentProvider | 'unknown';
+  artifact_type: DocumentArtifactType | 'unknown';
+  operation: string;
+  outcome: ProviderTelemetryOutcome;
+  latencyMs?: number;
+  retry_count?: number;
+  retry_after_ms?: number;
+  conflict?: boolean;
+  auth_failure?: boolean;
+  throttled?: boolean;
+  preview_failure?: boolean;
+  indexing_failure?: boolean;
+  bridge_ready?: boolean;
+  reconciliation_lag_ms?: number;
+}
+
+/**
+ * R-033 retry classification. A fault is `transient` only when there is concrete
+ * evidence of a throttling/quota or generic transport fault; every enumerated
+ * non-retryable class (conflict, auth, unsupported, invalid) fails closed and is never
+ * retried. `unknown` also fails closed (never retried).
+ */
+export type ProviderFaultClass =
+  | 'transient'
+  | 'conflict'
+  | 'auth'
+  | 'unsupported'
+  | 'invalid'
+  | 'unknown';
+
+export interface ProviderFaultSignal {
+  retryCount?: number;
+  /** Retry-After in seconds when the provider supplied it (R-033). */
+  retryAfterSeconds?: number | null;
+  /** Bounded retry budget (R-033). Defaults to 3. */
+  maxRetries?: number;
+  isStaleRevision?: boolean;
+  isAuthDenial?: boolean;
+  isUnsupportedCapability?: boolean;
+  isInvalidRequest?: boolean;
+  isThrottled?: boolean;
+  isTransient?: boolean;
+  httpStatus?: number;
+  /** Non-sensitive reason code; sanitized before emission. */
+  code?: string;
+}
+
+export interface ProviderFaultClassification {
+  classification: ProviderFaultClass;
+  retryable: boolean;
+  retryAfterMs: number | null;
+  retryCount: number;
+  reasonCode: string;
+}
+
+/** Upper bound on honored Retry-After (seconds) so backoff stays bounded and safe. */
+export const MAX_HONORED_RETRY_AFTER_SECONDS = 60;
+
+/** Default bounded retry budget (R-033). */
+export const DEFAULT_MAX_RETRIES = 3;
+
+function finiteNonNegative(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** Value-level redaction for secrets/tokens/document content/absolute paths (R-031). */
+export function redactSensitiveText(value: string | null | undefined, fallback: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    return fallback;
+  }
+  const trimmed = value.trim();
+  if (SENSITIVE_KEY_PATTERN.test(trimmed) || ABSOLUTE_PATH_PATTERN.test(trimmed)) {
+    return REDACTED_MARKER;
+  }
+  return trimmed.replace(REVISION_TOKEN_PATTERN, (match) =>
+    match.replace(/<[^>]+>|[:=][A-Za-z0-9._-]{8,}\b/, ':redacted'),
+  ).slice(0, 160);
+}
+
+/**
+ * R-038: every dimension is allow-listed and bounded; free-form text is never a field.
+ * All string dimensions pass through value-level redaction so a caller can never smuggle
+ * a token, snippet, or absolute path into telemetry.
+ */
+export function buildProviderTelemetryEvent(input: ProviderTelemetryInput): ProviderTelemetryEvent {
+  const latencyMs = finiteNonNegative(input.latencyMs);
+  const retryCount = finiteNonNegative(input.retry_count);
+  const retryAfterMs = finiteNonNegative(input.retry_after_ms);
+  const reconciliationLagMs = finiteNonNegative(input.reconciliation_lag_ms);
+
+  const event: ProviderTelemetryEvent = {
+    provider: input.provider === 'unknown' ? 'unknown' : input.provider,
+    artifact_type: input.artifact_type === 'unknown' ? 'unknown' : input.artifact_type,
+    operation: redactSensitiveText(input.operation, 'unknown'),
+    outcome: input.outcome === 'success' ? 'success' : 'failure',
+  };
+  if (latencyMs !== null) event.latency_ms = latencyMs;
+  if (retryCount !== null) event.retry_count = retryCount;
+  if (retryAfterMs !== null) event.retry_after_ms = retryAfterMs;
+  for (const [key, value] of Object.entries({
+    conflict: input.conflict,
+    auth_failure: input.auth_failure,
+    throttled: input.throttled,
+    preview_failure: input.preview_failure,
+    indexing_failure: input.indexing_failure,
+    bridge_ready: input.bridge_ready,
+  })) {
+    if (typeof value === 'boolean') {
+      (event as unknown as Record<string, unknown>)[key] = value;
+    }
+  }
+  if (reconciliationLagMs !== null) event.reconciliation_lag_ms = reconciliationLagMs;
+  return event;
+}
+
+/**
+ * R-033 deterministic retry classification. Explicit signals take precedence over HTTP
+ * status; bounded retry budget is enforced last. The four R-033 non-retryable classes and
+ * unproven `unknown` always fail closed (never retried).
+ */
+export function classifyProviderFault(signal: ProviderFaultSignal): ProviderFaultClassification {
+  const retryCount = finiteNonNegative(signal.retryCount) ?? 0;
+  const maxRetries = finiteNonNegative(signal.maxRetries) ?? DEFAULT_MAX_RETRIES;
+  const budgetExhausted = retryCount >= maxRetries;
+
+  let classification: ProviderFaultClass = 'unknown';
+  let retryAfterMs: number | null = null;
+
+  if (signal.isStaleRevision) {
+    classification = 'conflict';
+  } else if (signal.isAuthDenial) {
+    classification = 'auth';
+  } else if (signal.isUnsupportedCapability) {
+    classification = 'unsupported';
+  } else if (signal.isInvalidRequest) {
+    classification = 'invalid';
+  } else if (signal.isThrottled) {
+    classification = 'transient';
+    const honored = finiteNonNegative(signal.retryAfterSeconds);
+    if (honored !== null) {
+      retryAfterMs = Math.min(honored, MAX_HONORED_RETRY_AFTER_SECONDS) * 1000;
+    }
+  } else if (signal.isTransient) {
+    classification = 'transient';
+  } else if (typeof signal.httpStatus === 'number') {
+    const status = signal.httpStatus;
+    if (status === 429 || status === 408 || status === 502 || status === 503 || status === 504) {
+      classification = 'transient';
+    } else if (status === 401 || status === 403) {
+      classification = 'auth';
+    } else if (status === 409) {
+      classification = 'conflict';
+    } else if (status === 400 || status === 422) {
+      classification = 'invalid';
+    } else {
+      classification = 'unknown';
+    }
+  }
+
+  const retryable = classification === 'transient' && !budgetExhausted;
+  return {
+    classification,
+    retryable,
+    retryAfterMs,
+    retryCount,
+    reasonCode: redactSensitiveText(signal.code, 'provider_fault'),
+  };
+}
+
 export interface Phase2ObservabilityDiagnostics {
   profile: 'phase2-release-observability';
   generated_at: string;

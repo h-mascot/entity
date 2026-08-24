@@ -51,6 +51,14 @@ const privatePatterns = [
   { id: 'henry-name', re: /\bHenry(?: Mascot)?\b/g, severity: 'warn' },
   { id: 'enterprise-agent-name', re: /\b(?:Ada|Spock|Scotty|Zora|Midas|Uhura|Geordi|Book)\b/g, severity: 'warn' },
   { id: 'clawd-workspace-name', re: /\bclawd(?:-[A-Za-z0-9_-]+)?\b/g, severity: 'warn' },
+  // T-035 / R-031 secret and credential leakage guards. These match real credential
+  // shapes only (high-entropy token bodies), never the repository's placeholder
+  // fixtures (e.g. `abcdefghijklmnopqrstuvwxyz01234567`) which the base tests use
+  // intentionally to exercise redaction.
+  { id: 'google-oauth-token', re: /\bya29\.[A-Za-z0-9_-]{20,}\b/g, severity: 'error' },
+  { id: 'github-personal-token', re: /\bgh[pousr]_[A-Za-z0-9]{30,}\b/g, severity: 'error' },
+  { id: 'jwt-credential', re: /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\b/g, severity: 'error' },
+  { id: 'raw-credential-assignment', re: /\b(?:access_token|refresh_token|client_secret)\s*[:=]\s*["'][A-Za-z0-9._~+/=-]{24,}["']/g, severity: 'error' },
 ];
 
 const gitIgnoredFiles = (() => {

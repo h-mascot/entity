@@ -4,6 +4,13 @@ import {
   type AgentLogStatus,
   type CreateAgentLogInput,
 } from '../../../db/src';
+import {
+  buildProviderTelemetryEvent,
+  classifyProviderFault,
+  type ProviderFaultClassification,
+  type ProviderTelemetryEvent,
+  type ProviderTelemetryInput,
+} from '../phase2-observability';
 import { AGENT_CONFIG } from './config';
 import { getTaskAgentSettings } from './settings';
 
@@ -48,4 +55,33 @@ export function getAgentStatus(): AgentStatus {
     apiKeyConfigured: settings.apiKeyConfigured,
     apiKeySource: settings.apiKeySource,
   };
+}
+
+/**
+ * T-035 / R-038 — sanitized provider telemetry for the agent logging seam.
+ *
+ * Composes the shared provider-neutral observability/classification seam
+ * (phase2-observability) so raw credentials, tokens, document content, and
+ * operator-specific absolute paths can never reach the console/log surface. The
+ * event is emitted as structured telemetry only; no raw provider text is echoed.
+ */
+export function writeBridgeReadinessTelemetry(
+  input: ProviderTelemetryInput,
+): ProviderTelemetryEvent {
+  const event = buildProviderTelemetryEvent(input);
+  console.info('[document-integrations:obs]', JSON.stringify(event));
+  return event;
+}
+
+/**
+ * T-035 / R-033 — sanitized retry-classification trace for the agent logging seam.
+ * Uses the shared classifier (stale revision / auth / unsupported / invalid never
+ * retry as transient) and emits only the non-sensitive classification fields.
+ */
+export function traceClassifiedProviderFault(
+  signal: Parameters<typeof classifyProviderFault>[0],
+): ProviderFaultClassification {
+  const classification = classifyProviderFault(signal);
+  console.info('[document-integrations:classify]', JSON.stringify(classification));
+  return classification;
 }
