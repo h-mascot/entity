@@ -95,3 +95,14 @@ Workspace and Entity Wiki file sources report pre-existing health errors related
 - Deploy-path files classified superseded: tip's hooks are on main and release
   safety is now enforced stronger by REC-003/REC-004.
 - Generated docs refresh + docs:wiki:verify deferred to REC-008 per plan.
+
+## Terminal receipt (2026-08-24, implementation worker)
+- REC-002..REC-008 complete with proof; branch recovery/reconcile-all-deploys-20260824 @ b32db2b (local only).
+- Final gates: server 2544/2544; db 214/214; app 524/524; ctrl:gate pass; docs:wiki:verify pass
+  (fingerprint a6be0e491131a61ad2c0fc48941b909ec6b35880e943e959a247ff879cc26ac1, 24 pages);
+  scan:private-defaults exit 0; test:release-deploy 57/57; ctrl-live-smoke test 1/1; git clean.
+- validate_matrix.py OK (4/4 lines). Dispositions: curacel-readiness.json, openwiki-deploy.json.
+- Blocked for Henry (exact receipts in curacel-readiness.json): WS tenant-scoped broadcasts;
+  business invite acceptance architecture.
+- Production untouched. No push/PR/merge/deploy (delivery boundary). REC-009/REC-010 = manager.
+- Worker exits; wrapper (owner pid 93311) releases the lease; manager resumes from REC-009.
