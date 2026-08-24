@@ -10,10 +10,13 @@
 // deploy.sh probes the remote destination (python3 over ssh) and pipes the
 // probe JSON here. This guard fail-closes on:
 //   - SYMLINK_TARGET: destination resolves through a symlink (`current`)
+//   - NON_SHA_DESTINATION: existing dir whose basename is not the expected SHA
+//     (metadata-less non-SHA directories are unidentifiable and must be
+//     rejected — resume is permitted only under the exact expected SHA name)
 //   - IDENTITY_COLLISION: existing RELEASE.json/VERSION carries another SHA
 //   - BASENAME_COLLISION: SHA-named dir whose basename contradicts the candidate
 //   - RELEASE_UNREADABLE: RELEASE.json present but not parseable
-// and allows fresh dirs, metadata-less resume dirs, and same-SHA redeploys.
+// and allows fresh dirs, exact-SHA resume dirs, and same-SHA redeploys.
 import { readFileSync } from "node:fs";
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -49,13 +52,27 @@ export function decideDeployTarget(probe, expectedSha) {
     return { ok: true, reason: "FRESH_TARGET" };
   }
   const dirBasename = String(probe.basename || "").toLowerCase();
-  if (SHA_RE.test(dirBasename) && dirBasename !== expected) {
+  // Luna-high F1: an existing destination is resumable only when its resolved
+  // basename is exactly the expected release SHA. A metadata-less non-SHA
+  // directory (e.g. .../releases/legacy-pin) is unidentifiable — it may be a
+  // foreign layout — so mutating it can never be proven safe. Fail closed.
+  if (dirBasename !== expected) {
+    if (SHA_RE.test(dirBasename)) {
+      return {
+        ok: false,
+        reason: "BASENAME_COLLISION",
+        message:
+          `existing release directory ${realpath} is named for ${dirBasename} but the ` +
+          `candidate release SHA is ${expected}; refusing to mutate an existing release`,
+      };
+    }
     return {
       ok: false,
-      reason: "BASENAME_COLLISION",
+      reason: "NON_SHA_DESTINATION",
       message:
-        `existing release directory ${realpath} is named for ${dirBasename} but the ` +
-        `candidate release SHA is ${expected}; refusing to mutate an existing release`,
+        `existing destination ${realpath} is not named for the candidate release ` +
+        `SHA ${expected} (basename ${dirBasename || "<empty>"}); only exact-SHA release ` +
+        `directories may be deployed into or resumed`,
     };
   }
   if (probe.releasePresent && !probe.releaseGitSha) {

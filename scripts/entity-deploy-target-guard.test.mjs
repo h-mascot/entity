@@ -87,6 +87,30 @@ test("decision: existing metadata-less directory (deploy resume) is allowed", ()
   assert.deepEqual(result, { ok: true, reason: "NO_METADATA_RESUME" });
 });
 
+test("decision: metadata-less destination whose basename is not the expected SHA is rejected", () => {
+  // Luna-high F1: an existing metadata-less directory that is not named for
+  // the candidate release SHA is unidentifiable — it may be a foreign layout
+  // (e.g. a legacy pin like .../releases/legacy-pin or .../entity). Resume is
+  // permitted only when the resolved basename is exactly the expected SHA.
+  const result = decideDeployTarget(
+    probe({
+      configured: "/srv/entity-sandbox/releases/legacy-pin",
+      abspath: "/srv/entity-sandbox/releases/legacy-pin",
+      realpath: "/srv/entity-sandbox/releases/legacy-pin",
+      basename: "legacy-pin",
+    }),
+    shaA,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "NON_SHA_DESTINATION");
+});
+
+test("decision: metadata-less resume requires the exact expected SHA basename even when SHA-like", () => {
+  const result = decideDeployTarget(probe({ basename: shaB }), shaA);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "BASENAME_COLLISION");
+});
+
 test("decision: trailing-slash destinations do not false-positive as symlinks", () => {
   const configured = `/srv/entity-sandbox/releases/${shaA}/`;
   const result = decideDeployTarget(
@@ -262,9 +286,11 @@ test("deploy.sh: refuses a destination that resolves through the `current` symli
   assert.doesNotMatch(sshLog, /select count\(\*\) from tasks/);
 });
 
-test("deploy.sh: refuses an existing release directory whose RELEASE.json identity contradicts the candidate SHA", () => {
+test("deploy.sh: refuses an exact-SHA-named directory whose RELEASE.json identity contradicts the candidate SHA", () => {
   const { dir, head } = makeStubSourceRepo();
-  const targetDir = "/srv/entity-sandbox/releases/legacy-pin";
+  // A directory named for the candidate SHA but carrying another release's
+  // RELEASE.json identity (the in-place-mutation footprint).
+  const targetDir = `/srv/entity-sandbox/releases/${head}`;
   const scenario = {
     targetDir,
     dbCount: "50",
@@ -272,7 +298,7 @@ test("deploy.sh: refuses an existing release directory whose RELEASE.json identi
       configured: targetDir,
       abspath: targetDir,
       realpath: targetDir,
-      basename: "legacy-pin",
+      basename: head,
       exists: true,
       releasePresent: true,
       releaseGitSha: shaB,
@@ -284,6 +310,37 @@ test("deploy.sh: refuses an existing release directory whose RELEASE.json identi
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /IDENTITY_COLLISION/);
   assert.doesNotMatch(sshLog, /select count\(\*\) from tasks/);
+});
+
+test("deploy.sh: refuses an existing metadata-less non-SHA destination before any sync or DB preflight", () => {
+  const { dir, head } = makeStubSourceRepo();
+  // An existing directory with no RELEASE.json/VERSION whose basename is not
+  // the candidate SHA (e.g. a legacy pin name). Luna-high F1: this used to be
+  // accepted as a "resume" and rsync would mutate it in place.
+  const targetDir = "/srv/entity-sandbox/releases/legacy-pin";
+  const scenario = {
+    targetDir,
+    dbCount: "50",
+    guardProbe: {
+      configured: targetDir,
+      abspath: targetDir,
+      realpath: targetDir,
+      basename: "legacy-pin",
+      exists: true,
+      releasePresent: false,
+      releaseGitSha: null,
+      version: "",
+    },
+  };
+  const { result, sshLog } = runDeploy({ sourceDir: dir, sourceSha: head, scenario });
+  rmSync(dir, { recursive: true, force: true });
+  assert.notEqual(result.status, 0, `metadata-less non-SHA destination must be refused:\n${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /NON_SHA_DESTINATION/);
+  // No sync-capable step may run after rejection: the deploy must stop before
+  // the DB preflight (the first remote probe after the guard) and must never
+  // reach backup/rsync/restart.
+  assert.doesNotMatch(sshLog, /select count\(\*\) from tasks/);
+  assert.doesNotMatch(sshLog, /rsync|PRAGMA wal_checkpoint|cp '\/srv|systemctl|launchctl/i);
 });
 
 test("deploy.sh: allows a fresh exact-SHA release directory and proceeds past the destination guard", () => {
