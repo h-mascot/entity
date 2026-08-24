@@ -21,10 +21,16 @@ function liveState(overrides = {}) {
     releaseMode: true,
     currentLink: "/srv/entity-sandbox/current",
     currentRealpath: `/srv/entity-sandbox/releases/${shaA}`,
-    manifest: { gitSha: shaA, distHashes: { "packages/app/dist": `sha256:${"a".repeat(64)}` } },
+    manifest: {
+      gitSha: shaA,
+      distHashes: {
+        "packages/app/dist": `sha256:${"a".repeat(64)}`,
+        "packages/server/dist": `sha256:${"s".repeat(64)}`,
+      },
+    },
     version: shaA,
     recomputedAppDistHash: `sha256:${"a".repeat(64)}`,
-    recomputedServerDistHash: null,
+    recomputedServerDistHash: `sha256:${"s".repeat(64)}`,
     apiSha: shaA,
     servedIndexBytes: Buffer.from("index-bytes"),
     releaseIndexBytes: Buffer.from("index-bytes"),
@@ -80,6 +86,52 @@ test("decision: served index bytes differing from the release copy is drift", ()
   );
   assert.equal(result.ok, false);
   assert.ok(result.reasons.includes("SERVED_INDEX_MISMATCH"), JSON.stringify(result.reasons));
+});
+
+// Luna-high F2: every verification artifact is REQUIRED evidence. A missing,
+// unreadable, or unavailable fact must itself be drift with an explicit reason
+// (the previous comparison-only logic fail-open when either side was absent).
+
+test("decision: manifest missing the app dist hash fails closed", () => {
+  const result = decideDrift(
+    liveState({ manifest: { gitSha: shaA, distHashes: { "packages/server/dist": `sha256:${"s".repeat(64)}` } } }),
+    shaA,
+  );
+  assert.equal(result.ok, false);
+  assert.ok(result.reasons.includes("MANIFEST_APP_HASH_MISSING"), JSON.stringify(result.reasons));
+});
+
+test("decision: manifest missing the server dist hash fails closed", () => {
+  const result = decideDrift(
+    liveState({ manifest: { gitSha: shaA, distHashes: { "packages/app/dist": `sha256:${"a".repeat(64)}` } } }),
+    shaA,
+  );
+  assert.equal(result.ok, false);
+  assert.ok(result.reasons.includes("MANIFEST_SERVER_HASH_MISSING"), JSON.stringify(result.reasons));
+});
+
+test("decision: unreadable app dist tree fails closed", () => {
+  const result = decideDrift(liveState({ recomputedAppDistHash: null }), shaA);
+  assert.equal(result.ok, false);
+  assert.ok(result.reasons.includes("APP_DIST_UNREADABLE"), JSON.stringify(result.reasons));
+});
+
+test("decision: unreadable server dist tree fails closed", () => {
+  const result = decideDrift(liveState({ recomputedServerDistHash: null }), shaA);
+  assert.equal(result.ok, false);
+  assert.ok(result.reasons.includes("SERVER_DIST_UNREADABLE"), JSON.stringify(result.reasons));
+});
+
+test("decision: unreadable release index copy fails closed", () => {
+  const result = decideDrift(liveState({ releaseIndexBytes: null }), shaA);
+  assert.equal(result.ok, false);
+  assert.ok(result.reasons.includes("RELEASE_INDEX_UNREADABLE"), JSON.stringify(result.reasons));
+});
+
+test("decision: unavailable served index bytes fail closed", () => {
+  const result = decideDrift(liveState({ servedIndexBytes: null }), shaA);
+  assert.equal(result.ok, false);
+  assert.ok(result.reasons.includes("SERVED_INDEX_UNAVAILABLE"), JSON.stringify(result.reasons));
 });
 
 test("decision: service working outside the live release is drift", () => {

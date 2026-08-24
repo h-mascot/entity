@@ -121,16 +121,34 @@ export function decideDrift(live, expectedSha) {
   if (!live.version) reasons.push("VERSION_MISSING");
   if (live.version && live.version.toLowerCase() !== expected) reasons.push("VERSION_MISMATCH");
 
+  // Luna-high F2: the manifest app/server dist hashes, the recomputed dist
+  // tree hashes, the release index bytes, and the served index bytes are all
+  // REQUIRED evidence. Missing/unreadable/unavailable facts are explicit drift
+  // reasons (fail closed) — never silently skipped comparisons.
   const manifestHashes = live.manifest?.distHashes || {};
   const appHash = manifestHashes["packages/app/dist"];
-  if (appHash && live.recomputedAppDistHash && live.recomputedAppDistHash !== appHash) {
+  if (!appHash) {
+    reasons.push("MANIFEST_APP_HASH_MISSING");
+  } else if (!live.recomputedAppDistHash) {
+    reasons.push("APP_DIST_UNREADABLE");
+  } else if (live.recomputedAppDistHash !== appHash) {
     reasons.push("APP_DIST_BYTES_MUTATED");
   }
   const serverHash = manifestHashes["packages/server/dist"];
-  if (serverHash && live.recomputedServerDistHash && live.recomputedServerDistHash !== serverHash) {
+  if (!serverHash) {
+    reasons.push("MANIFEST_SERVER_HASH_MISSING");
+  } else if (!live.recomputedServerDistHash) {
+    reasons.push("SERVER_DIST_UNREADABLE");
+  } else if (live.recomputedServerDistHash !== serverHash) {
     reasons.push("SERVER_DIST_BYTES_MUTATED");
   }
 
+  if (live.releaseIndexBytes === null) {
+    reasons.push("RELEASE_INDEX_UNREADABLE");
+  }
+  if (live.servedIndexBytes === null) {
+    reasons.push("SERVED_INDEX_UNAVAILABLE");
+  }
   if (
     live.servedIndexBytes !== null &&
     live.releaseIndexBytes !== null &&
