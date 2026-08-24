@@ -105,6 +105,15 @@ function insertZipGap(packageBytes: Buffer): Buffer {
   return result;
 }
 
+function dropEntry(packageBytes: Buffer, name: string): Buffer {
+  const entries = readOoxmlPackage(packageBytes);
+  entries.delete(name);
+  return writeOoxmlPackage([...entries].map(([entryName, entryData]) => ({ name: entryName, data: entryData })));
+}
+
+const SLIDE_LAYOUT_PART = 'ppt/slideLayouts/slideLayout1.xml';
+const SLIDE_LAYOUT_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml';
+
 describe('local PPTX engine', () => {
   it('creates and reopens a real PPTX package with the committed semantic fixture intact', async () => {
     const fixture = await fullFidelityFixture();
@@ -494,5 +503,90 @@ describe('local PPTX engine', () => {
     const engine = new LocalPptxEngine({ workspaceId: 'workspace-1', runtime });
     await engine.create({ documentRef: 'file-source:v1.fixture', format: 'pptx', document: fixture, idempotencyKey: 'create-311', actor: { actorClass: 'human', actorId: 'human-1' } });
     expect(createCalled).toBe(true);
+  });
+
+  it('created packages carry a conformant slide layout part, content type, and slide-layout relationships', async () => {
+    const created = createPptxPackage(await fullFidelityFixture());
+    const entries = readOoxmlPackage(created);
+
+    // The required slide layout part exists.
+    expect(entries.has(SLIDE_LAYOUT_PART)).toBe(true);
+
+    // Its content type override is declared.
+    const contentTypes = entries.get('[Content_Types].xml')!.toString('utf8');
+    expect(contentTypes).toContain(SLIDE_LAYOUT_TYPE);
+    expect(contentTypes).toContain('slideLayout1.xml');
+
+    // slideMaster1.xml.rels resolves the authored rIdLayout1 to the layout part.
+    const masterRels = entries.get('ppt/slideMasters/_rels/slideMaster1.xml.rels')!.toString('utf8');
+    expect(masterRels).toContain('rIdLayout1');
+    expect(masterRels).toContain('../slideLayouts/slideLayout1.xml');
+
+    // The layout part itself references the slide master so the chain is complete.
+    const layoutRels = entries.get('ppt/slideLayouts/_rels/slideLayout1.xml.rels')!.toString('utf8');
+    expect(layoutRels).toContain('../slideMasters/slideMaster1.xml');
+
+    // Every slide part carries an explicit slide-layout relationship to the authored layout.
+    const fixture = await fullFidelityFixture();
+    fixture.slides.forEach((_slide, index) => {
+      const slideRels = entries.get(`ppt/slides/_rels/slide${index + 1}.xml.rels`);
+      expect(slideRels, `slide${index + 1}.xml.rels`).toBeDefined();
+      const relsText = slideRels!.toString('utf8');
+      expect(relsText).toContain('slideLayout');
+      expect(relsText).toContain('../slideLayouts/slideLayout1.xml');
+    });
+  });
+
+  it('rejects a package whose slide master has a missing or dangling slide-layout relationship', async () => {
+    const valid = createPptxPackage(await fullFidelityFixture());
+
+    // Dangling: drop the layout part the slide master still references.
+    expect(() => inspectPptxPackage(dropEntry(valid, SLIDE_LAYOUT_PART)))
+      .toThrow(expect.objectContaining({ code: 'invalid_pptx' }));
+
+    // Missing: slide master rels no longer carry a slide-layout relationship at all.
+    const noLayoutRels = withEntry(
+      valid,
+      'ppt/slideMasters/_rels/slideMaster1.xml.rels',
+      `${RELATIONSHIPS_OPEN}<Relationship Id="rIdTheme" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>`,
+    );
+    expect(() => inspectPptxPackage(noLayoutRels))
+      .toThrow(expect.objectContaining({ code: 'invalid_pptx' }));
+  });
+
+  it('rejects a slide part with no explicit slide-layout relationship', async () => {
+    const valid = createPptxPackage(await fullFidelityFixture());
+    const noSlideLayoutRels = withEntry(
+      valid,
+      'ppt/slides/_rels/slide1.xml.rels',
+      `${RELATIONSHIPS_OPEN}</Relationships>`,
+    );
+    expect(() => inspectPptxPackage(noSlideLayoutRels))
+      .toThrow(expect.objectContaining({ code: 'invalid_pptx' }));
+  });
+
+  it('slide text mutation preserves the complete spTree including nvGrpSpPr and grpSpPr', async () => {
+    const mutated = setSlideText(createPptxPackage(await fullFidelityFixture()), { slideRef: 'slide_2', elementRef: 'title', text: 'Updated' });
+    const entries = readOoxmlPackage(mutated);
+    const slide = entries.get('ppt/slides/slide2.xml')!.toString('utf8');
+    // The mandatory group-shape children must survive the targeted text replacement.
+    expect(slide).toContain('<p:nvGrpSpPr>');
+    expect(slide).toContain('<p:grpSpPr/>');
+    // Order: nvGrpSpPr, grpSpPr, then the authored shapes.
+    expect(slide.indexOf('<p:nvGrpSpPr>')).toBeLessThan(slide.indexOf('<p:grpSpPr/>'));
+    expect(slide.indexOf('<p:grpSpPr/>')).toBeLessThan(slide.indexOf('<p:sp>'));
+    expect(slide).not.toMatch(/<p:spTree><p:sp>/);
+  });
+
+  it('rejects a slide whose spTree is missing the mandatory group-shape children', async () => {
+    const valid = createPptxPackage(await fullFidelityFixture());
+    // Removing nvGrpSpPr must fail; removing grpSpPr must also fail.
+    const slideSource = readOoxmlPackage(valid).get('ppt/slides/slide1.xml')!.toString('utf8');
+    const withoutNv = slideSource.replace('<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr><p:nvPr/></p:cNvGrpSpPr></p:nvGrpSpPr>', '');
+    expect(() => inspectPptxPackage(withEntry(valid, 'ppt/slides/slide1.xml', withoutNv)))
+      .toThrow(expect.objectContaining({ code: 'invalid_pptx' }));
+    const withoutGrp = slideSource.replace('<p:grpSpPr/>', '');
+    expect(() => inspectPptxPackage(withEntry(valid, 'ppt/slides/slide1.xml', withoutGrp)))
+      .toThrow(expect.objectContaining({ code: 'invalid_pptx' }));
   });
 });
