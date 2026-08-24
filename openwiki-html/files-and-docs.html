@@ -19,7 +19,7 @@
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
-<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and document collaboration</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
@@ -44,7 +44,7 @@
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
-<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and document collaboration</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
@@ -64,7 +64,7 @@
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></details>
 <article class="wiki-article">
 <header class="page-header"><div class="eyebrow"><span>Entity Wiki</span><span class="eyebrow-type">Feature Surface</span></div><h1>Files and documents</h1><p class="description">File browsing and document workspace surface for Entity. Covers the unified file dashboard, Doc Hub chrome, document editor, file sources, document collaboration records, and docs-serving routes.</p><div class="tags" aria-label="Tags"><span class="tag">entity</span><span class="tag">files</span><span class="tag">docs</span><span class="tag">doc-hub</span><span class="tag">collaboration</span><span class="tag">file-sources</span></div></header>
-<div class="prose"><p>The Files area is a shared workspace for browsing content from one or more sources, opening documents, editing markdown-like files, and keeping collaboration state attached to the document.</p>
+<div class="prose"><p>The Files area is a shared workspace for browsing content from one or more sources, opening documents, editing markdown-like files, and keeping collaboration state attached to the document. It is the user-facing surface that consumes the file-source, read-only bootstrap, and bounded-read rules documented in <a href="/docs/source/entity-wiki/admin-and-extensions.html" target="_top">Admin and extensions</a> and <a href="/docs/source/entity-wiki/platform/configuration-and-plugins.html" target="_top">Configuration, Admin, Plugins, and Services</a>.</p>
 <p>The main source seams are:</p>
 <ul>
 <li><code>packages/app/src/views/FilesView.tsx</code> for the top-level Files route.</li>
@@ -122,16 +122,21 @@
 <li>shared/private documents require a valid token from the <code>Authorization: Bearer ...</code> header, <code>X-Share-Token</code>, or <code>?token=</code> query parameter;</li>
 <li>document edits and events are persisted in SQLite-backed tables.</li>
 </ul>
-<p>Local file sources add another boundary: the server seeds trusted local roots into <code>ENTITY_FS_LOCAL_SOURCE_ROOTS</code> during bootstrap, the local adapter reports <code>readOnly</code> in stored capabilities, and <code>packages/server/src/fs/routes-files.ts</code> rejects write requests when the adapter says the source is read-only. The adapter itself also blocks direct <code>write</code> and <code>mkdir</code> calls for read-only sources, so both the HTTP surface and the adapter layer enforce the same contract. The HTTP markdown adapter follows the same read-only rule, but its <code>readRaw</code> path can still return binary content and the file route will flag the payload as <code>isBinary</code> when the text read path rejects a non-text resource. The file-source API also refuses to delete config-managed local sources and preserves the <code>entity.config.yaml</code> source marker on updates, which closes the delete/recreate path that could otherwise bypass the trusted read-only policy. New local source registrations also inherit read-only policy when their root overlaps any protected read-only local root, so same-root, parent, and child aliases cannot be used to regain writes around a trusted wiki source. The local capability helper now reconstructs <code>readOnly</code> from stored capabilities so effective-config views and the adapter stay aligned even when the source record is persisted separately.</p>
-<h2 id="change-notes-for-future-agents">Change notes for future agents</h2>
-<p>When changing Files / Doc Hub, check these seams together:</p>
-<ol>
-<li><code>packages/app/src/views/FilesView.tsx</code> and <code>packages/app/src/components/UnifiedFileDashboard.tsx</code> for navigation and source selection.</li>
-<li><code>packages/app/src/views/DocumentEditorView.tsx</code> and <code>packages/app/src/components/doc-hub/DocHubWorkspaceChrome.tsx</code> for editing and tabs.</li>
-<li><code>packages/server/src/routes/docs.ts</code> and <code>packages/server/src/routes/documents.ts</code> for serving and authorization.</li>
-<li><code>packages/db/src/file-sources.ts</code> and <code>packages/db/src/document-collab.ts</code> for persistence.</li>
-</ol>
-<p>If you change the allowed document file types or auth model, update the server route and the UI together so the workspace does not offer a capability the backend rejects.</p>
+<p>Local file sources add another boundary: the server seeds trusted local roots into <code>ENTITY_FS_LOCAL_SOURCE_ROOTS</code> during bootstrap, the local adapter reports <code>readOnly</code> in stored capabilities, and <code>packages/server/src/routes/docs.ts</code> rejects write requests when the adapter says the source is read-only. The adapter itself also blocks direct <code>write</code> and <code>mkdir</code> calls for read-only sources, so both the HTTP surface and the adapter layer enforce the same contract. The HTTP markdown adapter follows the same read-only rule, but its <code>readRaw</code> path can still return binary content and the file route will flag the payload as <code>isBinary</code> when the text read path rejects a non-text resource. The file-source API also refuses to delete config-managed local sources and preserves the <code>entity.config.yaml</code> source marker on updates, which closes the delete/recreate path that could otherwise bypass the trusted read-only policy. New local source registrations also inherit read-only policy when their root overlaps any protected read-only local root, so same-root, parent, and child aliases cannot be used to regain writes around a trusted wiki source. The local capability helper now reconstructs <code>readOnly</code> from stored capabilities so effective-config views and the adapter stay aligned even when the source record is persisted separately.</p>
+<h2 id="task-and-document-relationships">Task and document relationships</h2>
+<p>A task output can target Doc Hub or the standalone document route; the route resolver is tested in <code>packages/app/src/lib/taskOutputDocTarget.test.ts</code>. Document comments are range-anchored collaboration objects, while task comments belong to <a href="/docs/source/entity-wiki/mission-control.html" target="_top">Mission Control</a>. Document review runs produce findings that may be applied or ignored; task review gates govern task completion. Keep these models distinct in UI and API changes.</p>
+<p>The agent registry can bind agents to file sources, so <a href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top">agent identity</a> is also used to filter and attribute file work.</p>
+<h2 id="change-and-test-guidance">Change and test guidance</h2>
+<p>Start with the owning surface rather than <code>App.tsx</code> unless navigation or shared state is involved. Relevant focused tests include:</p>
+<ul>
+<li><code>packages/app/src/lib/fileSearchSort.test.ts</code></li>
+<li><code>packages/app/src/lib/openFileTabs.test.ts</code></li>
+<li><code>packages/app/src/lib/taskOutputDocTarget.test.ts</code></li>
+<li><code>packages/app/src/lib/__tests__/fileRestoreState.test.ts</code></li>
+<li><code>packages/server/src/document-objects.test.ts</code></li>
+<li>tests under <code>packages/server/src/fs/</code> and <code>packages/server/src/editor/</code></li>
+</ul>
+<p>Build the app and run server Vitest. Browser-check search, source switching, open/close/restore, save behavior, task return navigation, restricted results, and the responsive layout; utility tests do not cover the full cross-package workflow.</p>
 </div>
 <nav class="pager" aria-label="Adjacent wiki pages"><a href="/docs/source/entity-wiki/features/workspace-and-files.html" target="_top" class="pager-link"><small>Previous</small><strong>← Workspace and files</strong></a><a href="/docs/source/entity-wiki/index.html" target="_top" class="pager-link pager-next"><small>Next</small><strong>Files →</strong></a></nav>
 </article>

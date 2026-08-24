@@ -40,8 +40,34 @@ else
 fi
 
 cd "$ROOT"
+
+# T-038 exact-SHA release proof (R-039): the sandbox must deploy and report the
+# exact reviewed candidate SHA. deploy.sh already fails closed when
+# ENTITY_RELEASE_SHA != source checkout HEAD; we resolve and export it so the
+# deploy path cannot silently accept a drifted tree.
+if [[ -z "${ENTITY_RELEASE_SHA:-}" ]]; then
+  export ENTITY_RELEASE_SHA="$(git -C "$ROOT" rev-parse HEAD)"
+fi
+export ENTITY_RELEASE_ENVIRONMENT="${ENTITY_RELEASE_ENVIRONMENT:-sandbox}"
+
 npm run docs:wiki:verify
 ./deploy.sh --all
+
+# Read back the deployed release identity and prove, fail-closed, that the
+# sandbox reports exactly the reviewed candidate SHA. Any drift between the
+# candidate SHA and the deployed RELEASE.json/VERSION aborts before live checks.
+EXACT_SHA_READBACK_DIR="$(mktemp -d)"
+cleanup_exact_sha_readback() {
+  rm -rf "${EXACT_SHA_READBACK_DIR}"
+}
+trap cleanup_exact_sha_readback EXIT
+scp -q "${ENTITY_SANDBOX_HOST}:${ENTITY_SANDBOX_DIR}/RELEASE.json" "${EXACT_SHA_READBACK_DIR}/RELEASE.json"
+scp -q "${ENTITY_SANDBOX_HOST}:${ENTITY_SANDBOX_DIR}/VERSION" "${EXACT_SHA_READBACK_DIR}/VERSION"
+node "${ROOT}/scripts/entity-release-info.mjs" --check \
+  --root "${EXACT_SHA_READBACK_DIR}" \
+  --expected "${ENTITY_RELEASE_SHA}"
+echo "[entity-sandbox] exact-SHA readback verified: sandbox reports ${ENTITY_RELEASE_SHA}"
+
 if [[ "$ENTITY_PROD_HTTP_HOST" == http://* || "$ENTITY_PROD_HTTP_HOST" == https://* ]]; then
   SANDBOX_BASE_URL="${ENTITY_PROD_HTTP_HOST%/}"
 else

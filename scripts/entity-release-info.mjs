@@ -33,16 +33,40 @@ const manifest = {
 if (args.check) {
   const existing = readJson(join(root, 'RELEASE.json'));
   const version = existsSync(join(root, 'VERSION')) ? readFileSync(join(root, 'VERSION'), 'utf8').trim() : '';
+  // Source identity when this is a live git checkout (CI/local source). Empty
+  // string when the root is a deployed host without a .git directory.
+  const sourceSha = git(['rev-parse', 'HEAD'], root);
   const errors = [];
   if (!existing) errors.push('missing RELEASE.json');
   if (!version) errors.push('missing VERSION');
-  if (existing?.gitSha && version && existing.gitSha !== version) errors.push(`VERSION ${version} does not match RELEASE.json.gitSha ${existing.gitSha}`);
+
+  // T-038 exact-SHA proof (R-039): the exact candidate SHA must be the SHA CI
+  // evaluates and the sandbox reports; any mismatch fails closed.
+  if (args.expected && !existing?.gitSha) errors.push('EXACT_SHA_MISMATCH: RELEASE.json has no gitSha to compare against reviewed candidate');
+  if (args.expected && existing?.gitSha && existing.gitSha !== args.expected) {
+    errors.push(`EXACT_SHA_MISMATCH: deployed RELEASE.json.gitSha ${existing.gitSha} does not match reviewed candidate ${args.expected}`);
+  }
+  if (args.expected && version && version !== args.expected) {
+    errors.push(`EXACT_SHA_MISMATCH: deployed VERSION ${version} does not match reviewed candidate ${args.expected}`);
+  }
+  if (args.expected && sourceSha && sourceSha !== args.expected) {
+    errors.push(`EXACT_SHA_MISMATCH: source HEAD ${sourceSha} does not match reviewed candidate ${args.expected}`);
+  }
+
+  // Source -> build/deployed drift detection: if this is a live git checkout
+  // carrying a RELEASE.json, the checked-out tree must match the deployed
+  // identity. Divergence means a deploy/verification ran on the wrong tree.
+  if (sourceSha && existing?.gitSha && existing.gitSha !== sourceSha) {
+    errors.push(`SOURCE_DRIFT: source HEAD ${sourceSha} does not match deployed gitSha ${existing.gitSha}`);
+  }
+
+  if (existing?.gitSha && version && existing.gitSha !== version) errors.push(`EXACT_SHA_MISMATCH: VERSION ${version} does not match RELEASE.json.gitSha ${existing.gitSha}`);
   if (existing?.gitSha && basename(root).match(/^[0-9a-f]{40}$/i) && basename(root) !== existing.gitSha) errors.push(`release dir basename ${basename(root)} does not match RELEASE.json.gitSha ${existing.gitSha}`);
   if (errors.length) {
-    console.error(JSON.stringify({ ok: false, root, errors }, null, 2));
+    console.error(JSON.stringify({ ok: false, root, gitSha: existing?.gitSha || null, sourceSha: sourceSha || null, expected: args.expected || null, errors }, null, 2));
     process.exit(1);
   }
-  console.log(JSON.stringify({ ok: true, root, gitSha: existing?.gitSha || version, manifestPresent: Boolean(existing), versionPresent: Boolean(version) }, null, 2));
+  console.log(JSON.stringify({ ok: true, root, gitSha: existing?.gitSha || version, sourceSha: sourceSha || null, manifestPresent: Boolean(existing), versionPresent: Boolean(version) }, null, 2));
   process.exit(0);
 }
 
@@ -54,7 +78,7 @@ if (args.write) {
 console.log(JSON.stringify({ ok: true, root, write: args.write, manifest }, null, 2));
 
 function parseArgs(argv) {
-  const parsed = { root: '', sha: '', branch: '', repo: '', environment: '', write: false, check: false };
+  const parsed = { root: '', sha: '', branch: '', repo: '', environment: '', expected: '', write: false, check: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--root') parsed.root = argv[++i] || '';
@@ -62,6 +86,7 @@ function parseArgs(argv) {
     else if (arg === '--branch') parsed.branch = argv[++i] || '';
     else if (arg === '--repo') parsed.repo = argv[++i] || '';
     else if (arg === '--environment') parsed.environment = argv[++i] || '';
+    else if (arg === '--expected') parsed.expected = argv[++i] || '';
     else if (arg === '--write') parsed.write = true;
     else if (arg === '--check') parsed.check = true;
     else throw new Error(`Unknown argument: ${arg}`);

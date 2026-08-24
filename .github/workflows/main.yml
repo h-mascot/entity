@@ -21,6 +21,23 @@ jobs:
       - run: npm run build
       - run: npm run scan:private-defaults -- --enforce
       - run: npm run test:release-deploy
+      # T-038 exact-SHA gate (R-039): record the checked-out exact SHA and prove,
+      # fail-closed, that it equals the SHA this run evaluates and ships. The shared
+      # entity-release-info exact-SHA check is the same primitive the sandbox-deploy
+      # path uses for readback, so CI and deploy resolve to one reviewed candidate.
+      - name: Record checked-out exact SHA and run shared exact-SHA gate
+        run: |
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          echo "Checked-out exact SHA: ${SOURCE_SHA}"
+          echo "GitHub evaluated SHA: ${{ github.sha }}"
+          if [ "${SOURCE_SHA}" != "${{ github.sha }}" ]; then
+            echo "EXACT_SHA_MISMATCH: CI checkout ${SOURCE_SHA} != evaluated ${{ github.sha }}" >&2
+            exit 1
+          fi
+          echo "ENTITY_RELEASE_SHA=${SOURCE_SHA}" >> "$GITHUB_ENV"
+          RECEIPT="$(mktemp -d)"
+          node scripts/entity-release-info.mjs --root "${RECEIPT}" --sha "${SOURCE_SHA}" --branch "${GITHUB_REF_NAME}" --write
+          node scripts/entity-release-info.mjs --check --root "${RECEIPT}" --expected "${SOURCE_SHA}"
       - run: node --test scripts/entity-openwiki-lib.test.mjs
       - run: npm run test:wiki-html
       - run: npm test || echo "Tests skipped (MVP mode)"
