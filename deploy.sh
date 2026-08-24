@@ -277,32 +277,25 @@ if [[ -n "$RUNTIME_WORKSPACE" ]]; then
 fi
 
 ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "set -euo pipefail; UID_NUM=\$(id -u); if [[ -n '${RUNTIME_LAUNCHD_SERVICE}' ]] && launchctl print \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\" >/dev/null 2>&1; then launchctl kickstart -k \"gui/\${UID_NUM}/${RUNTIME_LAUNCHD_SERVICE}\"; else lsof -i :'${PROD_PORT}' -t 2>/dev/null | xargs kill -9 2>/dev/null || true; sleep 2; mkdir -p \"\$(dirname '${RUNTIME_LOG_PATH}')\"; cd '${ENTITY_DIR}' && ${REMOTE_ENV} nohup '${REMOTE_NODE_BIN}' '${RUNTIME_NODE_ENTRY}' > '${RUNTIME_LOG_PATH}' 2>&1 & fi"
-# Bounded readiness poll instead of a blind fixed sleep: a normal startup may take
-# longer than a naive pause, and a crash-loop (e.g. a missing native broker) must
-# surface as a real ready-timeout failure rather than a false zero-task failure.
+# Bounded readiness poll instead of a blind fixed sleep or a first-numeric-accept:
+# the server is ready only when /api/tasks is numeric AND at least the preflight
+# TASK_COUNT. A numeric-but-low response (e.g. 0 while the configured 49-task DB is
+# still hydrating) is NOT readiness and must not abort as a false task-count drop:
+# keep polling until the count reaches the preflight value, and fail closed on a
+# persistent crash, a count that never reaches the preflight value, or a deadline
+# expiry. The exact contract lives in scripts/entity-readiness-poll.sh (deterministic
+# regression in scripts/entity-release-info.test.mjs).
 READY_ATTEMPTS="${ENTITY_DEPLOY_READY_ATTEMPTS:-20}"
-READY_COUNT=""
-for attempt in $(seq 1 "${READY_ATTEMPTS}"); do
-  READY_COUNT=$(curl --noproxy "*" -sS --max-time 5 "${PROD_BASE_URL}/api/tasks" | python3 -c "import sys, json; raw = sys.stdin.read().strip(); payload = json.loads(raw) if raw else {}; print(len(payload) if isinstance(payload, list) else payload.get('total', len(payload.get('tasks', [])) if isinstance(payload.get('tasks'), list) else 0))" 2>/dev/null || echo "")
-  READY_COUNT=$(printf '%s' "${READY_COUNT}" | tr -d '[:space:]')
-  if [[ "${READY_COUNT}" =~ ^[0-9]+$ ]]; then
-    log "Server became ready on attempt ${attempt}/${READY_ATTEMPTS}: ${READY_COUNT} tasks"
-    break
-  fi
-  if [[ "$attempt" -lt "${READY_ATTEMPTS}" ]]; then
-    sleep 2
-  fi
-done
-
-NEW_COUNT="${READY_COUNT}"
-log "Post-deploy readiness: api=${NEW_COUNT:+${NEW_COUNT}} tasks (was ${TASK_COUNT})"
-
-if [[ ! "${NEW_COUNT}" =~ ^[0-9]+$ ]]; then
-  error "Post-deploy server never became ready with a numeric task count after ${READY_ATTEMPTS} attempts ${NEW_COUNT:+(${NEW_COUNT})}; check the runtime log ${RUNTIME_LOG_PATH}"
+READY_LOG="$(mktemp)"
+READY_REASON=""
+if ! READY_COUNT="$(ENTITY_DEPLOY_READY_ATTEMPTS="${READY_ATTEMPTS}" "${SCRIPT_DIR}/scripts/entity-readiness-poll.sh" "${PROD_BASE_URL}" "${TASK_COUNT}" 2>"${READY_LOG}")"; then
+  READY_REASON="$(cat "${READY_LOG}")"
+  rm -f "${READY_LOG}"
+  [[ -z "${READY_REASON}" ]] || warn "${READY_REASON}"
+  error "Post-deploy server did not reach readiness (numeric task count >= preflight ${TASK_COUNT}) within ${READY_ATTEMPTS} attempts; check the runtime log ${RUNTIME_LOG_PATH}"
 fi
+rm -f "${READY_LOG}"
 
-if [[ "$NEW_COUNT" -lt "$TASK_COUNT" ]]; then
-  error "TASK COUNT DROPPED from ${TASK_COUNT} to ${NEW_COUNT}!"
-fi
-
+NEW_COUNT="$(printf '%s' "${READY_COUNT}" | tr -d '[:space:]')"
+log "Post-deploy readiness: api=${NEW_COUNT} tasks (preflight was ${TASK_COUNT})"
 log "Deploy complete: ${NEW_COUNT} tasks"

@@ -54,7 +54,12 @@ static int parent_fd(const msb_broker *broker, const char *path, char *leaf) {
     char *slash = strchr(cursor, '/');
     if (!slash) { strcpy(leaf, cursor); return fd; }
     *slash = '\0';
-    { int next = openat(fd, cursor, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW); close(fd); if (next < 0) return map_errno(); fd = next; }
+    {
+      int next = openat(fd, cursor, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+      close(fd);
+      if (next < 0) { return map_errno(); }
+      fd = next;
+    }
     cursor = slash + 1;
   }
 }
@@ -83,7 +88,9 @@ int msb_read(const msb_broker *broker, const char *path, uint8_t *out, size_t ca
   if (S_ISLNK(st.st_mode)) { close(fd); return MSB_INVALID; }
   if (!S_ISREG(st.st_mode) || st.st_size < 0 || (uint64_t)st.st_size > capacity || (uint64_t)st.st_size > MSB_MAX_IO) { close(fd); return MSB_LIMIT; }
   { int file = openat(fd, leaf, O_RDONLY | O_CLOEXEC | O_NOFOLLOW); close(fd); if (file < 0) return map_errno(); n = read(file, out, capacity); close(file); }
-  if (n < 0) return map_errno(); *length = (size_t)n; return ((uint64_t)n == (uint64_t)st.st_size) ? MSB_OK : MSB_IO;
+  if (n < 0) { return map_errno(); }
+  *length = (size_t)n;
+  return ((uint64_t)n == (uint64_t)st.st_size) ? MSB_OK : MSB_IO;
 }
 
 static int write_unlocked(const msb_broker *broker, const char *path, const uint8_t *data, size_t length, int exclusive) {
@@ -204,4 +211,7 @@ int msb_list(const msb_broker *broker, const char *path, msb_listing *out) {
   closedir(dir); out->length = used; return MSB_OK;
 }
 void msb_free_list(msb_listing *list) { if (list) { free(list->data); list->data = NULL; list->length = 0; } }
-int msb_protocol_validate(const uint8_t *request, size_t length) { if (!request || length < 2 || length > MSB_MAX_IO) return MSB_INVALID; return (request[0] >= '1' && request[0] <= '6' && memchr(request, '\0', length) == NULL) ? MSB_OK : MSB_INVALID; }
+int msb_protocol_validate(const uint8_t *request, size_t length) {
+  if (!request || length < 2 || length > MSB_MAX_IO) return MSB_INVALID;
+  return (request[0] >= '1' && request[0] <= '6' && memchr(request, '\0', length) == NULL) ? MSB_OK : MSB_INVALID;
+}

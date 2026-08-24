@@ -488,3 +488,89 @@ test("native managed-storage broker build installs an executable at the deployed
   assert.notEqual(lstatSync(runtimeBroker).size, 0, "installed broker must not be empty");
   assert.notEqual(lstatSync(runtimeBroker).mode & 0o111, 0, "installed broker must be executable");
 });
+
+// T-038 blocker 2 (post-restart readiness contract): the sandbox deploy installed
+// and ran the broker and eventually preserved all 49 tasks at the exact SHA, but
+// deploy.sh accepted the first NUMERIC /api/tasks response (0) while the configured
+// 49-task DB was still hydrating, then aborted with a false "TASK COUNT DROPPED".
+// Readiness must keep polling until the count is numeric AND at least the preflight
+// TASK_COUNT, and still fail closed on a persistent drop/crash/timeout. The contract
+// lives in scripts/entity-readiness-poll.sh; these tests exercise it deterministically
+// with a faked curl (no SSH/server required).
+
+const readinessPollScript = join(scriptsDirectory, "entity-readiness-poll.sh");
+
+// Install a faked curl that returns one line from seqFile per call (via countFile),
+// plus a no-op sleep, into bin/ so the poll can be driven without any network or
+// real delay.
+function installReadinessFakes(bin, seqFile, countFile) {
+  mkdirSync(bin, { recursive: true });
+  const { curl, sleep } = { curl: join(bin, "curl"), sleep: join(bin, "sleep") };
+  writeFileSync(curl, [
+    "#!/usr/bin/env bash",
+    `seq_file="${seqFile}"`,
+    `count_file="${countFile}"`,
+    'i="$(cat "$count_file" 2>/dev/null || echo 0)"',
+    'line="$(sed -n "$((i + 1))p" "$seq_file")"',
+    'printf "%s" "$line"',
+    'printf "%s" "$((i + 1))" > "$count_file"',
+  ].join("\n") + "\n");
+  chmodSync(curl, 0o755);
+  writeFileSync(sleep, "#!/usr/bin/env bash\nexit 0\n");
+  chmodSync(sleep, 0o755);
+  return { curl, sleep };
+}
+
+function runReadinessPoll({ seq = [], expected, attempts = 3 }) {
+  const root = mkdtempSync(join(tmpdir(), "entity-ready-poll-"));
+  try {
+    const bin = join(root, "bin");
+    const seqFile = join(root, "seq.txt");
+    const countFile = join(root, "count.txt");
+    writeFileSync(seqFile, seq.join("\n") + (seq.length ? "\n" : ""));
+    installReadinessFakes(bin, seqFile, countFile);
+    return spawnSync("bash", [readinessPollScript, "http://ready.test:3000", String(expected)], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        ENTITY_DEPLOY_READY_ATTEMPTS: String(attempts),
+      },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("readiness waits for hydration instead of aborting on a numeric zero-task response (T-038 blocker 2)", () => {
+  // The 49-task DB is still hydrating: two 0-total responses then the real 49.
+  // deploy.sh must NOT accept the first numeric 0 as ready; it must continue until
+  // numeric AND >= preflight, and succeed once hydration completes.
+  const result = runReadinessPoll({ seq: ['{"total": 0}', '{"total": 0}', '{"total": 49}'], expected: 49, attempts: 3 });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.stdout.trim(), "49");
+});
+
+test("readiness fails closed when the count never reaches the preflight task count", () => {
+  // A persistent sub-preflight count (a real drop) must fail closed, not falsely pass.
+  const result = runReadinessPoll({ seq: ['{"total": 10}', '{"total": 10}', '{"total": 10}'], expected: 49, attempts: 3 });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /never reported >= 49 tasks/);
+});
+
+test("readiness fails closed when the API never returns a numeric task count (crash)", () => {
+  // A crash-loop / non-numeric API must fail closed (never-ready), not be mistaken
+  // for a zero-task or dropped-count state.
+  const result = runReadinessPoll({ seq: ["not-json", "not-json", "not-json"], expected: 49, attempts: 3 });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /never became ready with a numeric task count/);
+});
+
+test("deploy readiness polls until numeric AND at least preflight TASK_COUNT (T-038 blocker 2 regression)", () => {
+  const source = readFileSync(deployScript, "utf8");
+  // deploy.sh must route readiness through the shared poll, passing the preflight
+  // TASK_COUNT as the required floor (numeric alone is not readiness).
+  assert.match(source, /scripts\/entity-readiness-poll\.sh"\s+"\$\{PROD_BASE_URL\}" "\$\{TASK_COUNT\}"/);
+  // And it must not re-introduce the false first-numeric "TASK COUNT DROPPED" abort.
+  assert.doesNotMatch(source, /TASK COUNT DROPPED/);
+});
