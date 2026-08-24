@@ -21,7 +21,7 @@ Preserve every historically deployed code line, reconcile every unique still-val
 
 ## Phases
 - [x] Phase 0: Preserve all 78 audited SHAs in two verified bundles.
-- [ ] Phase 1: Create plan, reconciliation matrix, state machine, manager, and proof contract.
+- [x] Phase 1: Create plan, reconciliation matrix, state machine, manager, and proof contract.
 - [ ] Phase 2: Fix manual/automatic deployment split and add anti-overwrite regression tests.
 - [ ] Phase 3: Reconcile Admin navigation behavior and tests.
 - [ ] Phase 4: Reconcile Curacel readiness unique behavior and tests.
@@ -64,4 +64,4 @@ Preserve every historically deployed code line, reconcile every unique still-val
 - Historical sandbox had 11 mutated release identities; root cause is manual rsync through `current` plus weak verification/controller cache.
 
 ## Status
-**Phase 1 in progress** — isolated worktree, plan, matrix, and manager infrastructure being established.
+**Phase 2 next** — REC-002 complete: matrix validated against live Git (4 lines, tips/merge-bases/ahead-behind/files/commits all match) via `docs/recovery/deploy-reconciliation-20260824/validate_matrix.py`.

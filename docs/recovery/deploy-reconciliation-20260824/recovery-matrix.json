@@ -601,8 +601,10 @@
     },
     {
       "id": "REC-002",
-      "proof": [],
-      "status": "in_progress",
+      "proof": [
+        "validate_matrix.py OK: 4 lines validated against live Git baseline 4af7084 (tips, merge-bases, ahead/behind, changed files, commits all match)"
+      ],
+      "status": "done",
       "title": "Create isolated recovery worktree, plan, matrix, and progress infrastructure"
     },
     {
@@ -655,5 +657,5 @@
     }
   ],
   "schemaVersion": 1,
-  "updatedAt": "2026-08-24T21:54:19.034584+00:00"
+  "updatedAt": "2026-08-24T21:58:43.308873+00:00"
 }
