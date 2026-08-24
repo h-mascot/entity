@@ -1,6 +1,6 @@
 # Entity No-Loss Deploy Recovery Plan
 
-Canonical tracker: [`task_plan.md`](./task_plan.md)  
+Canonical tracker: [`task_plan.md`](./task_plan.md)
 Machine reconciliation ledger: [`recovery-matrix.json`](./recovery-matrix.json)
 
 ## Outcome

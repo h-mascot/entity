@@ -106,3 +106,8 @@ Workspace and Entity Wiki file sources report pre-existing health errors related
   business invite acceptance architecture.
 - Production untouched. No push/PR/merge/deploy (delivery boundary). REC-009/REC-010 = manager.
 - Worker exits; wrapper (owner pid 93311) releases the lease; manager resumes from REC-009.
+
+## Manager pre-review transition
+- Worker generation 1 exited 0 with `agent_settled`; REC-002 through REC-008 complete.
+- First manager `ctrl:gate` rerun accidentally used shell Node 26 and failed only because `better-sqlite3` was built for Node ABI 127. This is environmental, not accepted proof. Authoritative rerun pins runtime/CI Node 22 before review.
+- Fixed pre-existing Markdown trailing whitespace found by `git diff --check`.
