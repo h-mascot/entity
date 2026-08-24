@@ -114,13 +114,13 @@ export const SECTION_20_MATRIX: Record<string, Record<'google_workspace' | 'micr
   },
   Preview: {
     google_workspace: { kind: 'automated', proof: 'adapter getPreview readiness normalization (R-034) in docs/sheets/slides adapter tests' },
-    microsoft_365: { kind: 'automated', proof: 'normalizeMicrosoftReadState capability-aware preview mapping (microsoft/read-state tests; matrix e2e)' },
+    microsoft_365: { kind: 'automated', proof: 'normalizeMicrosoftReadState capability-aware preview mapping, no raw token/secret leakage — in-file matrix e2e "preview/read state normalizes capability-aware and never leaks raw tokens"' },
     local_office: { kind: 'deferred', disposition: 'local preview renders via desktop/engine; no server preview seam, recorded manual/deferred' },
   },
   'Human edit': {
     google_workspace: { kind: 'automated', proof: 'getOpenTarget returns provider edit URL (capability-aware, docs-adapter.test.ts)' },
-    microsoft_365: { kind: 'manual', disposition: 'open-in-M365 link requires live tenant session; verified manually against an authorized tenant' },
-    local_office: { kind: 'manual', disposition: 'open local via desktop bridge; exercised manually on a desktop with the bridge installed' },
+    microsoft_365: { kind: 'manual', disposition: 'open-in-M365 link requires a live tenant session; no credentialed tenant available here — manual check is UNEXECUTED/maintenance-deferred, requires an authorized tenant only' },
+    local_office: { kind: 'manual', disposition: 'open local via desktop bridge requires a desktop with the bridge installed; no such desktop is available here — manual check is UNEXECUTED/maintenance-deferred' },
   },
   'Structured text mutation': {
     google_workspace: { kind: 'automated', proof: 'docs bounded insertText envelope, bounded length, stale rejection (docs-adapter.test.ts)' },
@@ -154,8 +154,8 @@ export const SECTION_20_MATRIX: Record<string, Record<'google_workspace' | 'micr
   },
   'Search/associations': {
     google_workspace: { kind: 'automated', proof: 'discover + reconcileChanges idempotent (docs-adapter.test.ts runAdapterContractSuite)' },
-    microsoft_365: { kind: 'manual', disposition: 'OneDrive/SharePoint search/association requires live tenant discovery; verified manually against an authorized tenant' },
-    local_office: { kind: 'manual', disposition: 'local file search/association over managed storage requires the desktop bridge; verified manually on desktop' },
+    microsoft_365: { kind: 'manual', disposition: 'OneDrive/SharePoint search/association requires live tenant discovery; no credentialed tenant available here — manual check is UNEXECUTED/maintenance-deferred, requires an authorized tenant only' },
+    local_office: { kind: 'manual', disposition: 'local file search/association over managed storage requires the desktop bridge; bridge is not exercised here — manual check is UNEXECUTED/maintenance-deferred on desktop' },
   },
 };
 
@@ -390,10 +390,25 @@ describe('T-036 cross-provider §20 acceptance matrix — ledger completeness', 
         if (evidence.kind === 'automated') {
           expect(evidence.proof.length).toBeGreaterThan(0);
         } else {
-          // manual/deferred must never be a fabricated success claim.
+          // manual/deferred must never be a fabricated success claim nor a claimed-executed
+          // past-tense proof: no live credentialed tenant or desktop-bridge proof exists here,
+          // so dispositions may only state a truthful requirement/unexecuted posture.
           expect(evidence.disposition.length).toBeGreaterThan(0);
-          expect(evidence.disposition.toLowerCase()).not.toContain('supported');
-          expect(evidence.disposition.toLowerCase()).not.toContain('green');
+          const lowered = evidence.disposition.toLowerCase();
+          expect(lowered).not.toContain('supported');
+          expect(lowered).not.toContain('green');
+          // Past-tense completion claims would fabricate manual proof that was never run.
+          // "verified manually" / "exercised manually" are the canonical offenders plus the
+          // generic past-tense completion verbs; any of these in a manual/deferred cell means
+          // a manual proof was reported as already executed — that is prohibited.
+          for (const banned of [
+            'verified manually',
+            'exercised manually',
+            'verified against',
+            'exercised on',
+          ]) {
+            expect(lowered, `manual/${evidence.kind} must not claim executed proof: '${banned}' in '${evidence.disposition}'`).not.toContain(banned);
+          }
         }
       }
     }
