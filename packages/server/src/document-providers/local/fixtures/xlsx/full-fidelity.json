@@ -1,0 +1,25 @@
+{
+  "title": "Entity T-030 XLSX full-fidelity fixture",
+  "sheets": [
+    {
+      "name": "Revenue",
+      "rows": [
+        ["Region", "Q1", "Q2", "Q3", "Q4"],
+        ["North", "1200", "1350", "1480", "1600"],
+        ["South", "980", "1010", "1075", "1120"],
+        ["West", "2100", "2240", "2310", "2480"],
+        ["Total", "4280", "4600", "4865", "5200"]
+      ]
+    },
+    {
+      "name": "Notes & Formatting",
+      "rows": [
+        ["Item", "Value", "Comment"],
+        ["Lead time", "14", "business days"],
+        ["Discount", "10%", "tier one <Standard> & \"Preferred\""],
+        ["Unicode", "向导 功能 — résumé", "Café déjà vu ✓"],
+        ["Formula note", "=SUM(B2:B4)", "documented as text; not recalculated"]
+      ]
+    }
+  ]
+}
