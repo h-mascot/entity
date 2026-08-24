@@ -72,6 +72,8 @@
 <li><code>packages/app/src/components/plugins/*</code> for plugin admin and slot rendering.</li>
 <li><code>packages/app/src/components/EntityServicesBoard.tsx</code> and <code>packages/app/src/components/plugins/services/ServicesPage.tsx</code> for services.</li>
 <li><code>packages/server/src/routes/worktype-registry.ts</code>, <code>packages/server/src/routes/chat-model-registry.ts</code>, and <code>packages/server/src/routes/runtime.ts</code> for backend registries and runtime configuration.</li>
+<li><code>packages/app/src/components/document-integrations/ProviderSettings.tsx</code> and <code>packages/app/src/components/settings/DocsSettings.tsx</code> for document-provider settings and destination policy controls.</li>
+<li><code>packages/server/src/routes/document-integrations.ts</code>, <code>packages/server/src/document-providers/*</code>, and <code>packages/db/src/document-integrations.ts</code> for provider-neutral document integration routing, adapter selection, and persistence.</li>
 <li><code>entity.config.example.yaml</code> for the default local configuration shape.</li>
 <li><code>packages/server/src/routes/legacy-files.ts</code> for legacy workspace mutation guards that now reject writes, creates, deletes, and moves into nested read-only local sources while still serving reads.</li>
 </ul>

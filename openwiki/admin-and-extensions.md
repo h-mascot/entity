@@ -16,6 +16,8 @@ The main source seams are:
 - `packages/app/src/components/plugins/*` for plugin admin and slot rendering.
 - `packages/app/src/components/EntityServicesBoard.tsx` and `packages/app/src/components/plugins/services/ServicesPage.tsx` for services.
 - `packages/server/src/routes/worktype-registry.ts`, `packages/server/src/routes/chat-model-registry.ts`, and `packages/server/src/routes/runtime.ts` for backend registries and runtime configuration.
+- `packages/app/src/components/document-integrations/ProviderSettings.tsx` and `packages/app/src/components/settings/DocsSettings.tsx` for document-provider settings and destination policy controls.
+- `packages/server/src/routes/document-integrations.ts`, `packages/server/src/document-providers/*`, and `packages/db/src/document-integrations.ts` for provider-neutral document integration routing, adapter selection, and persistence.
 - `entity.config.example.yaml` for the default local configuration shape.
 - `packages/server/src/routes/legacy-files.ts` for legacy workspace mutation guards that now reject writes, creates, deletes, and moves into nested read-only local sources while still serving reads.
 
