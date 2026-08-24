@@ -17,6 +17,11 @@ const baseUrl = configuredBaseUrl.startsWith('http')
 const tasksTarget = process.env.CTRL_LIVE_SMOKE_URL || `${baseUrl}/api/tasks`;
 const configTarget = process.env.CTRL_LIVE_CONFIG_URL || `${baseUrl}/api/config/effective`;
 const minimumTaskCount = Number(process.env.CTRL_LIVE_MIN_TASKS || 10);
+// Curacel readiness recovery (REC-006, from b8e3c121): when the live target is
+// protected by ENTITY_API_TOKEN bearer auth, every smoke probe must present it
+// or the smoke fails with 401s that look like server breakage.
+const apiToken = process.env.CTRL_LIVE_API_TOKEN || process.env.ENTITY_API_TOKEN;
+const requestHeaders = apiToken ? { authorization: `Bearer ${apiToken}` } : undefined;
 
 const fail = (message) => {
   console.error(`[ctrl-live] ${message}`);
@@ -26,7 +31,7 @@ const fail = (message) => {
 async function getJson(target) {
   let res;
   try {
-    res = await fetch(target);
+    res = await fetch(target, { headers: requestHeaders });
   } catch (error) {
     fail(`request failed for ${target}: ${error instanceof Error ? error.message : String(error)}`);
   }

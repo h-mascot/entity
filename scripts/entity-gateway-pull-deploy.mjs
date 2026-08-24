@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, renameSync, readFileSync, rmSync
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { collectLiveState, decideDrift, decideUpToDate } from './entity-deploy-live-verify.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const envPath = args.env || process.env.ENTITY_DEPLOY_ENV || '';
@@ -48,9 +49,21 @@ await withLock(async () => {
 
   log(`CHECK repo=${config.repo} branch=${config.branch} sha=${targetSha}`);
 
-  if (!args.force && state?.repo === config.repo && state?.branch === config.branch && state?.sha === targetSha) {
-    log(`UP_TO_DATE sha=${targetSha} deployedAt=${state.deployedAt || 'unknown'}`);
-    return;
+  if (!args.force) {
+    // REC-004: a cached target SHA is not proof. Revalidate the live release
+    // identity (current symlink basename, RELEASE manifest SHA, API version
+    // SHA, artifact/index bytes, service working directory, DB realpath)
+    // before reporting UP_TO_DATE. Any drift falls through to a redeploy so
+    // the controller heals mutated releases instead of hiding them.
+    const live = await collectLiveState(config);
+    const decision = decideUpToDate({ force: false, state, repo: config.repo, branch: config.branch, targetSha, live });
+    if (decision.upToDate) {
+      log(`UP_TO_DATE sha=${targetSha} deployedAt=${state.deployedAt || 'unknown'} revalidated=${decision.reason}`);
+      return;
+    }
+    if (decision.reason.startsWith('drift:')) {
+      log(`DRIFT_DETECTED sha=${targetSha} reasons=${decision.reason.slice('drift:'.length)} cached-state stale; redeploying`);
+    }
   }
 
   const ci = await getCiStatus(targetSha);
@@ -339,10 +352,21 @@ async function verifyLive(targetSha) {
         const body = await versionRes.json();
         const healthBody = await healthRes.json();
         if (body?.gitSha === targetSha && healthBody?.status === 'ok') {
-          log(`VERIFY_OK sha=${targetSha} port=${port} elapsedMs=${Date.now() - startedAt}`);
-          return;
+          // REC-004: readiness is not verification. The full live release
+          // identity must hold — a mutated release directory (the historical
+          // fa2e439-dir-serving-ffce217 case) fails here and triggers rollback
+          // even when the API reports the expected SHA.
+          const live = await collectLiveState(config);
+          const drift = decideDrift(live, targetSha);
+          if (!drift.ok) {
+            lastErr = `LIVE_DRIFT reasons=${drift.reasons.join(',')}`;
+          } else {
+            log(`VERIFY_OK sha=${targetSha} port=${port} elapsedMs=${Date.now() - startedAt} liveIdentityRevalidated=true`);
+            return;
+          }
+        } else {
+          lastErr = `sha_mismatch expected=${targetSha} got=${body?.gitSha || '<missing>'} health=${healthBody?.status || '<missing>'}`;
         }
-        lastErr = `sha_mismatch expected=${targetSha} got=${body?.gitSha || '<missing>'} health=${healthBody?.status || '<missing>'}`;
       } else {
         lastErr = `http version=${versionRes.status} health=${healthRes.status}`;
       }

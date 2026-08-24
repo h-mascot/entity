@@ -4651,6 +4651,19 @@ export function resolveTaskPolicy(envelope: TaskPolicyInputEnvelope): TaskPolicy
     reasonChain,
   });
 
+  // Curacel readiness recovery (REC-006, from b8e3c121): with resolved policy
+  // persistence, a stored task legitimately carries review/human-gate flags that
+  // originated in risk/trust/side-effect layers. When resolveTaskPolicy re-reads
+  // such a task, the task_projection echo of those same requirements is noise —
+  // drop it whenever any other layer already asserts the same decision so reason
+  // chains stay stable (idempotent re-resolution) instead of growing echoes.
+  const resolvedReasonChain = reasonChain.filter((entry) => {
+    if (entry.source !== 'task_projection') return true;
+    if (entry.decision !== 'review_required' && entry.decision !== 'human_gate_required') return true;
+    return !reasonChain.some((candidate) =>
+      candidate.source !== 'task_projection' && candidate.decision === entry.decision);
+  });
+
   return {
     review_required: reviewRequired,
     human_gate_required: humanGateRequired,
@@ -4662,7 +4675,7 @@ export function resolveTaskPolicy(envelope: TaskPolicyInputEnvelope): TaskPolicy
     auto_reassign_after_hours: autoReassignAfterHours,
     notification_routes: notificationRoutes,
     routing_policy_projection: routingPolicyProjection,
-    reason_chain: reasonChain,
+    reason_chain: resolvedReasonChain,
   };
 }
 
@@ -5686,6 +5699,11 @@ function bootstrap(db: Database.Database): void {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS entity_agent_id_tombstones (
+      agent_id TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS entity_modules (
       id TEXT PRIMARY KEY,
       slug TEXT NOT NULL UNIQUE,
@@ -5939,16 +5957,23 @@ function bootstrap(db: Database.Database): void {
 
 
 function seedEntityRegistryDefaults(db: Database.Database): void {
+  backfillRetiredAgentTombstones(db);
   const agents = [
     ['assistant', 'assistant', 'Assistant', '🤖', null, 'General-purpose local agent placeholder', 'local', 'cli', 'active', null, '{"owner":"Workspace","verification":"Registry + grants","modules":["chat","tasks","files","docs"]}']
   ];
   const insertAgent = db.prepare(`
     INSERT OR IGNORE INTO entity_agents (
       id, slug, name, emoji, avatar_url, description, adapter_type, runtime_type, status, instructions_path, metadata_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM entity_agent_id_tombstones
+      WHERE agent_id = ?
+    )
   `);
   for (const agent of agents) {
-    insertAgent.run(...agent);
+    insertAgent.run(...agent, agent[0]);
   }
 
   const modules = [
@@ -8277,6 +8302,10 @@ export function createAgentRegistryRepository(): AgentRegistryRepository {
   const getBySlugStmt = db.prepare('SELECT * FROM entity_agents WHERE slug = ?');
   const deleteAgentStmt = db.prepare('DELETE FROM entity_agents WHERE id = ?');
   const deleteAgentGrantsStmt = db.prepare('DELETE FROM entity_agent_module_grants WHERE agent_id = ?');
+  const getAgentTombstoneStmt = db.prepare('SELECT agent_id FROM entity_agent_id_tombstones WHERE agent_id = ?');
+  const createAgentTombstoneStmt = db.prepare(`
+    INSERT OR IGNORE INTO entity_agent_id_tombstones (agent_id) VALUES (?)
+  `);
   const createStmt = db.prepare(`
     INSERT INTO entity_agents (
       id, slug, name, emoji, avatar_url, description, adapter_type, runtime_type, runtime_binding_id, provider_type, helm_managed, binding_state, status, instructions_path, metadata_json, created_at, updated_at
@@ -8294,6 +8323,9 @@ export function createAgentRegistryRepository(): AgentRegistryRepository {
     },
     createAgent: (input: CreateAgentRegistryInput) => {
       const id = input.id?.trim() || randomUUID();
+      if (getAgentTombstoneStmt.get(id)) {
+        throw new Error(`Agent identity was retired and cannot be reused: ${id}`);
+      }
       createStmt.run(
         id,
         input.slug.trim().toLowerCase(),
@@ -8345,7 +8377,9 @@ export function createAgentRegistryRepository(): AgentRegistryRepository {
     deleteAgent: (id: string): boolean => {
       const transaction = db.transaction((agentId: string) => {
         deleteAgentGrantsStmt.run(agentId);
-        return deleteAgentStmt.run(agentId).changes > 0;
+        const deleted = deleteAgentStmt.run(agentId).changes > 0;
+        if (deleted) createAgentTombstoneStmt.run(agentId);
+        return deleted;
       });
       return transaction(id);
     },
@@ -8558,6 +8592,19 @@ export function createTaskRepository(): TaskRepository {
       };
       assertValidWorktypePolicyInputs(policyTaskDraft.worktype, policyTaskDraft.policy_inputs_json);
       const policyResolution = resolveTaskPolicy(buildTaskPolicyInputEnvelope(policyTaskDraft));
+      // Curacel readiness recovery (REC-006, from b8e3c121): persist the RESOLVED
+      // policy requirements, not the raw caller flags. Protected external side
+      // effects (claims/finance/customer-communication with required gates)
+      // must persist review_required/human_gate_required regardless of caller
+      // input, while task_projection/agent_trust echoes cannot re-require.
+      const resolvedReviewRequired = reviewRequired || policyResolution.reason_chain.some((entry) =>
+        entry.decision === 'review_required'
+        && entry.source !== 'task_projection'
+        && entry.source !== 'agent_trust');
+      const resolvedHumanGateRequired = humanGateRequired || policyResolution.reason_chain.some((entry) =>
+        entry.decision === 'human_gate_required' && entry.source !== 'task_projection');
+      const resolvedReviewState = normalizeReviewPolicyState(input.review_state, resolvedReviewRequired);
+      const resolvedHumanGateState = normalizeHumanGatePolicyState(input.human_gate_state, resolvedHumanGateRequired);
       const taskmasterDrivable = policyResolution.routing_policy_projection.taskmaster_drivable;
       const assignmentState =
         input.assignment_state?.trim() ||
@@ -8583,10 +8630,10 @@ export function createTaskRepository(): TaskRepository {
         policyTaskDraft.agent_trust_level,
         policyTaskDraft.policy_inputs_json,
         policyTaskDraft.external_side_effects_json,
-        reviewRequired ? 1 : 0,
-        policyTaskDraft.review_state,
-        humanGateRequired ? 1 : 0,
-        policyTaskDraft.human_gate_state,
+        resolvedReviewRequired ? 1 : 0,
+        resolvedReviewState,
+        resolvedHumanGateRequired ? 1 : 0,
+        resolvedHumanGateState,
         taskName,
         input.description?.trim() || null,
         input.brief?.trim() || null,
@@ -8632,6 +8679,45 @@ export function createTaskRepository(): TaskRepository {
       const nextPolicyInputsJson = typeof updates.policy_inputs_json !== 'undefined'
         ? normalizeJsonObjectString(updates.policy_inputs_json)
         : normalizeJsonObjectString(existingTask.policy_inputs_json);
+      const nextExternalSideEffectsJson = typeof updates.external_side_effects_json !== 'undefined'
+        ? normalizeExternalSideEffectsJson(updates.external_side_effects_json)
+        : normalizeExternalSideEffectsJson(existingTask.external_side_effects_json);
+      const existingMappedTask = mapTaskRow(existingTask);
+      // Curacel readiness recovery (REC-006, from b8e3c121): updates resolve the
+      // merged task policy so protected side effects added by an update persist
+      // their review/human-gate requirements the same as creation does.
+      const policyResolution = resolveTaskPolicy(buildTaskPolicyInputEnvelope({
+        ...existingMappedTask,
+        org_id: typeof updates.org_id === 'string'
+          ? normalizeWorkspaceId(updates.org_id, DEFAULT_WORKSPACE_ORG_ID)
+          : existingMappedTask.org_id,
+        team_id: typeof updates.team_id === 'string'
+          ? normalizeWorkspaceId(updates.team_id, DEFAULT_WORKSPACE_TEAM_ID)
+          : existingMappedTask.team_id,
+        project_id: typeof updates.project_id !== 'undefined'
+          ? normalizePositiveInteger(updates.project_id)
+          : existingMappedTask.project_id,
+        taskmaster_drivable: typeof updates.taskmaster_drivable !== 'undefined'
+          ? normalizeBlocked(updates.taskmaster_drivable)
+          : existingMappedTask.taskmaster_drivable,
+        worktype: nextWorktype,
+        risk_level: typeof updates.risk_level !== 'undefined'
+          ? normalizePolicyRiskLevel(updates.risk_level)
+          : existingMappedTask.risk_level,
+        agent_trust_level: typeof updates.agent_trust_level !== 'undefined'
+          ? normalizeAgentTrustLevel(updates.agent_trust_level)
+          : existingMappedTask.agent_trust_level,
+        policy_inputs_json: nextPolicyInputsJson,
+        external_side_effects_json: nextExternalSideEffectsJson,
+        review_required:
+          typeof updates.review_required !== 'undefined'
+            ? normalizeBlocked(updates.review_required)
+            : existingMappedTask.review_required,
+        human_gate_required:
+          typeof updates.human_gate_required !== 'undefined'
+            ? normalizeBlocked(updates.human_gate_required)
+            : existingMappedTask.human_gate_required,
+      }));
       if (typeof updates.worktype === 'string' || typeof updates.policy_inputs_json !== 'undefined') {
         assertValidWorktypePolicyInputs(nextWorktype, nextPolicyInputsJson);
       }
@@ -8817,42 +8903,56 @@ export function createTaskRepository(): TaskRepository {
         values.push(normalizeExternalSideEffectsJson(updates.external_side_effects_json));
       }
 
-      if (typeof updates.review_required !== 'undefined') {
-        const reviewRequired = normalizeBlocked(updates.review_required);
-        fields.push('review_required = ?');
-        values.push(reviewRequired ? 1 : 0);
-        if (typeof updates.review_state === 'undefined') {
-          fields.push('review_state = ?');
-          values.push(normalizeReviewPolicyState(undefined, reviewRequired));
-        }
-      }
-
-      if (typeof updates.review_state !== 'undefined') {
-        const reviewRequired =
+      if (
+        typeof updates.review_required !== 'undefined'
+        || typeof updates.review_state !== 'undefined'
+        || typeof updates.external_side_effects_json !== 'undefined'
+        || typeof updates.worktype !== 'undefined'
+        || typeof updates.policy_inputs_json !== 'undefined'
+      ) {
+        const reviewRequired = (
           typeof updates.review_required !== 'undefined'
             ? normalizeBlocked(updates.review_required)
-            : normalizeBlocked(existingTask.review_required);
+            : existingMappedTask.review_required
+        )
+          || policyResolution.reason_chain.some((entry) =>
+            entry.decision === 'review_required'
+            && entry.source !== 'task_projection'
+            && entry.source !== 'agent_trust');
+        fields.push('review_required = ?');
+        values.push(reviewRequired ? 1 : 0);
         fields.push('review_state = ?');
-        values.push(normalizeReviewPolicyState(updates.review_state, reviewRequired));
+        values.push(normalizeReviewPolicyState(
+          typeof updates.review_state !== 'undefined'
+            ? updates.review_state
+            : existingMappedTask.review_state,
+          reviewRequired,
+        ));
       }
 
-      if (typeof updates.human_gate_required !== 'undefined') {
-        const humanGateRequired = normalizeBlocked(updates.human_gate_required);
-        fields.push('human_gate_required = ?');
-        values.push(humanGateRequired ? 1 : 0);
-        if (typeof updates.human_gate_state === 'undefined') {
-          fields.push('human_gate_state = ?');
-          values.push(normalizeHumanGatePolicyState(undefined, humanGateRequired));
-        }
-      }
-
-      if (typeof updates.human_gate_state !== 'undefined') {
-        const humanGateRequired =
+      if (
+        typeof updates.human_gate_required !== 'undefined'
+        || typeof updates.human_gate_state !== 'undefined'
+        || typeof updates.external_side_effects_json !== 'undefined'
+        || typeof updates.worktype !== 'undefined'
+        || typeof updates.policy_inputs_json !== 'undefined'
+      ) {
+        const humanGateRequired = (
           typeof updates.human_gate_required !== 'undefined'
             ? normalizeBlocked(updates.human_gate_required)
-            : normalizeBlocked(existingTask.human_gate_required);
+            : existingMappedTask.human_gate_required
+        )
+          || policyResolution.reason_chain.some((entry) =>
+            entry.decision === 'human_gate_required' && entry.source !== 'task_projection');
+        fields.push('human_gate_required = ?');
+        values.push(humanGateRequired ? 1 : 0);
         fields.push('human_gate_state = ?');
-        values.push(normalizeHumanGatePolicyState(updates.human_gate_state, humanGateRequired));
+        values.push(normalizeHumanGatePolicyState(
+          typeof updates.human_gate_state !== 'undefined'
+            ? updates.human_gate_state
+            : existingMappedTask.human_gate_state,
+          humanGateRequired,
+        ));
       }
 
       if (fields.length === 0) {
@@ -11564,6 +11664,45 @@ export {
   type TaskHandoffRepository,
   type TaskHandoffStatus,
 } from './task-handoffs';
+
+// Curacel readiness recovery (REC-006, from b8e3c121): org-scoped operations,
+// existing-agent import, chat-history access roster, and chat noise controls.
+export {
+  CURACEL_CONNECTOR_TYPES,
+  CURACEL_TEAM_TYPES,
+  createCuracelOperationsRepository,
+  type CuracelOperationsRepository,
+} from './curacel-operations';
+export {
+  createAgentImportRepository,
+  type AgentImportRepository,
+} from './agent-import';
+export {
+  createChatHistoryAccessRepository,
+  type ChatHistoryAccessRepository,
+} from './chat-history-access';
+export {
+  createChatNoiseControlRepository,
+  type ChatNoiseControlRepository,
+} from './chat-noise-controls';
+
+// Curacel readiness recovery (REC-006): agent identities retired from the
+// registry are tombstoned so imports/seeding can never silently revive them.
+function backfillRetiredAgentTombstones(db: Database.Database): void {
+  const hasImportMappings = Boolean(db.prepare(`
+    SELECT 1
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'agent_import_mappings'
+  `).get());
+  if (!hasImportMappings) return;
+  db.exec(`
+    INSERT OR IGNORE INTO entity_agent_id_tombstones (agent_id)
+    SELECT mapping.agent_id
+    FROM agent_import_mappings AS mapping
+    LEFT JOIN entity_agents AS agent ON agent.id = mapping.agent_id
+    WHERE agent.id IS NULL
+  `);
+}
 
 
 export function getSubscribedCrews(agentSlug: string): CrewRecord[] {

@@ -15,6 +15,8 @@ The main source seams are:
 - `packages/app/src/components/UnifiedFileDashboard.tsx` for the multi-source browser.
 - `packages/app/src/components/doc-hub/DocHubWorkspaceChrome.tsx` for the tabbed Doc Hub chrome.
 - `packages/app/src/views/DocumentEditorView.tsx` and related editor components for editing, comments, suggestions, and review markers.
+- `packages/app/src/components/document-integrations/ProviderSettings.tsx` and `packages/app/src/components/settings/DocsSettings.tsx` for document-provider configuration in Admin.
+- `packages/server/src/routes/document-integrations.ts`, `packages/server/src/document-providers/*`, and `packages/db/src/document-integrations.ts` for the provider-neutral document API, provider adapters, write policy, and integration persistence.
 - `packages/server/src/routes/docs.ts`, `packages/server/src/routes/documents.ts`, and `packages/server/src/routes/search.ts` for document serving and document APIs.
 - `packages/db/src/file-sources.ts` and `packages/db/src/document-collab.ts` for source registration and collaboration persistence.
 - `packages/server/src/config/runtime.ts`, `packages/server/src/config/schema.ts`, `packages/server/src/fs/adapters/local.ts`, `packages/server/src/fs/adapters/http-markdown.ts`, `packages/server/src/fs/adapters/bounded-read.ts`, `packages/server/src/fs/routes-sources.ts`, and `packages/server/src/fs/routes-files.ts` for bootstrap allowlisting, read-only enforcement, bounded reads, and remote raw-read handling on local and HTTP-backed file sources.

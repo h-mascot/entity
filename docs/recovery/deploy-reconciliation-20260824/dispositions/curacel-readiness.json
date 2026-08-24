@@ -1,0 +1,778 @@
+{
+  "schemaVersion": 1,
+  "line": "curacel-readiness",
+  "tip": "b8e3c12108028afb5180c79468eaee2d83d79bd1",
+  "mergeBase": "f0f5bd3064bbace0e0c11cfa1303bd8527794d3f",
+  "baseline": "4af7084fb5f961bc7670767f60bbb5846ffd38b0",
+  "generatedAt": "2026-08-24T23:45:00+00:00",
+  "adaptation": "Membership-role gates (activeOrgRole/activeTeamRole/requireOrgAdministrator from the historical session principal) are re-grounded on main's persisted admin-principal middleware (createRequireAdminPrincipal) with a skipAdminAuth test seam, following the precedent of main's own task-handoffs port ('re-grounded on current main's trust model'). Org boundaries stay enforced by the org-scoped repositories.",
+  "decisionPolicy": [
+    "included",
+    "already-equivalent",
+    "superseded-with-proof",
+    "explicit-Henry-decision-required"
+  ],
+  "commits": [
+    {
+      "sha": "1b876bbb1f811656dc42dd4b779fc1426f0c3448",
+      "subject": "chore: remove stale project gate for curacel runner",
+      "disposition": "superseded-with-proof",
+      "proof": "removed the then-stale curacel runner gate; main's .project-gate.json is the current governed gate"
+    },
+    {
+      "sha": "efef9f2956d16b54650e6b34e0d971a44971967a",
+      "subject": "feat(auth): add membership-backed RBAC",
+      "disposition": "superseded-with-proof",
+      "proof": "membership-backed RBAC superseded by main principals/grants + admin-auth (R6 acceptance: persisted customer-principal model, NOT stale session auth); roster management surfaces recovered adapted (admin-gated routes)"
+    },
+    {
+      "sha": "97ea1e5a0dcbc80f7484eb49120c5647557b90f2",
+      "subject": "feat(onboarding): add business organization setup",
+      "disposition": "included",
+      "proof": "business organization setup exists on main re-grounded (business-onboarding router + flow); invite-acceptance lane split out as explicit-Henry-decision-required"
+    },
+    {
+      "sha": "384de4a91cd1b9109c01d6716f1542dbc49f6f8f",
+      "subject": "feat(agents): add scoped existing-agent import",
+      "disposition": "included",
+      "proof": "scoped existing-agent import ported: db/agent-import + routes + ExistingAgentImportPanel + registry identity tombstones; route + db tests green"
+    },
+    {
+      "sha": "854e5eb6339a9579e47a069bda9cb9219d3efe1a",
+      "subject": "feat(chat): add scoped agent history access",
+      "disposition": "included",
+      "proof": "scoped agent history access recovered: chat-history-access roster routes + agent history endpoint; read-time scoping on main chat.ts already equivalent (R4/R6)"
+    },
+    {
+      "sha": "e43d50b63cd438bec029a01c1f7a9c51f650e2d9",
+      "subject": "feat(chat): add scoped agent noise controls",
+      "disposition": "included",
+      "proof": "chat noise controls roster (mute/cooldown/audit/evaluate) ported with admin gating; main's THE-930 read-path noise guard already equivalent"
+    },
+    {
+      "sha": "02ec3986f10f3bd3d02080c63a02bb4b820f106d",
+      "subject": "feat: add provider health supervision",
+      "disposition": "superseded-with-proof",
+      "proof": "provider health supervision exists on main as swarm providers health with credential gating, secret redaction, and admin-only control (curacel-r6-criterion5 criterion 1) + SwarmBoard UI"
+    },
+    {
+      "sha": "7e30c31921ddf6bec46329980c84fe24c5c4301a",
+      "subject": "feat: add cross-agent handoffs",
+      "disposition": "superseded-with-proof",
+      "proof": "cross-agent handoffs already on main as THE-933 + Curacel pilot C-8 port (task-handoffs.ts header documents the adaptation)"
+    },
+    {
+      "sha": "6d0be0c91048874d288cfefd922c459c80a80d8f",
+      "subject": "docs: record Curacel queue proof",
+      "disposition": "superseded-with-proof",
+      "proof": "docs-only queue proof; preserved in verified bundle"
+    },
+    {
+      "sha": "94e538817dfbd9d8e5cbb849532fdc93ea39736d",
+      "subject": "docs: record sandbox verification",
+      "disposition": "superseded-with-proof",
+      "proof": "docs-only sandbox verification record; preserved in verified bundle"
+    },
+    {
+      "sha": "f4e356b563056bf2e50f2c5c916d24dc5b36365e",
+      "subject": "feat(auth): add cookie sessions and access roster",
+      "disposition": "superseded-with-proof",
+      "proof": "cookie sessions + access roster superseded by main access tokens + principals (R6); roster management recovered adapted where meaningful"
+    },
+    {
+      "sha": "9c1d149a27dacc80de1ebc9da1bcd1df87b61400",
+      "subject": "feat(curacel): complete sandbox readiness workflows",
+      "disposition": "included",
+      "proof": "curacel operations completion ported: operations center routes/db/UI, task-policy persistence, agent import, browser navigation fall-through"
+    },
+    {
+      "sha": "4cb8b8babea5e80d4a15a98c1329663940deb63e",
+      "subject": "docs(curacel): record readiness verification",
+      "disposition": "superseded-with-proof",
+      "proof": "docs-only readiness verification record; preserved in verified bundle"
+    },
+    {
+      "sha": "8a574d9c35d124d42a165528b99c868cf3b42a75",
+      "subject": "fix(sandbox): verify session-protected releases",
+      "disposition": "included",
+      "proof": "session-protected release verification intent recovered: ctrl-live-smoke bearer-token probes (test added); release-identity verification superseded/extended by REC-004 drift-aware live verification"
+    },
+    {
+      "sha": "b8e3c12108028afb5180c79468eaee2d83d79bd1",
+      "subject": "fix Curacel sandbox readiness workflows",
+      "disposition": "included",
+      "proof": "fix-up commit: sandbox readiness workflow fixes; covered by the included dispositions above + REC-003/004 deploy hardening"
+    }
+  ],
+  "files": [
+    {
+      "path": ".project-gate.json",
+      "status": "D",
+      "disposition": "superseded-with-proof",
+      "proof": "main's .project-gate.json is current governance (bookReview/highRiskScopes/proofCommands); historical deletion tied to the curacel runner era"
+    },
+    {
+      "path": "deploy.sh",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by REC-003 destination-identity guard (all lanes funnel through guarded deploy.sh)"
+    },
+    {
+      "path": "docs/plans/2026-07-28-curacel-readiness-core-plan.md",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "archive-only: plan history preserved in verified bundle (SHA 5e2b759b...); current plans live in docs/plans on main"
+    },
+    {
+      "path": "docs/plans/2026-07-29-curacel-readiness-completion-plan.md",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "archive-only: preserved in verified bundle"
+    },
+    {
+      "path": "docs/plans/2026-07-29-curacel-readiness-live-qa-closure-plan.md",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "archive-only: preserved in verified bundle"
+    },
+    {
+      "path": "docs/plans/ACTIVE_PLAN.md",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "historical pointer file superseded by this run's task_plan.md"
+    },
+    {
+      "path": "packages/app/src/App.tsx",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "historical auth-session/onboarding wiring superseded; navigation recovery handled in REC-005"
+    },
+    {
+      "path": "packages/app/src/components/BusinessInviteAcceptance.tsx",
+      "status": "A",
+      "disposition": "explicit-Henry-decision-required",
+      "proof": "invite-acceptance flow (POST /onboarding/business/invites/:token/accept) requires the historical business-onboarding db (org_invites) which main's re-implemented onboarding deliberately replaced; porting it means choosing between two provisioning architectures - product decision"
+    },
+    {
+      "path": "packages/app/src/components/BusinessOnboardingFlow.tsx",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main's flow is current; no agent-import coupling on main"
+    },
+    {
+      "path": "packages/app/src/components/CuracelOperationsCenter.tsx",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/app/src/components/ExistingAgentImportPanel.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/app/src/components/ExistingAgentImportPanel.tsx",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/MCOpsView.tsx",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "main is richer: taskLoadingGuards scoping + THE-860 returnBoard context (absent historically)"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/TaskDetailPanel.tsx",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "main is richer: TaskHandoffSection + workplane seams + swarm run clients"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/TaskHandoffsPanel.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "covers superseded panel; main's TaskHandoffSection has own coverage"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/TaskHandoffsPanel.tsx",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main has TaskHandoffSection + taskHandoffHistory + taskHandoffDiscoverability.test.ts in mission-control (equivalent UI)"
+    },
+    {
+      "path": "packages/app/src/components/mission-control/taskHandoffsModel.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main's taskHandoffHistory/taskDetailWorkplaneSeams"
+    },
+    {
+      "path": "packages/app/src/components/settings/AccessControlSettings.tsx",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "membership roster UI superseded by main UsersAndRolesSettings (principals/grants)"
+    },
+    {
+      "path": "packages/app/src/components/settings/AgentRegistrySettings.tsx",
+      "status": "M",
+      "disposition": "included",
+      "proof": "Existing runtime agents import section embedded with /api/orgs organization selector (historical wiring)"
+    },
+    {
+      "path": "packages/app/src/components/settings/CommunicationControlsSettings.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/app/src/components/settings/CommunicationControlsSettings.tsx",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/app/src/components/settings/ProviderHealthSettings.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main SwarmBoard coverage"
+    },
+    {
+      "path": "packages/app/src/components/settings/ProviderHealthSettings.tsx",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main SwarmBoard provider UI"
+    },
+    {
+      "path": "packages/app/src/components/settings/communicationControlsModel.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/app/src/components/settings/providerHealthModel.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main swarm model"
+    },
+    {
+      "path": "packages/app/src/lib/curacelAgentImportRows.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/app/src/lib/curacelOperationsModel.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/app/src/lib/curacelOperationsModel.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/app/src/lib/http.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main's http.test covers withApiToken"
+    },
+    {
+      "path": "packages/app/src/lib/http.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "withApiToken already present on main (identical export) - already-equivalent"
+    },
+    {
+      "path": "packages/app/src/views/AdminView.tsx",
+      "status": "M",
+      "disposition": "included",
+      "proof": "CuracelOperationsCenter (Integrations) + CommunicationControlsSettings (Agents) wired via lazy sections"
+    },
+    {
+      "path": "packages/db/src/agent-import.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/agent-import.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/agent-registry-identity.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/auth.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "tests superseded db/auth.ts membership store"
+    },
+    {
+      "path": "packages/db/src/auth.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main's principals/access-tokens model (db/src/principals.ts, access-tokens.ts, routes/principals.ts, UsersAndRolesSettings) replaces the membership/cookie-session store; curacel-r6-criterion5-acceptance.test.ts header: 'NOT stale session auth'"
+    },
+    {
+      "path": "packages/db/src/business-onboarding.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "tests superseded module"
+    },
+    {
+      "path": "packages/db/src/business-onboarding.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main re-implemented business onboarding (routes/business-onboarding.ts + BusinessOnboardingFlow) with per-org isolation proven by curacel-r6 criterion 3; historical drafts/receipts tables would create a parallel provisioning system"
+    },
+    {
+      "path": "packages/db/src/chat-history-access.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/chat-history-access.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/chat-noise-control-types.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/chat-noise-controls.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/chat-noise-controls.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/chat.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "covers main's integrated chat behavior"
+    },
+    {
+      "path": "packages/db/src/chat.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "main's chat.ts already integrates THE-930 noise guard + principal-scoped history (scoped.historyAllowed) - R4/R6 criterion 2"
+    },
+    {
+      "path": "packages/db/src/curacel-operations.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/curacel-operations.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/db/src/index.ts",
+      "status": "M",
+      "disposition": "included",
+      "proof": "resolved task-policy persistence on create/update; agent-identity tombstones (entity_agent_id_tombstones + backfill + create/delete guards); stable reason_chain filtering in resolveTaskPolicy; exports for ported repos; db tests 214/214 + server 2544/2544 green"
+    },
+    {
+      "path": "packages/db/src/provider-health.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "tests superseded db/provider-health.ts; main equivalent is swarm providers health (R6 criterion 1)"
+    },
+    {
+      "path": "packages/db/src/provider-health.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main equivalent: swarm providers health subsystem (/api/swarm/providers) with credential gating + redaction + admin-only control, proven by curacel-r6-criterion5 criterion 1; SwarmBoard UI covers visibility"
+    },
+    {
+      "path": "packages/db/src/task-handoffs.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main's tests cover the ported handoff DAG"
+    },
+    {
+      "path": "packages/db/src/task-handoffs.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main carries THE-933 + Curacel C-8 org-scoped handoff DAG (db/src/task-handoffs.ts + index.ts wiring; comment: 'both contracts coexist on the same endpoint')"
+    },
+    {
+      "path": "packages/db/src/task-policy-persistence.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/agent/comment-responder.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "historical wired scoped-broadcast + provider-health failure recording; both superseded (see those entries); main's responder is current"
+    },
+    {
+      "path": "packages/server/src/agent/index.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "historical wired provider-health runtime hooks; superseded by main swarm health"
+    },
+    {
+      "path": "packages/server/src/agent/settings.test.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "covers main's settings"
+    },
+    {
+      "path": "packages/server/src/agent/settings.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "historical added getTaskAgentProviderRuntimeConfig for health probes; superseded by main swarm providers"
+    },
+    {
+      "path": "packages/server/src/agent/tools.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "historical noise/noise-eval wiring superseded by main THE-930 agent-noise-guard (routes/chat.ts)"
+    },
+    {
+      "path": "packages/server/src/auth/access-policy.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "tests superseded module"
+    },
+    {
+      "path": "packages/server/src/auth/access-policy.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "membership model superseded by main principals (see db/auth.ts entry)"
+    },
+    {
+      "path": "packages/server/src/auth/scoped-broadcast.test.ts",
+      "status": "A",
+      "disposition": "explicit-Henry-decision-required",
+      "proof": "tests the blocked WS-scoping slice"
+    },
+    {
+      "path": "packages/server/src/auth/scoped-broadcast.ts",
+      "status": "A",
+      "disposition": "explicit-Henry-decision-required",
+      "proof": "org-scoped live WS broadcasts require the membership principal model main replaced; main's WS layer broadcasts globally (index.ts broadcast()); scoping under main's principal model is an open architecture decision"
+    },
+    {
+      "path": "packages/server/src/chat-noise-policy.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "noise evaluation policy superseded by main THE-930 agent-noise-guard (routes/agent-noise-guard.ts + chat.ts noise-settings); roster lane recovered via chat-noise-controls routes"
+    },
+    {
+      "path": "packages/server/src/index.ts",
+      "status": "M",
+      "disposition": "included",
+      "proof": "agent-import, chat-history-access, chat-noise-controls, curacel-operations routers registered under /api (historical wiring)"
+    },
+    {
+      "path": "packages/server/src/middleware/api-auth.test.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "covers main's api-auth"
+    },
+    {
+      "path": "packages/server/src/middleware/api-auth.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "main's api-auth is the production trust model; R6 boots the REAL api-auth in acceptance"
+    },
+    {
+      "path": "packages/server/src/middleware/rbac.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "tests superseded module"
+    },
+    {
+      "path": "packages/server/src/middleware/rbac.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "membership RBAC middleware superseded by main admin-principal middleware (middleware/admin-auth.ts + tests)"
+    },
+    {
+      "path": "packages/server/src/provider-health/backend-probes.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main swarm provider acceptance tests"
+    },
+    {
+      "path": "packages/server/src/provider-health/backend-probes.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main equivalent: swarm providers health (/api/swarm/providers, /providers/:id/health) with credential gating + secret redaction + admin-only control, proven by curacel-r6-criterion5 criterion 1 and SwarmBoard UI"
+    },
+    {
+      "path": "packages/server/src/provider-health/routes.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main swarm provider route acceptance"
+    },
+    {
+      "path": "packages/server/src/provider-health/routes.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main swarm provider routes (R6 criterion 1 acceptance boots real routes)"
+    },
+    {
+      "path": "packages/server/src/provider-health/runtime.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main swarm health runtime tests"
+    },
+    {
+      "path": "packages/server/src/provider-health/runtime.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main swarm health runtime"
+    },
+    {
+      "path": "packages/server/src/provider-health/service.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main swarm providers tests"
+    },
+    {
+      "path": "packages/server/src/provider-health/service.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by main swarm providers service"
+    },
+    {
+      "path": "packages/server/src/routes/activity-log.test.ts",
+      "status": "A",
+      "disposition": "explicit-Henry-decision-required",
+      "proof": "tests the blocked WS-scoping wiring; excluded with the slice"
+    },
+    {
+      "path": "packages/server/src/routes/activity-log.ts",
+      "status": "M",
+      "disposition": "explicit-Henry-decision-required",
+      "proof": "the only historical change was routing activity broadcasts through ScopedBroadcast; blocked with the WS scoping decision; main behavior (global broadcast) preserved meanwhile"
+    },
+    {
+      "path": "packages/server/src/routes/agent-import.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/agent-import.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/auth-access.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "tests superseded module"
+    },
+    {
+      "path": "packages/server/src/routes/auth-access.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "cookie-session roster routes superseded by main principals + access tokens (R6: NOT stale session auth)"
+    },
+    {
+      "path": "packages/server/src/routes/business-onboarding-model.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "module-bundle model for main's re-grounded onboarding exists inside routes/business-onboarding.ts (proven by R6 criterion 3)"
+    },
+    {
+      "path": "packages/server/src/routes/business-onboarding.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "covers main's re-grounded router"
+    },
+    {
+      "path": "packages/server/src/routes/business-onboarding.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main's router is the re-grounded implementation (proven by R6 acceptance criterion 3)"
+    },
+    {
+      "path": "packages/server/src/routes/chat-history-access.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/chat-history-access.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/chat-noise-controls.integration.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/chat-noise-controls.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/chat-noise-controls.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/chat.test.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "covers main's chat routes"
+    },
+    {
+      "path": "packages/server/src/routes/chat.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "main's chat routes carry noise-settings endpoints + principal-scoped history reads; org-scoped roster management recovered separately via chat-history-access routes"
+    },
+    {
+      "path": "packages/server/src/routes/curacel-operations.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/curacel-operations.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/runtime.test.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "main's runtime routes are current under principal model"
+    },
+    {
+      "path": "packages/server/src/routes/runtime.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "historical requireSystemAccess gating superseded by main node-operations surfaces (R6 criterion 4)"
+    },
+    {
+      "path": "packages/server/src/routes/task-handoffs.test.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "covers main's adapted port"
+    },
+    {
+      "path": "packages/server/src/routes/task-handoffs.ts",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "main's file header: 'Task handoffs HTTP routes - Curacel pilot capability C-8, adapted to main... Ported from curacel-readiness-runner but re-grounded on current main's trust model'"
+    },
+    {
+      "path": "packages/server/src/routes/tasks-browser-navigation.test.ts",
+      "status": "A",
+      "disposition": "included",
+      "proof": "ported from b8e3c121 in REC-006; membership-role gates re-grounded on main's admin-principal middleware (createRequireAdminPrincipal, skipAdminAuth test seam); db repos self-contained (own tables); tests green"
+    },
+    {
+      "path": "packages/server/src/routes/tasks.ts",
+      "status": "M",
+      "disposition": "included",
+      "proof": "HTML-accept fall-through on unprefixed GET /tasks/:id (SPA deep links) ported from b8e3c121; covered by tasks-browser-navigation.test.ts"
+    },
+    {
+      "path": "packages/server/src/routes/workspace.test.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "covers main's richer workspace routes"
+    },
+    {
+      "path": "packages/server/src/routes/workspace.ts",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "main is richer: customer-principal org resolution (R4 resolveCustomerOrgId) that the historical line lacked"
+    },
+    {
+      "path": "scripts/ctrl-live-smoke.mjs",
+      "status": "M",
+      "disposition": "included",
+      "proof": "CTRL_LIVE_API_TOKEN/ENTITY_API_TOKEN bearer auth attached to every smoke probe (main defined but never attached headers); scripts/ctrl-live-smoke.test.mjs ported and green"
+    },
+    {
+      "path": "scripts/ctrl-live-smoke.test.mjs",
+      "status": "A",
+      "disposition": "included",
+      "proof": "node --test 1/1 pass: smoke authenticates every probe with ENTITY_API_TOKEN"
+    },
+    {
+      "path": "scripts/entity-deploy-sandbox.sh",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by REC-003 hardening (destination guard refuses current-symlink profiles)"
+    },
+    {
+      "path": "scripts/entity-verify-sandbox.sh",
+      "status": "M",
+      "disposition": "superseded-with-proof",
+      "proof": "superseded by REC-003/REC-004 (target guard + drift-aware live verification); main's doc-integrations smoke preserved"
+    },
+    {
+      "path": "tasks/todo.md",
+      "status": "A",
+      "disposition": "superseded-with-proof",
+      "proof": "historical runner scratch list; archive-only in bundle"
+    }
+  ],
+  "blockedSlices": [
+    {
+      "slice": "org-scoped live WS activity broadcasts (ScopedBroadcast + activity-log.ts wiring)",
+      "reason": "requires membership principal model main replaced; main WS broadcasts globally; scoping design under principal model undecided",
+      "blockedFiles": [
+        "packages/server/src/auth/scoped-broadcast.ts",
+        "packages/server/src/auth/scoped-broadcast.test.ts",
+        "packages/server/src/routes/activity-log.ts",
+        "packages/server/src/routes/activity-log.test.ts"
+      ]
+    },
+    {
+      "slice": "business org invite acceptance (BusinessInviteAcceptance + org_invites)",
+      "reason": "requires historical business-onboarding db architecture that main's re-implemented onboarding deliberately replaced; choosing between two provisioning architectures is a product decision",
+      "blockedFiles": [
+        "packages/app/src/components/BusinessInviteAcceptance.tsx",
+        "packages/db/src/business-onboarding.ts",
+        "packages/db/src/business-onboarding.test.ts"
+      ]
+    }
+  ],
+  "proofCommands": [
+    "cd packages/db && npx vitest run (214/214)",
+    "cd packages/server && npx vitest run (2544/2544)",
+    "cd packages/app && npm test (524/524)",
+    "node --test scripts/ctrl-live-smoke.test.mjs (1/1)"
+  ]
+}

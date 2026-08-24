@@ -23,6 +23,11 @@ import {
   createRoadmap,
   createRoadmapItem,
   createWorkspaceScopeRepository,
+  createCuracelOperationsRepository,
+  createAgentImportRepository,
+  createChatHistoryAccessRepository,
+  createChatNoiseControlRepository,
+  createChatRepository,
   createTaskCommentRepository,
   deleteProject,
   deleteRoadmap,
@@ -97,6 +102,10 @@ import { registerPluginManagementRoutes } from "./plugins/routes";
 import { runInferenceProviderMigrations } from "./provider-registry/migrations";
 import { registerCrewRoutes } from "./crews-routes";
 import { registerChatRoutes } from "./routes/chat";
+import { createAgentImportRouter } from "./routes/agent-import";
+import { createChatHistoryAccessRouter } from "./routes/chat-history-access";
+import { createChatNoiseControlRouter } from "./routes/chat-noise-controls";
+import { createCuracelOperationsRouter } from "./routes/curacel-operations";
 import { createClickClackBridge } from "./clickclack/bridge";
 import { createChannelAdapterRouter } from "./channels/router";
 import { registerClickClackProxyRoutes } from "./clickclack/proxy";
@@ -326,6 +335,27 @@ const wss = new WebSocketServer({
 const agentRegistryRepo = createAgentRegistryRepository();
 const moduleRegistryRepo = createModuleRegistryRepository();
 const workspaceRepo = createWorkspaceScopeRepository();
+// Curacel readiness recovery (REC-006, from b8e3c121): org-scoped operations
+// center, existing-agent import, chat-history access roster, and chat noise
+// controls, re-grounded on main's trust model (management routes are
+// admin-principal gated; the org boundary is enforced by the org-scoped
+// repositories, never a caller-supplied header).
+const chatRepository = createChatRepository();
+app.use("/api", createAgentImportRouter({
+  agentRegistryRepo,
+  moduleRegistryRepo,
+  workspaceRepo,
+  chatRepo: chatRepository,
+}));
+app.use("/api", createChatHistoryAccessRouter({
+  agentRegistryRepo,
+  workspaceRepo,
+  chatRepo: chatRepository,
+}));
+app.use("/api", createChatNoiseControlRouter({
+  chatRepo: chatRepository,
+}));
+app.use("/api", createCuracelOperationsRouter());
 const documentObjectRepository = createDocumentObjectRepository();
 const evidenceArtifactRepository = createEvidenceArtifactRepository();
 const taskSyncLayer = createTaskSyncLayer();

@@ -14,6 +14,18 @@ if ((${#missing[@]} > 0)); then
   exit 78
 fi
 
+# REC-003 immutable-release safety: refuse the unsafe symlink profiles up front.
+# ENTITY_SANDBOX_DIR must never point at the `current`/`previous` symlinks: a
+# deploy through them rsyncs straight into an existing release directory and
+# mutates it in place (historical sandbox identity corruption). Target the
+# exact-SHA release directory instead; deploy.sh independently re-verifies the
+# destination identity on the remote host.
+SANDBOX_DIR_BASENAME="$(basename -- "${ENTITY_SANDBOX_DIR}")"
+if [[ "${SANDBOX_DIR_BASENAME}" == "current" || "${SANDBOX_DIR_BASENAME}" == "previous" ]]; then
+  echo "[entity-sandbox] ENTITY_SANDBOX_DIR must not point at the '${SANDBOX_DIR_BASENAME}' symlink (${ENTITY_SANDBOX_DIR}). Set it to the fresh exact-SHA release directory so a deploy can never mutate an existing immutable release." >&2
+  exit 78
+fi
+
 export ENTITY_PROD_HOST="${ENTITY_SANDBOX_HOST}"
 export ENTITY_PROD_HTTP_HOST="${ENTITY_SANDBOX_HTTP_HOST}"
 export ENTITY_PROD_PORT="${ENTITY_SANDBOX_PORT:-3007}"

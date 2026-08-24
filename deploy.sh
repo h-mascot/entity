@@ -151,6 +151,57 @@ REMOTE_NODE_VERSION="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "'${REMOTE_NODE_BIN}'
 [[ "${REMOTE_NODE_VERSION}" =~ ^v([0-9]+)(\.[0-9]+){2}$ ]] || error "Remote Node.js preflight returned an invalid version from ${REMOTE_NODE_BIN}: ${REMOTE_NODE_VERSION}"
 (( BASH_REMATCH[1] >= 20 )) || error "Remote Node.js ${REMOTE_NODE_VERSION} is unsupported; Entity requires Node 20 or newer"
 
+# REC-003 immutable-release safety: the deploy destination must be a fresh
+# exact-SHA release directory. Historically a manual profile pointed
+# ENTITY_PROD_DIR at .../<env>/current; rsync followed the symlink and mutated
+# a previously deployed release in place (RELEASE.json kept claiming the old
+# SHA while serving new bytes). Probe the live destination and fail closed
+# before any sync-capable step on symlink targets, SHA/basename contradictions,
+# or RELEASE.json/VERSION identity collisions.
+log "Verifying deploy destination identity (immutable-release safety)..."
+TARGET_GUARD_PROBE="$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" python3 - "'${ENTITY_DIR}'" <<'PY'
+import json, os, sys
+configured = sys.argv[1]
+abspath = os.path.normpath(configured)
+realpath = os.path.realpath(configured)
+exists = os.path.isdir(realpath)
+release_present = False
+release_sha = None
+version = ""
+if exists:
+    release_file = os.path.join(realpath, "RELEASE.json")
+    if os.path.isfile(release_file):
+        release_present = True
+        try:
+            with open(release_file) as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("gitSha"), str):
+                release_sha = data["gitSha"]
+        except Exception:
+            release_sha = None
+    version_file = os.path.join(realpath, "VERSION")
+    if os.path.isfile(version_file):
+        try:
+            with open(version_file) as f:
+                version = f.readline().strip()
+        except Exception:
+            version = ""
+print(json.dumps({
+    "configured": configured,
+    "abspath": abspath,
+    "realpath": realpath,
+    "basename": os.path.basename(realpath),
+    "exists": exists,
+    "releasePresent": release_present,
+    "releaseGitSha": release_sha,
+    "version": version,
+}))
+PY
+)"
+if ! printf '%s\n' "${TARGET_GUARD_PROBE}" | node "${SCRIPT_DIR}/scripts/entity-deploy-target-guard.mjs" --expected-sha "${RELEASE_SHA}" --configured "${ENTITY_DIR}"; then
+  error "Refusing to deploy: destination ${ENTITY_DIR} is not a safe exact-SHA release target for ${RELEASE_SHA}." 65
+fi
+
 log "Pre-flight: checking production DB on ${PROD_HOST}..."
 TASK_COUNT=$(ssh "${SSH_OPTS[@]}" "${PROD_HOST}" "sqlite3 '${PROD_DB}' 'select count(*) from tasks;'" 2>/dev/null || echo "0")
 TASK_COUNT=$(printf '%s' "${TASK_COUNT}" | tr -d '[:space:]')
