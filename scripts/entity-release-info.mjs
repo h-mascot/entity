@@ -4,6 +4,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, writeFi
 import { basename, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+function main() {
 const args = parseArgs(process.argv.slice(2));
 const root = resolve(args.root || process.cwd());
 const sha = args.sha || git(['rev-parse', 'HEAD'], root) || process.env.ENTITY_RELEASE_SHA || '';
@@ -76,6 +77,10 @@ if (args.write) {
 }
 
 console.log(JSON.stringify({ ok: true, root, write: args.write, manifest }, null, 2));
+}
+
+const isCliMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+if (isCliMain) main();
 
 function parseArgs(argv) {
   const parsed = { root: '', sha: '', branch: '', repo: '', environment: '', expected: '', write: false, check: false };
@@ -103,7 +108,7 @@ function readJson(file) {
   try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; }
 }
 
-function maybePathHash(file) {
+export function maybePathHash(file) {
   let st;
   try {
     st = lstatSync(file);
@@ -122,7 +127,7 @@ function maybePathHash(file) {
   return `sha256:${hash.digest('hex')}`;
 }
 
-function maybeTreeHash(dir, scope = 'immutable') {
+export function maybeTreeHash(dir, scope = 'immutable') {
   let st;
   try {
     st = lstatSync(dir);
@@ -134,7 +139,7 @@ function maybeTreeHash(dir, scope = 'immutable') {
   return st.isDirectory() ? `sha256:${treeHash(dir, [], scope)}` : null;
 }
 
-function treeHash(dir, excludeNames, scope = 'immutable') {
+export function treeHash(dir, excludeNames, scope = 'immutable') {
   const hash = createHash('sha256');
   const excludes = new Set(excludeNames);
   for (const entry of walk(dir, excludes, dir, scope)) {

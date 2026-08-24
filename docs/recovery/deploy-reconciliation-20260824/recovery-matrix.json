@@ -617,8 +617,10 @@
     },
     {
       "id": "REC-004",
-      "proof": [],
-      "status": "todo",
+      "proof": [
+        "npm run test:release-deploy: 57/57 pass incl. 15 entity-deploy-live-verify tests; UP_TO_DATE now revalidates live basename/manifest/API-SHA/dist-hashes/served-index/service-cwd/DB-realpath; fa2e439-serving-ffce217 regression covered; verifyLive drift-triggers rollback"
+      ],
+      "status": "done",
       "title": "Make deploy verification and poller detect basename/SHA/live-byte drift"
     },
     {
@@ -659,5 +661,5 @@
     }
   ],
   "schemaVersion": 1,
-  "updatedAt": "2026-08-24T22:08:03.566344+00:00"
+  "updatedAt": "2026-08-24T22:12:03.144343+00:00"
 }
