@@ -285,7 +285,6 @@ export function createAgentImportRouter(deps: AgentImportRouterDependencies): Ro
           // includes that team in its own team set.
           if (
             channel.team_id
-            && agent.teamIds.length > 0
             && !agent.teamIds.includes(channel.team_id)
           ) {
             throw new AgentImportError(

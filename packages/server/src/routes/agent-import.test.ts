@@ -616,6 +616,30 @@ describe('agent import routes', () => {
     await close();
   });
 
+  it('rejects a team-scoped channel when the import has no team membership with zero side effects', async () => {
+    const { agentRepo, importRepo, grants, post, close } = await setup();
+    const rejected = await post('empty-team-channel', {
+      source: 'runtime-fleet',
+      agents: [{
+        externalId: 'runtime-agent-79',
+        name: 'No Team Agent',
+        slug: 'no-team-agent',
+        teamIds: [],
+        moduleIds: [],
+        channelIds: ['team-z-channel'],
+        reviewPolicy: { required: false, humanGateRequired: false },
+      }],
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatch(/channel/);
+    expect(agentRepo.listAgents()).toEqual([]);
+    expect(importRepo.listMappings('org-a')).toEqual([]);
+    expect(grants).toEqual([]);
+    expect(importRepo.getLatestReceipt('org-a')).toBeUndefined();
+    expect(importRepo.getReceiptByIdempotencyKey('org-a', 'empty-team-channel')).toBeUndefined();
+    await close();
+  });
+
   it('rejects same-org channels scoped to a team outside the import with zero side effects', async () => {
     const { agentRepo, importRepo, grants, post, close } = await setup();
     const rejected = await post('cross-team-channel', {
