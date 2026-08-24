@@ -149,6 +149,40 @@ describe('task repository persistence', () => {
     expect(db.getTaskProjects(replacement.id)).toEqual([]);
   });
 
+  it('persists the T-010 document_operation event as a valid structured activity event (THE-951 F1 vm)', async () => {
+    const db = await loadDbModule();
+    const activities = db.createActivityRepository();
+
+    const created = activities.createActivity({
+      source: 'task',
+      type: 'task_updated',
+      activity_event_type: 'document_operation',
+      activity_event_payload_version: 1,
+      activity_event_schema_status: 'structured',
+      activity_event_payload: {
+        version: 1,
+        actor_principal_id: 'agent-1',
+        actor_type: 'agent',
+        data: { documentId: 'doc-1', operationType: 'mutate', actorClass: 'agent' },
+      },
+      action: 'mutate document',
+      description: 'agent mutate on document doc-1.',
+      agent_name: 'agent-1',
+      task_id: 3,
+    });
+
+    // The explicit valid `document_operation` event must survive the real projection as a
+    // structured event — NOT degrade to legacy_event_observed / legacy_unknown.
+    expect(created.activity_event_type).toBe('document_operation');
+    expect(created.activity_event_schema_status).toBe('structured');
+    expect(created.activity_event_legacy_type).toBeNull();
+
+    const persisted = activities.listActivities(1)[0];
+    expect(persisted.activity_event_type).toBe('document_operation');
+    expect(persisted.activity_event_schema_status).toBe('structured');
+    expect(persisted.activity_event_legacy_type).toBeNull();
+  });
+
   it('lists subtasks from all supported parent metadata keys and rejects invalid parent ids', async () => {
     const db = await loadDbModule();
     const tasks = db.createTaskRepository();

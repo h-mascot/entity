@@ -779,6 +779,25 @@ export type NativeDocumentKind = 'note' | 'spec' | 'report' | 'internal_doc' | '
 export type NativeDocumentMutabilityPolicy = 'editable_versioned' | 'immutable';
 export type NativeDocumentLifecycleState = 'draft' | 'active' | 'archived' | 'superseded';
 
+/**
+ * R-029 — search/indexing state for a native (managed) document. Tracked INDEPENDENTLY
+ * from the document's own modified time / provider state so an indexing failure never
+ * masquerades as a provider-write failure and the UI can identify stale/degraded indexing.
+ *   - `stale`: the document changed and has not been re-indexed since.
+ *   - `fresh`: last_indexed_at reflects the current content.
+ *   - `degraded`: indexing is impaired (kept for retry visibility).
+ *   - `indexing_failed`: the last indexing attempt failed; the provider write still succeeded.
+ */
+export type NativeDocumentSearchIndexState = 'fresh' | 'stale' | 'degraded' | 'indexing_failed';
+
+/**
+ * The states a re-index FAILURE/outcome may record through
+ * `markNativeDocumentIndexFailed`. Deliberately narrower than
+ * `NativeDocumentSearchIndexState`: a `fresh` outcome is recorded via
+ * `markNativeDocumentIndexed`, never through the failure lane (T-012 F4 carry-forward).
+ */
+export type NativeDocumentIndexFailureState = 'stale' | 'degraded' | 'indexing_failed';
+
 export interface NativeDocumentRecord {
   id: string;
   org_id: string;
@@ -797,6 +816,10 @@ export interface NativeDocumentRecord {
   linked_object_refs: ObjectRef[];
   created_by_principal_id: string | null;
   metadata_json: string;
+  /** R-029 index state — independent of provider modified time. Optional for fixture/back-compat. */
+  last_indexed_at?: string | null;
+  search_index_state?: NativeDocumentSearchIndexState;
+  last_index_error?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -829,6 +852,9 @@ export interface CreateNativeDocumentInput {
   linked_object_refs?: ObjectRef[];
   created_by_principal_id?: string | null;
   metadata_json?: string;
+  last_indexed_at?: string | null;
+  search_index_state?: NativeDocumentSearchIndexState;
+  last_index_error?: string | null;
 }
 
 export interface ListNativeDocumentsInput {
@@ -931,6 +957,20 @@ export interface DocumentObjectRepository {
   updateNativeDocumentVersion: (id: string, input: UpdateNativeDocumentVersionInput) => NativeDocumentRecord | undefined;
   listNativeDocumentVersions: (id: string) => NativeDocumentVersionRecord[];
   linkNativeDocumentObject: (id: string, objectRef: ObjectRef) => NativeDocumentRecord | undefined;
+  /**
+   * R-029 — record a successful re-index of a native document. Only touches index state;
+   * never re-writes the document so an indexing outcome can never corrupt a provider write.
+   */
+  markNativeDocumentIndexed: (id: string, indexedAt?: string | null) => NativeDocumentRecord | undefined;
+  /**
+   * R-029 — record an index failure/degraded state. Isolated from provider-write success so
+   * an indexing failure never falsely marks the document write as failed.
+   */
+  markNativeDocumentIndexFailed: (
+    id: string,
+    error?: string | null,
+    state?: NativeDocumentIndexFailureState,
+  ) => NativeDocumentRecord | undefined;
   createExternalDocumentRef: (input: CreateExternalDocumentRefInput) => ExternalDocumentRefRecord;
   getExternalDocumentRef: (id: string) => ExternalDocumentRefRecord | undefined;
   listExternalDocumentRefs: (input: ListExternalDocumentRefsInput) => ExternalDocumentRefRecord[];
@@ -2739,6 +2779,10 @@ export const ACTIVITY_EVENT_TYPES = [
   'permission_denied',
   'integration_degraded',
   'migration_warning',
+  // T-010 (THE-951): a document operation (create/mutate/read/reconcile) normalized activity event.
+  // Kept as a first-class structured event so R-027 document mutations persist with a valid
+  // activity_event_type + schema_status 'structured' instead of degrading to legacy_event_observed.
+  'document_operation',
   // Workplane minimal ActivityEvent spine (THE-869 / WP1-C-01)
   ...ACTIVITY_EVENT_SPINE_TYPES,
   'legacy_event_observed',
@@ -5264,6 +5308,9 @@ function bootstrap(db: Database.Database): void {
       linked_object_refs_json TEXT NOT NULL DEFAULT '[]',
       created_by_principal_id TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}',
+      last_indexed_at TEXT,
+      search_index_state TEXT NOT NULL DEFAULT 'stale',
+      last_index_error TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -5753,6 +5800,18 @@ function bootstrap(db: Database.Database): void {
 
   if (!hasColumn(db, 'external_document_refs', 'external_ref_state')) {
     db.exec("ALTER TABLE external_document_refs ADD COLUMN external_ref_state TEXT NOT NULL DEFAULT 'unknown'");
+  }
+
+  if (!hasColumn(db, 'native_documents', 'last_indexed_at')) {
+    db.exec('ALTER TABLE native_documents ADD COLUMN last_indexed_at TEXT');
+  }
+
+  if (!hasColumn(db, 'native_documents', 'search_index_state')) {
+    db.exec("ALTER TABLE native_documents ADD COLUMN search_index_state TEXT NOT NULL DEFAULT 'stale'");
+  }
+
+  if (!hasColumn(db, 'native_documents', 'last_index_error')) {
+    db.exec('ALTER TABLE native_documents ADD COLUMN last_index_error TEXT');
   }
 
   if (!hasColumn(db, 'entity_agents', 'runtime_binding_id')) {
@@ -7682,6 +7741,10 @@ function normalizeNativeDocumentLifecycleState(value: unknown): NativeDocumentLi
   return value === 'draft' || value === 'archived' || value === 'superseded' ? value : 'active';
 }
 
+function normalizeNativeDocumentSearchIndexState(value: unknown): NativeDocumentSearchIndexState {
+  return value === 'fresh' || value === 'stale' || value === 'degraded' || value === 'indexing_failed' ? value : 'stale';
+}
+
 function normalizeExternalConnectorType(value: unknown): ExternalDocumentConnectorType {
   return value === 'google_drive' || value === 'google_docs' ? value : 'other';
 }
@@ -7779,6 +7842,9 @@ function mapNativeDocumentRow(row: Record<string, unknown>): NativeDocumentRecor
     linked_object_refs: normalizeObjectRefsJson(row.linked_object_refs_json),
     created_by_principal_id: normalizeBlockerReason(row.created_by_principal_id),
     metadata_json: normalizeJsonObjectString(row.metadata_json),
+    last_indexed_at: normalizeNullableTimestamp(row.last_indexed_at),
+    search_index_state: normalizeNativeDocumentSearchIndexState(row.search_index_state),
+    last_index_error: normalizeBlockerReason(row.last_index_error),
     created_at: normalizeTimestamp(String(row.created_at ?? '')),
     updated_at: normalizeTimestamp(String(row.updated_at ?? row.created_at ?? '')),
   };
@@ -8965,7 +9031,23 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
         content_hash = ?,
         version = ?,
         metadata_json = ?,
+        search_index_state = 'stale',
+        last_indexed_at = NULL,
+        last_index_error = NULL,
         updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  const markNativeIndexedStmt = db.prepare(`
+    UPDATE native_documents
+    SET search_index_state = 'fresh',
+        last_indexed_at = ?,
+        last_index_error = NULL
+    WHERE id = ?
+  `);
+  const markNativeIndexFailedStmt = db.prepare(`
+    UPDATE native_documents
+    SET search_index_state = ?,
+        last_index_error = ?
     WHERE id = ?
   `);
   const updateExternalRefsStmt = db.prepare(`
@@ -8992,9 +9074,12 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
       linked_object_refs_json,
       created_by_principal_id,
       metadata_json,
+      last_indexed_at,
+      search_index_state,
+      last_index_error,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'markdown', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, 'markdown', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   const createExternalStmt = db.prepare(`
     INSERT INTO external_document_refs (
@@ -9058,7 +9143,10 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
           normalizeJsonObjectString(input.acl_json),
           stringifyObjectRefs(input.linked_object_refs ?? []),
           createdBy,
-          metadataJson
+          metadataJson,
+          normalizeNullableTimestamp(input.last_indexed_at),
+          normalizeNativeDocumentSearchIndexState(input.search_index_state ?? 'stale'),
+          normalizeBlockerReason(input.last_index_error)
         );
         insertNativeVersionStmt.run(id, version, stablePath, contentHash, metadataJson, createdBy);
         return id;
@@ -9161,6 +9249,32 @@ export function createDocumentObjectRepository(): DocumentObjectRepository {
       }
       const refs = appendObjectRef(mapNativeDocumentRow(current).linked_object_refs, objectRef);
       updateNativeRefsStmt.run(JSON.stringify(refs), normalizedId);
+      const row = getNativeStmt.get(normalizedId) as Record<string, unknown> | undefined;
+      return row ? mapNativeDocumentRow(row) : undefined;
+    },
+
+    markNativeDocumentIndexed: (id: string, indexedAt?: string | null) => {
+      const normalizedId = id.trim();
+      const current = getNativeStmt.get(normalizedId) as Record<string, unknown> | undefined;
+      if (!current) {
+        return undefined;
+      }
+      markNativeIndexedStmt.run(normalizeNullableTimestamp(indexedAt), normalizedId);
+      const row = getNativeStmt.get(normalizedId) as Record<string, unknown> | undefined;
+      return row ? mapNativeDocumentRow(row) : undefined;
+    },
+
+    markNativeDocumentIndexFailed: (
+      id: string,
+      error?: string | null,
+      state: NativeDocumentSearchIndexState = 'indexing_failed',
+    ) => {
+      const normalizedId = id.trim();
+      const current = getNativeStmt.get(normalizedId) as Record<string, unknown> | undefined;
+      if (!current) {
+        return undefined;
+      }
+      markNativeIndexFailedStmt.run(normalizeNativeDocumentSearchIndexState(state), normalizeBlockerReason(error), normalizedId);
       const row = getNativeStmt.get(normalizedId) as Record<string, unknown> | undefined;
       return row ? mapNativeDocumentRow(row) : undefined;
     },

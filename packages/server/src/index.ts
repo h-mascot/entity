@@ -45,6 +45,7 @@ import {
 import { getEntityDatabase } from "../../db/src/entity-db";
 import { createFileSourceRepository } from "../../db/src/file-sources";
 import { registerFileSystemRoutes } from "./fs";
+import { closeManagedStorageBrokerPool } from "./fs/managed-storage-broker";
 import { registerEditorModule } from "./editor";
 import { createSearchRouter } from "./routes/search";
 import {
@@ -110,6 +111,9 @@ import {
 import { registerDocsApiRoutes } from "./routes/docs";
 import { createWorktypeRegistryRouter } from "./routes/worktype-registry";
 import { createDocumentObjectRouter } from "./document-objects";
+import { createDocumentIntegrationsRouter } from "./routes/document-integrations";
+import { createDocumentRegistry } from "./document-providers/registry";
+import { applyDocumentIntegrationsMigration } from "./document-providers/migrations";
 import { registerTtsRoutes } from "./routes/tts";
 import { registerLegacyFileRoutes } from "./routes/legacy-files";
 import { registerDocumentRoutes } from "./routes/documents";
@@ -119,7 +123,13 @@ import { createAgentRegistryRouter } from "./routes/agent-registry";
 import { createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
 import { createTaskHandoffRouter } from "./routes/task-handoffs";
-import { createCustomerPrincipalMiddleware } from "./principals/request-context";
+import {
+  createCustomerPrincipalMiddleware,
+  getCustomerPrincipal,
+  isOrgAuthorized,
+} from "./principals/request-context";
+import { readExplicitRequestOrgHeader, resolveCustomerWorkspaceScope } from "./request-permissions";
+import { readDefaultOrgId } from "./config/admin-runtime";
 import { createDataPlaneCredentialGuard } from "./middleware/data-plane-credential";
 import { registerStrategicRoutes, registerTaskRoutes } from "./routes/tasks";
 import {
@@ -407,6 +417,70 @@ runInferenceProviderMigrations({
   db: entityDb,
   logger: console,
 });
+// ---------------------------------------------------------------------------
+// T-008 — provider-neutral Document Integration API (option (a) namespace).
+// Mounted under /api/document-integrations per PRD §12, following the
+// /api/document-objects precedent (~:329). NOT added to the editor router.
+// Workspace/tenant isolation is enforced at the route boundary (THE-945 r3 F3
+// predicate holds) via the injected resolver below; adapters/policies are
+// deliberately unpopulated (fail closed) until T-012+ wires real providers.
+// ---------------------------------------------------------------------------
+{
+  // Apply the ADDITIVE unified document schema (T-003). Safe to run repeatedly
+  // (IF NOT EXISTS); does not touch legacy document data (R-036).
+  const documentIntegrationsMigration = applyDocumentIntegrationsMigration(entityDb);
+  if (!documentIntegrationsMigration.success) {
+    // Collision or ensure failure is a startup concern; log it loudly. The
+    // registry still mounts and surfaces typed errors at the route boundary.
+    console.error(
+      "[document-integrations] T-003 additive schema not applied:",
+      documentIntegrationsMigration.collisionCheck,
+    );
+  }
+  const documentIntegrationsRegistry = createDocumentRegistry(entityDb);
+  /**
+   * Resolve the request's workspace/tenant scope for the T-008 API. A bound
+   * customer principal must map to exactly one authorized org (their workspace);
+   * any ambiguity or out-of-membership probe FAILS CLOSED (WORKSPACE_REQUIRED).
+   * The trusted service/admin path binds the deployment default org.
+   */
+  function resolveDocumentIntegrationsWorkspace(req: Request): string | null {
+    try {
+      const customer = getCustomerPrincipal(req);
+      // L1e: this namespace reads the caller-explicit org from the HEADER ONLY (no query/body
+      // org selectors — they must never steer the workspace binding).
+      const explicit = readExplicitRequestOrgHeader(req);
+      if (customer) {
+        // L1d: a customer (including an ambiguous global admin) resolves through the pure,
+        // fail-closed decision — explicit ?? single-membership-org, else null (WORKSPACE_REQUIRED);
+        // never the deployment default for a customer.
+        return resolveCustomerWorkspaceScope(
+          customer,
+          explicit,
+          explicit ? isOrgAuthorized(req, explicit) : false,
+        );
+      }
+      // Trusted service/admin path binds the deployment default org.
+      return explicit ?? readDefaultOrgId();
+    } catch {
+      // Any resolver/config fault fails closed rather than leaking a 500.
+      return null;
+    }
+  }
+  app.use(
+    "/api/document-integrations",
+    createDocumentIntegrationsRouter({
+      registry: documentIntegrationsRegistry,
+      // No real provider adapters are wired until T-012+; the API fails closed
+      // with typed PROVIDER_UNAVAILABLE rather than inventing a provider.
+      adapters: () => undefined,
+      policies: [],
+      destinations: [],
+      flags: phase2Flags,
+      resolveWorkspace: resolveDocumentIntegrationsWorkspace,
+    }),
+  );
+}
 const pluginHooks = new PluginHookEmitter(console);
 const startupEffectiveConfig = buildEffectiveConfig({ db: entityDb });
 const pluginRegistry = new PluginRegistry({
@@ -653,6 +727,7 @@ function shutdown(reason: string, exitCode = 0) {
   clearInterval(agentStatusInterval);
   taskAgentScheduler.stop();
   closeDocumentsDatabase();
+  void closeManagedStorageBrokerPool();
   console.log(`[Server] Shutting down (${reason})`);
   wss.close(() => {
     server.close(() => {

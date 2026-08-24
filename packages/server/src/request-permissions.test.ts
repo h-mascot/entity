@@ -2,7 +2,11 @@ import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPrincipalRepository, ensurePrincipalsSchema } from '../../db/src/principals';
 import { evaluatePermission } from './permissions';
-import { readRequestPrincipal } from './request-permissions';
+import {
+  readExplicitRequestOrgHeader,
+  readRequestPrincipal,
+  resolveCustomerWorkspaceScope,
+} from './request-permissions';
 
 const db = new Database(':memory:');
 const repo = createPrincipalRepository(db);
@@ -148,5 +152,51 @@ describe('request permissions with stored principals', () => {
     }), 'org-a', repo, { enforceStoredPrincipals: false });
 
     expect(principal.grants[0]?.role).toBe('admin');
+  });
+});
+
+describe('THE-949 T-008 L1e — readExplicitRequestOrgHeader (header-only, no default fallback)', () => {
+  it('reads x-entity-org-id and trims surrounding whitespace', () => {
+    expect(readExplicitRequestOrgHeader(fakeRequest({ 'x-entity-org-id': '  org-a  ' }))).toBe('org-a');
+  });
+
+  it('falls back to the x-entity-org alias header', () => {
+    expect(readExplicitRequestOrgHeader(fakeRequest({ 'x-entity-org': 'org-b' }))).toBe('org-b');
+  });
+
+  it('returns null when absent, blank, or whitespace-only (never a default-org fallback)', () => {
+    expect(readExplicitRequestOrgHeader(fakeRequest({}))).toBeNull();
+    expect(readExplicitRequestOrgHeader(fakeRequest({ 'x-entity-org-id': '   ' }))).toBeNull();
+    // Body/query org selectors must NOT steer the header-only selector.
+    const req = fakeRequest({});
+    (req as any).body = { org_id: 'org-a' };
+    (req as any).query = { org_id: 'org-a' };
+    expect(readExplicitRequestOrgHeader(req)).toBeNull();
+  });
+});
+
+describe('THE-949 T-008 L1d — resolveCustomerWorkspaceScope fails closed on ambiguity', () => {
+  it('global admin: explicit header wins', () => {
+    expect(resolveCustomerWorkspaceScope({ isGlobalAdmin: true, orgIds: ['a', 'b'] }, 'a', true)).toBe('a');
+  });
+
+  it('explicit ?? single-org with NO default-org fallback', () => {
+    // Single org, no explicit header -> the single membership org.
+    expect(resolveCustomerWorkspaceScope({ isGlobalAdmin: true, orgIds: ['org-a'] }, null, false)).toBe('org-a');
+    expect(resolveCustomerWorkspaceScope({ isGlobalAdmin: false, orgIds: ['org-a'] }, null, false)).toBe('org-a');
+    // Single org + explicit -> explicit.
+    expect(resolveCustomerWorkspaceScope({ isGlobalAdmin: true, orgIds: ['org-a'] }, 'org-b', true)).toBe('org-b');
+  });
+
+  it('ambiguous global admin (no explicit, multiple orgs) FAILS CLOSED (null -> WORKSPACE_REQUIRED), never the deployment default', () => {
+    expect(resolveCustomerWorkspaceScope({ isGlobalAdmin: true, orgIds: ['a', 'b'] }, null, false)).toBeNull();
+    // Non-global multi-org with no explicit explicit scope also fails closed.
+    expect(resolveCustomerWorkspaceScope({ isGlobalAdmin: false, orgIds: ['a', 'b'] }, null, false)).toBeNull();
+  });
+
+  it('non-global customer: an out-of-membership explicit header fails closed (null)', () => {
+    expect(resolveCustomerWorkspaceScope({ isGlobalAdmin: false, orgIds: ['org-a'] }, 'org-other', false)).toBeNull();
+    // Within-membership explicit header is honored.
+    expect(resolveCustomerWorkspaceScope({ isGlobalAdmin: false, orgIds: ['org-a'] }, 'org-a', true)).toBe('org-a');
   });
 });

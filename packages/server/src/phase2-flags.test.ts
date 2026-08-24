@@ -4,6 +4,7 @@ import {
   resolvePhase2Flags,
   serializePhase2FlagDiagnostics,
 } from './phase2-flags';
+import { capabilityResolutionEnabled } from './document-providers/capability-resolver';
 
 describe('Phase 2 feature flags', () => {
   it('uses conservative staged defaults for strict enforcement and migration rollout', () => {
@@ -74,5 +75,42 @@ describe('Phase 2 feature flags', () => {
         'search_permission_strictness',
       ]),
     );
+  });
+
+  it('F3b: capability_resolver_enforcement is default-enabled and surfaces in coverage + groups', () => {
+    const flags = resolvePhase2Flags({});
+    expect(phase2FlagEnabled(flags, 'capability_resolver_enforcement')).toBe(true);
+    expect(flags.capability_resolver_enforcement).toMatchObject({
+      key: 'capability_resolver_enforcement',
+      envVar: 'ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT',
+      defaultEnabled: true,
+      enabled: true,
+      source: 'default',
+      category: 'enforcement',
+    });
+    const diagnostics = serializePhase2FlagDiagnostics(flags, new Date('2026-08-18T00:00:00.000Z'));
+    expect(diagnostics.coverage.capability_resolver).toBe('capability_resolver_enforcement');
+    expect(diagnostics.groups.enforcement).toEqual(
+      expect.arrayContaining(['capability_resolver_enforcement']),
+    );
+  });
+
+  it('F3b: ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT env override flips the resolved flag', () => {
+    const on = resolvePhase2Flags({ ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT: 'on' });
+    expect(on.capability_resolver_enforcement).toMatchObject({ enabled: true, source: 'env' });
+    const off = resolvePhase2Flags({ ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT: '0' });
+    expect(off.capability_resolver_enforcement).toMatchObject({ enabled: false, source: 'env' });
+  });
+
+  it('F3b: capabilityResolutionEnabled rollback switch follows the audited flag (single reversible point)', () => {
+    // The documented fallback (disable-list) rolls the resolver *enforcement* back with no code
+    // change; the resolver module itself stays pure.
+    expect(capabilityResolutionEnabled(resolvePhase2Flags({}))).toBe(true);
+    expect(
+      capabilityResolutionEnabled(resolvePhase2Flags({ ENTITY_PHASE2_DISABLE_FLAGS: 'capability_resolver_enforcement' })),
+    ).toBe(false);
+    expect(
+      capabilityResolutionEnabled(resolvePhase2Flags({ ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT: 'off' })),
+    ).toBe(false);
   });
 });

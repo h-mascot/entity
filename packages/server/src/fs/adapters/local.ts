@@ -1,38 +1,23 @@
-import fs from 'fs';
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { detectContentType } from '../../file-types';
-import { assertAllowedLocalSourceBasePath, isBasePathAllowlisted } from '../source-root-guard';
-import { assertRealpathContained, assertWriteTargetRealpathContained, normalizeSourceRelativePath, resolveLocalPath } from '../security';
-import { readLocalFileBounded, SourceReadLimitError } from './bounded-read';
+import { ManagedStorageBrokerClient, ManagedStorageBrokerClientPool, ManagedStorageBrokerError, acquireManagedStorageBrokerClient, resolveManagedStorageBrokerExecutable, type BrokerStat } from '../managed-storage-broker';
+import { isBasePathAllowlisted } from '../source-root-guard';
+import { normalizeSourceRelativePath } from '../security';
+import { DEFAULT_SOURCE_READ_LIMIT_BYTES, SourceReadLimitError } from './bounded-read';
 import type { FileSourceAdapter, SourceCapability, SourceNode, SourcePathMetadata, SourceReadOptions } from './types';
 
-function toIsoTimestamp(value: Date): string {
-  return value.toISOString();
-}
+type ManagedStorageOperations = Pick<ManagedStorageBrokerClient, 'stat' | 'read' | 'write' | 'exclusiveCreate' | 'mkdir' | 'list'>;
 
-function toKind(stats: fs.Stats): SourcePathMetadata['kind'] {
-  if (stats.isFile()) {
-    return 'file';
-  }
-  if (stats.isDirectory()) {
-    return 'directory';
-  }
-  return 'other';
-}
-
-export const LOCAL_SOURCE_CAPABILITY_POLICY: SourceCapability = {
-  read: true,
-  write: false,
-  rename: false,
-  delete: false,
-  list: true,
-  search: true,
+export type LocalFileSourceAdapterOptions = {
+  brokerClient?: ManagedStorageOperations;
+  brokerExecutable?: string;
+  /**
+   * Broker client pool to draw from (defaults to the per-process pool). Use to
+   * bound child-process creation and to close pooled clients in tests.
+   */
+  brokerPool?: ManagedStorageBrokerClientPool;
 };
-
-interface LocalSourceCapabilityOptions {
-  readOnly?: boolean;
-}
 
 function sourceIsReadOnly(source: FileSourceRecord): boolean {
   try {
@@ -43,297 +28,177 @@ function sourceIsReadOnly(source: FileSourceRecord): boolean {
   }
 }
 
-export function deriveLocalSourceCapabilities(
-  basePath: string | undefined | null,
-  options: LocalSourceCapabilityOptions = {},
-): SourceCapability {
-  return {
-    ...LOCAL_SOURCE_CAPABILITY_POLICY,
-    write: !options.readOnly && isBasePathAllowlisted(basePath),
-  };
+export const LOCAL_SOURCE_CAPABILITY_POLICY: SourceCapability = {
+  read: true, write: false, rename: false, delete: false, list: true, search: true,
+};
+
+export function deriveLocalSourceCapabilities(basePath: string | undefined | null, options: { readOnly?: boolean } = {}): SourceCapability {
+  return { ...LOCAL_SOURCE_CAPABILITY_POLICY, write: !options.readOnly && isBasePathAllowlisted(basePath) };
 }
 
-export function localSourceCapabilitiesJson(
-  basePath?: string | null,
-  options: LocalSourceCapabilityOptions = {},
-): string {
-  return JSON.stringify({
-    ...deriveLocalSourceCapabilities(basePath, options),
-    readOnly: options.readOnly === true,
-  });
+export function localSourceCapabilitiesJson(basePath?: string | null, options: { readOnly?: boolean } = {}): string {
+  return JSON.stringify({ ...deriveLocalSourceCapabilities(basePath, options), readOnly: options.readOnly === true });
 }
 
-function toNode(sourceId: string, rootPath: string, entryName: string, stats: fs.Stats): SourceNode {
-  const normalizedRoot = rootPath.replace(/\\/g, '/').replace(/\/+$/, '');
-  const relativePath = normalizedRoot ? `${normalizedRoot}/${entryName}` : entryName;
-  const kind = toKind(stats);
-  const isDirectory = kind === 'directory';
+function normalizePath(relativePath: string): string {
+  return normalizeSourceRelativePath(relativePath);
+}
 
-  return {
-    sourceId,
-    path: relativePath,
-    name: entryName,
-    isDirectory,
-    kind,
-    size: kind === 'file' ? stats.size : undefined,
-    updatedAt: toIsoTimestamp(stats.mtime),
-  };
+function unavailable(error: unknown, message: string): Error {
+  // A broker whose startup root cannot be opened exits before it can emit a
+  // typed response. Keep the public validation contract explicit in that case.
+  if (error instanceof ManagedStorageBrokerError && error.code === 'not_found') return new Error(message);
+  if (error instanceof Error && error.message === 'managed storage broker exited') return new Error(message);
+  return error instanceof Error ? error : new Error(message);
+}
+
+// The broker describes failures with a small typed error-code vocabulary. The
+// route layer, however, maps HTTP statuses from human-readable error messages.
+// Re-surface the broker's typed failures as ManagedStorageBrokerError with the
+// same typed code but a message the routes already recognize, so the public
+// status codes and bodies are preserved without losing the typed code:
+//   - not_found -> 404 (missing file), via the "no such file" contract.
+//   - invalid   -> 403 (symlink/invalid descriptor-relative target), fail-closed.
+function translateBrokerReadError(error: unknown): Error {
+  if (error instanceof ManagedStorageBrokerError) {
+    if (error.code === 'not_found') return new ManagedStorageBrokerError('not_found', 'ENOENT: no such file or directory');
+    if (error.code === 'invalid') return new ManagedStorageBrokerError('invalid', 'Access outside source root is not allowed.');
+  }
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function unboundedReadLimit(): number {
+  return DEFAULT_SOURCE_READ_LIMIT_BYTES;
 }
 
 export class LocalFileSourceAdapter implements FileSourceAdapter {
   readonly key = 'local';
   private readonly source: FileSourceRecord;
+  private readonly broker: ManagedStorageOperations;
 
-  constructor(source: FileSourceRecord) {
+  constructor(source: FileSourceRecord, options: LocalFileSourceAdapterOptions = {}) {
     this.source = source;
+    // Reuse a pooled broker child (per executable+root) unless a specific client
+    // was injected, so repeated adapter construction for the same source does not
+    // spawn a fresh long-lived broker process each time.
+    this.broker = options.brokerClient
+      ?? options.brokerPool?.acquire({
+        executable: options.brokerExecutable ?? resolveManagedStorageBrokerExecutable(),
+        root: source.base_path?.trim() ?? '',
+      })
+      ?? acquireManagedStorageBrokerClient({
+        executable: options.brokerExecutable ?? resolveManagedStorageBrokerExecutable(),
+        root: source.base_path?.trim() ?? '',
+      });
   }
 
   async validate(source: FileSourceRecord): Promise<void> {
     const basePath = source.base_path?.trim();
-    const resolved = await assertAllowedLocalSourceBasePath(basePath);
-    const stats = await fs.promises.stat(resolved).catch((err) => {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code === 'ENOENT') {
-        throw new Error('Local source path does not exist.');
+    if (!basePath) throw new Error('Local source basePath is not configured.');
+    let stats;
+    try {
+      stats = await this.broker.stat('.');
+    } catch (error) {
+      if (error instanceof ManagedStorageBrokerError && error.code === 'invalid') {
+        throw new Error('Local source basePath must be a directory.');
       }
-      throw err;
-    });
-    if (!stats.isDirectory()) {
-      throw new Error('Local source basePath must be a directory.');
+      throw unavailable(error, 'Local source path does not exist.');
     }
+    if (!stats.isDirectory) throw new Error('Local source basePath must be a directory.');
   }
 
   private assertWritable(): void {
-    if (sourceIsReadOnly(this.source)) {
-      throw new Error('Local source is read-only.');
-    }
+    if (sourceIsReadOnly(this.source)) throw new Error('Local source is read-only.');
   }
 
   capabilities(): SourceCapability {
-    return deriveLocalSourceCapabilities(this.source.base_path, {
-      readOnly: sourceIsReadOnly(this.source),
-    });
-  }
-
-  async list(relativePath: string): Promise<SourceNode[]> {
-    const basePath = this.source.base_path?.trim();
-    if (!basePath) {
-      throw new Error('Local source basePath is not configured.');
-    }
-
-    const normalizedRelative = normalizeSourceRelativePath(relativePath);
-    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
-    await assertRealpathContained(basePath, absolutePath);
-    const entries = await fs.promises.readdir(absolutePath, { withFileTypes: true });
-
-    const nodes = (
-      await Promise.all(
-        entries
-          .filter((entry) => !entry.name.startsWith('.'))
-          .map(async (entry) => {
-            try {
-              const entryAbsolutePath = path.join(absolutePath, entry.name);
-              const stats = await fs.promises.lstat(entryAbsolutePath);
-              const rootPath = normalizedRelative;
-              return toNode(this.source.id, rootPath, entry.name, stats);
-            } catch (err) {
-              const code = (err as NodeJS.ErrnoException)?.code;
-              if (code === 'ENOENT') {
-                return null;
-              }
-              throw err;
-            }
-          })
-      )
-    ).filter((node): node is SourceNode => node !== null);
-
-    return nodes.sort((a, b) => {
-      if (a.isDirectory && !b.isDirectory) {
-        return -1;
-      }
-      if (!a.isDirectory && b.isDirectory) {
-        return 1;
-      }
-      return a.name.localeCompare(b.name);
-    });
+    return deriveLocalSourceCapabilities(this.source.base_path, { readOnly: sourceIsReadOnly(this.source) });
   }
 
   async stat(relativePath: string): Promise<SourcePathMetadata> {
-    const basePath = this.source.base_path?.trim();
-    if (!basePath) {
-      throw new Error('Local source basePath is not configured.');
-    }
-
-    const normalizedRelative = normalizeSourceRelativePath(relativePath);
-    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
-    await assertRealpathContained(basePath, absolutePath);
-    const stats = await fs.promises.lstat(absolutePath);
-    const name = normalizedRelative ? path.posix.basename(normalizedRelative) : path.basename(absolutePath);
-    const kind = toKind(stats);
-    return {
-      sourceId: this.source.id,
-      path: normalizedRelative,
-      name,
-      kind,
-      size: kind === 'file' ? stats.size : undefined,
-      updatedAt: toIsoTimestamp(stats.mtime),
-    };
+    const normalized = normalizePath(relativePath);
+    const stats = await this.broker.stat(normalized || '.');
+    const name = normalized ? path.posix.basename(normalized) : path.posix.basename(this.source.base_path?.replace(/[\\/]+$/, '') ?? '');
+    return { sourceId: this.source.id, path: normalized, name, kind: stats.isDirectory ? 'directory' : 'file', size: stats.isDirectory ? undefined : stats.size };
   }
 
-  async read(relativePath: string, options?: SourceReadOptions): Promise<{ content: string; contentType: string; updatedAt?: string; size?: number; isBinary?: boolean }> {
-    const basePath = this.source.base_path?.trim();
-    if (!basePath) {
-      throw new Error('Local source basePath is not configured.');
-    }
-
-    const normalizedRelative = normalizeSourceRelativePath(relativePath);
-    if (!normalizedRelative) {
-      throw new Error('Path is required.');
-    }
-
-    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
-    await assertRealpathContained(basePath, absolutePath);
-    const stats = await fs.promises.stat(absolutePath);
-    if (!stats.isFile()) {
-      throw new Error('Target path is not a file.');
-    }
-
-    if (options?.maxBytes !== undefined && stats.size > options.maxBytes) {
-      throw new SourceReadLimitError(options.maxBytes);
-    }
-    const buffer = await readLocalFileBounded(absolutePath, options);
-    const detected = detectContentType({ filePath: absolutePath, content: buffer });
-    return {
-      content: detected.isBinary ? '' : buffer.toString('utf-8'),
-      contentType: detected.contentType,
-      updatedAt: toIsoTimestamp(stats.mtime),
-      size: stats.size,
-      isBinary: detected.isBinary,
-    };
+  async list(relativePath: string): Promise<SourceNode[]> {
+    const normalized = normalizePath(relativePath);
+    const names = await this.broker.list(normalized || '.');
+    const nodes = await Promise.all(names.filter((name) => !name.startsWith('.')).map(async (name) => {
+      const childPath = normalized ? `${normalized}/${name}` : name;
+      const stats = await this.broker.stat(childPath);
+      const isDirectory = stats.isDirectory;
+      return { sourceId: this.source.id, path: childPath, name, isDirectory, kind: isDirectory ? 'directory' : 'file', size: isDirectory ? undefined : stats.size } satisfies SourceNode;
+    }));
+    return nodes.sort((a, b) => a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1);
   }
 
-  async readRaw(relativePath: string, options?: SourceReadOptions): Promise<{ content: Buffer; contentType: string; updatedAt?: string; size: number }> {
-    const basePath = this.source.base_path?.trim();
-    if (!basePath) {
-      throw new Error('Local source basePath is not configured.');
+  private async readBytes(relativePath: string, options?: SourceReadOptions): Promise<{ content: Buffer; size: number }> {
+    const normalized = normalizePath(relativePath);
+    if (!normalized) throw new Error('Path is required.');
+    let stats: BrokerStat;
+    try {
+      stats = await this.broker.stat(normalized);
+    } catch (error) {
+      throw translateBrokerReadError(error);
     }
-
-    const normalizedRelative = normalizeSourceRelativePath(relativePath);
-    if (!normalizedRelative) {
-      throw new Error('Path is required.');
+    if (stats.isDirectory) throw new Error('Target path is not a file.');
+    // Enforce the same shared hard ceiling the unbounded route path guarantees,
+    // so an oversized local read yields 413 (not a broker 500) with the standard
+    // read-limit message when no explicit maxBytes is supplied.
+    const maxBytes = options?.maxBytes === undefined || !Number.isFinite(options.maxBytes) || options.maxBytes < 1
+      ? unboundedReadLimit()
+      : Math.min(Math.floor(options.maxBytes), unboundedReadLimit());
+    if (stats.size > maxBytes) throw new SourceReadLimitError(maxBytes);
+    let content: Uint8Array;
+    try {
+      content = await this.broker.read(normalized);
+    } catch (error) {
+      throw translateBrokerReadError(error);
     }
+    return { content: Buffer.from(content), size: stats.size };
+  }
 
-    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
-    await assertRealpathContained(basePath, absolutePath);
-    const stats = await fs.promises.stat(absolutePath);
-    if (!stats.isFile()) {
-      throw new Error('Target path is not a file.');
-    }
+  async read(relativePath: string, options?: SourceReadOptions) {
+    const normalized = normalizePath(relativePath);
+    const { content, size } = await this.readBytes(normalized, options);
+    const detected = detectContentType({ filePath: normalized, content });
+    return { content: detected.isBinary ? '' : content.toString('utf8'), contentType: detected.contentType, size, isBinary: detected.isBinary };
+  }
 
-    const content = await readLocalFileBounded(absolutePath, options);
-    const detected = detectContentType({ filePath: absolutePath, content });
-    return {
-      content,
-      contentType: detected.contentType,
-      updatedAt: toIsoTimestamp(stats.mtime),
-      size: stats.size,
-    };
+  async readRaw(relativePath: string, options?: SourceReadOptions) {
+    const normalized = normalizePath(relativePath);
+    const { content, size } = await this.readBytes(normalized, options);
+    const detected = detectContentType({ filePath: normalized, content });
+    return { content, contentType: detected.contentType, size };
   }
 
   async write(relativePath: string, content: string): Promise<{ updatedAt?: string }> {
     this.assertWritable();
-    const basePath = this.source.base_path?.trim();
-    if (!basePath) {
-      throw new Error('Local source basePath is not configured.');
-    }
-
-    const normalizedRelative = normalizeSourceRelativePath(relativePath);
-    if (!normalizedRelative) {
-      throw new Error('Path is required.');
-    }
-
-    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
-    await assertWriteTargetRealpathContained(basePath, absolutePath);
-    try {
-      const stats = await fs.promises.stat(absolutePath);
-      if (!stats.isFile()) {
-        throw new Error('Target path is not a file.');
-      }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code !== 'ENOENT') {
-        throw err;
-      }
-    }
-
-    await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
-    await assertWriteTargetRealpathContained(basePath, absolutePath);
-    await fs.promises.writeFile(absolutePath, content, 'utf-8');
-    const updatedStats = await fs.promises.stat(absolutePath);
-    return {
-      updatedAt: toIsoTimestamp(updatedStats.mtime),
-    };
+    const normalized = normalizePath(relativePath);
+    if (!normalized) throw new Error('Path is required.');
+    await this.broker.write(normalized, Buffer.from(content, 'utf8'));
+    return {};
   }
 
   async writeExclusive(relativePath: string, content: string): Promise<{ updatedAt?: string }> {
     this.assertWritable();
-    const basePath = this.source.base_path?.trim();
-    if (!basePath) {
-      throw new Error('Local source basePath is not configured.');
-    }
-
-    const normalizedRelative = normalizeSourceRelativePath(relativePath);
-    if (!normalizedRelative) {
-      throw new Error('Path is required.');
-    }
-
-    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
-    await assertWriteTargetRealpathContained(basePath, absolutePath);
-    await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
-    await assertWriteTargetRealpathContained(basePath, absolutePath);
+    const normalized = normalizePath(relativePath);
+    if (!normalized) throw new Error('Path is required.');
     try {
-      await fs.promises.writeFile(absolutePath, content, { encoding: 'utf-8', flag: 'wx' });
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code === 'EEXIST') {
-        throw new Error('Converted document already exists.');
-      }
-      throw err;
+      await this.broker.exclusiveCreate(normalized, Buffer.from(content, 'utf8'));
+    } catch (error) {
+      if (error instanceof ManagedStorageBrokerError && error.code === 'exists') throw new Error('Converted document already exists.');
+      throw error;
     }
-    const updatedStats = await fs.promises.stat(absolutePath);
-    return {
-      updatedAt: toIsoTimestamp(updatedStats.mtime),
-    };
+    return {};
   }
 
   async mkdir(relativePath: string): Promise<void> {
     this.assertWritable();
-    const basePath = this.source.base_path?.trim();
-    if (!basePath) {
-      throw new Error('Local source basePath is not configured.');
-    }
-
-    const normalizedRelative = normalizeSourceRelativePath(relativePath);
-    if (!normalizedRelative) {
-      throw new Error('Path is required.');
-    }
-
-    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
-    await assertWriteTargetRealpathContained(basePath, absolutePath);
-    try {
-      const stats = await fs.promises.stat(absolutePath);
-      if (stats.isDirectory()) {
-        throw new Error('Folder already exists.');
-      }
-      throw new Error('Target path is not a directory.');
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code !== 'ENOENT') {
-        throw err;
-      }
-    }
-
-    await fs.promises.mkdir(absolutePath, { recursive: true });
-    await assertRealpathContained(basePath, absolutePath);
+    const normalized = normalizePath(relativePath);
+    if (!normalized) throw new Error('Path is required.');
+    await this.broker.mkdir(normalized);
   }
 }

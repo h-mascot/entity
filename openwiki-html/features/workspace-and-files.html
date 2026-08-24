@@ -19,7 +19,7 @@
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
-<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and document collaboration</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
@@ -44,7 +44,7 @@
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/overview.html" target="_top"><span>Entity architecture overview</span><small>Architecture</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/architecture/runtime-and-data.html" target="_top"><span>Runtime and Data Architecture</span><small>Architecture</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/agents-and-collaboration.html" target="_top"><span>Agents, Activity, and Collaboration</span><small>Features</small></a></li>
-<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and Document Collaboration</span><small>Features</small></a></li>
+<li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/files-and-documents.html" target="_top"><span>Files and document collaboration</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/index.html" target="_top"><span>Files</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control-and-tasks.html" target="_top"><span>Mission Control and tasks</span><small>Features</small></a></li>
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/features/mission-control.html" target="_top"><span>Mission Control and Task Governance</span><small>Features</small></a></li>
@@ -89,7 +89,7 @@
 </ul>
 <p>Those sources are enabled by default in the example config and bound to the sample assistant agent. The config also defines allowed document extensions for the docs surface, including markdown, text, JSON, YAML, CSV, TSV, and log-like files.</p>
 <h2 id="how-document-serving-works">How document serving works</h2>
-<p><code>packages/server/src/routes/docs.ts</code> builds an allow-list of roots from workspace and docs fallback paths, then resolves requested document paths against those roots. That means the docs viewer is intentionally constrained: the server does not serve arbitrary filesystem paths, only files under configured roots and allowed extensions.</p>
+<p><code>packages/server/src/routes/docs.ts</code> builds an allow-list of roots from workspace and docs fallback paths, then resolves requested document paths against those roots. That means the docs viewer is intentionally constrained: the server does not serve arbitrary filesystem paths, only files under configured roots and allowed extensions. The same read boundary is shared with <code>packages/server/src/fs/adapters/bounded-read.ts</code>, which keeps local reads, HTTP markdown reads, and docsify-adjacent reads on the same 16 MiB ceiling so the UI and indexing path fail the same way for oversized content.</p>
 <pre><code class="language-mermaid">flowchart TD
   UI[Files / Doc Hub UI]
   DocsRoute[packages/server/src/routes/docs.ts]
@@ -106,6 +106,7 @@
 <h2 id="degraded-or-compatibility-states">Degraded or compatibility states</h2>
 <ul>
 <li>The docs route contains legacy roots for older layouts, so the app can still read some historical paths during migration.</li>
+<li>The <code>entity-wiki</code> file source in <code>entity.config.example.yaml</code> now points at <code>./openwiki-html</code>, and the generated HTML tree is what the docs indexing pipeline reads after stripping markup and entities for previews.</li>
 <li>The UI contains lazy-loading fallbacks, which means the file experience can render skeleton states while bundles load.</li>
 <li>The file browsing model is source-driven, so an empty or misconfigured source list produces a reduced workspace rather than a hard crash.</li>
 </ul>

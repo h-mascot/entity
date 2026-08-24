@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -333,4 +333,244 @@ test("deploy removes the temporary runtime environment file on early failure", (
   assert.ok(cleanupTrapInstalled > temporaryFileCreated);
   assert.ok(cleanupTrapInstalled < firstEnvironmentCopy);
   assert.match(source, /cleanup_runtime_env\(\) \{[\s\S]*rm -f "\$\{RUNTIME_ENV_TMP\}"[\s\S]*\}/);
+});
+
+// T-038 exact-SHA release proof (R-039): the reviewed candidate SHA must be the
+// SHA CI evaluates and the deployed sandbox reports; any mismatch fails closed.
+// `entity-release-info.mjs --check --expected <sha>` is the shared primitive used
+// by CI and the sandbox-deploy path to prove the deployed receipt identity equals
+// the reviewed candidate SHA and that no source/build drift slipped in.
+
+// Helper: build a git worktree fixture whose committed HEAD is a real SHA and
+// whose RELEASE.json is written for a caller-chosen recorded SHA.
+function gitReleaseFixture(recordedSha) {
+  const root = mkdtempSync(join(tmpdir(), "entity-exactsha-" + (recordedSha || "").slice(0, 6) + "-"));
+  writeFileSync(join(root, "package.json"), JSON.stringify({
+    name: "exactsha-fixture",
+    scripts: { "docs:wiki:verify": "node -e \"process.exit(0)\"" },
+  }));
+  writeFileSync(join(root, "tracked.txt"), "immutable\n");
+  writeFileSync(join(root, "VERSION"), recordedSha ? `${recordedSha}\n` : "");
+  writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: recordedSha }, null, 2));
+  for (const args of [
+    ["init", "-b", "main"],
+    ["config", "user.email", "test@example.com"],
+    ["config", "user.name", "Entity Test"],
+    ["add", "."],
+    ["commit", "-m", "fixture"],
+  ]) {
+    const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  return root;
+}
+
+function headSha(root) {
+  return spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
+}
+
+function runCheck(root, { expected } = {}) {
+  const args = [script, "--check", "--root", root];
+  if (expected) args.push("--expected", expected);
+  return spawnSync(process.execPath, args, { encoding: "utf8" });
+}
+
+test("exact-SHA check passes when deployed receipt SHA, VERSION, and source HEAD all equal the reviewed candidate SHA", () => {
+  const root = gitReleaseFixture();
+  try {
+    const candidate = headSha(root);
+    writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: candidate }, null, 2));
+    writeFileSync(join(root, "VERSION"), `${candidate}\n`);
+    const result = runCheck(root, { expected: candidate });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.gitSha, candidate);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("exact-SHA check fails closed when deployed SHA does not match the reviewed candidate SHA", () => {
+  const reviewed = "4".repeat(40);
+  const deployed = "5".repeat(40);
+  const root = gitReleaseFixture(deployed);
+  try {
+    writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: deployed }, null, 2));
+    writeFileSync(join(root, "VERSION"), `${deployed}\n`);
+    const result = runCheck(root, { expected: reviewed });
+    assert.notEqual(result.status, 0);
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.match(output, /EXACT_SHA_MISMATCH/);
+    assert.match(output, new RegExp(reviewed));
+    assert.match(output, new RegExp(deployed));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("exact-SHA check fails closed when the deployed RELEASE.json and VERSION disagree", () => {
+  const root = gitReleaseFixture();
+  try {
+    const shaA = "a".repeat(40);
+    const shaB = "b".repeat(40);
+    writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: shaA }, null, 2));
+    writeFileSync(join(root, "VERSION"), `${shaB}\n`);
+    const result = runCheck(root);
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /EXACT_SHA_MISMATCH/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("exact-SHA check fails closed when the source checkout has drifted from the deployed/gitSha identity", () => {
+  const root = gitReleaseFixture();
+  try {
+    const deployed = headSha(root);
+    const drifted = "c".repeat(40);
+    writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: drifted }, null, 2));
+    writeFileSync(join(root, "VERSION"), `${drifted}\n`);
+    const result = runCheck(root);
+    assert.notEqual(result.status, 0);
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.match(output, /SOURCE_DRIFT/);
+    assert.match(output, new RegExp(deployed));
+    assert.match(output, new RegExp(drifted));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deploy-sandbox invokes the exact-SHA release check and must never target production", () => {
+  const source = readFileSync(deployScript, "utf8");
+  const scriptSource = readFileSync(join(scriptsDirectory, "entity-deploy-sandbox.sh"), "utf8");
+  // The sandbox deploy must route identity through the shared release-info exact-SHA check.
+  assert.match(scriptSource, /release-info\.mjs[^\n]*--check/);
+  assert.match(scriptSource, /--expected/);
+  // It must resolve and export the exact candidate SHA for the deploy lane.
+  assert.match(scriptSource, /ENTITY_RELEASE_SHA/);
+  // The sandbox lane stays sandbox-gated and never routes through a prod lane.
+  assert.match(scriptSource, /ENTITY_SANDBOX_/);
+  assert.doesNotMatch(scriptSource, /promote:prod/);
+});
+
+// T-038 blocker 2: the deployment path must self-contain the native managed-storage
+// broker — compile/test it and install the executable to the deployed runtime path
+// before restart — so a sandbox/gateway never crash-loops on a missing broker.
+
+test("deploy self-contains the native managed-storage broker build and runtime install (T-038 blocker 2)", () => {
+  const deploySource = readFileSync(deployScript, "utf8");
+  const buildSource = readFileSync(join(scriptsDirectory, "build-managed-storage-broker.mjs"), "utf8");
+  // deploy.sh must invoke the native broker build during the server build, before
+  // the built files are synced, so a broken broker lane fails closed pre-sync.
+  assert.match(deploySource, /build-managed-storage-broker\.mjs/);
+  const buildInvoked = deploySource.indexOf("build-managed-storage-broker.mjs");
+  const serverBuild = deploySource.indexOf("npm --prefix packages/server run build");
+  const syncBegins = deploySource.indexOf("Syncing built files to configured target");
+  assert.ok(serverBuild !== -1 && buildInvoked > serverBuild, "broker build must run after the server TS build");
+  assert.ok(buildInvoked < syncBegins, "broker build must complete before the server-dist sync");
+  // The build/install tool must place the executable at the deployed runtime path
+  // the compiled server resolves (dist/server/native/.../.build/broker).
+  assert.match(buildSource, /packages\/server\/dist\/server\/native\/managed-storage-broker\/\.build\/broker/);
+  assert.match(buildSource, /copyFileSync/);
+});
+
+test("native managed-storage broker build installs an executable at the deployed runtime path (T-038 blocker 2)", () => {
+  const buildScript = join(scriptsDirectory, "build-managed-storage-broker.mjs");
+  const result = spawnSync(process.execPath, [buildScript], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(`${result.stdout}\n${result.stderr}`, /compile and direct tests passed/);
+  const runtimeBroker = join(scriptsDirectory, "..", "packages/server/dist/server/native/managed-storage-broker/.build/broker");
+  assert.equal(existsSync(runtimeBroker), true, "deployed runtime broker executable must be installed");
+  // Fail-closed: the installed artifact must be an executable file, not an empty/absent stub.
+  assert.ok(lstatSync(runtimeBroker).isFile(), "installed broker must be a regular file");
+  assert.notEqual(lstatSync(runtimeBroker).size, 0, "installed broker must not be empty");
+  assert.notEqual(lstatSync(runtimeBroker).mode & 0o111, 0, "installed broker must be executable");
+});
+
+// T-038 blocker 2 (post-restart readiness contract): the sandbox deploy installed
+// and ran the broker and eventually preserved all 49 tasks at the exact SHA, but
+// deploy.sh accepted the first NUMERIC /api/tasks response (0) while the configured
+// 49-task DB was still hydrating, then aborted with a false "TASK COUNT DROPPED".
+// Readiness must keep polling until the count is numeric AND at least the preflight
+// TASK_COUNT, and still fail closed on a persistent drop/crash/timeout. The contract
+// lives in scripts/entity-readiness-poll.sh; these tests exercise it deterministically
+// with a faked curl (no SSH/server required).
+
+const readinessPollScript = join(scriptsDirectory, "entity-readiness-poll.sh");
+
+// Install a faked curl that returns one line from seqFile per call (via countFile),
+// plus a no-op sleep, into bin/ so the poll can be driven without any network or
+// real delay.
+function installReadinessFakes(bin, seqFile, countFile) {
+  mkdirSync(bin, { recursive: true });
+  const { curl, sleep } = { curl: join(bin, "curl"), sleep: join(bin, "sleep") };
+  writeFileSync(curl, [
+    "#!/usr/bin/env bash",
+    `seq_file="${seqFile}"`,
+    `count_file="${countFile}"`,
+    'i="$(cat "$count_file" 2>/dev/null || echo 0)"',
+    'line="$(sed -n "$((i + 1))p" "$seq_file")"',
+    'printf "%s" "$line"',
+    'printf "%s" "$((i + 1))" > "$count_file"',
+  ].join("\n") + "\n");
+  chmodSync(curl, 0o755);
+  writeFileSync(sleep, "#!/usr/bin/env bash\nexit 0\n");
+  chmodSync(sleep, 0o755);
+  return { curl, sleep };
+}
+
+function runReadinessPoll({ seq = [], expected, attempts = 3 }) {
+  const root = mkdtempSync(join(tmpdir(), "entity-ready-poll-"));
+  try {
+    const bin = join(root, "bin");
+    const seqFile = join(root, "seq.txt");
+    const countFile = join(root, "count.txt");
+    writeFileSync(seqFile, seq.join("\n") + (seq.length ? "\n" : ""));
+    installReadinessFakes(bin, seqFile, countFile);
+    return spawnSync("bash", [readinessPollScript, "http://ready.test:3000", String(expected)], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        ENTITY_DEPLOY_READY_ATTEMPTS: String(attempts),
+      },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("readiness waits for hydration instead of aborting on a numeric zero-task response (T-038 blocker 2)", () => {
+  // The 49-task DB is still hydrating: two 0-total responses then the real 49.
+  // deploy.sh must NOT accept the first numeric 0 as ready; it must continue until
+  // numeric AND >= preflight, and succeed once hydration completes.
+  const result = runReadinessPoll({ seq: ['{"total": 0}', '{"total": 0}', '{"total": 49}'], expected: 49, attempts: 3 });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.stdout.trim(), "49");
+});
+
+test("readiness fails closed when the count never reaches the preflight task count", () => {
+  // A persistent sub-preflight count (a real drop) must fail closed, not falsely pass.
+  const result = runReadinessPoll({ seq: ['{"total": 10}', '{"total": 10}', '{"total": 10}'], expected: 49, attempts: 3 });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /never reported >= 49 tasks/);
+});
+
+test("readiness fails closed when the API never returns a numeric task count (crash)", () => {
+  // A crash-loop / non-numeric API must fail closed (never-ready), not be mistaken
+  // for a zero-task or dropped-count state.
+  const result = runReadinessPoll({ seq: ["not-json", "not-json", "not-json"], expected: 49, attempts: 3 });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /never became ready with a numeric task count/);
+});
+
+test("deploy readiness polls until numeric AND at least preflight TASK_COUNT (T-038 blocker 2 regression)", () => {
+  const source = readFileSync(deployScript, "utf8");
+  // deploy.sh must route readiness through the shared poll, passing the preflight
+  // TASK_COUNT as the required floor (numeric alone is not readiness).
+  assert.match(source, /scripts\/entity-readiness-poll\.sh"\s+"\$\{PROD_BASE_URL\}" "\$\{TASK_COUNT\}"/);
+  // And it must not re-introduce the false first-numeric "TASK COUNT DROPPED" abort.
+  assert.doesNotMatch(source, /TASK COUNT DROPPED/);
 });

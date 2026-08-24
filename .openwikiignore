@@ -34,6 +34,7 @@ entity.config.yaml
 *.key
 
 # Voluminous proof and browser artifacts
+docs/plans/evidence/
 e2e/artifacts/
 playwright-report/
 test-results/

@@ -61,6 +61,52 @@ export function readExplicitRequestOrg(req: Request): string | null {
   return null;
 }
 
+/**
+ * THE-949/T-008 L1e: read the caller-EXPLICIT request org from the HEADER ONLY (no query/body
+ * org selectors), without a default-org fallback. The document-integrations namespace binds its
+ * workspace from the header only — a query/body org selector must never steer the workspace
+ * binding (the scoped-search precedent). Additive: existing callers of `readExplicitRequestOrg`
+ * (which keep query/body) are unchanged.
+ */
+export function readExplicitRequestOrgHeader(req: Request): string | null {
+  const headerOrg = req.header('x-entity-org-id') ?? req.header('x-entity-org');
+  const value = typeof headerOrg === 'string' ? headerOrg.trim() : '';
+  return value || null;
+}
+
+/** The membership facts a customer principal carries (as consumed by `resolveCustomerWorkspaceScope`). */
+export interface CustomerWorkspaceScope {
+  isGlobalAdmin: boolean;
+  orgIds: string[];
+}
+
+/**
+ * THE-949/T-008 L1d: resolve the workspace for a customer principal from the caller-EXPLICIT
+ * (header-only) org plus their membership, without any deployment-default-org fallback.
+ *
+ * Fail-closed rules:
+ *  - Global admin: an explicit org wins; otherwise bind the single membership org, else `null`
+ *    (ambiguous scope => WORKSPACE_REQUIRED). Never silently binds the deployment default.
+ *  - Non-global customer: an explicit org is honored ONLY if it lies within membership
+ *    (`isExplicitAuthorized`); a missing explicit scope auto-binds the single membership org, else
+ *    `null` (ambiguous).
+ *
+ * Returns `null` (fail closed) on any ambiguity rather than guessing a workspace.
+ */
+export function resolveCustomerWorkspaceScope(
+  customer: CustomerWorkspaceScope,
+  explicit: string | null,
+  isExplicitAuthorized: boolean,
+): string | null {
+  if (customer.isGlobalAdmin) {
+    return explicit ?? (customer.orgIds.length === 1 ? customer.orgIds[0] : null);
+  }
+  if (explicit) {
+    return isExplicitAuthorized ? explicit : null;
+  }
+  return customer.orgIds.length === 1 ? customer.orgIds[0] : null;
+}
+
 function readEnforceStoredPrincipals(): boolean {
   try {
     return readAccessControlRuntimeSettings().enforceStoredPrincipals;

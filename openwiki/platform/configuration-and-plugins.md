@@ -1,7 +1,7 @@
 ---
 type: Platform Guide
 title: Configuration, Admin, Plugins, and Services
-description: Entity configuration precedence, runtime seeding, Admin behavior, model settings, plugin lifecycle and UI mounts, Entity Services, and feature flags.
+description: Entity configuration precedence, runtime seeding, Admin behavior, model settings, plugin lifecycle and UI mounts, Entity Services, feature flags, and document-provider settings.
 tags: [entity, configuration, admin, plugins, services]
 ---
 
@@ -30,7 +30,7 @@ flowchart TD
 
 `packages/server/src/config/load.ts`, `effective.ts`, `runtime.ts`, and `schema.ts` implement this flow. Entity arrays with IDs are merged by ID; ordinary arrays are replaced. Bootstrap paths such as database/workspace configuration are restart-required rather than safely editable at runtime.
 
-`entity.config.example.yaml` demonstrates local-safe server paths, agents, file sources, task columns/priorities/projects, empty public services, plugin defaults, voice, deploy behavior, and terminal targets. Keep secrets in environment/provider mechanisms, not this file. Effective-config responses redact recognized secret paths. Config-managed file sources keep their `entity.config.yaml` ownership marker through storage, reject API attempts to replace their adapter type with a different one, and remain non-deletable through the file-source API.
+`entity.config.example.yaml` demonstrates local-safe server paths, agents, file sources, task columns/priorities/projects, empty public services, plugin defaults, voice, deploy behavior, and terminal targets. Keep secrets in environment/provider mechanisms, not this file. Effective-config responses redact recognized secret paths. Config-managed file sources keep their `entity.config.yaml` ownership marker through storage, reject API attempts to replace their adapter type with a different one, and remain non-deletable through the file-source API. The same admin/config surface now also hosts document-provider settings for Google Workspace, Microsoft 365, and local office behavior: `packages/app/src/components/document-integrations/ProviderSettings.tsx` models connection state, write mode, destination policy, local readiness, and diagnostics, while `packages/app/src/components/settings/DocsSettings.tsx` exposes those controls in Admin. The provider-write lane remains fail-closed unless the connection is healthy, authorization is proven, explicit admin write authorization is set, the mode is not disabled, and exactly one approved destination is enabled.
 
 ## Admin surfaces
 
@@ -95,7 +95,7 @@ Default public configuration contains no private services and disables gateway/M
 | `ENTITY_CHAT_CLICKCLACK_BRIDGE` | Optional compatibility routing to ClickClack |
 | plugin `enabled` state | Guards normal plugin routes/UI metadata, subject to separately core-mounted routes |
 
-See [Files and documents](../features/files-and-documents.md) and [Agents and collaboration](../features/agents-and-collaboration.md) for user-visible degradation.
+See [Files and documents](../features/files-and-documents.md) and [Agents and collaboration](../features/agents-and-collaboration.md) for user-visible degradation. Document provider settings also surface degraded states for Google Workspace, Microsoft 365, and local office backends, including connection failure, reauthorization, admin consent, and local engine readiness.
 
 ## Change and test guidance
 
