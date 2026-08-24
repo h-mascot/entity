@@ -22,7 +22,7 @@ Preserve every historically deployed code line, reconcile every unique still-val
 ## Phases
 - [x] Phase 0: Preserve all 78 audited SHAs in two verified bundles.
 - [x] Phase 1: Create plan, reconciliation matrix, state machine, manager, and proof contract.
-- [ ] Phase 2: Fix manual/automatic deployment split and add anti-overwrite regression tests.
+- [x] Phase 2: Fix manual/automatic deployment split and add anti-overwrite regression tests.
 - [ ] Phase 3: Reconcile Admin navigation behavior and tests.
 - [ ] Phase 4: Reconcile Curacel readiness unique behavior and tests.
 - [ ] Phase 5: Reconcile OpenWiki deployment unique behavior and tests.

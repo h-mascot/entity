@@ -609,8 +609,10 @@
     },
     {
       "id": "REC-003",
-      "proof": [],
-      "status": "todo",
+      "proof": [
+        "npm run test:release-deploy: 42/42 pass incl. 17 new entity-deploy-target-guard tests; deploy.sh refuses SYMLINK_TARGET/IDENTITY_COLLISION/BASENAME_COLLISION before sync; entity-deploy-sandbox.sh refuses current/previous profiles"
+      ],
+      "status": "done",
       "title": "Block manual deploys from rsyncing through current symlink"
     },
     {
@@ -657,5 +659,5 @@
     }
   ],
   "schemaVersion": 1,
-  "updatedAt": "2026-08-24T21:58:43.308873+00:00"
+  "updatedAt": "2026-08-24T22:08:03.566344+00:00"
 }
