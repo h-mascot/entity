@@ -1,0 +1,22 @@
+{
+  "schema": "entity.promotion-gate/v1",
+  "issue": "THE-981/T-040",
+  "candidateSha": "e6efcfd26bc86ae4bdfdccca80b5f84bfcba4885",
+  "decision": "authorized",
+  "authorization": [
+    {
+      "type": "gateway_mitigation",
+      "mitigation": "repointed_away_from_main",
+      "confirmed": false,
+      "confirmedBy": "",
+      "confirmedAt": "",
+      "notes": "T-040 selected mitigation: the on-network Entity pull-deployer must be REPOINTED away from main (or disabled) before any merge to main. This is the mandatory superviser/operator-owned step. This record is intentionally NOT yet confirmed: the gate therefore FAILS CLOSED until a supervisor actually disables/repoints the production gateway deployer and fills confirmed/confirmedBy/confirmedAt. Henry's explicit approval (authorization type henry_approval) is the alternative authorization and has NOT been obtained or invented by this worker."
+    }
+  ],
+  "henryApproval": {
+    "present": false,
+    "notes": "No Henry approval obtained by this Runner Local implementation worker; approval is expressly not invented here. If Henry approves before merge, replace this record's authorization with a henry_approval entry carrying approver=Henry, a reference, and a signature."
+  },
+  "recordedBy": "runner-local/entity-document-integrations-t040-20260824",
+  "generatedAt": "2026-08-24T00:00:00Z"
+}

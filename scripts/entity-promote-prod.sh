@@ -4,15 +4,24 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 
-APPROVED=0
-if [[ "${1:-}" == "--yes" ]]; then
-  APPROVED=1
+# T-040 — Production approval gate (fail-closed).
+# Production promotion is authorized ONLY by the audited promotion gate backed by
+# explicit Henry-approval evidence OR a verified gateway-deployer mitigation
+# (deployer disabled or repointed away from main). A self-supplied --yes flag or
+# ENTITY_PROD_APPROVED=1 is NOT sufficient on its own: the evidence gate must pass
+# against the exact candidate SHA, or promotion refuses (exit 78). No deployment
+# (sandbox or prod) is performed here; this ticket only hardens the gate and records
+# evidence. The promote path remains available for the supervisor/Henry after the
+# selected mitigation is confirmed and recorded.
+CANDIDATE_SHA="${ENTITY_RELEASE_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
+GATE_EVIDENCE="${ENTITY_PROMOTION_EVIDENCE:-${ENTITY_RELEASE_EVIDENCE_DIR:-docs/plans/evidence/entity-document-integrations/T-040}/gateway-mitigation.json}"
+if [[ -z "$CANDIDATE_SHA" ]]; then
+  echo "[entity-promote] cannot determine candidate SHA; refusing prod deploy." >&2
+  exit 78
 fi
-if [[ "${ENTITY_PROD_APPROVED:-0}" == "1" ]]; then
-  APPROVED=1
-fi
-if [[ "$APPROVED" != "1" ]]; then
-  echo "[entity-promote] refusing prod deploy without explicit approval. Re-run with --yes or ENTITY_PROD_APPROVED=1 after sandbox verification." >&2
+# shellcheck disable=SC2086
+if ! "$ROOT/scripts/entity-promotion-gate.sh" --evidence "$GATE_EVIDENCE" --sha "$CANDIDATE_SHA"; then
+  echo "[entity-promote] FAILED CLOSED: no authorized Henry-approval or gateway-mitigation evidence at $GATE_EVIDENCE for $CANDIDATE_SHA. Record the selected mitigation in the T-040 evidence bundle before any merge/promotion." >&2
   exit 78
 fi
 

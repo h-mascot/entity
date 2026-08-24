@@ -30,6 +30,7 @@
     "deploy:sandbox": "bash scripts/entity-deploy-sandbox.sh",
     "ship:sandbox": "npm run docs:wiki:prepare && npm run ctrl:gate && npm run deploy:sandbox",
     "promote:prod": "bash scripts/entity-promote-prod.sh",
+    "test:promotion-gate": "bash scripts/entity-promotion-gate.test.sh",
     "release:info": "node scripts/entity-release-info.mjs",
     "release:check": "node scripts/entity-release-info.mjs --check",
     "test:release-deploy": "node --test scripts/entity-release-info.test.mjs",
