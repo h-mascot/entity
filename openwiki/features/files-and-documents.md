@@ -1,13 +1,13 @@
 ---
 type: Feature Guide
-title: Files and Document Collaboration
-description: Entity Files and Doc Hub behavior, including multi-source browsing, search, editing, native collaboration, external references, routing, flags, and degraded states.
+title: Files and document collaboration
+description: Entity Files and Doc Hub behavior, including multi-source browsing, editing, native collaboration, external references, routing, flags, degraded states, and provider-neutral document tooling.
 tags: [entity, files, documents, collaboration]
 ---
 
 # Files and document collaboration
 
-Files is the user-facing entry to Doc Hub. It combines configured sources, a searchable home, open-file tabs, source-backed editing, and—when identity and credentials allow—agent-native collaboration. It also receives document output links from [Mission Control](mission-control.md).
+Files is the user-facing entry to Doc Hub. It combines configured sources, a searchable home, open-file tabs, source-backed editing, and—when identity and credentials allow—agent-native collaboration. It also receives document output links from [Mission Control](mission-control.md) and now exposes provider-neutral document tooling that covers Google Workspace, Microsoft 365, and local office documents.
 
 ## User workflow
 
@@ -15,7 +15,8 @@ Files is the user-facing entry to Doc Hub. It combines configured sources, a sea
 2. Open a result into Doc Hub. Open files are represented as tabs; users can return home, switch tabs, close tabs, and use split editing where supported.
 3. Read or edit source content through `/api/fs/file`; source capabilities and document state determine what controls appear.
 4. For a source-backed native document with Documents credentials, enter comments, suggestions, review findings, authorship, presence, and follow/watch workflows.
-5. Open a task output. Entity prefers a matching enabled source in Doc Hub and falls back to `/docs/:path`, preserving return-to-task context.
+5. Use provider-specific document controls to create, update, and review Google Workspace, Microsoft 365, or local office documents when the configured provider connection, destination policy, and write authorization all pass their fail-closed checks.
+6. Open a task output. Entity prefers a matching enabled source in Doc Hub and falls back to `/docs/:path`, preserving return-to-task context.
 
 Recent git changes refined this shipped surface by deduplicating the source selector/result metadata, adding sorting, showing date and time, and hiding editor controls on the Doc Hub home.
 
@@ -60,13 +61,17 @@ sequenceDiagram
 
 ### Server and data
 
-- `packages/server/src/fs/` implements source registration, adapters, file security, trees, index/search, I/O, and source routes.
+- `packages/server/src/fs/` implements source registration, adapters, file security, trees, index/search, I/O, and source routes. The shared bounded-read helper in that tree now enforces the same 16 MiB ceiling across local, HTTP markdown, and Docsify reads, so oversized content is rejected consistently instead of being buffered differently by each adapter. `packages/server/src/fs/classify.ts` and `packages/server/src/fs/index-runner.ts` strip HTML wrappers and entities before they derive titles and previews, which keeps the generated wiki presentation tree searchable as text rather than markup.
 - `packages/db/src/file-sources.ts` and `file-index.ts` persist source definitions, indexed records, and sync runs.
 - `packages/server/src/editor/` supplies collaboration routes, services, WebSocket behavior, and document-token authentication.
 - `packages/db/src/document-collab.ts` persists sessions, authorship, presence, comment threads/replies, suggestions, and review data.
 - `packages/server/src/routes/agent-api.ts` exposes scoped `/api/documents/*` operations; these self-authenticate with document token/scopes when the native editor is enabled.
+- `packages/server/src/routes/document-integrations.ts` wires the provider-neutral document API to provider-specific adapters and enforces write-policy and destination checks before create/update actions proceed.
+- `packages/server/src/document-providers/google/{docs-adapter.ts,sheets-adapter.ts,slides-adapter.ts,reconciler.ts,read-state.ts}` implement Google document write, reconciliation, and read-state behavior.
+- `packages/server/src/document-providers/microsoft/{connection.ts,destinations.ts,reconciler.ts,read-state.ts,create-adapter.ts}` implement Microsoft Entra binding, destination discovery, reconciliation, and read-state behavior.
+- `packages/server/src/document-providers/local/{docx-engine.ts,xlsx-engine.ts,pptx-engine.ts,managed-storage.ts,safe-save.ts,file-watcher.ts,bridge.ts}` implement local office engine support, managed storage, safe-save coordination, and file watching.
 
-The broader [runtime and data architecture](../architecture/runtime-and-data.md) distinguishes native documents, evidence artifacts, and external references.
+The broader [runtime and data architecture](../architecture/runtime-and-data.md) distinguishes native documents, evidence artifacts, and external references. The [configuration and plugins](../platform/configuration-and-plugins.md) page covers the admin surfaces that configure document provider settings and write authorization, while [Runtime and release](runtime-and-release.md) owns the generated wiki HTML presentation path and the bootstrap migration that points `entity-wiki` at `./openwiki-html`.
 
 ## Flags, permissions, and degraded states
 
@@ -87,7 +92,7 @@ The broader [runtime and data architecture](../architecture/runtime-and-data.md)
 
 Admin stores/configures Documents API access, but credentials are scoped bearer/service credentials and must not be embedded in documentation. The [security page](../operations/security-and-release.md) explains why object-permission enforcement is route-specific.
 
-Config-managed file sources are a stricter case: the server treats `entity.config.yaml` ownership as sticky, so those sources cannot be deleted through the API, and their adapter type cannot be swapped to a different source kind such as `http-markdown`. When a trusted config-managed source is stored as another adapter type, the storage layer preserves the `entity.config.yaml` ownership marker so later updates keep the same source provenance. Legacy workspace write, create, delete, and move routes now also reject paths that fall inside nested read-only local sources, while reads from those sources remain available. Document conversion is constrained separately to enabled local sources with write capability, so a file can be browsed or read even when it is not eligible for conversion.
+Config-managed file sources are a stricter case: the server treats `entity.config.yaml` ownership as sticky, so those sources cannot be deleted through the API, and their adapter type cannot be swapped to a different source kind such as `http-markdown`. When a trusted config-managed source is stored as another adapter type, the storage layer preserves the `entity.config.yaml` ownership marker so later updates keep the same source provenance. Legacy workspace write, create, delete, and move routes now also reject paths that fall inside nested read-only local sources, while reads from those sources remain available. Document conversion is constrained separately to enabled local sources with write capability, so a file can be browsed or read even when it is not eligible for conversion. The HTML preview policy for generated wiki content is owned by [Runtime and release](runtime-and-release.md) and `packages/app/src/lib/htmlPreviewPolicy.ts`, which keeps the Entity Wiki preview scriptless while leaving interactive HTML sources on the richer sandbox.
 
 ## Task and document relationships
 
@@ -106,5 +111,4 @@ Start with the owning surface rather than `App.tsx` unless navigation or shared 
 - `packages/server/src/document-objects.test.ts`
 - tests under `packages/server/src/fs/` and `packages/server/src/editor/`
 
-Build the app and run server Vitest. Browser-check search, source switching, open/close/restore, save behavior, task return navigation, restricted results, and the responsive layout; utility tests do not cover the full cross-package workflow.
-ity tests do not cover the full cross-package workflow.
+Build the app and run server Vitest. Browser-check search, source switching, open/close/restore, save behavior, task return navigation, restricted results, HTML preview fragment navigation, and the responsive layout; utility tests do not cover the full cross-package workflow.

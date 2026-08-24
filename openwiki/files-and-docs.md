@@ -7,7 +7,7 @@ tags: [entity, files, docs, doc-hub, collaboration, file-sources]
 
 # Files and documents
 
-The Files area is a shared workspace for browsing content from one or more sources, opening documents, editing markdown-like files, and keeping collaboration state attached to the document.
+The Files area is a shared workspace for browsing content from one or more sources, opening documents, editing markdown-like files, and keeping collaboration state attached to the document. It is the user-facing surface that consumes the file-source, read-only bootstrap, and bounded-read rules documented in [Admin and extensions](admin-and-extensions.md) and [Configuration, Admin, Plugins, and Services](platform/configuration-and-plugins.md).
 
 The main source seams are:
 
@@ -77,15 +77,23 @@ The access model is explicit:
 - shared/private documents require a valid token from the `Authorization: Bearer ...` header, `X-Share-Token`, or `?token=` query parameter;
 - document edits and events are persisted in SQLite-backed tables.
 
-Local file sources add another boundary: the server seeds trusted local roots into `ENTITY_FS_LOCAL_SOURCE_ROOTS` during bootstrap, the local adapter reports `readOnly` in stored capabilities, and `packages/server/src/fs/routes-files.ts` rejects write requests when the adapter says the source is read-only. The adapter itself also blocks direct `write` and `mkdir` calls for read-only sources, so both the HTTP surface and the adapter layer enforce the same contract. The HTTP markdown adapter follows the same read-only rule, but its `readRaw` path can still return binary content and the file route will flag the payload as `isBinary` when the text read path rejects a non-text resource. The file-source API also refuses to delete config-managed local sources and preserves the `entity.config.yaml` source marker on updates, which closes the delete/recreate path that could otherwise bypass the trusted read-only policy. New local source registrations also inherit read-only policy when their root overlaps any protected read-only local root, so same-root, parent, and child aliases cannot be used to regain writes around a trusted wiki source. The local capability helper now reconstructs `readOnly` from stored capabilities so effective-config views and the adapter stay aligned even when the source record is persisted separately.
+Local file sources add another boundary: the server seeds trusted local roots into `ENTITY_FS_LOCAL_SOURCE_ROOTS` during bootstrap, the local adapter reports `readOnly` in stored capabilities, and `packages/server/src/routes/docs.ts` rejects write requests when the adapter says the source is read-only. The adapter itself also blocks direct `write` and `mkdir` calls for read-only sources, so both the HTTP surface and the adapter layer enforce the same contract. The HTTP markdown adapter follows the same read-only rule, but its `readRaw` path can still return binary content and the file route will flag the payload as `isBinary` when the text read path rejects a non-text resource. The file-source API also refuses to delete config-managed local sources and preserves the `entity.config.yaml` source marker on updates, which closes the delete/recreate path that could otherwise bypass the trusted read-only policy. New local source registrations also inherit read-only policy when their root overlaps any protected read-only local root, so same-root, parent, and child aliases cannot be used to regain writes around a trusted wiki source. The local capability helper now reconstructs `readOnly` from stored capabilities so effective-config views and the adapter stay aligned even when the source record is persisted separately.
 
-## Change notes for future agents
+## Task and document relationships
 
-When changing Files / Doc Hub, check these seams together:
+A task output can target Doc Hub or the standalone document route; the route resolver is tested in `packages/app/src/lib/taskOutputDocTarget.test.ts`. Document comments are range-anchored collaboration objects, while task comments belong to [Mission Control](mission-control.md). Document review runs produce findings that may be applied or ignored; task review gates govern task completion. Keep these models distinct in UI and API changes.
 
-1. `packages/app/src/views/FilesView.tsx` and `packages/app/src/components/UnifiedFileDashboard.tsx` for navigation and source selection.
-2. `packages/app/src/views/DocumentEditorView.tsx` and `packages/app/src/components/doc-hub/DocHubWorkspaceChrome.tsx` for editing and tabs.
-3. `packages/server/src/routes/docs.ts` and `packages/server/src/routes/documents.ts` for serving and authorization.
-4. `packages/db/src/file-sources.ts` and `packages/db/src/document-collab.ts` for persistence.
+The agent registry can bind agents to file sources, so [agent identity](agents-and-collaboration.md) is also used to filter and attribute file work.
 
-If you change the allowed document file types or auth model, update the server route and the UI together so the workspace does not offer a capability the backend rejects.
+## Change and test guidance
+
+Start with the owning surface rather than `App.tsx` unless navigation or shared state is involved. Relevant focused tests include:
+
+- `packages/app/src/lib/fileSearchSort.test.ts`
+- `packages/app/src/lib/openFileTabs.test.ts`
+- `packages/app/src/lib/taskOutputDocTarget.test.ts`
+- `packages/app/src/lib/__tests__/fileRestoreState.test.ts`
+- `packages/server/src/document-objects.test.ts`
+- tests under `packages/server/src/fs/` and `packages/server/src/editor/`
+
+Build the app and run server Vitest. Browser-check search, source switching, open/close/restore, save behavior, task return navigation, restricted results, and the responsive layout; utility tests do not cover the full cross-package workflow.

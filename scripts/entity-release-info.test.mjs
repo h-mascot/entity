@@ -334,3 +334,123 @@ test("deploy removes the temporary runtime environment file on early failure", (
   assert.ok(cleanupTrapInstalled < firstEnvironmentCopy);
   assert.match(source, /cleanup_runtime_env\(\) \{[\s\S]*rm -f "\$\{RUNTIME_ENV_TMP\}"[\s\S]*\}/);
 });
+
+// T-038 exact-SHA release proof (R-039): the reviewed candidate SHA must be the
+// SHA CI evaluates and the deployed sandbox reports; any mismatch fails closed.
+// `entity-release-info.mjs --check --expected <sha>` is the shared primitive used
+// by CI and the sandbox-deploy path to prove the deployed receipt identity equals
+// the reviewed candidate SHA and that no source/build drift slipped in.
+
+// Helper: build a git worktree fixture whose committed HEAD is a real SHA and
+// whose RELEASE.json is written for a caller-chosen recorded SHA.
+function gitReleaseFixture(recordedSha) {
+  const root = mkdtempSync(join(tmpdir(), "entity-exactsha-" + (recordedSha || "").slice(0, 6) + "-"));
+  writeFileSync(join(root, "package.json"), JSON.stringify({
+    name: "exactsha-fixture",
+    scripts: { "docs:wiki:verify": "node -e \"process.exit(0)\"" },
+  }));
+  writeFileSync(join(root, "tracked.txt"), "immutable\n");
+  writeFileSync(join(root, "VERSION"), recordedSha ? `${recordedSha}\n` : "");
+  writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: recordedSha }, null, 2));
+  for (const args of [
+    ["init", "-b", "main"],
+    ["config", "user.email", "test@example.com"],
+    ["config", "user.name", "Entity Test"],
+    ["add", "."],
+    ["commit", "-m", "fixture"],
+  ]) {
+    const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  return root;
+}
+
+function headSha(root) {
+  return spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
+}
+
+function runCheck(root, { expected } = {}) {
+  const args = [script, "--check", "--root", root];
+  if (expected) args.push("--expected", expected);
+  return spawnSync(process.execPath, args, { encoding: "utf8" });
+}
+
+test("exact-SHA check passes when deployed receipt SHA, VERSION, and source HEAD all equal the reviewed candidate SHA", () => {
+  const root = gitReleaseFixture();
+  try {
+    const candidate = headSha(root);
+    writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: candidate }, null, 2));
+    writeFileSync(join(root, "VERSION"), `${candidate}\n`);
+    const result = runCheck(root, { expected: candidate });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.gitSha, candidate);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("exact-SHA check fails closed when deployed SHA does not match the reviewed candidate SHA", () => {
+  const reviewed = "4".repeat(40);
+  const deployed = "5".repeat(40);
+  const root = gitReleaseFixture(deployed);
+  try {
+    writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: deployed }, null, 2));
+    writeFileSync(join(root, "VERSION"), `${deployed}\n`);
+    const result = runCheck(root, { expected: reviewed });
+    assert.notEqual(result.status, 0);
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.match(output, /EXACT_SHA_MISMATCH/);
+    assert.match(output, new RegExp(reviewed));
+    assert.match(output, new RegExp(deployed));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("exact-SHA check fails closed when the deployed RELEASE.json and VERSION disagree", () => {
+  const root = gitReleaseFixture();
+  try {
+    const shaA = "a".repeat(40);
+    const shaB = "b".repeat(40);
+    writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: shaA }, null, 2));
+    writeFileSync(join(root, "VERSION"), `${shaB}\n`);
+    const result = runCheck(root);
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /EXACT_SHA_MISMATCH/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("exact-SHA check fails closed when the source checkout has drifted from the deployed/gitSha identity", () => {
+  const root = gitReleaseFixture();
+  try {
+    const deployed = headSha(root);
+    const drifted = "c".repeat(40);
+    writeFileSync(join(root, "RELEASE.json"), JSON.stringify({ schemaVersion: 1, gitSha: drifted }, null, 2));
+    writeFileSync(join(root, "VERSION"), `${drifted}\n`);
+    const result = runCheck(root);
+    assert.notEqual(result.status, 0);
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.match(output, /SOURCE_DRIFT/);
+    assert.match(output, new RegExp(deployed));
+    assert.match(output, new RegExp(drifted));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deploy-sandbox invokes the exact-SHA release check and must never target production", () => {
+  const source = readFileSync(deployScript, "utf8");
+  const scriptSource = readFileSync(join(scriptsDirectory, "entity-deploy-sandbox.sh"), "utf8");
+  // The sandbox deploy must route identity through the shared release-info exact-SHA check.
+  assert.match(scriptSource, /release-info\.mjs[^\n]*--check/);
+  assert.match(scriptSource, /--expected/);
+  // It must resolve and export the exact candidate SHA for the deploy lane.
+  assert.match(scriptSource, /ENTITY_RELEASE_SHA/);
+  // The sandbox lane stays sandbox-gated and never routes through a prod lane.
+  assert.match(scriptSource, /ENTITY_SANDBOX_/);
+  assert.doesNotMatch(scriptSource, /promote:prod/);
+});
