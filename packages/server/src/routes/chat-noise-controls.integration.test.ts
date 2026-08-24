@@ -61,6 +61,20 @@ async function setup() {
     review_policy: { required: false, human_gate_required: false },
     imported_by_user_id: 'operator-a',
   });
+  // Luna-high F6: agent-b is imported by ANOTHER organization (org-b); a
+  // cooldown row for it must not be clearable through org-a's management
+  // route just because the channel scope is org-a's.
+  imports.upsertMapping({
+    org_id: 'org-b',
+    source: 'runtime-fleet',
+    external_id: 'agent-b',
+    agent_id: 'agent-b',
+    team_ids: ['team-b'],
+    module_ids: [],
+    channel_ids: [],
+    review_policy: { required: false, human_gate_required: false },
+    imported_by_user_id: 'operator-b',
+  });
 
   const app = express();
   app.use(express.json());
@@ -115,5 +129,44 @@ describe('chat noise-control real repository routes', () => {
       expect.objectContaining({ action: 'mute_set' }),
       expect.objectContaining({ action: 'mute_cleared' }),
     ]));
+  });
+
+  // Luna-high F6: cooldown deletion must apply the same agent mapping/org/team
+  // validation as creation. A cooldown for an agent imported by another
+  // organization must survive a delete issued through this org's route.
+  it('refuses to clear a cooldown for an agent mapped to another organization', async () => {
+    const ctx = await setup();
+    // The foreign-agent cooldown exists in org-a's channel namespace (e.g.
+    // written by the automated noise engine before the mapping moved, or by a
+    // pre-validation writer).
+    ctx.noise.configureCooldown({
+      org_id: 'org-a',
+      team_id: 'team-a',
+      channel_id: 'channel-a',
+      agent_id: 'agent-b',
+      cooldown_seconds: 300,
+      configured_by_user_id: 'engine',
+    });
+    expect(ctx.noise.getCooldown('org-a', 'channel-a', 'agent-b')).toMatchObject({
+      cooldown_seconds: 300,
+    });
+
+    const denied = await ctx.request(
+      '/orgs/org-a/chat-noise-controls/channels/channel-a/agents/agent-b/cooldown',
+      { method: 'DELETE' },
+    );
+    expect(denied.status).toBe(404);
+    expect(denied.body).toMatchObject({ code: 'AGENT_NOT_FOUND' });
+
+    // The target cooldown remains intact and no clear audit was written (the
+    // only audit entry is the engine's original configuration record).
+    expect(ctx.noise.getCooldown('org-a', 'channel-a', 'agent-b')).toMatchObject({
+      cooldown_seconds: 300,
+    });
+    const audit = await ctx.request('/orgs/org-a/chat-noise-controls/audit');
+    expect(audit.body.audit).toEqual([
+      expect.objectContaining({ action: 'cooldown_configured', agent_id: 'agent-b' }),
+    ]);
+    expect(JSON.stringify(audit.body.audit)).not.toContain('cooldown_cleared');
   });
 });

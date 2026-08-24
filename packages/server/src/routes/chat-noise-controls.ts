@@ -236,10 +236,24 @@ export function createChatNoiseControlRouter(deps: ChatNoiseControlRouterDepende
       try {
         const orgId = required(req.params.orgId, 'organization id');
         const channelId = required(req.params.channelId, 'channel id');
-        const scope = channelScope(orgId, channelId);        const cleared = noise.clearCooldown({
+        const agentId = required(req.params.agentId, 'agent id');
+        const scope = channelScope(orgId, channelId);
+        // Luna-high F6: deletion applies the same agent mapping/org/team
+        // validation as creation — a cooldown for an agent imported by another
+        // organization (or outside the channel's team) is not clearable through
+        // this organization's management route.
+        const mapping = imports.getMappingByAgent(agentId);
+        if (
+          !mapping
+          || mapping.org_id !== orgId
+          || (scope.team_id && !mapping.team_ids.includes(scope.team_id))
+        ) {
+          throw new NoiseControlError(404, 'AGENT_NOT_FOUND', 'Mapped agent not found.');
+        }
+        const cleared = noise.clearCooldown({
           org_id: orgId,
           channel_id: channelId,
-          agent_id: required(req.params.agentId, 'agent id'),
+          agent_id: agentId,
           cleared_by_user_id: actor(req),
         });
         res.json({ cleared });
