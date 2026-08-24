@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import ExistingAgentImportPanel from '../ExistingAgentImportPanel';
 
 interface RegistryAgent {
   id: string;
@@ -84,6 +85,8 @@ export default function AgentRegistrySettings({ apiBase, onRegistryChanged }: Ag
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string }>>([]);
+  const [importOrgId, setImportOrgId] = useState('');
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedId || agent.slug === selectedId) ?? null,
@@ -111,6 +114,12 @@ export default function AgentRegistrySettings({ apiBase, onRegistryChanged }: Ag
       setAgents(agentsJson.list ?? []);
       setModules(modulesJson.list ?? []);
       if (!selectedId && agentsJson.list?.length) setSelectedId(agentsJson.list[0].id);
+      const orgsRes = await fetch(apiPath(apiBase, '/api/orgs'));
+      if (orgsRes.ok) {
+        const orgsJson = await orgsRes.json() as { orgs?: Array<{ id: string; name: string }> };
+        setOrganizations(orgsJson.orgs ?? []);
+        setImportOrgId((current) => current || orgsJson.orgs?.[0]?.id || '');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load agent registry');
     } finally {
@@ -379,6 +388,28 @@ export default function AgentRegistrySettings({ apiBase, onRegistryChanged }: Ag
           )}
         </div>
       </div>
+      <section className="mc-shell-card border border-[var(--border-secondary)] p-4 lg:col-span-2">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-[var(--text-primary)]">Existing runtime agents</div>
+            <div className="mt-1 text-xs text-[var(--text-muted)]">Import or re-import stable identities without creating duplicate registry entries.</div>
+          </div>
+          <label className="text-xs text-[var(--text-muted)]">
+            Organization
+            <select
+              value={importOrgId}
+              onChange={(event) => setImportOrgId(event.target.value)}
+              className="mc-shell-input ml-2 min-h-10 px-2 text-sm"
+            >
+              <option value="">Select organization</option>
+              {organizations.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
+            </select>
+          </label>
+        </div>
+        {importOrgId
+          ? <ExistingAgentImportPanel key={importOrgId} orgId={importOrgId} apiBase={apiBase} />
+          : <p className="mt-4 text-xs text-[var(--text-muted)]">An active organization membership is required before importing agents.</p>}
+      </section>
     </div>
   );
 }

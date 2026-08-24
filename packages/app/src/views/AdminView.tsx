@@ -12,6 +12,10 @@ const PluginAdminPanel = lazy(() => import('../components/plugins/PluginAdminPan
 const OfflineAwareChat = lazy(() => import('../components/OfflineAwareChat'));
 const UsersAndRolesSettings = lazy(() => import('../components/settings/UsersAndRolesSettings'));
 const AdminSettingsForm = lazy(() => import('../components/settings/AdminSettingsForm'));
+// Curacel readiness recovery (REC-006, from b8e3c121): operations center and
+// communication controls surfaces, re-grounded on main's trust model.
+const CommunicationControlsSettings = lazy(() => import('../components/settings/CommunicationControlsSettings'));
+const CuracelOperationsCenter = lazy(() => import('../components/CuracelOperationsCenter'));
 
 type AdminSection =
   | 'general'
@@ -181,6 +185,22 @@ function LazyOfflineAwareChat(props: { isOffline: boolean }) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading chat status" />}>
       <OfflineAwareChat {...props} />
+    </Suspense>
+  );
+}
+
+function LazyCommunicationControlsSettings(props: { apiBase?: string }) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading communication controls" />}>
+      <CommunicationControlsSettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyCuracelOperationsCenter(props: { apiBase?: string }) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading Curacel operations" />}>
+      <CuracelOperationsCenter {...props} />
     </Suspense>
   );
 }
@@ -745,6 +765,9 @@ export default function AdminView({
               </div>
             </div>
             <LazyOfflineAwareChat isOffline={isOffline} />
+            <div className="md:col-span-3">
+              <LazyCuracelOperationsCenter apiBase={apiBase} />
+            </div>
             <div className="mc-shell-card border border-[var(--border-secondary)] p-4 md:col-span-3">
               <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm font-medium text-[var(--text-primary)]">Documents API</div>
@@ -1011,6 +1034,7 @@ export default function AdminView({
               apiBase={apiBase}
               onRegistryChanged={onAgentRegistryChanged}
             />
+            <LazyCommunicationControlsSettings apiBase={apiBase} />
           </div>
         )}
 

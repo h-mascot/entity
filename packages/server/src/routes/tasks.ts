@@ -449,7 +449,14 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
     }
   }));
 
-  app.get(`${tasksBase}/:id`, asyncHandler(async (req, res) => {
+  app.get(`${tasksBase}/:id`, asyncHandler(async (req, res, next) => {
+    // Curacel readiness recovery (REC-006, from b8e3c121): a browser deep link
+    // to /tasks/:id (HTML navigation) must fall through to the SPA shell instead
+    // of returning JSON, so task URLs work as page navigation.
+    if (prefix === '' && req.headers.accept?.includes('text/html')) {
+      next();
+      return;
+    }
     const id = parseTaskId(req.params.id);
     if (!id) {
       return res.status(400).json({ error: "invalid task id" });

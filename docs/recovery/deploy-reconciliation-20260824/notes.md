@@ -69,3 +69,19 @@ Workspace and Entity Wiki file sources report pre-existing health errors related
   The actual historical admin groupings are Workspace/People/Work/Content/System.
   Restored the historical truth; flagged for manager summary.
 - OpenWiki doc regeneration from e538991 deliberately deferred to REC-008 per plan.
+
+## REC-006 reconciliation record (2026-08-24)
+- Disposition receipt: dispositions/curacel-readiness.json (107 files, 15 commits, zero silent drops).
+- Included (adapted to main's admin-principal trust model, precedent = main's own task-handoffs port):
+  curacel-operations subsystem (db/routes/UI), agent-import subsystem (+ registry identity
+  tombstones), chat-history-access roster, chat-noise-controls roster, resolved task-policy
+  persistence + stable reason-chain filtering, /tasks/:id HTML deep-link fall-through,
+  ctrl-live-smoke bearer probes (+ new test).
+- Superseded with proof: membership RBAC/cookie sessions (main principals; R6 acceptance
+  explicitly replaces "stale session auth"), provider health (main swarm providers health, R6
+  criterion 1), task handoffs (main THE-933 + C-8), chat noise read path (THE-930), business
+  onboarding provisioning (main router, R6 criterion 3), runtime/system gating (node-operations),
+  deploy script changes (REC-003/004), docs/plans (bundle).
+- Blocked for Henry (genuine architecture/product decisions, receipts in disposition JSON):
+  1) org-scoped live WS activity broadcasts (ScopedBroadcast) — main's WS layer is global;
+  2) business org invite acceptance — requires choosing historical vs main onboarding architecture.

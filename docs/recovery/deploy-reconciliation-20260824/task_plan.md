@@ -24,7 +24,7 @@ Preserve every historically deployed code line, reconcile every unique still-val
 - [x] Phase 1: Create plan, reconciliation matrix, state machine, manager, and proof contract.
 - [x] Phase 2: Fix manual/automatic deployment split and add anti-overwrite regression tests.
 - [x] Phase 3: Reconcile Admin navigation behavior and tests.
-- [ ] Phase 4: Reconcile Curacel readiness unique behavior and tests.
+- [x] Phase 4: Reconcile Curacel readiness unique behavior and tests.
 - [ ] Phase 5: Reconcile OpenWiki deployment unique behavior and tests.
 - [ ] Phase 6: Cross-feature integration, generated docs, full CTRL, and exact-diff review.
 - [ ] Phase 7: Push PR, require CI, merge when clean, immutable sandbox deploy, browser/API proof.
@@ -64,4 +64,4 @@ Preserve every historically deployed code line, reconcile every unique still-val
 - Historical sandbox had 11 mutated release identities; root cause is manual rsync through `current` plus weak verification/controller cache.
 
 ## Status
-**Phase 4 next** — REC-005 complete: grouped navigation recovered from e538991 (Workspace/Work/Team/Admin top nav + Workspace/People/Work/Content/System admin groups + Modules settings + hidden-module enforcement), enterprise/Openclaw section preserved from main. Browser proof 14/14 on local dev server.
+**Phase 5 next** — REC-006 complete: curacel-readiness disposition 107 files/15 commits (37 included, 66 superseded-with-proof, 5 explicit-Henry-decision-required across 2 blocked slices: WS tenant scoping, invite acceptance). Ported: curacel-operations, agent-import, chat-history-access roster, chat-noise-controls roster, task-policy persistence, agent-identity tombstones, SPA task deep-links, smoke bearer auth. Proof: server 2544/2544, db 214/214, app 524/524, browser 4/4.

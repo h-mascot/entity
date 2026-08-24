@@ -633,8 +633,10 @@
     },
     {
       "id": "REC-006",
-      "proof": [],
-      "status": "todo",
+      "proof": [
+        "dispositions/curacel-readiness.json complete (107 files/15 commits classified); server vitest 2544/2544; db vitest 214/214; app tests 524/524; ctrl-live-smoke test 1/1; browser 4/4 (operations center, communication controls, agent import surface, zero console errors)"
+      ],
+      "status": "done",
       "title": "Reconcile Curacel readiness line semantically"
     },
     {
@@ -663,5 +665,5 @@
     }
   ],
   "schemaVersion": 1,
-  "updatedAt": "2026-08-24T22:19:54.794903+00:00"
+  "updatedAt": "2026-08-24T22:45:49.600074+00:00"
 }
