@@ -169,6 +169,7 @@ const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
   <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>
+  <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>
   <Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
   <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
 </Types>`;
@@ -194,7 +195,22 @@ ${slides}
 function slideMasterRels(): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">
+  <Relationship Id="rIdLayout1" Type="${OFFICE_RELATIONSHIPS}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
   <Relationship Id="rIdTheme" Type="${OFFICE_RELATIONSHIPS}/theme" Target="../theme/theme1.xml"/>
+</Relationships>`;
+}
+
+function slideLayoutRels(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">
+  <Relationship Id="rIdMaster" Type="${OFFICE_RELATIONSHIPS}/slideMaster" Target="../slideMasters/slideMaster1.xml"/>
+</Relationships>`;
+}
+
+function slideRels(): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">
+  <Relationship Id="rIdLayout" Type="${OFFICE_RELATIONSHIPS}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>
 </Relationships>`;
 }
 
@@ -237,6 +253,15 @@ const slideMasterXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <p:sldLayoutIdLst><p:sldLayoutId id="1" r:id="rIdLayout1"/></p:sldLayoutIdLst>
   <p:txStyles/>
 </p:sldMaster>`;
+
+const slideLayoutXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="${DRAWING_NAMESPACE}" xmlns:r="${OFFICE_RELATIONSHIPS}" xmlns:p="${PRESENTATION_NAMESPACE}">
+  <p:cSld name="Blank"><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr><p:nvPr/></p:cNvGrpSpPr></p:nvGrpSpPr>
+    <p:grpSpPr/>
+  </p:spTree></p:cSld>
+  <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
+</p:sldLayout>`;
 
 function shapeXml(element: PptxSlideElement, shapeId: string): string {
   const preserve = /^\s|\s$/.test(element.text) ? ' xml:space="preserve"' : '';
@@ -283,11 +308,14 @@ export function createPptxPackage(presentation: PptxPresentation): Buffer {
     { name: 'ppt/_rels/presentation.xml.rels', data: Buffer.from(presentationRels(presentation.slides.length)) },
     { name: 'ppt/slideMasters/slideMaster1.xml', data: Buffer.from(slideMasterXml) },
     { name: 'ppt/slideMasters/_rels/slideMaster1.xml.rels', data: Buffer.from(slideMasterRels()) },
+    { name: 'ppt/slideLayouts/slideLayout1.xml', data: Buffer.from(slideLayoutXml) },
+    { name: 'ppt/slideLayouts/_rels/slideLayout1.xml.rels', data: Buffer.from(slideLayoutRels()) },
     { name: 'ppt/theme/theme1.xml', data: Buffer.from(themeXml) },
   ];
   let shapeIdOffset = 2;
   presentation.slides.forEach((slide, index) => {
     entries.push({ name: `ppt/slides/slide${index + 1}.xml`, data: Buffer.from(slideXml(slide.elements, shapeIdOffset)) });
+    entries.push({ name: `ppt/slides/_rels/slide${index + 1}.xml.rels`, data: Buffer.from(slideRels()) });
     shapeIdOffset += slide.elements.length;
   });
   const packageBytes = writeOoxmlPackage(entries);
@@ -478,6 +506,59 @@ function prefixFromSource(source: string, localRoot: string, namespace: string):
   return prefix;
 }
 
+/** Split a masked element block into its direct (first-level) child element blocks. */
+function splitTopLevelElements(source: string, masked: string): string[] {
+  const children: string[] = [];
+  let pos = 0;
+  while (pos < masked.length) {
+    const lt = masked.indexOf('<', pos);
+    if (lt < 0) break;
+    const next = masked[lt + 1];
+    if (next === '/' || next === '?' || next === '!') { pos = masked.indexOf('>', lt) + 1; continue; }
+    const gt = masked.indexOf('>', lt);
+    if (gt < 0) break;
+    const head = masked.slice(lt + 1, gt);
+    const name = head.match(/^[A-Za-z_][A-Za-z0-9_.:-]*/)?.[0];
+    if (!name) { pos = gt + 1; continue; }
+    if (/\/\s*$/.test(head)) { children.push(source.slice(lt, gt + 1)); pos = gt + 1; continue; }
+    const closeTag = `</${name}>`;
+    const closeIndex = masked.indexOf(closeTag, gt + 1);
+    if (closeIndex < 0) { pos = gt + 1; continue; }
+    children.push(source.slice(lt, closeIndex + closeTag.length));
+    pos = closeIndex + closeTag.length;
+  }
+  return children;
+}
+
+/** Return the direct children of the single slide `p:spTree` element (fails closed if absent). */
+function spTreeDirectChildren(source: string, masked: string, p: string): { children: string[]; block: string } {
+  const spTreeName = localPattern(p, 'spTree');
+  const closeSpTree = localPattern(p, 'spTree');
+  const blocks = splitChildren(source, masked, spTreeName, closeSpTree);
+  if (blocks.length === 0) throw new PptxValidationError('invalid_pptx', 'PPTX slide shape tree is missing');
+  const block = blocks[0];
+  const openEnd = block.indexOf('>') + 1;
+  const closeStart = block.lastIndexOf(`</${closeSpTree}>`);
+  const innerSource = block.slice(openEnd, closeStart);
+  const innerMasked = visibleXml(block).slice(openEnd, closeStart);
+  return { children: splitTopLevelElements(innerSource, innerMasked), block };
+}
+
+/**
+ * A conformant PresentationML shape tree always opens with the mandatory group-shape
+ * children `p:nvGrpSpPr` and `p:grpSpPr` before any shapes. Fail closed when they are absent.
+ */
+function assertCompleteSpTree(spTreeChildren: readonly string[], p: string): void {
+  if (spTreeChildren.length === 0) throw new PptxValidationError('invalid_pptx', 'PPTX slide shape tree is missing');
+  const names = spTreeChildren.map((child) => xmlStartTags(child)[0]?.name);
+  if (!names.includes(localName(p, 'nvGrpSpPr'))) {
+    throw new PptxValidationError('invalid_pptx', 'PPTX slide shape tree is missing the required nvGrpSpPr child');
+  }
+  if (!names.includes(localName(p, 'grpSpPr'))) {
+    throw new PptxValidationError('invalid_pptx', 'PPTX slide shape tree is missing the required grpSpPr child');
+  }
+}
+
 /** Parse one slide part into its ordered text elements (stable ids preserved). */
 function parseSlideXml(source: string): PptxSlideElement[] {
   const p = presentationPrefix(source);
@@ -486,10 +567,7 @@ function parseSlideXml(source: string): PptxSlideElement[] {
   const spName = localPattern(p, 'sp');
   const closeSp = localPattern(p, 'sp');
   const elements: PptxSlideElement[] = [];
-  const spTreeName = localPattern(p, 'spTree');
-  const closeSpTree = localPattern(p, 'spTree');
-  const spTreeChildren = splitChildren(source, masked, spTreeName, closeSpTree);
-  if (spTreeChildren.length === 0) throw new PptxValidationError('invalid_pptx', 'PPTX slide shape tree is missing');
+  assertCompleteSpTree(spTreeDirectChildren(source, masked, p).children, p);
   for (const shape of splitChildren(source, masked, spName, closeSp)) {
     const cNvPr = xmlStartTags(shape).find((tag) => tag.name === localName(p, 'cNvPr'));
     const id = cNvPr?.attributes.get('name');
@@ -506,6 +584,76 @@ function parseSlideXml(source: string): PptxSlideElement[] {
   }
   if (elements.length === 0) throw new PptxValidationError('invalid_pptx', 'PPTX slide has no authored text elements');
   return elements;
+}
+
+/** Resolve a relationship `Target` against its source part into an absolute package part name. */
+function resolveRelationshipTarget(relationshipPart: string, target: string): string | null {
+  const sourceDirectory = relationshipPart === '_rels/.rels'
+    ? ''
+    : relationshipPart.match(/^(?:(.*)\/)?_rels\/[^/]+\.rels$/)?.[1];
+  if (sourceDirectory === undefined) return null;
+  const resolved = sourceDirectory ? sourceDirectory.split('/') : [];
+  for (const segment of target.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (resolved.length === 0) return null;
+      resolved.pop();
+    } else {
+      resolved.push(segment);
+    }
+  }
+  return resolved.join('/');
+}
+
+function resolveRequiredTarget(relsPart: string, target: string, entries: Map<string, Buffer>, kind: string): void {
+  const resolved = resolveRelationshipTarget(relsPart, target);
+  if (!resolved || !entries.has(resolved)) {
+    throw new PptxValidationError('invalid_pptx', `PPTX ${kind} relationship target is missing: ${target}`);
+  }
+}
+
+/**
+ * A conformant presentation binds every slide to a slide layout and resolves every authored
+ * slide-master `sldLayoutId` `r:id`. Fail closed when any required layout relationship is
+ * missing or dangling.
+ */
+function assertPresentationLayout(entries: Map<string, Buffer>, relationshipsByPart: Map<string, readonly XmlStartTag[]>): void {
+  const layoutType = '/relationships/slideLayout';
+  for (const [name] of entries) {
+    const match = name.match(/^ppt\/slides\/([^/]+)\.xml$/);
+    if (!match) continue;
+    const relsPart = `ppt/slides/_rels/${match[1]}.xml.rels`;
+    const layoutRels = (relationshipsByPart.get(relsPart) ?? [])
+      .filter((relationship) => relationship.attributes.get('Type')?.endsWith(layoutType));
+    if (layoutRels.length === 0) {
+      throw new PptxValidationError('invalid_pptx', `PPTX slide part has no slide-layout relationship: ${name}`);
+    }
+    for (const relationship of layoutRels) {
+      resolveRequiredTarget(relsPart, relationship.attributes.get('Target') ?? '', entries, 'slide-layout');
+    }
+  }
+  if (entries.has('ppt/slideMasters/slideMaster1.xml')) {
+    const masterSource = xmlPart(entries, 'ppt/slideMasters/slideMaster1.xml');
+    const relsPart = 'ppt/slideMasters/_rels/slideMaster1.xml.rels';
+    const relationships = relationshipsByPart.get(relsPart) ?? [];
+    const layoutRels = relationships.filter((relationship) => relationship.attributes.get('Type')?.endsWith(layoutType));
+    if (layoutRels.length === 0) {
+      throw new PptxValidationError('invalid_pptx', 'PPTX slide master has no slide-layout relationship');
+    }
+    const ids = new Set(relationships.map((relationship) => relationship.attributes.get('Id') ?? ''));
+    const sldLayoutIdTag = localPattern(prefixFromSource(masterSource, 'sldMaster', PRESENTATION_NAMESPACE), 'sldLayoutId');
+    const authored = [...visibleXml(masterSource).matchAll(new RegExp(`<${sldLayoutIdTag}(?:\\s[^>]*)?/?>`, 'g'))]
+      .map((match) => xmlStartTags(masterSource.slice(match.index, match.index + match[0].length))[0]?.attributes.get('r:id'))
+      .filter((rId): rId is string => !!rId);
+    for (const rId of authored) {
+      if (!ids.has(rId) || !layoutRels.some((relationship) => relationship.attributes.get('Id') === rId)) {
+        throw new PptxValidationError('invalid_pptx', `PPTX slide master layout relationship is unresolved: ${rId}`);
+      }
+    }
+    for (const relationship of layoutRels) {
+      resolveRequiredTarget(relsPart, relationship.attributes.get('Target') ?? '', entries, 'slide-layout');
+    }
+  }
 }
 
 export function inspectPptxPackage(packageBytes: Buffer): PptxPresentation {
@@ -544,6 +692,7 @@ export function inspectPptxPackage(packageBytes: Buffer): PptxPresentation {
       assertSafeRelationshipTarget(name, relationship.attributes.get('Target') ?? '');
     }
   }
+  assertPresentationLayout(entries, relationshipsByPart);
   const rootRelationships = relationshipsByPart.get('_rels/.rels') ?? [];
   if (!rootRelationships.some((relationship) =>
     relationship.attributes.get('Type')?.endsWith('/relationships/officeDocument')
@@ -658,33 +807,37 @@ export function setSlideText(packageBytes: Buffer, selector: { slideRef: string;
   const slideSource = xmlPart(entries, slideName);
   const p = presentationPrefix(slideSource);
   const masked = visibleXml(slideSource);
-  const spName = localPattern(p, 'sp');
-  const closeSp = localPattern(p, 'sp');
+  const { children: spTreeChildren, block } = spTreeDirectChildren(slideSource, masked, p);
   const rewritten: string[] = [];
   let updated = 0;
-  for (const shape of splitChildren(slideSource, masked, spName, closeSp)) {
-    const cNvPr = xmlStartTags(shape).find((tag) => tag.name === localName(p, 'cNvPr'));
+  // Rebuild only the spTree inner content from its full direct-child set: the mandatory
+  // nvGrpSpPr/grpSpPr and every non-target child are preserved verbatim, and only the
+  // targeted shape's text run is replaced.
+  for (const child of spTreeChildren) {
+    if (xmlStartTags(child)[0]?.name !== localName(p, 'sp')) { rewritten.push(child); continue; }
+    const cNvPr = xmlStartTags(child).find((tag) => tag.name === localName(p, 'cNvPr'));
     const id = cNvPr?.attributes.get('name');
-    if (id !== elementRef) { rewritten.push(shape); continue; }
+    if (id !== elementRef) { rewritten.push(child); continue; }
     if (updated > 0) throw new PptxValidationError('invalid_pptx', `ambiguous PPTX element targeting at ${elementRef}`);
     const preserve = /^\s|\s$/.test(selector.text) ? ' xml:space="preserve"' : '';
     const newText = `<${localName('a', 't')}${preserve}>${xml(selector.text)}</${localName('a', 't')}>`;
     const tPattern = new RegExp(`<${localName('a', 't')}(?:\\s[^>]*)?>[\\s\\S]*?<\\/${localName('a', 't')}>`, 'g');
     // Replace the first (and our authored shape has exactly one) text run.
     let count = 0;
-    const nextShape = shape.replace(tPattern, () => { count++; return newText; });
+    const nextShape = child.replace(tPattern, () => { count++; return newText; });
     if (count !== 1) throw new PptxValidationError('invalid_pptx', `PPTX element ${elementRef} has no writable text run`);
     rewritten.push(nextShape);
     updated++;
   }
   if (updated !== 1) throw new PptxValidationError('slide_target_not_found', `PPTX element ${elementRef} is not writable on slide ${slideRef}`);
-  const newSlideBody = rewritten.join('');
-  const spTreeName = localPattern(p, 'spTree');
-  const closeSpTree = localPattern(p, 'spTree');
-  const spTreeChildren = splitChildren(slideSource, masked, spTreeName, closeSpTree);
-  if (spTreeChildren.length === 0) throw new PptxValidationError('invalid_pptx', 'PPTX slide shape tree is missing');
-  const treeStart = slideSource.indexOf(spTreeChildren[0]);
-  const nextSlide = `${slideSource.slice(0, treeStart)}<${spTreeName}>${newSlideBody}</${closeSpTree}>${slideSource.slice(treeStart + spTreeChildren[0].length)}`;
+  // Keep the spTree element's own framing (open tag + close tag) and swap in the rewritten
+  // inner children, so no surrounding slide structure is lost.
+  const openEnd = block.indexOf('>') + 1;
+  const closeTag = `</${localPattern(p, 'spTree')}>`;
+  const closeStart = block.lastIndexOf(closeTag);
+  const nextBlock = `${block.slice(0, openEnd)}${rewritten.join('')}${block.slice(closeStart)}`;
+  const treeStart = slideSource.indexOf(block);
+  const nextSlide = `${slideSource.slice(0, treeStart)}${nextBlock}${slideSource.slice(treeStart + block.length)}`;
   entries.set(slideName, Buffer.from(nextSlide));
   const candidate = writeOoxmlPackage([...entries].map(([name, data]) => ({ name, data })));
   inspectPptxPackage(candidate);
