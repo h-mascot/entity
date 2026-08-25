@@ -12,6 +12,7 @@ const PluginAdminPanel = lazy(() => import('../components/plugins/PluginAdminPan
 const OfflineAwareChat = lazy(() => import('../components/OfflineAwareChat'));
 const UsersAndRolesSettings = lazy(() => import('../components/settings/UsersAndRolesSettings'));
 const AdminSettingsForm = lazy(() => import('../components/settings/AdminSettingsForm'));
+const OrgsTeamsSettings = lazy(() => import('../components/settings/OrgsTeamsSettings'));
 
 type AdminSection =
   | 'general'
@@ -171,6 +172,14 @@ function LazyUsersAndRolesSettings(props: { apiBase?: string }) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading users and roles" />}>
       <UsersAndRolesSettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyOrgsTeamsSettings(props: { apiBase?: string }) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading orgs and teams" />}>
+      <OrgsTeamsSettings {...props} />
     </Suspense>
   );
 }
@@ -502,6 +511,7 @@ export default function AdminView({
 
         {adminSection === 'accessControl' && (
           <div className="grid gap-3">
+            <LazyOrgsTeamsSettings apiBase={apiBase} />
             <LazyUsersAndRolesSettings apiBase={apiBase} />
             <LazyAdminSettingsForm
               apiBase={apiBase}
