@@ -24,18 +24,22 @@ import { fileURLToPath } from 'node:url';
 // Requires a C11 compiler named by CC (single executable path/name) or `cc` on
 // PATH. Entity's supported native-build hosts are macOS and Linux.
 // Security boundary: this runs only in a trusted source checkout. Publication
-// is a single descriptor-anchored transaction: the parent directories' and
-// every existing final artifact's identity (dev, ino) is pinned through an
-// open file descriptor, prior generations are snapshotted as same-directory
-// hardlink backups, absent finals are created with a no-replace hardlink,
-// existing finals are re-verified against the anchored identity immediately
-// before the atomic rename and re-verified as the staged inode immediately
-// after, and any failure — including any identity change at any boundary —
-// restores the exact prior generation (or publishes nothing) while refusing
-// to overwrite or remove anything this run did not own. An exclusive lock
-// (broker-build.lock in the source .build directory) is held from staging
-// through publication and cleanup so concurrent builds fail fast instead of
-// racing the renames.
+// is a single transaction whose every mutation is kernel-conditional and
+// directory-descriptor-anchored, performed by the fs_guard native helper
+// (compiled first from the same trusted sources and self-tested against this
+// volume): absent finals are created with a kernel no-replace linkat; an
+// existing final is replaced by an atomic kernel exchange (RENAME_SWAP /
+// RENAME_EXCHANGE) that cannot overwrite or remove either side and is
+// reversed with the unexpected entry restored byte-identically in place on
+// any identity drift; removals are kernel no-replace conditional moves that
+// only ever relocate the verified inode and restore any foreign entry; the
+// parent directories' identities are verified against descriptors pinned at
+// start-up so a swapped directory can never redirect a mutation. Any failure
+// — including any identity change at any boundary — restores the exact prior
+// generation (or publishes nothing) while refusing to overwrite or remove
+// anything this run did not own. An exclusive lock (broker-build.lock in the
+// source .build directory) is held from staging through publication and
+// cleanup so concurrent builds fail fast instead of racing the mutations.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = resolve(root, 'packages/server/native/managed-storage-broker');
 const out = resolve(source, '.build');
@@ -77,9 +81,11 @@ function assertRegularSource(path) {
 // follows symlinks, so a dangling symlink at a final-artifact path read as
 // "absent" and publication renamed over it; lstat() keeps the entry visible
 // so every unexpected entry (including dangling symlinks) fails closed.
+// Identity-bearing reads use bigint stats so exact inode numbers reach the
+// native guard helper.
 function lstatOrNull(path) {
   try {
-    return lstatSync(path);
+    return lstatSync(path, { bigint: true });
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
@@ -95,17 +101,16 @@ function assertReplaceableRegularFile(path) {
 }
 
 // --- Descriptor-anchored identity ------------------------------------------
-// Node 22 exposes no conditional rename (no renameat2(RENAME_NOREPLACE /
-// RENAME_EXCHANGE) or renamex_np(RENAME_EXCL) binding) and no fd-relative
-// linkat()/flock(). The atomic primitives available are linkSync (atomic
-// no-replace create: EEXIST on any existing destination), renameSync
-// (unconditional atomic replace), and open()/fstat() (a descriptor pins one
-// inode no matter what later happens to the path). Ownership is therefore
-// descriptor-anchored: identity is the {dev, ino} pinned through an open
-// descriptor, re-verified against the path immediately before and after every
-// mutation. The only window the Node API surface cannot close sits between the
-// final pre-check and the rename itself, and every post-check turns a lost
-// race there into a loud fail-closed with forensic backups kept.
+// Every guarded mutation is executed by the fs_guard native helper relative
+// to a verified parent-directory descriptor, because Node 22 exposes no
+// conditional rename or fd-relative linkat: an unconditional renameSync/
+// rmSync after a pathname pre-check leaves an interval in which an external
+// actor can replace the final path (or its parent directory) and have the
+// unexpected entry destroyed. The helper's kernel primitives close that
+// interval (atomic exchange, no-replace link/move); identity is the exact
+// {dev, ino} (bigint) pinned through descriptors and re-verified at every
+// boundary. Identity is captured with bigint stats so the exact inode reaches
+// the helper without number-precision loss.
 
 function inodeOf(stat) {
   return { dev: stat.dev, ino: stat.ino };
@@ -126,9 +131,9 @@ function anchorFinalArtifact(path) {
   if (entry.isSymbolicLink() || !entry.isFile()) {
     throw new Error(`Unsafe broker output (must be absent or a regular file): ${path}`);
   }
-  const fd = openSync(path, constants.O_RDONLY);
+  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
-    const anchored = fstatSync(fd);
+    const anchored = fstatSync(fd, { bigint: true });
     if (!anchored.isFile() || !sameInode(inodeOf(anchored), inodeOf(entry))) {
       throw new Error(`Broker output identity changed while anchoring ${path} — refusing to publish`);
     }
@@ -147,9 +152,9 @@ function pathAnchors(path, identity) {
 }
 
 function anchorRealDirectory(path) {
-  const fd = openSync(path, constants.O_RDONLY);
+  const fd = openSync(path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
   try {
-    const stat = fstatSync(fd);
+    const stat = fstatSync(fd, { bigint: true });
     if (!stat.isDirectory()) {
       throw new Error(`Unsafe broker build directory (must be a real directory): ${path}`);
     }
@@ -386,16 +391,61 @@ ensureRealDirectoryTree(root, runtimeOut);
 const coreSource = resolve(source, 'managed_storage_broker.c');
 const testSource = resolve(source, 'test_managed_storage_broker.c');
 const brokerSource = resolve(source, 'broker_main.c');
-for (const path of [coreSource, testSource, brokerSource]) assertRegularSource(path);
+const guardSource = resolve(source, 'fs_guard.c');
+for (const path of [coreSource, testSource, brokerSource, guardSource]) assertRegularSource(path);
 
 const tempObject = resolve(out, `.managed_storage_broker.o.tmp-${nonce}`);
 const tempTest = resolve(out, `.test.tmp-${nonce}`);
 const tempBroker = resolve(out, `.broker.tmp-${nonce}`);
+const tempGuard = resolve(out, `.fs-guard.tmp-${nonce}`);
 const finalObject = resolve(out, 'managed_storage_broker.o');
 const finalTest = resolve(out, 'test');
 const finalBroker = resolve(out, 'broker');
 const runtimeBroker = resolve(runtimeOut, 'broker');
 const runtimeTemp = resolve(runtimeOut, `.broker.tmp-${nonce}`);
+
+// Every guarded mutation runs through the fs_guard helper (kernel-conditional,
+// dirfd-anchored). Refusals are loud and include the helper's structured
+// reason plus the recovery outcome (restored in place / preserved at tomb).
+let guardTempIdentity = null;
+
+function runGuard(args, refuseMessage) {
+  let stdout = '';
+  try {
+    stdout = execFileSync(tempGuard, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    let result = null;
+    try {
+      result = JSON.parse(String(error.stdout ?? ''));
+    } catch {
+      result = null;
+    }
+    const reason = result?.reason ? ` (${result.reason})` : '';
+    const recovery =
+      result?.recovered === true
+        ? ' — the unexpected entry was restored in place byte-identically'
+        : result?.recovered === false && result?.tomb
+          ? ` — the unexpected entry is preserved at ${result.tomb}`
+          : '';
+    const detail = String(error.stdout ?? error.message ?? '').trim();
+    throw new Error(`${refuseMessage}${reason}${recovery}: ${detail}`);
+  }
+  let result;
+  try {
+    result = JSON.parse(stdout);
+  } catch {
+    throw new Error(`broker guard helper returned unparseable output: ${stdout.trim()}`);
+  }
+  if (result.ok !== true) {
+    throw new Error(`${refuseMessage}: ${JSON.stringify(result)}`);
+  }
+  return result;
+}
+
+function guardDirArgs(artifact) {
+  const anchor = anchorForDirectory(artifact);
+  return [dirname(artifact.final), String(anchor.identity.dev), String(anchor.identity.ino)];
+}
 
 // Publication order is fixed: object, test binary, source broker, runtime
 // broker. Each entry stages in the same directory as its final path so every
@@ -408,12 +458,13 @@ const publication = [
 ];
 
 // Restore the exact prior generation for every artifact that was published.
-// Reverse publication order. Every step is identity-guarded: rollback may
-// only rename a forensic backup over the artifact THIS run published (the
-// path must still anchor the staged temp's inode) or remove that exact file —
-// an unexpected replacement, a vanished final, a changed backup, or a
-// swapped parent directory fails closed, is collected, reported loudly, and
-// keeps every forensic backup.
+// Reverse publication order. Every mutation is identity-guarded through the
+// fs_guard helper: rollback may only atomically exchange a forensic backup
+// with the exact inode THIS run published (an unexpected replacement, a
+// vanished final, a changed backup, or a swapped parent directory fails
+// closed with the unexpected entry preserved), and may only remove the exact
+// file this run published via a kernel no-replace conditional move. Every
+// refusal is collected, reported loudly, and keeps every forensic backup.
 function rollbackPublication(published, backups, tempIdentities, priorIdentities) {
   const errors = [];
   for (const artifact of [...published].reverse()) {
@@ -428,18 +479,51 @@ function rollbackPublication(published, backups, tempIdentities, priorIdentities
         );
       }
       const backup = backups.get(artifact.name);
+      const dirArgs = guardDirArgs(artifact);
       if (backup !== undefined) {
         if (!pathAnchors(backup.path, backup.identity)) {
           throw new Error(`forensic backup for ${artifact.name} changed (${backup.path}) — refusing to restore it`);
         }
-        renameSync(backup.path, artifact.final);
+        // Kernel atomic exchange of backup and final: neither side can be
+        // overwritten or removed by the mutation, and any in-interval swap is
+        // reversed with the unexpected entry restored in place.
+        runGuard(
+          [
+            'exchange',
+            ...dirArgs,
+            basename(backup.path), String(backup.identity.dev), String(backup.identity.ino),
+            basename(artifact.final), String(publishedIdentity.dev), String(publishedIdentity.ino),
+            '--token', `rollback-restore:${artifact.name}`,
+          ],
+          `restoration of ${artifact.name} refused — refusing to overwrite an unexpected entry at ${artifact.final}`,
+        );
         if (!pathAnchors(artifact.final, backup.identity)) {
           throw new Error(`restoration of ${artifact.name} did not land on the prior generation`);
         }
+        // The backup path now holds exactly the inode this run published;
+        // drop it with the guarded conditional removal.
+        runGuard(
+          [
+            'remove-owned',
+            ...dirArgs,
+            basename(backup.path), String(publishedIdentity.dev), String(publishedIdentity.ino),
+            '--token', `rollback-backup-drop:${artifact.name}`,
+          ],
+          `forensic backup drop for ${artifact.name} refused`,
+        );
       } else {
         // No prior generation: remove exactly the file this run published
-        // (identity verified above). Never touch anything else.
-        rmSync(artifact.final, { force: true });
+        // through a kernel no-replace conditional move (an in-interval
+        // replacement is relocated and restored, never removed).
+        runGuard(
+          [
+            'remove-owned',
+            ...dirArgs,
+            basename(artifact.final), String(publishedIdentity.dev), String(publishedIdentity.ino),
+            '--token', `rollback-remove:${artifact.name}`,
+          ],
+          `removal of published ${artifact.name} refused — refusing to remove an unexpected entry at ${artifact.final}`,
+        );
       }
       backups.delete(artifact.name);
     } catch (error) {
@@ -459,11 +543,20 @@ function rollbackPublication(published, backups, tempIdentities, priorIdentities
   if (errors.length > 0) {
     throw new Error(`Broker build rollback incomplete (${errors.join('; ')}) — forensic backups kept in ${out}`);
   }
-  for (const backup of backups.values()) {
+  for (const [name, backup] of backups) {
+    const artifact = publication.find((entry) => entry.name === name);
     if (!pathAnchors(backup.path, backup.identity)) {
       throw new Error(`Broker build backup identity changed during cleanup (${backup.path}) — forensic backups kept in ${out}`);
     }
-    rmSync(backup.path, { force: true });
+    runGuard(
+      [
+        'remove-owned',
+        ...guardDirArgs(artifact),
+        basename(backup.path), String(backup.identity.dev), String(backup.identity.ino),
+        '--token', `backup-cleanup:${name}`,
+      ],
+      `broker build backup cleanup for ${name} refused — forensic backups kept in ${out}`,
+    );
   }
 }
 
@@ -477,116 +570,208 @@ try {
   verifyDirectoryAnchor(out, sourceAnchor);
   verifyDirectoryAnchor(runtimeOut, runtimeAnchor);
   acquireLockOrThrow();
+  let primaryFailure = null;
+  // Tracks what each staging temp currently anchors, updated after every
+  // guarded mutation, so temp cleanup only ever removes entries this run can
+  // still account for.
+  const tempCurrent = new Map();
   try {
-    for (const path of [finalObject, finalTest, finalBroker, runtimeBroker]) {
-      assertReplaceableRegularFile(path);
-    }
-
-    // Staging: every fallible compile/test/copy/chmod step happens on temp
-    // paths before any final path is touched.
-    execFileSync(cc, [...common, '-c', coreSource, '-o', tempObject], { stdio: 'inherit' });
-    execFileSync(cc, [...common, testSource, tempObject, '-o', tempTest], { stdio: 'inherit' });
-    execFileSync(cc, [...common, brokerSource, tempObject, '-o', tempBroker], { stdio: 'inherit' });
-    execFileSync(tempTest, [], { stdio: 'inherit' });
-    copyFileSync(tempBroker, runtimeTemp, constants.COPYFILE_EXCL);
-    chmodSync(runtimeTemp, 0o755);
-
-    // Stage identities: the staged temps are this run's files; record the
-    // inode each publish step must place at (and verify at) the final path.
-    const tempIdentities = new Map();
-    for (const artifact of publication) {
-      const tempStat = lstatOrNull(artifact.temp);
-      if (tempStat === null || !tempStat.isFile()) {
-        throw new Error(`Broker build staged artifact is missing or not a regular file: ${artifact.temp}`);
-      }
-      tempIdentities.set(artifact.name, inodeOf(tempStat));
-    }
-
-    // Snapshot: anchor each existing final's identity through a descriptor,
-    // back it up as a same-directory hardlink, and verify the backup shares
-    // the anchored inode, so publication can only ever replace the exact
-    // generation that was validated (fail closed on swaps).
-    const backups = new Map();
-    const priorIdentities = new Map();
-    const published = [];
     try {
-      for (const artifact of publication) {
-        injectFailure(`snapshot-${artifact.name}`);
-        verifyDirectoryAnchor(dirname(artifact.final), anchorForDirectory(artifact));
-        const prior = anchorFinalArtifact(artifact.final);
-        priorIdentities.set(artifact.name, prior);
-        if (prior !== null) {
-          const backup = resolve(dirname(artifact.final), `${basename(artifact.final)}.bak-${nonce}`);
-          linkSync(artifact.final, backup);
-          const backupStat = lstatOrNull(backup);
-          if (backupStat === null || !backupStat.isFile() || !sameInode(inodeOf(backupStat), prior)) {
-            throw new Error(`Broker build backup inode mismatch for ${artifact.final} — refusing to publish over a swapped path`);
-          }
-          backups.set(artifact.name, { path: backup, identity: prior });
-        }
+      for (const path of [finalObject, finalTest, finalBroker, runtimeBroker]) {
+        assertReplaceableRegularFile(path);
       }
 
-      // Publish: atomic same-directory steps expose the staged generation.
-      // Absent finals are created with linkSync — a genuinely atomic
-      // no-replace (EEXIST fails closed if anything appears). Existing finals
-      // are re-verified against the anchored identity immediately before the
-      // atomic rename, and re-verified as the staged inode immediately after;
-      // any identity change fails closed into rollback.
+      // The guarded-mutation helper is compiled first, from the same trusted
+      // sources with the same compiler, and self-tested against this volume's
+      // kernel primitives before any final path is touched. A filesystem (or
+      // kernel) without the atomic exchange / no-replace primitives fails the
+      // build closed here — there is no unsafe fallback anywhere.
+      execFileSync(cc, [...common, guardSource, '-o', tempGuard], { stdio: 'inherit' });
+      guardTempIdentity = inodeOf(lstatSync(tempGuard, { bigint: true }));
+      runGuard(
+        ['selftest', out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino)],
+        'broker guard helper selftest failed — this volume lacks the kernel primitives the guarded transaction requires',
+      );
+
+      // Staging: every fallible compile/test/copy/chmod step happens on temp
+      // paths before any final path is touched.
+      execFileSync(cc, [...common, '-c', coreSource, '-o', tempObject], { stdio: 'inherit' });
+      tempCurrent.set('object', inodeOf(lstatSync(tempObject, { bigint: true })));
+      execFileSync(cc, [...common, testSource, tempObject, '-o', tempTest], { stdio: 'inherit' });
+      tempCurrent.set('test', inodeOf(lstatSync(tempTest, { bigint: true })));
+      execFileSync(cc, [...common, brokerSource, tempObject, '-o', tempBroker], { stdio: 'inherit' });
+      tempCurrent.set('broker', inodeOf(lstatSync(tempBroker, { bigint: true })));
+      execFileSync(tempTest, [], { stdio: 'inherit' });
+      copyFileSync(tempBroker, runtimeTemp, constants.COPYFILE_EXCL);
+      chmodSync(runtimeTemp, 0o755);
+      tempCurrent.set('runtime', inodeOf(lstatSync(runtimeTemp, { bigint: true })));
+
+      // Stage identities: the staged temps are this run's files; record the
+      // inode each publish step must place at (and verify at) the final path,
+      // cross-checked against what staging recorded for the same path.
+      const tempIdentities = new Map();
       for (const artifact of publication) {
-        injectFailure(`publish-${artifact.name}`);
-        maybeSwapFinalArtifact('publish', artifact);
-        maybeSwapParentDirectory(artifact);
-        verifyDirectoryAnchor(dirname(artifact.final), anchorForDirectory(artifact));
-        const prior = priorIdentities.get(artifact.name);
-        if (prior === null) {
-          if (lstatOrNull(artifact.final) !== null) {
-            throw new Error(
-              `Broker final artifact appeared after snapshot (${artifact.final}) — refusing to replace an unexpected entry`,
-            );
+        const tempStat = lstatOrNull(artifact.temp);
+        if (tempStat === null || !tempStat.isFile()) {
+          throw new Error(`Broker build staged artifact is missing or not a regular file: ${artifact.temp}`);
+        }
+        const identity = inodeOf(tempStat);
+        if (!sameInode(identity, tempCurrent.get(artifact.name))) {
+          throw new Error(`Broker build staged artifact identity changed after staging: ${artifact.temp}`);
+        }
+        tempIdentities.set(artifact.name, identity);
+      }
+
+      // Snapshot: anchor each existing final's identity through a descriptor,
+      // back it up as a same-directory hardlink, and verify the backup shares
+      // the anchored inode, so publication can only ever replace the exact
+      // generation that was validated (fail closed on swaps).
+      const backups = new Map();
+      const priorIdentities = new Map();
+      const published = [];
+      try {
+        for (const artifact of publication) {
+          injectFailure(`snapshot-${artifact.name}`);
+          verifyDirectoryAnchor(dirname(artifact.final), anchorForDirectory(artifact));
+          const prior = anchorFinalArtifact(artifact.final);
+          priorIdentities.set(artifact.name, prior);
+          if (prior !== null) {
+            const backup = resolve(dirname(artifact.final), `${basename(artifact.final)}.bak-${nonce}`);
+            linkSync(artifact.final, backup);
+            const backupStat = lstatOrNull(backup);
+            if (backupStat === null || !backupStat.isFile() || !sameInode(inodeOf(backupStat), prior)) {
+              throw new Error(`Broker build backup inode mismatch for ${artifact.final} — refusing to publish over a swapped path`);
+            }
+            backups.set(artifact.name, { path: backup, identity: prior });
           }
-          try {
-            linkSync(artifact.temp, artifact.final);
-          } catch (error) {
-            if (error.code === 'EEXIST') {
+        }
+
+        // Publish: each step is a kernel-conditional, dirfd-anchored mutation
+        // executed by the fs_guard helper. Absent finals are created with a
+        // kernel no-replace linkat (EEXIST fails closed if anything appears —
+        // nothing is ever replaced). Existing finals are replaced by an atomic
+        // kernel exchange of the staged temp with the exact anchored prior
+        // generation: the mutation cannot overwrite or remove either side, and
+        // an in-interval swap of the final is reversed with the unexpected
+        // entry restored byte-identically in place before failing closed into
+        // rollback. The temp path receives the prior generation, so the staged
+        // inode only ever reaches the final through a kernel-mediated step.
+        for (const artifact of publication) {
+          injectFailure(`publish-${artifact.name}`);
+          maybeSwapFinalArtifact('publish', artifact);
+          maybeSwapParentDirectory(artifact);
+          verifyDirectoryAnchor(dirname(artifact.final), anchorForDirectory(artifact));
+          const prior = priorIdentities.get(artifact.name);
+          const staged = tempIdentities.get(artifact.name);
+          const dirArgs = guardDirArgs(artifact);
+          if (prior === null) {
+            if (lstatOrNull(artifact.final) !== null) {
               throw new Error(
-                `Broker final artifact appeared during publication (${artifact.final}) — refusing to replace an unexpected entry`,
+                `Broker final artifact appeared after snapshot (${artifact.final}) — refusing to replace an unexpected entry`,
               );
             }
-            throw error;
-          }
-        } else {
-          if (!pathAnchors(artifact.final, prior)) {
-            throw new Error(
-              `Broker final artifact identity changed between snapshot and publication (${artifact.final}) — refusing to replace an unexpected entry`,
+            runGuard(
+              [
+                'link-absent',
+                ...dirArgs,
+                basename(artifact.temp), String(staged.dev), String(staged.ino),
+                basename(artifact.final),
+                '--token', `publish-link:${artifact.name}`,
+              ],
+              `Broker final artifact appeared during publication (${artifact.final}) — refusing to replace an unexpected entry`,
             );
+          } else {
+            if (!pathAnchors(artifact.final, prior)) {
+              throw new Error(
+                `Broker final artifact identity changed between snapshot and publication (${artifact.final}) — refusing to replace an unexpected entry`,
+              );
+            }
+            runGuard(
+              [
+                'exchange',
+                ...dirArgs,
+                basename(artifact.temp), String(staged.dev), String(staged.ino),
+                basename(artifact.final), String(prior.dev), String(prior.ino),
+                '--token', `publish-exchange:${artifact.name}`,
+              ],
+              `Broker final artifact identity changed during publication (${artifact.final}) — refusing to replace an unexpected entry`,
+            );
+            // The atomic exchange placed the prior generation at the temp path.
+            tempCurrent.set(artifact.name, prior);
           }
-          renameSync(artifact.temp, artifact.final);
+          if (!pathAnchors(artifact.final, staged)) {
+            throw new Error(`Broker final artifact identity changed during publication (${artifact.final}) — refusing to continue`);
+          }
+          published.push(artifact);
         }
-        if (!pathAnchors(artifact.final, tempIdentities.get(artifact.name))) {
-          throw new Error(`Broker final artifact identity changed during publication (${artifact.final}) — refusing to continue`);
+      } catch (error) {
+        primaryFailure = error;
+        rollbackPublication(published, backups, tempIdentities, priorIdentities);
+        throw error;
+      }
+
+      // Success: the prior generation is no longer reachable at its final
+      // path; drop the backups, but only through the guarded conditional
+      // removal (each must still anchor exactly the hardlink this run made).
+      for (const backup of backups.values()) {
+        if (!pathAnchors(backup.path, backup.identity)) {
+          throw new Error(`Broker build backup identity changed before cleanup (${backup.path}) — forensic backups kept in ${out}`);
         }
-        published.push(artifact);
+      }
+      for (const [name, backup] of backups) {
+        const artifact = publication.find((entry) => entry.name === name);
+        runGuard(
+          [
+            'remove-owned',
+            ...guardDirArgs(artifact),
+            basename(backup.path), String(backup.identity.dev), String(backup.identity.ino),
+            '--token', `backup-cleanup:${name}`,
+          ],
+          `Broker build backup cleanup for ${name} refused — forensic backups kept in ${out}`,
+        );
       }
     } catch (error) {
-      rollbackPublication(published, backups, tempIdentities, priorIdentities);
+      // Mark ANY in-flight failure so the finally block below logs (instead
+      // of replacing) secondary cleanup errors.
+      primaryFailure = error;
       throw error;
     }
-
-    // Success: the prior generation is no longer reachable; drop the backups,
-    // but only while each still anchors exactly the hardlink this run made.
-    for (const backup of backups.values()) {
-      if (!pathAnchors(backup.path, backup.identity)) {
-        throw new Error(`Broker build backup identity changed before cleanup (${backup.path}) — forensic backups kept in ${out}`);
+  } finally {
+    // Guarded temp cleanup: every staging temp (and the helper itself) is
+    // removed only while it still anchors exactly the identity this run last
+    // recorded for it — an unexpected entry at a temp path is never removed.
+    // Secondary cleanup failures never mask the primary failure.
+    const secondary = [];
+    for (const path of [...publication.map((entry) => entry.temp), tempGuard]) {
+      try {
+        const artifact = publication.find((entry) => entry.temp === path);
+        const identity = artifact === undefined ? guardTempIdentity : tempCurrent.get(artifact.name);
+        if (identity === undefined || identity === null) {
+          rmSync(path, { force: true }); // never staged/tracked this run
+          continue;
+        }
+        const anchor = dirname(path) === out ? sourceAnchor : runtimeAnchor;
+        runGuard(
+          [
+            'remove-owned',
+            dirname(path), String(anchor.identity.dev), String(anchor.identity.ino),
+            basename(path), String(identity.dev), String(identity.ino),
+            '--token', `temp-cleanup:${basename(path)}`,
+          ],
+          `Broker build temp cleanup refused for ${path}`,
+        );
+      } catch (error) {
+        secondary.push(`${path}: ${error.message}`);
       }
     }
-    for (const backup of backups.values()) {
-      rmSync(backup.path, { force: true });
-    }
-  } finally {
-    for (const path of [tempObject, tempTest, tempBroker, runtimeTemp]) {
-      rmSync(path, { force: true });
-    }
     releaseLock();
+    if (secondary.length > 0) {
+      const combined = `Broker build temp cleanup incomplete (${secondary.join('; ')})`;
+      if (primaryFailure === null) {
+        throw new Error(combined);
+      }
+      console.error(combined);
+    }
   }
 } finally {
   closeSync(sourceAnchor.fd);

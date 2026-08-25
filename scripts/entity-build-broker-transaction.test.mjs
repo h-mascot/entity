@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { constants, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { hostname, tmpdir } from 'node:os';
@@ -255,6 +255,263 @@ test('publish and rollback fail closed on unexpected swaps, preserving outside c
       for (const path of artifactPaths) {
         assert.equal(existsSync(path), false, `unknown hook must not publish ${path}`);
       }
+    });
+  } finally {
+    await restoreOutputs();
+  }
+});
+
+test('native fs_guard helper: kernel-conditional mutations survive swaps inside the check→mutation interval', { timeout: 120_000 }, async (t) => {
+  // Direct proof against the helper the build now uses for every guarded
+  // mutation. The ENTITY_BROKER_GUARD_INNER_SWAP hook fires EXACTLY between
+  // the helper's final ownership precheck and the mutation syscall — the
+  // interval the previous unconditional renameSync/rmSync design left open.
+  // Every case must fail closed (or succeed cleanly) with the injected
+  // canary byte-identical and nothing unexpected removed.
+  const realCc = run('sh', ['-c', 'command -v cc']).stdout.trim();
+  assert.ok(realCc, 'test host must expose a C compiler on PATH');
+  const toolDir = await mkdtemp(resolve(tmpdir(), 'entity-broker-fs-guard-'));
+  const guardSource = resolve(root, 'packages/server/native/managed-storage-broker/fs_guard.c');
+  const guardBin = resolve(toolDir, 'fs_guard');
+  const scratch = resolve(toolDir, 'scratch');
+  await mkdir(scratch);
+  const compile = run(realCc, ['-std=c11', '-D_GNU_SOURCE', '-Wall', '-Wextra', '-Werror', '-pedantic', guardSource, '-o', guardBin]);
+  assert.equal(compile.status, 0, `fs_guard must compile under the build's exact flags:\n${failureDetail(compile)}`);
+  const dirStat = await stat(scratch);
+  const dirArgs = [scratch, String(dirStat.dev), String(dirStat.ino)];
+  const canaryOf = (token) => `inner-canary-${token}\n`;
+
+  const guard = (args, innerSwap = null) => {
+    const env = { ...process.env };
+    if (innerSwap !== null) env.ENTITY_BROKER_GUARD_INNER_SWAP = innerSwap;
+    const result = run(guardBin, args, { env });
+    let parsed = null;
+    try {
+      parsed = JSON.parse(result.stdout.trim().split('\n').pop() ?? '');
+    } catch {
+      parsed = null;
+    }
+    return { result, parsed };
+  };
+  const ident = async (name) => {
+    const info = await lstat(resolve(scratch, name));
+    return [String(info.dev), String(info.ino)];
+  };
+  const write = async (name, content) => writeFile(resolve(scratch, name), content);
+  const read = async (name) => readFile(resolve(scratch, name), 'utf8');
+
+  try {
+    await t.test('selftest proves the volume supports the kernel primitives', () => {
+      const { result, parsed } = guard(['selftest', ...dirArgs]);
+      assert.equal(result.status, 0, `selftest must pass:\n${failureDetail(result)}`);
+      assert.equal(parsed.ok, true);
+    });
+
+    await t.test('clean exchange atomically swaps exactly the anchored identities', async () => {
+      await write('a', 'content-A');
+      await write('b', 'content-B');
+      const { result } = guard(['exchange', ...dirArgs, 'a', ...(await ident('a')), 'b', ...(await ident('b'))]);
+      assert.equal(result.status, 0, failureDetail(result));
+      assert.equal(await read('a'), 'content-B');
+      assert.equal(await read('b'), 'content-A');
+    });
+
+    await t.test('inner-interval swap of the final side is reversed; canary byte-identical', async () => {
+      await write('a', 'staged');
+      await write('b', 'prior');
+      const token = 'publish-exchange:object';
+      const { result, parsed } = guard(
+        ['exchange', ...dirArgs, 'a', ...(await ident('a')), 'b', ...(await ident('b')), '--token', token],
+        token,
+      );
+      assert.notEqual(result.status, 0, 'a swap inside the interval must fail the mutation');
+      assert.equal(parsed.reason, 'identity-drift');
+      assert.equal(parsed.recovered, true, 'the exchange must be reversed in place');
+      assert.equal(await read('a'), 'staged', 'the staged side must be restored untouched');
+      assert.equal(await read('b'), canaryOf(token), 'the canary must survive byte-identical at the final path');
+    });
+
+    await t.test('inner-interval swap of the temp side is reversed; canary byte-identical', async () => {
+      await write('a', 'staged');
+      await write('b', 'prior');
+      const token = 'publish-exchange:test';
+      const { result, parsed } = guard(
+        ['exchange', ...dirArgs, 'a', ...(await ident('a')), 'b', ...(await ident('b')), '--token', token, '--hook-side', 'a'],
+        token,
+      );
+      assert.notEqual(result.status, 0);
+      assert.equal(parsed.recovered, true);
+      assert.equal(await read('a'), canaryOf(token), 'canary preserved where it was placed');
+      assert.equal(await read('b'), 'prior', 'final side untouched');
+    });
+
+    await t.test('link-absent is a kernel no-replace: an appearing entry is never replaced', async () => {
+      await write('src', 'staged');
+      const ok = guard(['link-absent', ...dirArgs, 'src', ...(await ident('src')), 'dst']);
+      assert.equal(ok.result.status, 0, failureDetail(ok.result));
+      assert.equal(await read('dst'), 'staged');
+      const token = 'publish-link:object';
+      const { result, parsed } = guard(
+        ['link-absent', ...dirArgs, 'src', ...(await ident('src')), 'dst2', '--token', token],
+        token,
+      );
+      assert.notEqual(result.status, 0);
+      assert.equal(parsed.reason, 'dst-appeared');
+      assert.equal(await read('dst2'), canaryOf(token), 'appeared canary must survive untouched');
+      assert.equal(await read('src'), 'staged');
+    });
+
+    await t.test('remove-owned removes the verified inode and nothing else', async () => {
+      await write('victim', 'mine');
+      const { result } = guard(['remove-owned', ...dirArgs, 'victim', ...(await ident('victim'))]);
+      assert.equal(result.status, 0, failureDetail(result));
+      assert.equal(existsSync(resolve(scratch, 'victim')), false, 'the owned entry must be removed');
+    });
+
+    await t.test('inner-interval replacement is relocated then restored; never removed', async () => {
+      await write('victim', 'mine');
+      const token = 'rollback-remove:object';
+      const { result, parsed } = guard(
+        ['remove-owned', ...dirArgs, 'victim', ...(await ident('victim')), '--token', token],
+        token,
+      );
+      assert.notEqual(result.status, 0, 'a replacement inside the interval must fail the removal');
+      assert.equal(parsed.reason, 'replaced-and-restored');
+      assert.equal(parsed.recovered, true);
+      assert.equal(await read('victim'), canaryOf(token), 'the canary must remain byte-identical at its path');
+    });
+
+    await t.test('refuses wrong identities, foreign directories, and escaping names', async () => {
+      await write('a', 'x');
+      await write('b', 'y');
+      const wrong = guard(['remove-owned', ...dirArgs, 'a', '1', '2']);
+      assert.notEqual(wrong.result.status, 0);
+      assert.equal(wrong.parsed.reason, 'identity');
+      const foreignDir = guard(['exchange', scratch, '1', '2', 'a', '1', '1', 'b', '2', '2']);
+      assert.notEqual(foreignDir.result.status, 0);
+      assert.equal(foreignDir.parsed.reason, 'directory-identity');
+      const escape = guard(['remove-owned', ...dirArgs, '../escape', '1', '2']);
+      assert.notEqual(escape.result.status, 0, 'dirfd-escaping names must be rejected');
+      assert.equal(await read('a'), 'x');
+      assert.equal(await read('b'), 'y');
+    });
+
+    await t.test('leaves no debris', async () => {
+      const debris = (await readdir(scratch)).filter((name) => name.startsWith('.guard-'));
+      assert.deepEqual(debris, [], `guard helper must not leave tomb/canary debris: ${debris}`);
+    });
+  } finally {
+    await rm(toolDir, { recursive: true, force: true });
+  }
+});
+
+test('guarded publication and rollback defeat swaps injected inside the actual check→mutation interval', { timeout: 420_000 }, async (t) => {
+  // Build-level integration of the fs_guard inner-interval hook: the swap
+  // happens after the helper's final ownership check and before the mutation
+  // syscall — the exact interval Luna generation 19 flagged. Every case must
+  // fail closed with the outside canary byte-identical and no unexpected path
+  // removed or overwritten.
+  const restoreOutputs = await preserveOutputs();
+  const innerCanary = (token) => `inner-canary-${token}\n`;
+  const buildWithInnerSwap = (token, extraEnv = {}) =>
+    run(process.execPath, [buildScript], {
+      env: { ...process.env, ENTITY_BROKER_GUARD_INNER_SWAP: token, ...extraEnv },
+    });
+  try {
+    await t.test('publish over an existing final: first artifact canary survives in place', async () => {
+      await freshOutputs();
+      const seeded = run(process.execPath, [buildScript]);
+      assert.equal(seeded.status, 0, `seed build failed:\n${failureDetail(seeded)}`);
+      const priorGeneration = await readArtifacts();
+      const token = 'publish-exchange:object';
+      const result = buildWithInnerSwap(token);
+      assert.notEqual(result.status, 0, `inner-interval swap must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /refusing to replace an unexpected entry|rollback incomplete/i);
+      assert.equal(await readFile(finalArtifacts.object, 'utf8'), innerCanary(token), 'canary must survive byte-identical at the final path');
+      const [, test, broker, runtime] = await readArtifacts();
+      assert.deepEqual([test, broker, runtime], priorGeneration.slice(1), 'later artifacts must keep the prior generation');
+      assert.ok((await readdir(sourceOut)).some((name) => name.includes('.bak-')), 'forensic backups must be kept');
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
+    });
+
+    await t.test('publish over an existing final: last artifact canary survives, rest restored', async () => {
+      await freshOutputs();
+      const seeded = run(process.execPath, [buildScript]);
+      assert.equal(seeded.status, 0, `seed build failed:\n${failureDetail(seeded)}`);
+      const priorGeneration = await readArtifacts();
+      const token = 'publish-exchange:runtime';
+      const result = buildWithInnerSwap(token);
+      assert.notEqual(result.status, 0, `inner-interval swap must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /refusing to replace an unexpected entry|rollback incomplete/i);
+      assert.equal(await readFile(finalArtifacts.runtime, 'utf8'), innerCanary(token), 'runtime canary must survive byte-identical');
+      const [object, test, broker] = await Promise.all(
+        [finalArtifacts.object, finalArtifacts.test, finalArtifacts.broker].map((path) => readFile(path)),
+      );
+      assert.deepEqual([object, test, broker], priorGeneration.slice(0, 3), 'source artifacts must be restored to the prior generation');
+      assert.deepEqual((await readdir(sourceOut)).filter((name) => name.includes('.bak-')), [], 'restored source backups must be dropped');
+      assert.ok((await readdir(runtimeOut)).some((name) => name.includes('.bak-')), 'runtime forensic backup must be kept');
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
+    });
+
+    await t.test('publish onto an absent final: appearing canary is never replaced', async () => {
+      await freshOutputs();
+      const token = 'publish-link:object';
+      const result = buildWithInnerSwap(token);
+      assert.notEqual(result.status, 0, `inner-interval swap must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /refusing to replace an unexpected entry/i);
+      assert.equal(await readFile(finalArtifacts.object, 'utf8'), innerCanary(token), 'appearing canary must survive untouched');
+      for (const [name, path] of Object.entries(finalArtifacts)) {
+        if (name === 'object') continue;
+        assert.equal(existsSync(path), false, `${name} must not be published`);
+      }
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
+    });
+
+    await t.test('rollback restore: canary at the final path is never overwritten', async () => {
+      await freshOutputs();
+      const seeded = run(process.execPath, [buildScript]);
+      assert.equal(seeded.status, 0, `seed build failed:\n${failureDetail(seeded)}`);
+      const priorGeneration = await readArtifacts();
+      const token = 'rollback-restore:object';
+      const result = buildWithInnerSwap(token, { [FAIL_AT]: 'publish-test' });
+      assert.notEqual(result.status, 0, `inner-interval rollback swap must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /rollback incomplete/i);
+      assert.equal(await readFile(finalArtifacts.object, 'utf8'), innerCanary(token), 'rollback canary must survive byte-identical at the final path');
+      const [, test, broker, runtime] = await readArtifacts();
+      assert.deepEqual([test, broker, runtime], priorGeneration.slice(1), 'unpublished artifacts must keep the prior generation');
+      assert.ok((await readdir(sourceOut)).some((name) => name.includes('.bak-')), 'forensic backups must be kept');
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
+    });
+
+    await t.test('rollback removal of a newly published artifact: canary is never removed', async () => {
+      await freshOutputs();
+      const token = 'rollback-remove:object';
+      const result = buildWithInnerSwap(token, { [FAIL_AT]: 'publish-test' });
+      assert.notEqual(result.status, 0, `inner-interval rollback swap must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /rollback incomplete/i);
+      assert.equal(await readFile(finalArtifacts.object, 'utf8'), innerCanary(token), 'the canary must never be removed');
+      for (const [name, path] of Object.entries(finalArtifacts)) {
+        if (name === 'object') continue;
+        assert.equal(existsSync(path), false, `${name} must not be published`);
+      }
+      assert.deepEqual((await readdir(sourceOut)).filter((name) => name.includes('.bak-')), [], 'no backups exist to keep');
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
+    });
+
+    await t.test('backup cleanup: canary placed on the backup path is preserved', async () => {
+      await freshOutputs();
+      const seeded = run(process.execPath, [buildScript]);
+      assert.equal(seeded.status, 0, `seed build failed:\n${failureDetail(seeded)}`);
+      const token = 'backup-cleanup:object';
+      const result = buildWithInnerSwap(token);
+      assert.notEqual(result.status, 0, `inner-interval cleanup swap must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /backup cleanup.*refused|forensic backups kept/i);
+      const backupNames = (await readdir(sourceOut)).filter((name) => name.startsWith('managed_storage_broker.o.bak-'));
+      assert.equal(backupNames.length, 1, `exactly the guarded backup must remain: ${backupNames}`);
+      assert.equal(await readFile(resolve(sourceOut, backupNames[0]), 'utf8'), innerCanary(token), 'cleanup canary must survive byte-identical at the backup path');
+      const [sourceBroker, runtimeBrokerBytes] = await Promise.all(executables.map((path) => readFile(path)));
+      assert.deepEqual(sourceBroker, runtimeBrokerBytes, 'the fully published generation must stay coherent');
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
     });
   } finally {
     await restoreOutputs();

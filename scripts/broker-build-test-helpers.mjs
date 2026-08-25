@@ -22,10 +22,14 @@ export const finalArtifacts = {
 };
 
 // Transient names the build script owns: staging temps, transaction backups,
-// lock-steal claims, and the build lock itself. Test fixtures never preserve
+// lock-steal claims, the build lock itself, and the fs_guard helper's tombs,
+// inner-swap canaries, and selftest scratch. Test fixtures never preserve
 // or restore these between runs.
 export function isTransientBuildName(name) {
-  return name === 'broker-build.lock' || /\.tmp-|\.bak-|\.stale-|\.swapped-|\.outside-canary-/.test(name);
+  return (
+    name === 'broker-build.lock' ||
+    /\.tmp-|\.bak-|\.stale-|\.swapped-|\.outside-canary-|\.guard-tomb-|\.guard-inner-canary-|\.guard-selftest-/.test(name)
+  );
 }
 
 export function run(command, args, options = {}) {
