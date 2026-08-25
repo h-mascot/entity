@@ -1108,13 +1108,35 @@ export default function OnboardingFlow({
       const payload = state.firstSourceMode === 'github'
         ? { displayName: 'GitHub source', type: 'github', baseUrl: profileDraft.githubUrl, icon: '⚡' }
         : { displayName: 'Entity source', type: 'local', basePath: profileDraft.sourcePath, icon: '⚡' };
-      const res = await fetch(apiPath(apiBase, '/api/sources'), {
+      const createRes = await fetch(apiPath(apiBase, '/api/sources'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok && res.status !== 409) throw new Error(`source ${res.status}`);
-      setSourceStatus('ok');
+      if (!createRes.ok && createRes.status !== 409) throw new Error(`source ${createRes.status}`);
+      const created = createRes.ok ? await createRes.json() as { id?: string } : null;
+      let sourceId = created?.id;
+      if (!sourceId) {
+        // Source already existed (409); resolve its real id from the sources list.
+        const listRes = await fetch(apiPath(apiBase, '/api/sources?includeDisabled=true'));
+        if (listRes.ok) {
+          const list = await listRes.json() as { sources?: Array<{ id: string; displayName: string; type: string }> };
+          const expectedName = state.firstSourceMode === 'github' ? 'GitHub source' : 'Entity source';
+          const expectedType = state.firstSourceMode === 'github' ? 'github' : 'local';
+          sourceId = list.sources?.find((item) => item.displayName === expectedName && item.type === expectedType)?.id;
+        }
+      }
+      if (!sourceId) throw new Error('source id unavailable');
+      // Live availability check: never claim a source is connected from creation alone.
+      const testRes = await fetch(apiPath(apiBase, `/api/sources/${encodeURIComponent(sourceId)}/test`), { method: 'POST' });
+      if (!testRes.ok) throw new Error(`test ${testRes.status}`);
+      const testPayload = await testRes.json() as { status?: string };
+      if (testPayload.status === 'ok') {
+        setSourceStatus('ok');
+      } else {
+        // degraded or error: the source exists but is not live-verified.
+        setSourceStatus('error');
+      }
     } catch {
       setSourceStatus('error');
     }

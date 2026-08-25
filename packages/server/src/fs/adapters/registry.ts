@@ -3,6 +3,7 @@ import type { FileSourceAdapter, SourceCapability } from './types';
 import { LocalFileSourceAdapter } from './local';
 import { DocsifyFileSourceAdapter } from './docsify';
 import { HttpMarkdownFileSourceAdapter } from './http-markdown';
+import { GitHubFileSourceAdapter } from './github';
 
 const DEFAULT_CAPABILITIES: SourceCapability = {
   read: true,
@@ -22,10 +23,10 @@ class PlaceholderAdapter implements FileSourceAdapter {
     this.source = source;
   }
 
-  async validate(source: FileSourceRecord): Promise<void> {
-    if (!source.id || !source.display_name) {
-      throw new Error('Invalid source configuration.');
-    }
+  async validate(_source: FileSourceRecord): Promise<void> {
+    throw new Error(
+      `${this.key} sources are not implemented yet. Configure a local, docsify, http-markdown, or github source instead.`
+    );
   }
 
   capabilities(): SourceCapability {
@@ -55,7 +56,7 @@ const factories: Record<FileSourceType, AdapterFactory> = {
   local: (source) => new LocalFileSourceAdapter(source),
   docsify: (source) => new DocsifyFileSourceAdapter(source),
   'http-markdown': (source) => new HttpMarkdownFileSourceAdapter(source),
-  github: (source) => new PlaceholderAdapter('github', source),
+  github: (source) => new GitHubFileSourceAdapter(source),
   s3: (source) => new PlaceholderAdapter('s3', source),
   custom: (source) => new PlaceholderAdapter('custom', source),
 };
@@ -67,4 +68,11 @@ export function createFileSourceAdapter(source: FileSourceRecord): FileSourceAda
   }
 
   return factory(source);
+}
+
+// Types whose adapters perform a real live availability check in validate().
+export const liveSourceAdapterTypes: readonly FileSourceType[] = ['local', 'docsify', 'http-markdown', 'github'];
+
+export function adapterSupportsLiveValidation(type: FileSourceType): boolean {
+  return liveSourceAdapterTypes.includes(type);
 }

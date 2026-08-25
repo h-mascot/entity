@@ -20,6 +20,8 @@ interface CreateFileSourceInput {
   baseUrl?: string;
   basePath?: string;
   manifestPath?: string;
+  authType?: FileSource['authType'];
+  authRef?: string;
   icon?: string;
 }
 
@@ -29,8 +31,25 @@ interface UpdateFileSourceInput {
   baseUrl?: string;
   basePath?: string;
   manifestPath?: string;
+  authType?: FileSource['authType'];
+  authRef?: string;
   icon?: string;
   enabled?: boolean;
+}
+
+export interface SourceSyncResult {
+  sourceId: string;
+  status: string;
+  durationMs?: number;
+  latestSyncRun?: {
+    id: number;
+    status: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    filesScanned?: number;
+    filesIndexed?: number;
+    error?: string | null;
+  } | null;
 }
 
 function buildUrls(path: string, apiBase = ''): string[] {
@@ -181,8 +200,8 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
   );
 
   const testSource = useCallback(
-    async (id: string): Promise<{ status: 'ok' | 'error'; message: string; durationMs?: number }> => {
-      const payload = await requestJsonWithFallback<{ status?: 'ok' | 'error'; message?: string; durationMs?: number }>(
+    async (id: string): Promise<{ status: 'ok' | 'degraded' | 'error'; message: string; durationMs?: number }> => {
+      const payload = await requestJsonWithFallback<{ status?: 'ok' | 'degraded' | 'error'; message?: string; durationMs?: number; latestSyncRun?: unknown }>(
         {
           urls: [
           ...buildApiOnlyUrls(`/sources/${encodeURIComponent(id)}/test`, apiBase),
@@ -196,12 +215,32 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
       );
 
       return {
-        status: payload.status === 'ok' ? 'ok' : 'error',
+        status: payload.status === 'ok' ? 'ok' : payload.status === 'degraded' ? 'degraded' : 'error',
         message: payload.message ?? 'Unknown source test status.',
         durationMs: payload.durationMs,
       };
     },
     [apiBase]
+  );
+
+  const syncSource = useCallback(
+    async (id: string): Promise<SourceSyncResult> => {
+      const payload = await requestJsonWithFallback<SourceSyncResult>(
+        {
+          urls: [
+            ...buildApiOnlyUrls(`/sources/${encodeURIComponent(id)}/sync`, apiBase),
+            ...buildApiOnlyUrls(`/fs/sources/${encodeURIComponent(id)}/sync`, apiBase),
+          ],
+          init: {
+            method: 'POST',
+          },
+          fallbackError: 'Failed to sync source.',
+        }
+      );
+      await loadSources();
+      return payload;
+    },
+    [apiBase, loadSources]
   );
 
   const fetchTree = useCallback(
@@ -391,6 +430,7 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
     setSourceEnabled,
     deleteSource,
     testSource,
+    syncSource,
     fetchTree,
     fetchFile,
     createFile,
