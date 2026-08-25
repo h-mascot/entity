@@ -141,6 +141,15 @@ function makeActivityRepository(initialActivities: ActivityRecord[] = []): Activ
     listActivitiesByTaskId: vi.fn((taskId: number, limit = 100) =>
       initialActivities.filter((activity) => activity.task_id === taskId).slice(0, limit)
     ),
+    listActivitiesFiltered: () => ({ activities: [], total: 0 }),
+    getActivityReport: () => ({
+      totals: { count: 0 },
+      byAction: [],
+      byActor: [],
+      byDay: [],
+      bySource: [],
+      byType: [],
+    }),
     createActivity: vi.fn((input: CreateActivityInput) => {
       created.push(input);
       return {
