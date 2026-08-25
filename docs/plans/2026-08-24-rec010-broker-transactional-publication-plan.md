@@ -7,6 +7,17 @@ inherited stdio pipes after the TAP summary. Round 3 makes holder teardown
 deterministic (owned process group/session, gate-file release + SIGTERM/SIGKILL
 escalation + stream destroy on every path, bounded subtest timeouts) before
 implementing GREEN. Acceptance criteria unchanged.
+Round 4 addendum (Henry-authorized, final of max 4): Luna-high generation 11
+settled CHANGES_REQUESTED at 08c5653 — `readLockRecord()` treated parseable
+but structurally/semantically invalid same-host lock JSON as stale because
+invalid/missing pids flowed into `isPidAlive()` and were reclaimed. Round 4
+validates the complete writer schema (plain non-array object; positive
+int32-range integer `pid`; non-empty string `hostname`; canonical ISO-8601
+`startedAt` that round-trips through `toISOString()`; non-empty string
+`nonce`; no unknown fields) inside `readLockRecord()` BEFORE stale evaluation,
+so every malformed record fails closed untouched. Live-holder, foreign-host,
+stale-dead-holder, symlink, transaction, rollback, and cleanup behavior is
+unchanged; stale/foreign/live fixtures now carry writer-consistent nonces.
 Branch: `fix/clean-checkout-broker-build` at clean HEAD `2e4f1f8526d720c2a3d8f3051ec71e74b0f54294`.
 Scope: exactly the two Luna-high findings on `scripts/build-managed-storage-broker.mjs`.
 Not in scope: push/merge/deploy, server consumer module, dirty canonical Entity, sandbox runtime.
@@ -74,6 +85,17 @@ Exclusive build lock (P2):
       (page content unchanged, matching the 2e4f1f8 precedent) and re-run
       `npm run docs:wiki:verify`.
 - [x] 9. Commit locally (no push/merge/deploy). Final report (no self-approval).
+- [x] 10. Round 4 RED: table-driven malformed same-host lock-schema subtests
+      (missing/zero/negative/fractional/string/out-of-range pid; missing/empty/
+      non-string hostname; missing/empty/non-string nonce; missing/numeric/
+      unparseable/non-canonical startedAt; extra field; null/array/string/
+      number/boolean records) assert nonzero exit + byte-identical lock + no
+      publication. Verified failing against 08c5653 (missing-pid case stolen).
+- [x] 11. Round 4 GREEN: `lockRecordSchemaError()` + wiring in
+      `readLockRecord()`; transaction suite 12/12 under node@22.
+- [x] 12. Round 4 proofs: full `test:release-deploy`, root build,
+      fingerprint-metadata refresh + `docs:wiki:verify` (08c5653 precedent),
+      `git diff --check`, private-default scan, full diff review, commit.
 
 ## Files touched (expected)
 

@@ -250,10 +250,12 @@ test('broker publication is a coherent transaction guarded by an exclusive build
     await t.test('recovers a stale lock left by a dead same-host build', async () => {
       await freshOutputs();
       await mkdir(sourceOut, { recursive: true });
+      const deadPid = await exitedChildPid();
       await writeLockRecord({
-        pid: await exitedChildPid(),
+        pid: deadPid,
         hostname: hostname(),
         startedAt: new Date(Date.now() - 60_000).toISOString(),
+        nonce: `${deadPid}-stale-fixture`,
       });
       const result = run(process.execPath, [buildScript]);
       assert.equal(result.status, 0, `stale lock must be stolen, not fatal:\n${failureDetail(result)}`);
@@ -264,14 +266,20 @@ test('broker publication is a coherent transaction guarded by an exclusive build
     });
 
     await t.test('fails closed on a live-pid lock, a foreign-host lock, and a corrupt lock', async () => {
+      const foreignPid = await exitedChildPid();
       const cases = [
         {
           name: 'live pid',
-          record: { pid: process.pid, hostname: hostname(), startedAt: new Date().toISOString() },
+          record: { pid: process.pid, hostname: hostname(), startedAt: new Date().toISOString(), nonce: `${process.pid}-live-fixture` },
         },
         {
           name: 'foreign host',
-          record: { pid: await exitedChildPid(), hostname: 'definitely-not-this-host', startedAt: new Date().toISOString() },
+          record: {
+            pid: foreignPid,
+            hostname: 'definitely-not-this-host',
+            startedAt: new Date().toISOString(),
+            nonce: `${foreignPid}-foreign-fixture`,
+          },
         },
       ];
       for (const { name, record } of cases) {
@@ -292,6 +300,62 @@ test('broker publication is a coherent transaction guarded by an exclusive build
       const corrupt = run(process.execPath, [buildScript]);
       assert.notEqual(corrupt.status, 0, 'corrupt lock must fail closed');
       assert.equal(await readFile(lockPath, 'utf8'), 'this is not broker lock JSON\n', 'corrupt lock must be left untouched');
+    });
+
+    await t.test('fails closed on malformed same-host lock schemas instead of stealing them', async () => {
+      // Every case is parseable JSON naming THIS host with a dead pid. Before
+      // the schema guard these flowed missing/invalid pids into the liveness
+      // check, read as dead, and were stolen as "stale". Each must now fail
+      // closed with the lock byte-identical and nothing published.
+      await freshOutputs();
+      await mkdir(sourceOut, { recursive: true });
+      const deadPid = await exitedChildPid();
+      const canonical = () => new Date(Date.now() - 60_000).toISOString();
+      const valid = () => ({
+        pid: deadPid,
+        hostname: hostname(),
+        startedAt: canonical(),
+        nonce: `${deadPid}-schema-fixture`,
+      });
+      const cases = [
+        { name: 'missing pid', record: { ...valid(), pid: undefined } },
+        { name: 'zero pid', record: { ...valid(), pid: 0 } },
+        { name: 'negative pid', record: { ...valid(), pid: -1 } },
+        { name: 'fractional pid', record: { ...valid(), pid: 1.5 } },
+        { name: 'string pid', record: { ...valid(), pid: String(deadPid) } },
+        { name: 'out-of-range pid', record: { ...valid(), pid: 0x1_0000_0000 } },
+        { name: 'missing hostname', record: { ...valid(), hostname: undefined } },
+        { name: 'empty hostname', record: { ...valid(), hostname: '' } },
+        { name: 'non-string hostname', record: { ...valid(), hostname: 123 } },
+        { name: 'missing nonce', record: { ...valid(), nonce: undefined } },
+        { name: 'empty nonce', record: { ...valid(), nonce: '' } },
+        { name: 'non-string nonce', record: { ...valid(), nonce: 42 } },
+        { name: 'missing startedAt', record: { ...valid(), startedAt: undefined } },
+        { name: 'numeric startedAt', record: { ...valid(), startedAt: 1756089480000 } },
+        { name: 'unparseable startedAt', record: { ...valid(), startedAt: 'yesterday' } },
+        { name: 'non-canonical startedAt', record: { ...valid(), startedAt: '2026-08-24T23:18:00Z' } },
+        { name: 'unexpected extra field', record: { ...valid(), extra: 'field' } },
+        { name: 'null record', raw: 'null' },
+        { name: 'array record', raw: '[1]' },
+        { name: 'string record', raw: '"lock"' },
+        { name: 'number record', raw: '42' },
+        { name: 'boolean record', raw: 'true' },
+      ];
+      for (const { name, record, raw } of cases) {
+        const payload = raw !== undefined ? `${raw}\n` : `${JSON.stringify(record)}\n`;
+        await writeFile(lockPath, payload);
+        const result = run(process.execPath, [buildScript]);
+        assert.notEqual(result.status, 0, `${name} lock must fail closed:\n${failureDetail(result)}`);
+        assert.match(
+          result.stderr,
+          /malformed|corrupt/i,
+          `${name} must be reported as a malformed record, not stale:\n${failureDetail(result)}`,
+        );
+        assert.equal(await readFile(lockPath, 'utf8'), payload, `${name} lock must remain byte-identical`);
+        for (const path of artifactPaths) {
+          assert.equal(existsSync(path), false, `${name} lock must not publish ${path}`);
+        }
+      }
     });
 
     await t.test('removes the lock after a failed build', async () => {

@@ -121,6 +121,43 @@ function isPidAlive(pid) {
   }
 }
 
+// The complete writer schema: a plain object with exactly pid, hostname,
+// startedAt, and nonce. Parseable-but-invalid same-host records must fail
+// closed here, BEFORE stale evaluation — otherwise missing/invalid pids flow
+// into isPidAlive(), read as dead, and the lock is wrongly stolen.
+const lockRecordFields = new Set(['pid', 'hostname', 'startedAt', 'nonce']);
+
+function lockRecordSchemaError(record) {
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+    return 'record must be a plain object';
+  }
+  for (const key of Object.keys(record)) {
+    if (!lockRecordFields.has(key)) return `unexpected field "${key}"`;
+  }
+  // process.pid on every supported host is a positive int32; the bound keeps
+  // absurd integer values from ever reaching process.kill as a RangeError.
+  if (!Number.isSafeInteger(record.pid) || record.pid <= 0 || record.pid > 0x7fffffff) {
+    return 'pid must be a positive integer';
+  }
+  if (typeof record.hostname !== 'string' || record.hostname.length === 0) {
+    return 'hostname must be a non-empty string';
+  }
+  // The writer stores new Date().toISOString(); require the exact canonical
+  // form (a finite instant that round-trips) so no foreign representation is
+  // mistaken for a holder record.
+  if (
+    typeof record.startedAt !== 'string' ||
+    !Number.isFinite(Date.parse(record.startedAt)) ||
+    new Date(record.startedAt).toISOString() !== record.startedAt
+  ) {
+    return 'startedAt must be the writer\'s canonical ISO-8601 timestamp';
+  }
+  if (typeof record.nonce !== 'string' || record.nonce.length === 0) {
+    return 'nonce must be a non-empty string';
+  }
+  return null;
+}
+
 function readLockRecord() {
   const stat = lstatSync(lockPath);
   if (stat.isSymbolicLink() || !stat.isFile()) {
@@ -133,14 +170,19 @@ function readLockRecord() {
   } catch {
     throw new Error(`Broker build lock is corrupt (unparseable JSON): ${lockPath}`);
   }
+  const schemaError = lockRecordSchemaError(record);
+  if (schemaError !== null) {
+    throw new Error(`Broker build lock is malformed (invalid record schema: ${schemaError}): ${lockPath}`);
+  }
   return { raw, record };
 }
 
-// Analyze an existing lock. Live holders, foreign hosts, corrupt records, and
-// non-regular lock paths all fail closed WITHOUT touching the lock. A stale
-// lock (same host, dead pid) is stolen via re-verify + rename claim + claim
-// content check; returns true when the stale lock is gone and acquisition
-// should be retried.
+// Analyze an existing lock. Live holders, foreign hosts, malformed or corrupt
+// records (any schema deviation fails in readLockRecord before evaluation),
+// and non-regular lock paths all fail closed WITHOUT touching the lock. A
+// stale lock (same host, dead pid) is stolen via re-verify + rename claim +
+// claim content check; returns true when the stale lock is gone and
+// acquisition should be retried.
 function stealStaleLockOrThrow() {
   const { raw, record } = readLockRecord();
   const detail = `pid ${record?.pid ?? '?'} on ${record?.hostname ?? '?'} started ${record?.startedAt ?? '?'}`;
