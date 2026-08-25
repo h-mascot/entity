@@ -91,22 +91,22 @@ directory and never in a replacement directory.
 
 ## Steps
 
-- [ ] 1. `fs_guard.c` helper (exchange/link-absent/remove-owned/selftest,
+- [x] 1. `fs_guard.c` helper (exchange/link-absent/remove-owned/selftest,
       inner-swap hook) + direct compile proof under the build's exact flags.
-- [ ] 2. Build-script integration: guarded publish (existing/absent), guarded
+- [x] 2. Build-script integration: guarded publish (existing/absent), guarded
       rollback (restore/remove), guarded backup+temp cleanup, helper selftest
       gate, bigint identities passed exactly to the helper.
-- [ ] 3. Tests: direct helper adversarial suite (inner-interval swaps on every
+- [x] 3. Tests: direct helper adversarial suite (inner-interval swaps on every
       op) + build-level inner-swap tests (publish first/last, absent-final,
       rollback restore, rollback remove, backup cleanup); existing suites stay
       green unchanged in behavior.
-- [ ] 4. Correct generation-17 residual-limit claims in the round-2 plan doc;
+- [x] 4. Correct generation-17 residual-limit claims in the round-2 plan doc;
       update script header comments.
-- [ ] 5. Exact-worktree proof (node@22, serial, bounded): focused suites,
+- [x] 5. Exact-worktree proof (node@22, serial, bounded): focused suites,
       `npm run test:release-deploy`, root build, wiki prepare/verify only if
       the source fingerprint requires it, `npm run scan:private-defaults`,
       `git diff --check 5169cce..HEAD`, full diff + clean status.
-- [ ] 6. Commit in small auditable save-points; report SHAs, files, test
+- [x] 6. Commit in small auditable save-points; report SHAs, files, test
       counts, kernel guarantee, residual limit. No push/merge/deploy.
 
 ## Files touched (expected)
