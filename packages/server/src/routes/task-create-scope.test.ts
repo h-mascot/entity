@@ -132,6 +132,15 @@ describe('task create scope', () => {
       parseTaskAccountabilityForCreate: () => ({}),
       pluginHooks: { emit: async () => undefined },
       registerCrewRoutes: () => undefined,
+      handoffRepository: {
+        listForTask: () => [],
+        create: () => {
+          throw new Error('handoffs not exercised by this test');
+        },
+        rollback: () => {
+          throw new Error('handoffs not exercised by this test');
+        },
+      },
       taskSyncLayer: {
         listTasks: async () => [],
         createTask: async (input: Record<string, unknown>) => {
