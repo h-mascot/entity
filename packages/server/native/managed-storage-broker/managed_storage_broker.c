@@ -2,6 +2,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <sys/file.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,8 +66,14 @@ static int parent_fd(const msb_broker *broker, const char *path, char *leaf) {
 }
 
 int msb_open(msb_broker *broker, const char *root) {
+  char resolved[PATH_MAX];
   if (!broker || !root) return MSB_INVALID;
-  broker->root_fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+  /* Root is trusted startup configuration. Resolve it once so a stable service
+   * alias (for example openwiki-html -> current/openwiki-html) binds this broker
+   * process to one immutable directory. All operation paths remain descriptor-
+   * relative and O_NOFOLLOW, so child symlinks are still rejected. */
+  if (!realpath(root, resolved)) return map_errno();
+  broker->root_fd = open(resolved, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
   return broker->root_fd < 0 ? map_errno() : MSB_OK;
 }
 void msb_close(msb_broker *broker) { if (broker && broker->root_fd >= 0) { close(broker->root_fd); broker->root_fd = -1; } }

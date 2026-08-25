@@ -145,10 +145,13 @@ static void test_replace_holds_operation_lock(const msb_broker *broker, const ch
 }
 
 int main(void) {
-  char root[] = "/tmp/msb-root-XXXXXX", outside[] = "/tmp/msb-out-XXXXXX"; char path[512];
-  msb_broker b = {.root_fd = -1}; msb_stat st; msb_listing list = {0}; uint8_t buf[32]; size_t n;
-  must(mkdtemp(root) != NULL); must(mkdtemp(outside) != NULL); snprintf(path, sizeof path, "%s/secret", outside); { int f = open(path, O_CREAT|O_WRONLY, 0600); must(f >= 0); must(write(f, "OUT", 3) == 3); close(f); }
+  char root[] = "/tmp/msb-root-XXXXXX", root_link[] = "/tmp/msb-root-link-XXXXXX", outside[] = "/tmp/msb-out-XXXXXX"; char path[512];
+  msb_broker b = {.root_fd = -1}, linked = {.root_fd = -1}; msb_stat st; msb_listing list = {0}; uint8_t buf[32]; size_t n;
+  must(mkdtemp(root) != NULL); must(mkdtemp(root_link) != NULL); must(rmdir(root_link) == 0); must(symlink(root, root_link) == 0); must(mkdtemp(outside) != NULL); snprintf(path, sizeof path, "%s/secret", outside); { int f = open(path, O_CREAT|O_WRONLY, 0600); must(f >= 0); must(write(f, "OUT", 3) == 3); close(f); }
   must(msb_open(&b, root) == MSB_OK);
+  must(msb_open(&linked, root_link) == MSB_OK);
+  must(msb_stat_path(&linked, ".", &st) == MSB_OK && st.is_directory);
+  msb_close(&linked);
   test_read_limits(&b, root);
   must(msb_write(&b, "a.txt", (const uint8_t *)"hello", 5, 1) == MSB_OK);
   must(msb_stat_path(&b, "a.txt", &st) == MSB_OK && st.size == 5 && !st.is_directory);
@@ -203,7 +206,7 @@ int main(void) {
   snprintf(path, sizeof path, "%s/l16m.bin", root); unlink(path);
   snprintf(path, sizeof path, "%s/over.bin", root); unlink(path);
   snprintf(path, sizeof path, "%s/too-big2", root); unlink(path);
-  snprintf(path, sizeof path, "%s/a.txt", root); unlink(path); rmdir(root);
+  snprintf(path, sizeof path, "%s/a.txt", root); unlink(path); rmdir(root); unlink(root_link);
   snprintf(path, sizeof path, "%s/secret", outside); unlink(path); rmdir(outside);
   return 0;
 }

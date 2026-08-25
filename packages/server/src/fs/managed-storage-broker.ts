@@ -170,12 +170,16 @@ export class ManagedStorageBrokerClient {
     if (this.failed) return Promise.reject(this.spawnError ?? new ManagedStorageBrokerSpawnError());
     if (this.closed) return Promise.reject(new Error('managed storage broker is closed'));
     if (!this.child) return Promise.reject(new ManagedStorageBrokerSpawnError());
+    // The UI/API represent source-root traversal as an empty relative path. The
+    // native broker deliberately accepts `.` as its only root descriptor and
+    // rejects an empty protocol path, so normalize only this exact boundary.
+    const operationPath = request.path === '' ? '.' : request.path;
     const fields = request.op === 'stat' || request.op === 'read' || request.op === 'list'
-      ? [request.op, encode(request.path)]
-      : request.op === 'mkdir' ? [request.op, encode(request.path), request.mode.toString(8)]
+      ? [request.op, encode(operationPath)]
+      : request.op === 'mkdir' ? [request.op, encode(operationPath), request.mode.toString(8)]
       : request.op === 'replace-if-equal'
-        ? [request.op, encode(request.path), encode(request.recoveryPath), encode(request.expected), encode(request.data)]
-        : [request.op === 'exclusive-create' ? 'create' : request.op, encode(request.path), encode(request.data)];
+        ? [request.op, encode(operationPath), encode(request.recoveryPath), encode(request.expected), encode(request.data)]
+        : [request.op === 'exclusive-create' ? 'create' : request.op, encode(operationPath), encode(request.data)];
     const payload = `${fields.join('\t')}\n`;
     return new Promise((resolve, reject) => {
       const entry = { resolve, reject };
