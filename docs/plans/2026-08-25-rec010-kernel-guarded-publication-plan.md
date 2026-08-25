@@ -57,21 +57,23 @@ now also guarded through fs_guard), transaction rollback ordering,
 JS-level swap hooks, FAIL_AT labels, native broker build, permissions,
 clean-checkout wiring.
 
-Additional hardening from Codex review rounds: run-scoped names carry 128
-random bits (pid + ms + crypto random) so no external actor can know a
-staging/backup/claim/tomb name before this run creates it exclusively;
-every cc staging temp is exclusively pre-created (`wx`) before compile;
-never-identity-tracked temps are never blindly removed (exclusively
-pre-created ones are removed with the current identity through the
-guarded conditional removal; anything else must be provably absent or the
-cleanup fails loudly).
+Additional hardening from Codex review rounds: run-scoped JS names carry
+128 random bits (pid + ms + crypto random) and every helper-internal name
+(tomb, inner-swap canary, selftest scratch) carries 128 bits of OS entropy
+from /dev/urandom, so no external actor can know a staging/backup/claim/
+tomb name before this run creates it exclusively; every cc staging temp is
+exclusively pre-created (`wx`) before compile; never-identity-tracked temps
+are never blindly removed (exclusively pre-created ones are removed with the
+current identity through the guarded conditional removal; anything else must
+be provably absent or the cleanup fails loudly).
 
 ## Residual limit (honest, irreducible)
 
 No kernel on any supported host offers unlink-by-inode, so exactly one
 terminal `unlinkat` remains inside `remove-owned`: the tomb unlink, guarded
-by (a) an unpredictable name that did not exist until the same helper
-invocation created it as the destination of the kernel no-replace move,
+by (a) a name carrying 128 bits of OS entropy that did not exist until the
+same helper invocation created it as the destination of the kernel
+no-replace move,
 (b) fd-pinned identity verification of the inode the move placed there,
 (c) immediate adjacency of verify and unlink in single-threaded native
 code, and (d) a post-unlink link-count audit that converts any replacement

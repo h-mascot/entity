@@ -59,7 +59,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <time.h>
 #include <unistd.h>
 
 #if defined(__APPLE__)
@@ -97,10 +96,26 @@ struct options {
 
 static int hook_fired = 0;
 
-static uint64_t now_ns(void) {
-  struct timespec ts;
-  if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return (uint64_t)getpid();
-  return ((uint64_t)ts.tv_sec * 1000000000ull) + (uint64_t)ts.tv_nsec;
+// 16 bytes of OS entropy for helper-internal names (tomb, inner-swap canary,
+// selftest scratch). /dev/urandom is the portable source on both supported
+// hosts; failing to obtain entropy fails the operation closed rather than
+// degrading to a predictable name.
+static int fill_random_hex(char *out, size_t hex_chars) {
+  unsigned char raw[16];
+  size_t need = hex_chars / 2;
+  if (need > sizeof(raw)) return -1;
+  int fd = open("/dev/urandom", O_RDONLY);
+  if (fd < 0) return -1;
+  ssize_t got = read(fd, raw, need);
+  close(fd);
+  if (got != (ssize_t)need) return -1;
+  static const char hex[] = "0123456789abcdef";
+  for (size_t i = 0; i < need; i += 1) {
+    out[i * 2] = hex[raw[i] >> 4];
+    out[i * 2 + 1] = hex[raw[i] & 0x0f];
+  }
+  out[need * 2] = '\0';
+  return 0;
 }
 
 // Minimal JSON string escaper (names/tokens are ASCII nonce identifiers; the
@@ -239,10 +254,12 @@ static void maybe_inner_swap(int dirfd, const struct options *opt, const char *t
   if (want == NULL || *want == '\0' || opt->token == NULL || hook_fired != 0) return;
   if (strcmp(want, opt->token) != 0) return;
   hook_fired = 1;
-  char canary[128];
-  snprintf(canary, sizeof(canary), ".guard-inner-canary-%ld-%" PRIu64, (long)getpid(), now_ns());
+  char entropy[33];
+  if (fill_random_hex(entropy, sizeof(entropy) - 1) != 0) return; // hook environment is broken: do not silently weaken
+  char canary[160];
+  snprintf(canary, sizeof(canary), ".guard-inner-canary-%ld-%s", (long)getpid(), entropy);
   int fd = openat(dirfd, canary, O_CREAT | O_EXCL | O_WRONLY, 0600);
-  if (fd < 0) return; // hook environment is broken: do not silently weaken
+  if (fd < 0) return;
   dprintf(fd, "inner-canary-%s\n", opt->token);
   close(fd);
   renameat(dirfd, canary, dirfd, target_name); // attacker-style replace
@@ -385,14 +402,21 @@ static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const 
     return 1;
   }
   nlink_t nlink_before = pinned.st_nlink;
-  // The tomb is an unpredictable name that is NOT pre-created: the kernel
-  // no-replace conditional rename (RENAME_EXCL on macOS / RENAME_NOREPLACE on
-  // Linux) refuses to move onto any existing entry, so even an omniscient
-  // pre-creation at the tomb name can only fail the operation, never destroy
-  // anything. The move relocates the entry at `name` without overwriting any
-  // other entry.
-  char tomb[128];
-  snprintf(tomb, sizeof(tomb), ".guard-tomb-%ld-%" PRIu64, (long)getpid(), now_ns());
+  // The tomb is a cryptographically unpredictable name that is NOT
+  // pre-created: the kernel no-replace conditional rename (RENAME_EXCL on
+  // macOS / RENAME_NOREPLACE on Linux) refuses to move onto any existing
+  // entry, so even an omniscient pre-creation at the tomb name can only fail
+  // the operation, never destroy anything. The move relocates the entry at
+  // `name` without overwriting any other entry.
+  char entropy[33];
+  if (fill_random_hex(entropy, sizeof(entropy) - 1) != 0) {
+    close(fd);
+    close(dirfd);
+    fail(op, "entropy", 0, NULL, NULL, "could not obtain OS entropy for the tomb name");
+    return 1;
+  }
+  char tomb[160];
+  snprintf(tomb, sizeof(tomb), ".guard-tomb-%ld-%s", (long)getpid(), entropy);
   maybe_inner_swap(dirfd, opt, name);
   if (renameatx_np(dirfd, name, dirfd, tomb, GUARD_NOREPLACE) != 0) {
     int e = errno;
@@ -453,8 +477,14 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
   (void)opt;
   int parent = -1;
   if (anchor_directory(dir, ddev, dino, &parent) != 0) return 1;
-  char scratch[128];
-  snprintf(scratch, sizeof(scratch), ".guard-selftest-%ld-%" PRIu64, (long)getpid(), now_ns());
+  char entropy[33];
+  if (fill_random_hex(entropy, sizeof(entropy) - 1) != 0) {
+    close(parent);
+    fail(op, "entropy", 0, NULL, NULL, "could not obtain OS entropy for the scratch name");
+    return 1;
+  }
+  char scratch[160];
+  snprintf(scratch, sizeof(scratch), ".guard-selftest-%ld-%s", (long)getpid(), entropy);
   if (mkdirat(parent, scratch, 0700) != 0) {
     int e = errno;
     close(parent);
