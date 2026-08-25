@@ -548,8 +548,12 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
       break;
     }
   } while (0);
-  // Best-effort cleanup of the scratch entries; leftovers are visible debris
-  // only on the failure path (which fails the build).
+  // Best-effort cleanup of the scratch entries. The scratch directory did not
+  // exist until this invocation created it (unpredictable name) and only this
+  // helper has written to it, so these names are ours by construction; a
+  // racing same-user replacement is the documented uniform residual for any
+  // helper-internal unlink on an unknowable name. Leftovers are visible
+  // debris only on the failure path (which fails the build).
   const char *e = "e";
   unlinkat(dfd, a, 0);
   unlinkat(dfd, b, 0);

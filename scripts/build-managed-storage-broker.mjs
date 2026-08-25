@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -11,7 +12,6 @@ import {
   openSync,
   readFileSync,
   renameSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { hostname } from 'node:os';
@@ -241,7 +241,10 @@ function maybeSwapParentDirectory(artifact) {
 
 // --- Exclusive build lock ----------------------------------------------------
 const lockPath = resolve(out, 'broker-build.lock');
-const nonce = `${process.pid}-${Date.now()}`;
+// Run-scoped names are unpredictable (pid + ms + 128 random bits) so no
+// external actor can know a staging/backup/claim name before this run
+// creates it exclusively; every such creation uses O_EXCL semantics.
+const nonce = `${process.pid}-${Date.now()}-${randomBytes(16).toString('hex')}`;
 const lockRecord = { pid: process.pid, hostname: hostname(), startedAt: new Date().toISOString(), nonce };
 const lockPayload = `${JSON.stringify(lockRecord)}\n`;
 let lockHeld = false;
@@ -633,6 +636,27 @@ function anchorForDirectory(artifact) {
   return artifact.name === 'runtime' ? runtimeAnchor : sourceAnchor;
 }
 
+// Tracks what each staging temp currently anchors, updated after every
+// guarded mutation, so temp cleanup only ever removes entries this run can
+// still account for. `tempOwnedUntracked` holds temps this run created
+// exclusively (O_EXCL) whose producing step has not completed yet: they are
+// ours by construction and are cleaned with the current identity, guarded.
+const tempCurrent = new Map();
+const tempOwnedUntracked = new Set();
+function stageTemp(path) {
+  // Exclusive pre-creation on an unpredictable name: a pre-existing entry
+  // can only be interference (EEXIST) and fails the build closed; from here
+  // on the name belongs to this run.
+  writeFileSync(path, '', { flag: 'wx' });
+  tempOwnedUntracked.add(path);
+}
+function markStaged(name, path) {
+  const identity = inodeOf(lstatSync(path, { bigint: true }));
+  tempCurrent.set(name, identity);
+  tempOwnedUntracked.delete(path);
+  return identity;
+}
+
 try {
   verifyDirectoryAnchor(out, sourceAnchor);
   verifyDirectoryAnchor(runtimeOut, runtimeAnchor);
@@ -641,18 +665,17 @@ try {
   // volume's kernel primitives before any final path or the lock is touched.
   // A filesystem (or kernel) without the atomic exchange / no-replace
   // primitives fails the build closed here — no unsafe fallback anywhere.
+  // (cc creates the guard temp itself on an unpredictable name; a failed
+  // compile normally leaves nothing, and any untracked leftover is refused
+  // loudly at cleanup rather than blindly removed.)
   execFileSync(cc, [...common, guardSource, '-o', tempGuard], { stdio: 'inherit' });
-  guardTempIdentity = inodeOf(lstatSync(tempGuard, { bigint: true }));
+  guardTempIdentity = markStaged('guard', tempGuard);
   runGuard(
     ['selftest', out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino)],
     'broker guard helper selftest failed — this volume lacks the kernel primitives the guarded transaction requires',
   );
   acquireLockOrThrow();
   let primaryFailure = null;
-  // Tracks what each staging temp currently anchors, updated after every
-  // guarded mutation, so temp cleanup only ever removes entries this run can
-  // still account for.
-  const tempCurrent = new Map();
   try {
     try {
       for (const path of [finalObject, finalTest, finalBroker, runtimeBroker]) {
@@ -661,16 +684,19 @@ try {
 
       // Staging: every fallible compile/test/copy/chmod step happens on temp
       // paths before any final path is touched.
+      stageTemp(tempObject);
       execFileSync(cc, [...common, '-c', coreSource, '-o', tempObject], { stdio: 'inherit' });
-      tempCurrent.set('object', inodeOf(lstatSync(tempObject, { bigint: true })));
+      markStaged('object', tempObject);
+      stageTemp(tempTest);
       execFileSync(cc, [...common, testSource, tempObject, '-o', tempTest], { stdio: 'inherit' });
-      tempCurrent.set('test', inodeOf(lstatSync(tempTest, { bigint: true })));
+      markStaged('test', tempTest);
+      stageTemp(tempBroker);
       execFileSync(cc, [...common, brokerSource, tempObject, '-o', tempBroker], { stdio: 'inherit' });
-      tempCurrent.set('broker', inodeOf(lstatSync(tempBroker, { bigint: true })));
+      markStaged('broker', tempBroker);
       execFileSync(tempTest, [], { stdio: 'inherit' });
       copyFileSync(tempBroker, runtimeTemp, constants.COPYFILE_EXCL);
       chmodSync(runtimeTemp, 0o755);
-      tempCurrent.set('runtime', inodeOf(lstatSync(runtimeTemp, { bigint: true })));
+      markStaged('runtime', runtimeTemp);
 
       // Stage identities: the staged temps are this run's files; record the
       // inode each publish step must place at (and verify at) the final path,
@@ -813,7 +839,30 @@ try {
       try {
         const identity = tempCurrent.get(artifactNameForTemp(path));
         if (identity === undefined || identity === null) {
-          rmSync(path, { force: true }); // never staged/tracked this run
+          // Never identity-tracked (its producing step failed):
+          // - a temp this run exclusively pre-created is ours by construction
+          //   and is removed with its CURRENT identity through the guarded
+          //   conditional removal (an in-interval replacement is relocated
+          //   and restored, never removed);
+          // - a temp this run never created must be provably absent — an
+          //   existing entry we cannot account for is never blindly removed.
+          if (tempOwnedUntracked.has(path)) {
+            const stat = lstatOrNull(path);
+            if (stat === null) continue;
+            runGuard(
+              [
+                'remove-owned',
+                out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino),
+                basename(path), String(stat.dev), String(stat.ino),
+                '--token', `temp-cleanup:${basename(path)}`,
+              ],
+              `Broker build temp cleanup refused for ${path}`,
+            );
+            continue;
+          }
+          if (lstatOrNull(path) !== null) {
+            throw new Error(`untracked staging temp exists — refusing unguarded cleanup: ${path}`);
+          }
           continue;
         }
         const anchor = dirname(path) === out ? sourceAnchor : runtimeAnchor;
@@ -832,15 +881,22 @@ try {
     }
     releaseLock();
     try {
-      runGuard(
-        [
-          'remove-owned',
-          out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino),
-          basename(tempGuard), String(guardTempIdentity.dev), String(guardTempIdentity.ino),
-          '--token', 'temp-cleanup:fs-guard',
-        ],
-        `Broker build temp cleanup refused for ${tempGuard}`,
-      );
+      // The helper removes itself last (after the lock is released): guarded
+      // by the identity cc produced. An untracked leftover (failed/partial
+      // compile) is never blindly removed — it is refused loudly instead.
+      if (guardTempIdentity !== null) {
+        runGuard(
+          [
+            'remove-owned',
+            out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino),
+            basename(tempGuard), String(guardTempIdentity.dev), String(guardTempIdentity.ino),
+            '--token', 'temp-cleanup:fs-guard',
+          ],
+          `Broker build temp cleanup refused for ${tempGuard}`,
+        );
+      } else if (lstatOrNull(tempGuard) !== null) {
+        throw new Error(`untracked guard temp exists — refusing unguarded cleanup: ${tempGuard}`);
+      }
     } catch (error) {
       secondary.push(`${tempGuard}: ${error.message}`);
     }

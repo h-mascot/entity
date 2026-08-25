@@ -52,23 +52,40 @@ nothing unexpected is removed.
 
 Preserved unchanged: ENOENT-only absence semantics, all-four-artifact
 coverage, snapshot/forensic-backup flow, exclusive lock + malformed-lock
-fail-closed behavior, transaction rollback ordering, JS-level swap hooks,
-FAIL_AT labels, native broker build, permissions, clean-checkout wiring.
+fail-closed behavior (the lock's own steal/restore/release mutations are
+now also guarded through fs_guard), transaction rollback ordering,
+JS-level swap hooks, FAIL_AT labels, native broker build, permissions,
+clean-checkout wiring.
 
-## Residual limit (honest)
+Additional hardening from Codex review rounds: run-scoped names carry 128
+random bits (pid + ms + crypto random) so no external actor can know a
+staging/backup/claim/tomb name before this run creates it exclusively;
+every cc staging temp is exclusively pre-created (`wx`) before compile;
+never-identity-tracked temps are never blindly removed (exclusively
+pre-created ones are removed with the current identity through the
+guarded conditional removal; anything else must be provably absent or the
+cleanup fails loudly).
 
-The final `unlinkat` of the helper-created tomb in `remove-owned` is the one
-operation no kernel makes conditional (no unlink-by-inode exists on macOS or
-Linux). Its protection is structural: an unguessable name that did not exist
-until the same helper invocation, fd-pinned identity verification, immediate
-adjacency in single-threaded native code, and a post-unlink link-count audit
-that converts any replacement into a loud failure. No deterministic or
-schedulable injection point can reach it; documented rather than hidden.
-Defense-in-depth: the helper binary itself is identity-checked before every
-execution. Parent-directory swaps inside the helper's own interval are
-structurally harmless: every mutation is relative to the verified directory
-descriptor, so it lands in the anchored (possibly moved) directory and never
-in a replacement directory.
+## Residual limit (honest, irreducible)
+
+No kernel on any supported host offers unlink-by-inode, so exactly one
+terminal `unlinkat` remains inside `remove-owned`: the tomb unlink, guarded
+by (a) an unpredictable name that did not exist until the same helper
+invocation created it as the destination of the kernel no-replace move,
+(b) fd-pinned identity verification of the inode the move placed there,
+(c) immediate adjacency of verify and unlink in single-threaded native
+code, and (d) a post-unlink link-count audit that converts any replacement
+into a loud failure. The same uniform residual class covers cc overwriting
+an entry swapped onto an exclusively pre-created, cryptographically
+unpredictable staging temp name after pre-creation, and the selftest's
+cleanup of entries in its own freshly created unpredictable scratch
+directory. No deterministic or schedulable injection point (including the
+in-interval hook) can reach any of these; documented rather than hidden.
+Defense-in-depth: the helper binary itself is identity-checked before
+every execution. Parent-directory swaps inside the helper's own interval
+are structurally harmless: every mutation is relative to the verified
+directory descriptor, so it lands in the anchored (possibly moved)
+directory and never in a replacement directory.
 
 ## Steps
 
