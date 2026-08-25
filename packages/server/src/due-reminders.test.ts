@@ -160,7 +160,7 @@ describe('scanDueDateReminders', () => {
     expect(result.errors).toEqual([]);
     expect(routed[0]).toMatchObject({
       recipientPrincipalId: 'sam',
-      canonicalEventId: 'due-reminder:101:due-soon',
+      canonicalEventId: 'due-reminder:101:due-soon:2026-08-25T18:00:00.000Z',
       notificationType: 'task_nudge',
       urgency: 'normal',
     });
@@ -205,6 +205,25 @@ describe('scanDueDateReminders', () => {
     expect(repo.listNotificationsForRecipient({ recipient_principal_id: 'sam' })).toHaveLength(1);
   });
 
+  it('re-notifies when the due date changes', async () => {
+    const repo = createMemoryNotificationRepository();
+    const { service } = makeRoutingCapture(repo);
+    const deps = {
+      notificationRepository: repo,
+      routingService: service,
+      listTasks: () => [makeTask({ due_date: '2026-08-25T18:00:00.000Z' })],
+      now: () => NOW,
+    };
+    await scanDueDateReminders(deps);
+    const moved = {
+      ...deps,
+      listTasks: () => [makeTask({ due_date: '2026-08-25T14:00:00.000Z' })],
+    };
+    const second = await scanDueDateReminders(moved);
+    expect(second.createdNotifications).toBe(1);
+    expect(repo.listNotificationsForRecipient({ recipient_principal_id: 'sam' })).toHaveLength(2);
+  });
+
   it('marks overdue tasks with high urgency and overdue wording', async () => {
     const repo = createMemoryNotificationRepository();
     const { service, routed } = makeRoutingCapture(repo);
@@ -216,7 +235,7 @@ describe('scanDueDateReminders', () => {
     });
 
     expect(routed[0]).toMatchObject({
-      canonicalEventId: 'due-reminder:101:overdue',
+      canonicalEventId: 'due-reminder:101:overdue:2026-08-24T12:00:00.000Z',
       urgency: 'high',
     });
     expect(String(routed[0].title)).toMatch(/^Overdue:/);
@@ -333,7 +352,7 @@ describe('createDueReminderScheduler', () => {
 
 describe('reminderEventId', () => {
   it('formats canonical event ids used for dedupe', () => {
-    expect(reminderEventId(101, 'overdue')).toBe('due-reminder:101:overdue');
+    expect(reminderEventId(101, 'overdue', '2026-08-24T12:00:00.000Z')).toBe('due-reminder:101:overdue:2026-08-24T12:00:00.000Z');
   });
 
   it('default stages cover due-soon and overdue', () => {
