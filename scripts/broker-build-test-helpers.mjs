@@ -25,7 +25,7 @@ export const finalArtifacts = {
 // lock-steal claims, and the build lock itself. Test fixtures never preserve
 // or restore these between runs.
 export function isTransientBuildName(name) {
-  return name === 'broker-build.lock' || /\.tmp-|\.bak-|\.stale-/.test(name);
+  return name === 'broker-build.lock' || /\.tmp-|\.bak-|\.stale-|\.swapped-|\.outside-canary-/.test(name);
 }
 
 export function run(command, args, options = {}) {

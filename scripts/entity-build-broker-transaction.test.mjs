@@ -3,7 +3,7 @@ import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, 
 import { constants, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { hostname, tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -148,6 +148,114 @@ ${failureDetail(result)}`);
         }
       });
     }
+  } finally {
+    await restoreOutputs();
+  }
+});
+
+test('publish and rollback fail closed on unexpected swaps, preserving outside canaries', { timeout: 300_000 }, async (t) => {
+  // The build script's test-only swap hooks simulate an external actor that
+  // replaces a final artifact (or its whole parent directory) immediately
+  // before a guarded publish/rollback boundary. Every case must fail closed
+  // with the unexpected entry left byte-identical, never replaced or removed.
+  const restoreOutputs = await preserveOutputs();
+  const canaryPattern = (phase, artifact) => new RegExp(`^outside-canary-${phase}-${artifact}-.+\n$`);
+  try {
+    await t.test('publish: an unexpected replacement of the first artifact is never re-replaced', async () => {
+      await freshOutputs();
+      const seeded = run(process.execPath, [buildScript]);
+      assert.equal(seeded.status, 0, `seed build failed:\n${failureDetail(seeded)}`);
+      const priorGeneration = await readArtifacts();
+      const result = buildWithInjection([], { ENTITY_BROKER_BUILD_SWAP_AT: 'object' });
+      assert.notEqual(result.status, 0, `swapped object must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /refusing to replace an unexpected entry|rollback incomplete/i);
+      assert.match(await readFile(finalArtifacts.object, 'utf8'), canaryPattern('publish', 'object'), 'canary must survive at the object final path');
+      const [object, ...rest] = await readArtifacts();
+      assert.deepEqual(rest, priorGeneration.slice(1), 'test/broker/runtime must keep the prior generation');
+      const sourceDebris = (await readdir(sourceOut)).filter((name) => name.includes('.bak-'));
+      assert.ok(sourceDebris.length > 0, 'forensic backups must be kept while a final is in an unexpected state');
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
+    });
+
+    await t.test('publish: a swapped last artifact keeps its canary and restores the rest', async () => {
+      await freshOutputs();
+      const seeded = run(process.execPath, [buildScript]);
+      assert.equal(seeded.status, 0, `seed build failed:\n${failureDetail(seeded)}`);
+      const priorGeneration = await readArtifacts();
+      const result = buildWithInjection([], { ENTITY_BROKER_BUILD_SWAP_AT: 'runtime' });
+      assert.notEqual(result.status, 0, `swapped runtime must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /refusing to replace an unexpected entry|rollback incomplete/i);
+      const [object, test, broker, runtime] = await readArtifacts();
+      assert.deepEqual([object, test, broker], priorGeneration.slice(0, 3), 'source artifacts must be restored to the prior generation');
+      assert.match(await readFile(finalArtifacts.runtime, 'utf8'), canaryPattern('publish', 'runtime'), 'runtime canary must survive');
+      assert.deepEqual((await readdir(sourceOut)).filter((name) => name.includes('.bak-')), [], 'restored source backups must be dropped');
+      assert.ok((await readdir(runtimeOut)).some((name) => name.includes('.bak-')), 'runtime forensic backup must be kept');
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
+    });
+
+    await t.test('publish: an artifact appearing at an absent final path is never replaced', async () => {
+      await freshOutputs();
+      const result = buildWithInjection([], { ENTITY_BROKER_BUILD_SWAP_AT: 'object' });
+      assert.notEqual(result.status, 0, `appeared object must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /appeared after snapshot|refusing to replace an unexpected entry/i);
+      assert.match(await readFile(finalArtifacts.object, 'utf8'), canaryPattern('publish', 'object'), 'appeared canary must survive untouched');
+      for (const [name, path] of Object.entries(finalArtifacts)) {
+        if (name === 'object') continue;
+        assert.equal(existsSync(path), false, `${name} must not be published`);
+      }
+      assert.deepEqual((await readdir(sourceOut)).filter((name) => name.includes('.bak-')), [], 'no backups exist to keep');
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
+    });
+
+    await t.test('rollback: an unexpected replacement of a published artifact is never overwritten or removed', async () => {
+      await freshOutputs();
+      const seeded = run(process.execPath, [buildScript]);
+      assert.equal(seeded.status, 0, `seed build failed:\n${failureDetail(seeded)}`);
+      const priorGeneration = await readArtifacts();
+      const result = buildWithInjection(['publish-test'], { ENTITY_BROKER_BUILD_SWAP_AT_ROLLBACK: 'object' });
+      assert.notEqual(result.status, 0, `rollback swap must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /rollback incomplete/i, 'the incomplete rollback must be reported loudly');
+      assert.match(await readFile(finalArtifacts.object, 'utf8'), canaryPattern('rollback', 'object'), 'rollback canary must survive untouched');
+      const [object, test, broker, runtime] = await readArtifacts();
+      assert.deepEqual([test, broker, runtime], priorGeneration.slice(1), 'unpublished artifacts must keep the prior generation');
+      assert.ok((await readdir(sourceOut)).some((name) => name.includes('.bak-')), 'forensic backups must be kept');
+      assert.equal(existsSync(lockPath), false, 'lock must be released even after the failed rollback');
+    });
+
+    await t.test('publish: a swapped parent directory fails closed without publishing into it', async () => {
+      await freshOutputs();
+      const seeded = run(process.execPath, [buildScript]);
+      assert.equal(seeded.status, 0, `seed build failed:\n${failureDetail(seeded)}`);
+      const priorGeneration = await readArtifacts();
+      const result = buildWithInjection([], { ENTITY_BROKER_BUILD_SWAP_DIR_AT: 'runtime' });
+      assert.notEqual(result.status, 0, `swapped runtime directory must fail the build:\n${failureDetail(result)}`);
+      assert.match(result.stderr, /directory identity changed|rollback incomplete/i);
+      // The replacement directory at the old path must stay empty...
+      assert.deepEqual(await readdir(runtimeOut), [], 'nothing may be published into the replacement directory');
+      // ...the real directory survives under the swap name with the prior
+      // generation and its forensic backup intact.
+      const moved = (await readdir(dirname(runtimeOut))).filter((name) => name.includes('.swapped-'));
+      assert.equal(moved.length, 1, `the real runtime directory must survive exactly once: ${moved}`);
+      const movedOut = resolve(dirname(runtimeOut), moved[0]);
+      assert.deepEqual(await readFile(resolve(movedOut, 'broker')), priorGeneration[3], 'prior runtime generation must survive in the moved directory');
+      assert.ok((await readdir(movedOut)).some((name) => name.includes('.bak-')), 'runtime forensic backup must survive in the moved directory');
+      const [object, test, broker] = await Promise.all(
+        [finalArtifacts.object, finalArtifacts.test, finalArtifacts.broker].map((path) => readFile(path)),
+      );
+      assert.deepEqual([object, test, broker], priorGeneration.slice(0, 3), 'source artifacts must be restored to the prior generation');
+      await rm(movedOut, { recursive: true, force: true });
+      assert.equal(existsSync(lockPath), false, 'lock must be released');
+    });
+
+    await t.test('swap hooks reject unknown artifact names without publishing', async () => {
+      await freshOutputs();
+      const result = buildWithInjection([], { ENTITY_BROKER_BUILD_SWAP_AT: 'definitely-not-an-artifact' });
+      assert.notEqual(result.status, 0, 'unknown swap hook artifact must fail the build');
+      assert.match(result.stderr, /Unknown swap hook artifact/i);
+      for (const path of artifactPaths) {
+        assert.equal(existsSync(path), false, `unknown hook must not publish ${path}`);
+      }
+    });
   } finally {
     await restoreOutputs();
   }
