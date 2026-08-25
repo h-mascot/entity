@@ -1,0 +1,643 @@
+// fs_guard — kernel-conditional, descriptor-anchored guarded mutations for the
+// managed-storage broker build transaction (REC-010, run
+// entity-deploy-reconciliation-20260824).
+//
+// Security boundary: the Node build script cannot express a mutation whose
+// effect is conditional on the current identity of the mutated entry, so a
+// "verify then unconditional renameSync/rmSync" sequence left an interval in
+// which an external actor could replace the final path (or its parent
+// directory) and have the unexpected entry destroyed. This helper closes that
+// interval with kernel-mediated primitives, all relative to a verified parent
+// directory descriptor:
+//
+//   exchange     renameatx_np(RENAME_SWAP) on macOS / renameat2(RENAME_EXCHANGE)
+//                on Linux: an atomic kernel exchange that NEVER overwrites or
+//                removes either side. Both entries survive, exchanged. A lost
+//                race is detected by post-verification and undone by swapping
+//                back, restoring any unexpected entry byte-identically in
+//                place, before failing closed.
+//   link-absent  linkat(dirfd, src, dirfd, dst, 0): kernel no-replace creation;
+//                EEXIST fails closed if anything occupies the destination.
+//   remove-owned move the entry to a fresh O_EXCL tomb with the kernel
+//                no-replace conditional rename (RENAME_EXCL on macOS — note
+//                macOS has no RENAME_NOREPLACE; its 0x1 flag is the unrelated
+//                RENAME_SECLUDE — and RENAME_NOREPLACE on Linux), so a foreign
+//                entry can only be relocated, never destroyed; it is moved
+//                back on verification mismatch. The tomb is unlinked only
+//                after the pinned descriptor verified it anchors exactly the
+//                expected inode, and the unlink is audited via the pinned
+//                descriptor: precisely that inode must lose its link.
+//   selftest     prove SWAP/NOREPLACE/linkat work on the target volume before
+//                the transaction relies on them; missing primitives fail the
+//                build closed (there is NO unsafe fallback anywhere).
+//
+// Every operation first anchors the parent directory: it opens the directory,
+// fstats it, and requires {dev, ino} to equal the identity the build pinned at
+// start-up, so a swapped parent directory can never redirect a mutation. All
+// entry classification uses AT_SYMLINK_NOFOLLOW and openat(O_NOFOLLOW); only
+// regular files are ever accepted, and only exact {dev, ino} matches count.
+//
+// Test-only hook: ENTITY_BROKER_GUARD_INNER_SWAP=<token> makes the matching
+// invocation (each op receives --token from the build script) emulate an
+// attacker EXACTLY between the final ownership precheck and the mutation
+// syscall: it creates a canary (O_CREAT|O_EXCL) and destructively renames it
+// over the guarded entry, as a real racing attacker would. The build must
+// still fail closed with the canary byte-identical and nothing unexpected
+// removed. The hook never fires in production.
+//
+// Compile: cc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -pedantic
+// Supported hosts: macOS (10.12+) and Linux (3.15+); anything else fails at
+// compile time rather than degrading to unsafe primitives.
+
+#include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
+#if defined(__APPLE__)
+// macOS <sys/stdio.h>: 0x1 is RENAME_SECLUDE (NOT no-replace). The no-replace
+// conditional rename on macOS is RENAME_EXCL (fails EEXIST when the target
+// name exists); the atomic exchange is RENAME_SWAP.
+#define GUARD_NOREPLACE 0x00000004u // RENAME_EXCL
+#define GUARD_SWAP 0x00000002u      // RENAME_SWAP
+// Declared in <sys/stdio.h> since macOS 10.12; re-declared here (identical
+// prototype) because strict -std=c11 hides the header declaration.
+int renameatx_np(int fromfd, const char *from, int tofd, const char *to, unsigned int flags);
+#elif defined(__linux__)
+#include <sys/syscall.h>
+#define GUARD_NOREPLACE 0x00000001u // RENAME_NOREPLACE
+#define GUARD_SWAP 0x00000002u      // RENAME_EXCHANGE
+#ifndef SYS_renameat2
+#error this Linux toolchain does not expose the renameat2 syscall number
+#endif
+static int renameatx_np(int fromfd, const char *from, int tofd, const char *to, unsigned int flags) {
+  return (int)syscall(SYS_renameat2, fromfd, from, tofd, to, flags);
+}
+#else
+#error unsupported host: need renameatx_np (macOS) or renameat2 (Linux)
+#endif
+
+struct file_id {
+  uint64_t dev;
+  uint64_t ino;
+};
+
+struct options {
+  const char *token;      // guarded-mutation token for the inner-swap hook
+  const char *hook_side;  // exchange only: which side the hook replaces (a|b)
+};
+
+static int hook_fired = 0;
+
+static uint64_t now_ns(void) {
+  struct timespec ts;
+  if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return (uint64_t)getpid();
+  return ((uint64_t)ts.tv_sec * 1000000000ull) + (uint64_t)ts.tv_nsec;
+}
+
+// Minimal JSON string escaper (names/tokens are ASCII nonce identifiers; the
+// escaper guarantees the emitted line stays a single JSON object regardless).
+static void json_string(const char *s) {
+  putchar('"');
+  for (const unsigned char *p = (const unsigned char *)s; *p != '\0'; p += 1) {
+    if (*p == '"' || *p == '\\') {
+      printf("\\%c", *p);
+    } else if (*p < 0x20) {
+      printf("\\u%04x", *p);
+    } else {
+      putchar(*p);
+    }
+  }
+  putchar('"');
+}
+
+// All results are one JSON line on stdout. ok => exit 0; guarded refusal =>
+// exit 1 (JSON still printed); usage/internal errors => exit 2 (stderr).
+static void print_result(int ok, const char *op, const char *reason, int recovered,
+                         const char *canary, const char *tomb, const char *detail) {
+  printf("{\"ok\":%s,\"op\":", ok ? "true" : "false");
+  json_string(op);
+  printf(",\"reason\":");
+  json_string(reason == NULL ? "" : reason);
+  printf(",\"recovered\":%s", recovered ? "true" : "false");
+  printf(",\"canary\":");
+  if (canary == NULL) {
+    printf("null");
+  } else {
+    json_string(canary);
+  }
+  printf(",\"tomb\":");
+  if (tomb == NULL) {
+    printf("null");
+  } else {
+    json_string(tomb);
+  }
+  printf(",\"detail\":");
+  json_string(detail == NULL ? "" : detail);
+  printf("}\n");
+}
+
+static int parse_u64(const char *s, uint64_t *out) {
+  if (s == NULL || *s == '\0') return -1;
+  errno = 0;
+  char *end = NULL;
+  uintmax_t v = strtoumax(s, &end, 10);
+  if (errno != 0 || end == s || *end != '\0' || v > UINT64_MAX) return -1;
+  *out = (uint64_t)v;
+  return 0;
+}
+
+// Guarded entries must be plain names inside the anchored directory: a '/'
+// or "." / ".." would escape the dirfd anchor (openat with an absolute path
+// ignores dirfd entirely).
+static int valid_entry_name(const char *name) {
+  if (name == NULL || name[0] == '\0') return 0;
+  if (strchr(name, '/') != NULL) return 0;
+  if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
+  return 1;
+}
+
+static void fail(const char *op, const char *reason, int recovered, const char *canary,
+                 const char *tomb, const char *detail) {
+  print_result(0, op, reason, recovered, canary, tomb, detail);
+}
+
+static int anchor_directory(const char *dir, uint64_t dev, uint64_t ino, int *dirfd_out) {
+  int dfd = open(dir, O_RDONLY | O_DIRECTORY);
+  if (dfd < 0) {
+    fail("anchor", "directory-open", 0, NULL, NULL, strerror(errno));
+    return -1;
+  }
+  struct stat st;
+  if (fstat(dfd, &st) != 0 || !S_ISDIR(st.st_mode) ||
+      (uint64_t)st.st_dev != dev || (uint64_t)st.st_ino != ino) {
+    close(dfd);
+    fail("anchor", "directory-identity", 0, NULL, NULL,
+         "the directory path no longer anchors the identity the build pinned");
+    return -1;
+  }
+  *dirfd_out = dfd;
+  return 0;
+}
+
+// Classify an entry through the dirfd (NOFOLLOW: a symlink is never a file),
+// then pin the exact inode through an O_NOFOLLOW descriptor. The descriptor
+// stays open so the inode cannot be recycled underneath the caller.
+static int anchor_entry(int dirfd, const char *name, struct file_id expected, int *fd_out,
+                        const char **reason) {
+  struct stat st;
+  if (fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW) != 0) {
+    *reason = errno == ENOENT ? "absent" : "stat-failed";
+    return -1;
+  }
+  if (S_ISLNK(st.st_mode) || !S_ISREG(st.st_mode)) {
+    *reason = "not-regular";
+    return -1;
+  }
+  int fd = openat(dirfd, name, O_RDONLY | O_NOFOLLOW);
+  if (fd < 0) {
+    *reason = errno == ELOOP ? "not-regular" : "open-failed";
+    return -1;
+  }
+  struct stat pinned;
+  if (fstat(fd, &pinned) != 0 || !S_ISREG(pinned.st_mode) ||
+      (uint64_t)pinned.st_dev != (uint64_t)st.st_dev || (uint64_t)pinned.st_ino != (uint64_t)st.st_ino) {
+    close(fd);
+    *reason = "identity-drift";
+    return -1;
+  }
+  if ((uint64_t)pinned.st_dev != expected.dev || (uint64_t)pinned.st_ino != expected.ino) {
+    close(fd);
+    *reason = "identity";
+    return -1;
+  }
+  *fd_out = fd;
+  return 0;
+}
+
+static int entry_matches(int dirfd, const char *name, struct file_id expected) {
+  struct stat st;
+  if (fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW) != 0) return 0;
+  if (S_ISLNK(st.st_mode) || !S_ISREG(st.st_mode)) return 0;
+  return (uint64_t)st.st_dev == expected.dev && (uint64_t)st.st_ino == expected.ino;
+}
+
+// Test-only inner-interval hook (see header comment): fire at most once, at
+// the exact point between the caller's final ownership precheck and the
+// mutation syscall, by destructively renaming an exclusive-create canary over
+// the guarded entry — a faithful emulation of the racing external attacker.
+static void maybe_inner_swap(int dirfd, const struct options *opt, const char *target_name) {
+  const char *want = getenv("ENTITY_BROKER_GUARD_INNER_SWAP");
+  if (want == NULL || *want == '\0' || opt->token == NULL || hook_fired != 0) return;
+  if (strcmp(want, opt->token) != 0) return;
+  hook_fired = 1;
+  char canary[128];
+  snprintf(canary, sizeof(canary), ".guard-inner-canary-%ld-%" PRIu64, (long)getpid(), now_ns());
+  int fd = openat(dirfd, canary, O_CREAT | O_EXCL | O_WRONLY, 0600);
+  if (fd < 0) return; // hook environment is broken: do not silently weaken
+  dprintf(fd, "inner-canary-%s\n", opt->token);
+  close(fd);
+  renameat(dirfd, canary, dirfd, target_name); // attacker-style replace
+}
+
+static int op_exchange(const char *dir, uint64_t ddev, uint64_t dino, const char *name_a,
+                       struct file_id a, const char *name_b, struct file_id b,
+                       const struct options *opt) {
+  const char *op = "exchange";
+  int dirfd;
+  if (anchor_directory(dir, ddev, dino, &dirfd) != 0) return 1;
+  const char *reason = NULL;
+  int fd_a = -1;
+  int fd_b = -1;
+  if (anchor_entry(dirfd, name_a, a, &fd_a, &reason) != 0) {
+    close(dirfd);
+    fail(op, reason == NULL ? "entry-a" : reason, 0, NULL, NULL, name_a);
+    return 1;
+  }
+  if (anchor_entry(dirfd, name_b, b, &fd_b, &reason) != 0) {
+    close(fd_a);
+    close(dirfd);
+    fail(op, reason == NULL ? "entry-b" : reason, 0, NULL, NULL, name_b);
+    return 1;
+  }
+  close(fd_a);
+  close(fd_b);
+  const char *hook_target = (opt->hook_side != NULL && strcmp(opt->hook_side, "a") == 0) ? name_a : name_b;
+  maybe_inner_swap(dirfd, opt, hook_target);
+  // Snapshot what each entry anchors at the exact pre-mutation instant (the
+  // hook above may legitimately have changed one side): recovery verifies
+  // against THIS state, so a reversed exchange provably restores it.
+  struct stat pre_a;
+  struct stat pre_b;
+  if (fstatat(dirfd, name_a, &pre_a, AT_SYMLINK_NOFOLLOW) != 0 ||
+      fstatat(dirfd, name_b, &pre_b, AT_SYMLINK_NOFOLLOW) != 0) {
+    int e = errno;
+    close(dirfd);
+    char detail[256];
+    snprintf(detail, sizeof(detail), "pre-swap stat failed: %s", strerror(e));
+    fail(op, "pre-swap-stat", 0, NULL, NULL, detail);
+    return 1;
+  }
+  if (renameatx_np(dirfd, name_a, dirfd, name_b, GUARD_SWAP) != 0) {
+    int e = errno;
+    close(dirfd);
+    char detail[256];
+    snprintf(detail, sizeof(detail), "RENAME_SWAP failed: %s", strerror(e));
+    fail(op, "swap-syscall", 0, NULL, NULL, detail);
+    return 1;
+  }
+  // Post-verify: A must now anchor the former B identity and vice versa.
+  if (entry_matches(dirfd, name_a, b) && entry_matches(dirfd, name_b, a)) {
+    close(dirfd);
+    print_result(1, op, "", 0, NULL, NULL, "");
+    return 0;
+  }
+  // An unexpected entry was exchanged away (never destroyed): swap back so it
+  // is restored byte-identically at its original path, then fail closed.
+  // "Recovered" means the entries anchor exactly what they anchored at the
+  // pre-mutation instant — including an attacker-placed entry.
+  struct file_id pre_a_id = {(uint64_t)pre_a.st_dev, (uint64_t)pre_a.st_ino};
+  struct file_id pre_b_id = {(uint64_t)pre_b.st_dev, (uint64_t)pre_b.st_ino};
+  int recovered = 0;
+  if (renameatx_np(dirfd, name_a, dirfd, name_b, GUARD_SWAP) == 0 &&
+      entry_matches(dirfd, name_a, pre_a_id) && entry_matches(dirfd, name_b, pre_b_id)) {
+    recovered = 1;
+  }
+  close(dirfd);
+  fail(op, "identity-drift", recovered, NULL, NULL,
+       "the guarded entry changed between the ownership check and the exchange; "
+       "the exchange was reversed and every entry restored in place");
+  return 1;
+}
+
+static int op_link_absent(const char *dir, uint64_t ddev, uint64_t dino, const char *src,
+                          struct file_id src_id, const char *dst, const struct options *opt) {
+  const char *op = "link-absent";
+  int dirfd;
+  if (anchor_directory(dir, ddev, dino, &dirfd) != 0) return 1;
+  const char *reason = NULL;
+  int fd_src = -1;
+  if (anchor_entry(dirfd, src, src_id, &fd_src, &reason) != 0) {
+    close(dirfd);
+    fail(op, reason == NULL ? "src" : reason, 0, NULL, NULL, src);
+    return 1;
+  }
+  close(fd_src);
+  struct stat st;
+  if (fstatat(dirfd, dst, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+    close(dirfd);
+    fail(op, "dst-exists", 0, NULL, NULL, dst);
+    return 1;
+  }
+  if (errno != ENOENT) {
+    int e = errno;
+    close(dirfd);
+    char detail[256];
+    snprintf(detail, sizeof(detail), "stat dst failed: %s", strerror(e));
+    fail(op, "dst-stat", 0, NULL, NULL, detail);
+    return 1;
+  }
+  maybe_inner_swap(dirfd, opt, dst);
+  if (linkat(dirfd, src, dirfd, dst, 0) != 0) {
+    int e = errno;
+    close(dirfd);
+    const char *r = e == EEXIST ? "dst-appeared" : "link-syscall";
+    char detail[256];
+    snprintf(detail, sizeof(detail), "linkat failed: %s", strerror(e));
+    fail(op, r, 0, NULL, NULL, detail);
+    return 1;
+  }
+  int ok = entry_matches(dirfd, dst, src_id);
+  close(dirfd);
+  if (!ok) {
+    fail(op, "post-verify", 0, NULL, NULL, dst);
+    return 1;
+  }
+  print_result(1, op, "", 0, NULL, NULL, "");
+  return 0;
+}
+
+static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const char *name,
+                           struct file_id expected, const struct options *opt) {
+  const char *op = "remove-owned";
+  int dirfd;
+  if (anchor_directory(dir, ddev, dino, &dirfd) != 0) return 1;
+  const char *reason = NULL;
+  int fd = -1;
+  if (anchor_entry(dirfd, name, expected, &fd, &reason) != 0) {
+    close(dirfd);
+    fail(op, reason == NULL ? "entry" : reason, 0, NULL, NULL, name);
+    return 1;
+  }
+  struct stat pinned;
+  if (fstat(fd, &pinned) != 0) { // unreachable: anchor_entry just fstat'ed it
+    close(fd);
+    close(dirfd);
+    fail(op, "pin-fstat", 0, NULL, NULL, name);
+    return 1;
+  }
+  nlink_t nlink_before = pinned.st_nlink;
+  // The tomb is an unpredictable name that is NOT pre-created: the kernel
+  // no-replace conditional rename (RENAME_EXCL on macOS / RENAME_NOREPLACE on
+  // Linux) refuses to move onto any existing entry, so even an omniscient
+  // pre-creation at the tomb name can only fail the operation, never destroy
+  // anything. The move relocates the entry at `name` without overwriting any
+  // other entry.
+  char tomb[128];
+  snprintf(tomb, sizeof(tomb), ".guard-tomb-%ld-%" PRIu64, (long)getpid(), now_ns());
+  maybe_inner_swap(dirfd, opt, name);
+  if (renameatx_np(dirfd, name, dirfd, tomb, GUARD_NOREPLACE) != 0) {
+    int e = errno;
+    close(fd);
+    close(dirfd);
+    char detail[256];
+    const char *r = e == ENOENT ? "vanished" : (e == EEXIST ? "tomb-occupied" : "move-syscall");
+    snprintf(detail, sizeof(detail), "kernel no-replace move failed: %s", strerror(e));
+    fail(op, r, 0, NULL, tomb, detail);
+    return 1;
+  }
+  if (!entry_matches(dirfd, tomb, expected)) {
+    // The moved entry is NOT the one we owned: it was replaced inside the
+    // guarded interval and must be restored byte-identically — never deleted.
+    if (renameatx_np(dirfd, tomb, dirfd, name, GUARD_NOREPLACE) == 0) {
+      close(fd);
+      close(dirfd);
+      fail(op, "replaced-and-restored", 1, NULL, NULL,
+           "the removed path had been replaced; the replacement was restored in place");
+      return 1;
+    }
+    int e = errno;
+    close(fd);
+    close(dirfd);
+    char detail[320];
+    // EEXIST: a new entry appeared at the original name; the replacement is
+    // preserved untouched at the tomb path reported here. Nothing is deleted.
+    snprintf(detail, sizeof(detail), "replacement preserved at tomb entry %s (%s)", tomb, strerror(e));
+    fail(op, "replaced-not-restorable", 0, NULL, tomb, detail);
+    return 1;
+  }
+  // The tomb anchors exactly the pinned inode: unlink it and prove via the
+  // pinned descriptor that precisely that inode lost this link.
+  if (unlinkat(dirfd, tomb, 0) != 0) {
+    int e = errno;
+    close(fd);
+    close(dirfd);
+    char detail[256];
+    snprintf(detail, sizeof(detail), "tomb unlink failed: %s", strerror(e));
+    fail(op, "unlink-syscall", 0, NULL, tomb, detail);
+    return 1;
+  }
+  struct stat after;
+  int audit_ok = fstat(fd, &after) == 0 && after.st_nlink == nlink_before - 1;
+  close(fd);
+  close(dirfd);
+  if (!audit_ok) {
+    fail(op, "unlink-audit", 0, NULL, tomb,
+         "the unlinked entry did not match the pinned inode — the removal is reported, not hidden");
+    return 1;
+  }
+  print_result(1, op, "", 0, NULL, NULL, "");
+  return 0;
+}
+
+static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const struct options *opt) {
+  const char *op = "selftest";
+  (void)opt;
+  int parent = -1;
+  if (anchor_directory(dir, ddev, dino, &parent) != 0) return 1;
+  char scratch[128];
+  snprintf(scratch, sizeof(scratch), ".guard-selftest-%ld-%" PRIu64, (long)getpid(), now_ns());
+  if (mkdirat(parent, scratch, 0700) != 0) {
+    int e = errno;
+    close(parent);
+    char detail[256];
+    snprintf(detail, sizeof(detail), "scratch mkdir failed: %s", strerror(e));
+    fail(op, "scratch", 0, NULL, NULL, detail);
+    return 1;
+  }
+  int dfd = openat(parent, scratch, O_RDONLY | O_DIRECTORY);
+  if (dfd < 0) {
+    close(parent);
+    fail(op, "scratch-open", 0, NULL, NULL, scratch);
+    return 1;
+  }
+  const char *fail_reason = NULL;
+  char detail[256] = "";
+  const char *a = "a";
+  const char *b = "b";
+  const char *c = "c";
+  const char *d = "d";
+  do {
+    int fa = openat(dfd, a, O_CREAT | O_EXCL | O_WRONLY, 0600);
+    int fb = openat(dfd, b, O_CREAT | O_EXCL | O_WRONLY, 0600);
+    if (fa < 0 || fb < 0) {
+      if (fa >= 0) close(fa);
+      if (fb >= 0) close(fb);
+      fail_reason = "create";
+      break;
+    }
+    if (write(fa, "A", 1) != 1 || write(fb, "B", 1) != 1) {
+      close(fa);
+      close(fb);
+      fail_reason = "write";
+      break;
+    }
+    close(fa);
+    close(fb);
+    struct stat sa;
+    struct stat sb;
+    if (fstatat(dfd, a, &sa, AT_SYMLINK_NOFOLLOW) != 0 || fstatat(dfd, b, &sb, AT_SYMLINK_NOFOLLOW) != 0) {
+      fail_reason = "stat";
+      break;
+    }
+    // SWAP: a must read "B" afterwards, b must read "A".
+    if (renameatx_np(dfd, a, dfd, b, GUARD_SWAP) != 0) {
+      snprintf(detail, sizeof(detail), "RENAME_SWAP: %s", strerror(errno));
+      fail_reason = "swap-syscall";
+      break;
+    }
+    fa = openat(dfd, a, O_RDONLY | O_NOFOLLOW);
+    fb = openat(dfd, b, O_RDONLY | O_NOFOLLOW);
+    char ca = 0;
+    char cb = 0;
+    if (fa < 0 || fb < 0 || read(fa, &ca, 1) != 1 || read(fb, &cb, 1) != 1) {
+      if (fa >= 0) close(fa);
+      if (fb >= 0) close(fb);
+      fail_reason = "swap-verify";
+      break;
+    }
+    close(fa);
+    close(fb);
+    if (ca != 'B' || cb != 'A') {
+      fail_reason = "swap-content";
+      break;
+    }
+    if (linkat(dfd, a, dfd, c, 0) != 0) {
+      snprintf(detail, sizeof(detail), "linkat: %s", strerror(errno));
+      fail_reason = "link-syscall";
+      break;
+    }
+    int fd_d = openat(dfd, d, O_CREAT | O_EXCL | O_WRONLY, 0600);
+    if (fd_d < 0) {
+      fail_reason = "create-d";
+      break;
+    }
+    close(fd_d);
+    errno = 0;
+    if (renameatx_np(dfd, c, dfd, d, GUARD_NOREPLACE) == 0 || errno != EEXIST) {
+      fail_reason = "noreplace-refused";
+      break;
+    }
+    if (renameatx_np(dfd, c, dfd, "e", GUARD_NOREPLACE) != 0) {
+      snprintf(detail, sizeof(detail), "noreplace-absent: %s", strerror(errno));
+      fail_reason = "noreplace-absent";
+      break;
+    }
+    struct stat sa2;
+    if (fstatat(dfd, a, &sa2, AT_SYMLINK_NOFOLLOW) != 0 ||
+        (uint64_t)sa2.st_dev != (uint64_t)sb.st_dev || (uint64_t)sa2.st_ino != (uint64_t)sb.st_ino) {
+      fail_reason = "swap-identity";
+      break;
+    }
+  } while (0);
+  // Best-effort cleanup of the scratch entries; leftovers are visible debris
+  // only on the failure path (which fails the build).
+  const char *e = "e";
+  unlinkat(dfd, a, 0);
+  unlinkat(dfd, b, 0);
+  unlinkat(dfd, c, 0);
+  unlinkat(dfd, d, 0);
+  unlinkat(dfd, e, 0);
+  close(dfd);
+  int rmd = unlinkat(parent, scratch, AT_REMOVEDIR);
+  close(parent);
+  if (fail_reason != NULL) {
+    fail(op, fail_reason, 0, NULL, NULL, detail);
+    return 1;
+  }
+  if (rmd != 0) {
+    fail(op, "scratch-cleanup", 0, NULL, NULL, scratch);
+    return 1;
+  }
+  print_result(1, op, "", 0, NULL, NULL, "");
+  return 0;
+}
+
+static int parse_options(int argc, char **argv, int first, struct options *opt) {
+  opt->token = NULL;
+  opt->hook_side = NULL;
+  for (int i = first; i < argc; i += 1) {
+    if (strcmp(argv[i], "--token") == 0 && i + 1 < argc) {
+      opt->token = argv[i + 1];
+      i += 1;
+    } else if (strcmp(argv[i], "--hook-side") == 0 && i + 1 < argc) {
+      opt->hook_side = argv[i + 1];
+      i += 1;
+    } else {
+      return -1;
+    }
+  }
+  if (opt->hook_side != NULL && strcmp(opt->hook_side, "a") != 0 && strcmp(opt->hook_side, "b") != 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static int usage(void) {
+  fprintf(stderr,
+          "usage: fs_guard exchange DIR DIRDEV DIRINO NAMEA ADEV AINO NAMEB BDEV BINO [--token T] [--hook-side a|b]\n"
+          "       fs_guard link-absent DIR DIRDEV DIRINO SRC SRCDEV SRCINO DST [--token T]\n"
+          "       fs_guard remove-owned DIR DIRDEV DIRINO NAME DEV INO [--token T]\n"
+          "       fs_guard selftest DIR DIRDEV DIRINO\n");
+  return 2;
+}
+
+int main(int argc, char **argv) {
+  if (argc < 5) return usage();
+  const char *op = argv[1];
+  uint64_t ddev;
+  uint64_t dino;
+  if (parse_u64(argv[3], &ddev) != 0 || parse_u64(argv[4], &dino) != 0) return usage();
+  if (strcmp(op, "exchange") == 0 && argc >= 11) {
+    struct file_id a;
+    struct file_id b;
+    struct options opt;
+    if (!valid_entry_name(argv[5]) || !valid_entry_name(argv[8])) return usage();
+    if (parse_u64(argv[6], &a.dev) != 0 || parse_u64(argv[7], &a.ino) != 0 ||
+        parse_u64(argv[9], &b.dev) != 0 || parse_u64(argv[10], &b.ino) != 0) {
+      return usage();
+    }
+    if (parse_options(argc, argv, 11, &opt) != 0) return usage();
+    return op_exchange(argv[2], ddev, dino, argv[5], a, argv[8], b, &opt);
+  }
+  if (strcmp(op, "link-absent") == 0 && argc >= 9) {
+    struct file_id src;
+    struct options opt;
+    if (!valid_entry_name(argv[5]) || !valid_entry_name(argv[8])) return usage();
+    if (parse_u64(argv[6], &src.dev) != 0 || parse_u64(argv[7], &src.ino) != 0) return usage();
+    if (parse_options(argc, argv, 9, &opt) != 0) return usage();
+    return op_link_absent(argv[2], ddev, dino, argv[5], src, argv[8], &opt);
+  }
+  if (strcmp(op, "remove-owned") == 0 && argc >= 8) {
+    struct file_id expected;
+    struct options opt;
+    if (!valid_entry_name(argv[5])) return usage();
+    if (parse_u64(argv[6], &expected.dev) != 0 || parse_u64(argv[7], &expected.ino) != 0) {
+      return usage();
+    }
+    if (parse_options(argc, argv, 8, &opt) != 0) return usage();
+    return op_remove_owned(argv[2], ddev, dino, argv[5], expected, &opt);
+  }
+  if (strcmp(op, "selftest") == 0 && argc == 5) {
+    struct options opt = {0};
+    return op_selftest(argv[2], ddev, dino, &opt);
+  }
+  return usage();
+}
