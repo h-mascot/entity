@@ -249,20 +249,25 @@ static int entry_matches(int dirfd, const char *name, struct file_id expected) {
 // the exact point between the caller's final ownership precheck and the
 // mutation syscall, by destructively renaming an exclusive-create canary over
 // the guarded entry — a faithful emulation of the racing external attacker.
-static void maybe_inner_swap(int dirfd, const struct options *opt, const char *target_name) {
+// Returns 0 when no injection was requested or the injection was performed;
+// -1 when the requested injection could not be performed (entropy or create
+// failure) so the caller fails closed instead of mutating unguarded by a hook
+// the test environment demanded.
+static int maybe_inner_swap(int dirfd, const struct options *opt, const char *target_name) {
   const char *want = getenv("ENTITY_BROKER_GUARD_INNER_SWAP");
-  if (want == NULL || *want == '\0' || opt->token == NULL || hook_fired != 0) return;
-  if (strcmp(want, opt->token) != 0) return;
+  if (want == NULL || *want == '\0' || opt->token == NULL || hook_fired != 0) return 0;
+  if (strcmp(want, opt->token) != 0) return 0;
   hook_fired = 1;
   char entropy[33];
-  if (fill_random_hex(entropy, sizeof(entropy) - 1) != 0) return; // hook environment is broken: do not silently weaken
+  if (fill_random_hex(entropy, sizeof(entropy) - 1) != 0) return -1;
   char canary[160];
   snprintf(canary, sizeof(canary), ".guard-inner-canary-%ld-%s", (long)getpid(), entropy);
   int fd = openat(dirfd, canary, O_CREAT | O_EXCL | O_WRONLY, 0600);
-  if (fd < 0) return;
+  if (fd < 0) return -1;
   dprintf(fd, "inner-canary-%s\n", opt->token);
   close(fd);
   renameat(dirfd, canary, dirfd, target_name); // attacker-style replace
+  return 0;
 }
 
 static int op_exchange(const char *dir, uint64_t ddev, uint64_t dino, const char *name_a,
@@ -288,7 +293,12 @@ static int op_exchange(const char *dir, uint64_t ddev, uint64_t dino, const char
   close(fd_a);
   close(fd_b);
   const char *hook_target = (opt->hook_side != NULL && strcmp(opt->hook_side, "a") == 0) ? name_a : name_b;
-  maybe_inner_swap(dirfd, opt, hook_target);
+  if (maybe_inner_swap(dirfd, opt, hook_target) != 0) {
+    close(dirfd);
+    fail(op, "hook-entropy", 0, NULL, NULL,
+         "the requested inner-swap injection could not be performed — refusing to mutate unguarded");
+    return 1;
+  }
   // Snapshot what each entry anchors at the exact pre-mutation instant (the
   // hook above may legitimately have changed one side): recovery verifies
   // against THIS state, so a reversed exchange provably restores it.
@@ -362,7 +372,12 @@ static int op_link_absent(const char *dir, uint64_t ddev, uint64_t dino, const c
     fail(op, "dst-stat", 0, NULL, NULL, detail);
     return 1;
   }
-  maybe_inner_swap(dirfd, opt, dst);
+  if (maybe_inner_swap(dirfd, opt, dst) != 0) {
+    close(dirfd);
+    fail(op, "hook-entropy", 0, NULL, NULL,
+         "the requested inner-swap injection could not be performed — refusing to mutate unguarded");
+    return 1;
+  }
   if (linkat(dirfd, src, dirfd, dst, 0) != 0) {
     int e = errno;
     close(dirfd);
@@ -417,7 +432,13 @@ static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const 
   }
   char tomb[160];
   snprintf(tomb, sizeof(tomb), ".guard-tomb-%ld-%s", (long)getpid(), entropy);
-  maybe_inner_swap(dirfd, opt, name);
+  if (maybe_inner_swap(dirfd, opt, name) != 0) {
+    close(fd);
+    close(dirfd);
+    fail(op, "hook-entropy", 0, NULL, NULL,
+         "the requested inner-swap injection could not be performed — refusing to mutate unguarded");
+    return 1;
+  }
   if (renameatx_np(dirfd, name, dirfd, tomb, GUARD_NOREPLACE) != 0) {
     int e = errno;
     close(fd);
