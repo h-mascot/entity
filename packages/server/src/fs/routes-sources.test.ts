@@ -218,3 +218,41 @@ describe('source registration routes', () => {
     });
   });
 });
+
+describe("placeholder source connectors", () => {
+  it("fails the connection test closed for unimplemented adapters instead of reporting healthy", async () => {
+    const dbRoot = await makeTempRoot();
+    process.env.ENTITY_TASK_DB_PATH = path.join(dbRoot, "test.db");
+
+    await withSourceServer(async (baseUrl) => {
+      const created = await fetch(`${baseUrl}/api/sources`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: "GitHub upstream",
+          type: "github",
+          baseUrl: "https://github.com/example/example",
+          authType: "bearer",
+          authRef: "env:GITHUB_TOKEN",
+        }),
+      });
+      expect(created.status).toBe(201);
+      const source = (await created.json()) as { id: string };
+      expect(source.id).toBeTruthy();
+
+      const tested = await fetch(`${baseUrl}/api/sources/${source.id}/test`, { method: "POST" });
+      expect(tested.status).toBe(200);
+      const result = (await tested.json()) as { status: string; message: string };
+      expect(result.status).toBe("error");
+      expect(result.message).toContain("not implemented");
+
+      // Health must be persisted as error so Admin and the wizard cannot show a fake-healthy source.
+      const listed = await fetch(`${baseUrl}/api/sources?includeDisabled=true`);
+      const payload = (await listed.json()) as { sources: Array<{ id: string; health: string }> };
+      const stored = payload.sources.find((item) => item.id === source.id);
+      expect(stored?.health).toBe("error");
+
+      await fetch(`${baseUrl}/api/sources/${source.id}`, { method: "DELETE" });
+    });
+  });
+});

@@ -26,6 +26,12 @@ class PlaceholderAdapter implements FileSourceAdapter {
     if (!source.id || !source.display_name) {
       throw new Error('Invalid source configuration.');
     }
+
+    // Fail closed: placeholder adapters cannot reach the upstream yet, so a
+    // connection test must not report success for an unimplemented connector.
+    throw new Error(
+      `${this.key} sources are not implemented yet. Configuration is saved, but live connectivity cannot be verified until the ${this.key} adapter ships.`
+    );
   }
 
   capabilities(): SourceCapability {
