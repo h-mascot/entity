@@ -40,6 +40,18 @@ export function parseTaskCreateScope(
   body: Record<string, unknown>,
 ): TaskCreateScope | { error: string } {
   const scope: TaskCreateScope = {};
+  // mc1363: accept the camelCase aliases the org resolver already reads
+  // (`readExplicitRequestOrg` reads body.orgId). Without this, a caller sending
+  // {"orgId": "...", "teamId": "..."} had org bound by the resolver but team
+  // silently dropped, guaranteeing 'team_id is required when org_id is provided'.
+  const orgAlias = body.orgId;
+  if (typeof body.org_id === 'undefined' && typeof orgAlias !== 'undefined') {
+    body = { ...body, org_id: orgAlias };
+  }
+  const teamAlias = body.teamId;
+  if (typeof body.team_id === 'undefined' && typeof teamAlias !== 'undefined') {
+    body = { ...body, team_id: teamAlias };
+  }
   for (const key of ["org_id", "team_id"] as const) {
     const value = body[key];
     if (typeof value === "undefined") continue;
@@ -80,7 +92,8 @@ export function scopeTasksForCreateDedupe(
 type TaskCreateScopeRepository = Pick<
   WorkspaceScopeRepository,
   "getOrg" | "getTeam" | "getProject"
->;
+> &
+  Partial<Pick<WorkspaceScopeRepository, "listTeams">>;
 
 export type TaskCreateScopeValidation =
   | { ok: true }
@@ -99,11 +112,36 @@ export function validateTaskCreateScope(
     };
   }
   if (!scope.team_id) {
-    return {
-      ok: false,
-      statusCode: 400,
-      error: "team_id is required when org_id is provided",
-    };
+    // mc1363: default sensibly instead of hard-failing. If the org has exactly
+    // one active team, bind it (single-team orgs like curacel/pilot). Otherwise
+    // fail with an actionable message naming the org so clients can surface the
+    // team requirement before submit. Repos without listTeams (older shape)
+    // keep the legacy error.
+    const teams = typeof workspaceRepo.listTeams === 'function'
+      ? workspaceRepo.listTeams({ orgId: scope.org_id })
+      : undefined;
+    const activeTeams = teams
+      ? teams.filter((team) => !team.status || team.status === 'active')
+      : undefined;
+    if (activeTeams && activeTeams.length === 1) {
+      scope.team_id = activeTeams[0].id;
+    } else if (activeTeams && activeTeams.length === 0) {
+      return {
+        ok: false,
+        statusCode: workspaceRepo.getOrg(scope.org_id) ? 400 : 404,
+        error: workspaceRepo.getOrg(scope.org_id)
+          ? `org ${scope.org_id} has no active teams; create a team before creating org-scoped tasks`
+          : `org ${scope.org_id} not found`,
+      };
+    } else {
+      return {
+        ok: false,
+        statusCode: 400,
+        error:
+          `team_id is required when org_id is provided` +
+          (activeTeams ? ` (org ${scope.org_id} has ${activeTeams.length} teams)` : ''),
+      };
+    }
   }
   if (!workspaceRepo.getOrg(scope.org_id)) {
     return {

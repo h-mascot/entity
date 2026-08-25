@@ -186,4 +186,108 @@ describe('task create scope', () => {
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   });
+
+  it('accepts camelCase orgId/teamId aliases matching the org resolver body reads', () => {
+    expect(parseTaskCreateScope({
+      orgId: 'curacel',
+      teamId: 'pilot',
+    })).toEqual({
+      org_id: 'curacel',
+      team_id: 'pilot',
+    });
+    expect(parseTaskCreateScope({
+      orgId: '   ',
+    })).toEqual({
+      error: 'org_id must be a non-empty string',
+    });
+    // snake_case wins when both spellings are present.
+    expect(parseTaskCreateScope({
+      org_id: 'org-a',
+      orgId: 'org-b',
+      team_id: 'org-a-product',
+    })).toEqual({
+      org_id: 'org-a',
+      team_id: 'org-a-product',
+    });
+  });
+
+  it('defaults team to the single active team when org_id is provided without team_id', () => {
+    const org = { id: 'curacel' } as OrgRecord;
+    const singleTeamRepo = {
+      getOrg: (orgId: string) => orgId === org.id ? org : undefined,
+      getTeam: (context: { orgId: string }, teamId: string) =>
+        context.orgId === org.id && teamId === 'pilot'
+          ? ({ id: 'pilot', org_id: org.id, status: 'active' } as TeamRecord)
+          : undefined,
+      getProject: () => undefined,
+      listTeams: () => [
+        { id: 'pilot', org_id: org.id, status: 'active' } as TeamRecord,
+      ],
+    } as Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam' | 'getProject' | 'listTeams'>;
+
+    expect(validateTaskCreateScope({ org_id: 'curacel' }, singleTeamRepo)).toEqual({
+      ok: true,
+    });
+    expect(validateTaskCreateScope({ org_id: 'curacel' }, singleTeamRepo)).toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+    // The defaulted scope must carry the bound team for downstream consumers.
+    const scope: { org_id?: string; team_id?: string } = { org_id: 'curacel' };
+    validateTaskCreateScope(scope, singleTeamRepo);
+    expect(scope.team_id).toBe('pilot');
+
+    // Multiple active teams: still an error, but actionable.
+    const multiTeamRepo = {
+      ...singleTeamRepo,
+      listTeams: () => [
+        { id: 'pilot', org_id: org.id, status: 'active' } as TeamRecord,
+        { id: 'claims', org_id: org.id, status: 'active' } as TeamRecord,
+      ],
+      getTeam: (context: { orgId: string }, teamId: string) =>
+        context.orgId === org.id && (teamId === 'pilot' || teamId === 'claims')
+          ? ({ id: teamId, org_id: org.id, status: 'active' } as TeamRecord)
+          : undefined,
+    } as Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam' | 'getProject' | 'listTeams'>;
+    expect(validateTaskCreateScope({ org_id: 'curacel' }, multiTeamRepo)).toEqual({
+      ok: false,
+      statusCode: 400,
+      error: 'team_id is required when org_id is provided (org curacel has 2 teams)',
+    });
+
+    // No active teams: actionable error instead of the generic one.
+    const noTeamRepo = {
+      ...singleTeamRepo,
+      listTeams: () => [],
+    } as Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam' | 'getProject' | 'listTeams'>;
+    expect(validateTaskCreateScope({ org_id: 'curacel' }, noTeamRepo)).toEqual({
+      ok: false,
+      statusCode: 400,
+      error: 'org curacel has no active teams; create a team before creating org-scoped tasks',
+    });
+
+    // Inactive teams do not count as defaultable.
+    const inactiveTeamRepo = {
+      ...singleTeamRepo,
+      listTeams: () => [
+        { id: 'pilot', org_id: org.id, status: 'archived' } as TeamRecord,
+      ],
+    } as Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam' | 'getProject' | 'listTeams'>;
+    expect(validateTaskCreateScope({ org_id: 'curacel' }, inactiveTeamRepo)).toEqual({
+      ok: false,
+      statusCode: 400,
+      error: 'org curacel has no active teams; create a team before creating org-scoped tasks',
+    });
+
+    // Repos without listTeams (legacy shape) keep the legacy error.
+    const legacyRepo = {
+      getOrg: (orgId: string) => orgId === org.id ? org : undefined,
+      getTeam: () => undefined,
+      getProject: () => undefined,
+    } as Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam' | 'getProject'>;
+    expect(validateTaskCreateScope({ org_id: 'curacel' }, legacyRepo)).toEqual({
+      ok: false,
+      statusCode: 400,
+      error: 'team_id is required when org_id is provided',
+    });
+  });
 });
