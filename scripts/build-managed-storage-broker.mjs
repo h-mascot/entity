@@ -249,6 +249,7 @@ const lockRecord = { pid: process.pid, hostname: hostname(), startedAt: new Date
 const lockPayload = `${JSON.stringify(lockRecord)}\n`;
 let lockHeld = false;
 let lockIdentity = null; // inode this run's lock record occupies, for guarded release
+let lockReleaseFailure = null; // set when the guarded release could not run cleanly: an otherwise-successful build must then exit nonzero
 
 function isPidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -425,11 +426,17 @@ function releaseLock() {
     const current = readFileSync(lockPath, 'utf8');
     if (current !== lockPayload) {
       // The lock no longer contains our record: never remove someone else's.
-      console.error(`broker build lock content changed before release (${lockPath}) — leaving it in place`);
+      // The unexpected/replacement lock state is left untouched, and the
+      // failure is recorded so an otherwise-successful build still exits
+      // nonzero (a build whose lock it could not release must not report
+      // success).
+      lockReleaseFailure = `broker build lock content changed before release (${lockPath}) — replacement left in place; failing the build`;
+      console.error(lockReleaseFailure);
       return;
     }
     if (lockIdentity === null || !pathAnchors(lockPath, lockIdentity)) {
-      console.error(`broker build lock identity changed before release (${lockPath}) — leaving it in place`);
+      lockReleaseFailure = `broker build lock identity changed before release (${lockPath}) — replacement left in place; failing the build`;
+      console.error(lockReleaseFailure);
       return;
     }
     // Kernel-conditional removal of exactly the inode this run claimed; an
@@ -440,8 +447,11 @@ function releaseLock() {
     );
   } catch (error) {
     if (error.code !== 'ENOENT') {
-      // Never let lock-release trouble mask the build outcome: report loudly.
-      console.error(`broker build lock release failed: ${error.message}`);
+      // The lock state itself is left untouched above; report loudly and
+      // fail the build — never let lock-release trouble masquerade as
+      // success (a primary failure may still take precedence over this).
+      lockReleaseFailure = `broker build lock release failed: ${error.message}`;
+      console.error(lockReleaseFailure);
     }
   }
 }
@@ -880,6 +890,13 @@ try {
       }
     }
     releaseLock();
+    if (lockReleaseFailure !== null) {
+      // Luna generation 23 finding 4: a lock this run could not release
+      // cleanly fails an otherwise-successful build. The lock state itself
+      // was left untouched inside releaseLock — only the exit status
+      // changes here, and a primary failure still takes precedence.
+      secondary.push(lockReleaseFailure);
+    }
     try {
       // The helper removes itself last (after the lock is released): guarded
       // by the identity cc produced. An untracked leftover (failed/partial

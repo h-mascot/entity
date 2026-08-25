@@ -36,7 +36,13 @@
 //                never authorize the deletion.
 //   selftest     prove SWAP/NOREPLACE/linkat work on the target volume before
 //                the transaction relies on them; missing primitives fail the
-//                build closed (there is NO unsafe fallback anywhere).
+//                build closed (there is NO unsafe fallback anywhere). The
+//                selftest's own scratch cleanup is ownership-preserving and
+//                fully checked: every cleanup unlink runs only while the
+//                scratch name still anchors exactly the inode the selftest
+//                created there, and the first refusal (replacement, foreign
+//                entry, or failed unlink) preserves the entry in place and
+//                fails the selftest/build closed.
 //
 // Every operation first anchors the parent directory: it opens the directory,
 // fstats it, and requires {dev, ino} to equal the identity the build pinned at
@@ -52,7 +58,18 @@
 // still fail closed with the canary byte-identical and nothing unexpected
 // removed. ENTITY_BROKER_GUARD_PRE_DELETE_SWAP=<token> is the remove-owned
 // sibling that fires between the tomb's ownership verification and the
-// tomb's deletion. Neither hook ever fires in production.
+// tomb's deletion. Neither hook ever fires in production. Both hooks' own
+// canary staging is checked end-to-end (write and close) and their failure
+// cleanup is ownership-preserving: a canary this helper could not fully
+// stage or move is removed only while it still anchors the inode staged
+// here, and a replacement of the canary itself is preserved untouched.
+// Test-only fault selectors (REC-010 generation 28):
+// ENTITY_BROKER_GUARD_HOOK_FAULT=<mode> (write|close|rename|rename-replace)
+// makes the inner-swap canary's staging fail deterministically at its exact
+// decision point; ENTITY_BROKER_GUARD_SELFTEST_FAULT=<token>:<mode>
+// (replace-entry|unlink-fail) injects a replaced scratch entry or a failing
+// cleanup unlink into the selftest. Neither selector ever fires in
+// production.
 //
 // Compile: cc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -pedantic
 // Supported hosts: macOS (10.12+) and Linux (3.15+); anything else fails at
@@ -104,6 +121,24 @@ struct options {
 
 static int hook_fired = 0;
 static int pre_delete_hook_fired = 0;
+static int selftest_fault_fired = 0;
+
+// Ownership-preserving conditional unlink (the committed generation 26
+// pattern): remove `name` only while it still anchors exactly the {dev, ino}
+// the caller pinned when it created the entry — an ownership check, never
+// name entropy. Returns 0 when the name is gone (removed here, or already
+// absent); -1 when the entry must be preserved (a replacement, a foreign
+// entry, an unexpected type, or a failed unlink) so the caller fails closed
+// with the entry left in place.
+static int unlink_if_still_owned(int dirfd, const char *name, uint64_t dev, uint64_t ino) {
+  struct stat st;
+  if (fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW) != 0) {
+    return errno == ENOENT ? 0 : -1;
+  }
+  if (!S_ISREG(st.st_mode)) return -1;
+  if ((uint64_t)st.st_dev != dev || (uint64_t)st.st_ino != ino) return -1;
+  return unlinkat(dirfd, name, 0) == 0 ? 0 : -1;
+}
 
 // 16 bytes of OS entropy for helper-internal names (tomb, inner-swap canary,
 // selftest scratch). /dev/urandom is the portable source on both supported
@@ -289,12 +324,7 @@ static int maybe_pre_delete_swap(int dirfd, const struct options *opt, const cha
   // The injection could not run: remove the leftover only while it still
   // anchors exactly the inode this helper created microseconds ago, then
   // refuse so the caller never deletes unguarded.
-  struct stat leftover;
-  if (fstatat(dirfd, canary, &leftover, AT_SYMLINK_NOFOLLOW) == 0 && S_ISREG(leftover.st_mode) &&
-      (uint64_t)leftover.st_dev == (uint64_t)created.st_dev &&
-      (uint64_t)leftover.st_ino == (uint64_t)created.st_ino) {
-    unlinkat(dirfd, canary, 0);
-  }
+  (void)unlink_if_still_owned(dirfd, canary, (uint64_t)created.st_dev, (uint64_t)created.st_ino);
   return -1;
 }
 
@@ -302,10 +332,19 @@ static int maybe_pre_delete_swap(int dirfd, const struct options *opt, const cha
 // the exact point between the caller's final ownership precheck and the
 // mutation syscall, by destructively renaming an exclusive-create canary over
 // the guarded entry — a faithful emulation of the racing external attacker.
-// Returns 0 when no injection was requested or the injection was performed;
-// -1 when the requested injection could not be performed (entropy or create
-// failure) so the caller fails closed instead of mutating unguarded by a hook
-// the test environment demanded.
+// The canary's staging is checked end-to-end (write AND close), and a move
+// that could not run is cleaned up ownership-preservingly: the canary is
+// unlinked only while its name still anchors exactly the inode staged here,
+// so a replacement of the canary itself is preserved untouched while the
+// caller still fails closed (Luna generation 28, finding 3).
+// ENTITY_BROKER_GUARD_HOOK_FAULT=<mode> (write | close | rename |
+// rename-replace) is a test-only selector making the named staging step fail
+// deterministically at its exact decision point; rename-replace additionally
+// emulates an attacker replacing the staged canary at its own unpredictable
+// name while the move fails. Returns 0 when no injection was requested or
+// the injection was performed; -1 when the requested injection could not be
+// performed (entropy or create failure) so the caller fails closed instead
+// of mutating unguarded by a hook the test environment demanded.
 static int maybe_inner_swap(int dirfd, const struct options *opt, const char *target_name) {
   const char *want = getenv("ENTITY_BROKER_GUARD_INNER_SWAP");
   if (want == NULL || *want == '\0' || opt->token == NULL || hook_fired != 0) return 0;
@@ -317,16 +356,61 @@ static int maybe_inner_swap(int dirfd, const struct options *opt, const char *ta
   snprintf(canary, sizeof(canary), ".guard-inner-canary-%ld-%s", (long)getpid(), entropy);
   int fd = openat(dirfd, canary, O_CREAT | O_EXCL | O_WRONLY, 0600);
   if (fd < 0) return -1;
-  dprintf(fd, "inner-canary-%s\n", opt->token);
-  close(fd);
-  if (renameat(dirfd, canary, dirfd, target_name) != 0) {
-    // The attacker-style replacement could not run: clean up this helper's
-    // canary (created O_EXCL microseconds ago) and refuse, so the caller
-    // never mutates unguarded by an injection that was requested.
-    unlinkat(dirfd, canary, 0);
+  struct stat created;
+  if (fstat(fd, &created) != 0) {
+    close(fd);
     return -1;
   }
-  return 0;
+  const char *fault = getenv("ENTITY_BROKER_GUARD_HOOK_FAULT");
+  int written = dprintf(fd, "inner-canary-%s\n", opt->token);
+  if (fault != NULL && strcmp(fault, "write") == 0) written = -1;
+  int closed = close(fd);
+  if (fault != NULL && strcmp(fault, "close") == 0) closed = -1;
+  int fail_move = fault != NULL && strncmp(fault, "rename", 6) == 0;
+  int replace_staged = fault != NULL && strcmp(fault, "rename-replace") == 0;
+  int moved = -1;
+  if (written > 0 && closed == 0) {
+    if (!fail_move) {
+      moved = renameat(dirfd, canary, dirfd, target_name) == 0 ? 0 : -1;
+    } else if (replace_staged) {
+      // Emulate the attacker replacing the STAGED canary at its own name in
+      // the interval while the move is failing: the ownership-preserving
+      // cleanup below must then refuse to unlink the replacement.
+      char attacker_entropy[33];
+      if (fill_random_hex(attacker_entropy, sizeof(attacker_entropy) - 1) != 0) {
+        // Cannot emulate: fall through to the plain failed-move cleanup.
+      } else {
+        char attacker[176];
+        snprintf(attacker, sizeof(attacker), ".guard-inner-attacker-%ld-%s", (long)getpid(), attacker_entropy);
+        int afd = openat(dirfd, attacker, O_CREAT | O_EXCL | O_WRONLY, 0600);
+        if (afd < 0) {
+          // fall through to the plain failed-move cleanup
+        } else {
+          struct stat attacker_created;
+          if (fstat(afd, &attacker_created) != 0) {
+            close(afd);
+          } else {
+            int aw = dprintf(afd, "attacker-replacement\n");
+            int ac = close(afd);
+            if (aw > 0 && ac == 0 && renameat(dirfd, attacker, dirfd, canary) == 0) {
+              // The canary name now anchors the attacker's inode: the cleanup
+              // below must detect the mismatch and preserve it.
+            } else {
+              (void)unlink_if_still_owned(dirfd, attacker, (uint64_t)attacker_created.st_dev,
+                                         (uint64_t)attacker_created.st_ino);
+            }
+          }
+        }
+      }
+    }
+  }
+  if (moved == 0) return 0;
+  // The attacker-style replacement could not run (or was not requested):
+  // clean up this helper's canary ONLY while the name still anchors exactly
+  // the inode this helper staged microseconds ago — a replacement of the
+  // canary is preserved in place and the caller fails closed regardless.
+  (void)unlink_if_still_owned(dirfd, canary, (uint64_t)created.st_dev, (uint64_t)created.st_ino);
+  return -1;
 }
 
 static int op_exchange(const char *dir, uint64_t ddev, uint64_t dino, const char *name_a,
@@ -584,9 +668,55 @@ static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const 
   return 0;
 }
 
+// Test-only selftest hook (see header comment): fire at most once, between
+// the scratch entries' creation and the ownership-preserving cleanup, in one
+// of two deterministic modes selected by ENTITY_BROKER_GUARD_SELFTEST_FAULT=
+// <token>:<mode>. "replace-entry" destructively renames an exclusive-create
+// canary over the scratch entry "d" — a faithful emulation of a racing
+// external actor replacing a scratch entry before cleanup. "unlink-fail"
+// strips the scratch directory's write permission so the cleanup unlinks
+// fail. Returns 0 when nothing was requested or the injection ran; -1 when
+// the requested injection could not be performed, so the selftest fails
+// closed instead of cleaning up unguarded by a hook the test environment
+// demanded. The injected canary's own staging is checked and cleaned up
+// ownership-preservingly on failure.
+static int maybe_selftest_fault(int dirfd, const struct options *opt) {
+  const char *want = getenv("ENTITY_BROKER_GUARD_SELFTEST_FAULT");
+  if (want == NULL || *want == '\0' || opt->token == NULL || selftest_fault_fired != 0) return 0;
+  const char *colon = strchr(want, ':');
+  if (colon == NULL || colon == want) return 0;
+  size_t token_len = (size_t)(colon - want);
+  if (strlen(opt->token) != token_len || strncmp(want, opt->token, token_len) != 0) return 0;
+  const char *mode = colon + 1;
+  selftest_fault_fired = 1;
+  if (strcmp(mode, "unlink-fail") == 0) {
+    return fchmod(dirfd, 0500) == 0 ? 0 : -1;
+  }
+  if (strcmp(mode, "replace-entry") != 0) return -1; // unknown mode: refuse
+  char entropy[33];
+  if (fill_random_hex(entropy, sizeof(entropy) - 1) != 0) return -1;
+  char canary[176];
+  snprintf(canary, sizeof(canary), ".guard-selftest-canary-%ld-%s", (long)getpid(), entropy);
+  int fd = openat(dirfd, canary, O_CREAT | O_EXCL | O_WRONLY, 0600);
+  if (fd < 0) return -1;
+  struct stat created;
+  if (fstat(fd, &created) != 0) {
+    close(fd);
+    return -1;
+  }
+  int written = dprintf(fd, "selftest-canary\n");
+  int closed = close(fd);
+  if (written <= 0 || closed != 0 || renameat(dirfd, canary, dirfd, "d") != 0) {
+    // The replacement could not run: tidy the staged canary only while it
+    // still anchors the inode just created, then refuse.
+    (void)unlink_if_still_owned(dirfd, canary, (uint64_t)created.st_dev, (uint64_t)created.st_ino);
+    return -1;
+  }
+  return 0;
+}
+
 static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const struct options *opt) {
   const char *op = "selftest";
-  (void)opt;
   int parent = -1;
   if (anchor_directory(dir, ddev, dino, &parent) != 0) return 1;
   char entropy[33];
@@ -617,15 +747,45 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
   const char *b = "b";
   const char *c = "c";
   const char *d = "d";
+  // The inode each scratch name anchors because THIS helper put it there
+  // ({0,0} = no entry of ours at that name). The cleanup below unlinks a
+  // name only while it still anchors exactly this identity, so a replacement
+  // injected anywhere between creation and cleanup is preserved, never
+  // destroyed (Luna generation 28, finding 2).
+  struct file_id expect[5];
+  for (int i = 0; i < 5; i += 1) {
+    expect[i].dev = 0;
+    expect[i].ino = 0;
+  }
   do {
     int fa = openat(dfd, a, O_CREAT | O_EXCL | O_WRONLY, 0600);
-    int fb = openat(dfd, b, O_CREAT | O_EXCL | O_WRONLY, 0600);
-    if (fa < 0 || fb < 0) {
-      if (fa >= 0) close(fa);
-      if (fb >= 0) close(fb);
+    if (fa < 0) {
       fail_reason = "create";
       break;
     }
+    struct stat created_a;
+    if (fstat(fa, &created_a) != 0) {
+      close(fa);
+      fail_reason = "create-stat";
+      break;
+    }
+    expect[0].dev = (uint64_t)created_a.st_dev;
+    expect[0].ino = (uint64_t)created_a.st_ino;
+    int fb = openat(dfd, b, O_CREAT | O_EXCL | O_WRONLY, 0600);
+    if (fb < 0) {
+      close(fa);
+      fail_reason = "create";
+      break;
+    }
+    struct stat created_b;
+    if (fstat(fb, &created_b) != 0) {
+      close(fa);
+      close(fb);
+      fail_reason = "create-stat";
+      break;
+    }
+    expect[1].dev = (uint64_t)created_b.st_dev;
+    expect[1].ino = (uint64_t)created_b.st_ino;
     if (write(fa, "A", 1) != 1 || write(fb, "B", 1) != 1) {
       close(fa);
       close(fb);
@@ -645,6 +805,12 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
       snprintf(detail, sizeof(detail), "RENAME_SWAP: %s", strerror(errno));
       fail_reason = "swap-syscall";
       break;
+    }
+    // The exchange swapped which inode each name anchors.
+    {
+      struct file_id swapped = expect[0];
+      expect[0] = expect[1];
+      expect[1] = swapped;
     }
     fa = openat(dfd, a, O_RDONLY | O_NOFOLLOW);
     fb = openat(dfd, b, O_RDONLY | O_NOFOLLOW);
@@ -667,11 +833,20 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
       fail_reason = "link-syscall";
       break;
     }
+    expect[2] = expect[0]; // c hard-links a's current inode
     int fd_d = openat(dfd, d, O_CREAT | O_EXCL | O_WRONLY, 0600);
     if (fd_d < 0) {
       fail_reason = "create-d";
       break;
     }
+    struct stat created_d;
+    if (fstat(fd_d, &created_d) != 0) {
+      close(fd_d);
+      fail_reason = "create-d-stat";
+      break;
+    }
+    expect[3].dev = (uint64_t)created_d.st_dev;
+    expect[3].ino = (uint64_t)created_d.st_ino;
     close(fd_d);
     errno = 0;
     if (renameatx_np(dfd, c, dfd, d, GUARD_NOREPLACE) == 0 || errno != EEXIST) {
@@ -683,6 +858,9 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
       fail_reason = "noreplace-absent";
       break;
     }
+    expect[4] = expect[2]; // e is c's inode under a new name
+    expect[2].dev = 0;     // ... and c is gone by this helper's own move
+    expect[2].ino = 0;
     struct stat sa2;
     if (fstatat(dfd, a, &sa2, AT_SYMLINK_NOFOLLOW) != 0 ||
         (uint64_t)sa2.st_dev != (uint64_t)sb.st_dev || (uint64_t)sa2.st_ino != (uint64_t)sb.st_ino) {
@@ -690,23 +868,42 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
       break;
     }
   } while (0);
-  // Best-effort cleanup of the scratch entries. The scratch directory did not
-  // exist until this invocation created it (unpredictable name) and only this
-  // helper has written to it, so these names are ours by construction; a
-  // racing same-user replacement is the documented uniform residual for any
-  // helper-internal unlink on an unknowable name. Leftovers are visible
-  // debris only on the failure path (which fails the build).
-  const char *e = "e";
-  unlinkat(dfd, a, 0);
-  unlinkat(dfd, b, 0);
-  unlinkat(dfd, c, 0);
-  unlinkat(dfd, d, 0);
-  unlinkat(dfd, e, 0);
+  // Test-only fault hook (see header comment): fires between the scratch
+  // entries' creation and the cleanup below — exactly where an external
+  // actor or a failing volume interferes with the cleanup.
+  int hook_failed = maybe_selftest_fault(dfd, opt) != 0 ? 1 : 0;
+  // Ownership-preserving, fully checked cleanup (Luna generation 28,
+  // finding 2): every scratch mutation below runs only while the name still
+  // anchors exactly the inode this helper recorded for it, and the first
+  // refusal stops the cleanup — an unexpected replacement is preserved in
+  // place, the scratch directory is left as visible debris holding it, and
+  // the selftest (and therefore the build) fails closed.
+  const char *cleanup_names[5] = {a, b, c, d, "e"};
+  int cleanup_refused = 0;
+  char cleanup_detail[256] = "";
+  for (int i = 0; i < 5 && cleanup_refused == 0; i += 1) {
+    if (unlink_if_still_owned(dfd, cleanup_names[i], expect[i].dev, expect[i].ino) != 0) {
+      cleanup_refused = 1;
+      snprintf(cleanup_detail, sizeof(cleanup_detail),
+               "scratch cleanup refused at %s — the entry was replaced, foreign, or its unlink failed; "
+               "it is preserved in the scratch directory",
+               cleanup_names[i]);
+    }
+  }
   close(dfd);
   int rmd = unlinkat(parent, scratch, AT_REMOVEDIR);
   close(parent);
   if (fail_reason != NULL) {
     fail(op, fail_reason, 0, NULL, NULL, detail);
+    return 1;
+  }
+  if (hook_failed) {
+    fail(op, "selftest-hook", 0, NULL, NULL,
+         "the requested selftest fault injection could not be performed — refusing to clean up unguarded");
+    return 1;
+  }
+  if (cleanup_refused) {
+    fail(op, "cleanup-refused", 0, NULL, scratch, cleanup_detail);
     return 1;
   }
   if (rmd != 0) {
@@ -742,7 +939,7 @@ static int usage(void) {
           "usage: fs_guard exchange DIR DIRDEV DIRINO NAMEA ADEV AINO NAMEB BDEV BINO [--token T] [--hook-side a|b]\n"
           "       fs_guard link-absent DIR DIRDEV DIRINO SRC SRCDEV SRCINO DST [--token T]\n"
           "       fs_guard remove-owned DIR DIRDEV DIRINO NAME DEV INO [--token T]\n"
-          "       fs_guard selftest DIR DIRDEV DIRINO\n");
+          "       fs_guard selftest DIR DIRDEV DIRINO [--token T]\n");
   return 2;
 }
 
@@ -782,8 +979,9 @@ int main(int argc, char **argv) {
     if (parse_options(argc, argv, 8, &opt) != 0) return usage();
     return op_remove_owned(argv[2], ddev, dino, argv[5], expected, &opt);
   }
-  if (strcmp(op, "selftest") == 0 && argc == 5) {
-    struct options opt = {0};
+  if (strcmp(op, "selftest") == 0 && argc >= 5) {
+    struct options opt;
+    if (parse_options(argc, argv, 5, &opt) != 0) return usage();
     return op_selftest(argv[2], ddev, dino, &opt);
   }
   return usage();
