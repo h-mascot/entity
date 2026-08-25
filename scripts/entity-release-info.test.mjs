@@ -453,6 +453,9 @@ test("deploy-sandbox invokes the exact-SHA release check and must never target p
   // The sandbox lane stays sandbox-gated and never routes through a prod lane.
   assert.match(scriptSource, /ENTITY_SANDBOX_/);
   assert.doesNotMatch(scriptSource, /promote:prod/);
+  // Exact-SHA releases live under releases/<sha>; shared runtime config stays at service root.
+  assert.match(scriptSource, /basename -- "\$\{SANDBOX_DIR_PARENT\}"\)" == "releases"/);
+  assert.match(scriptSource, /SANDBOX_SERVICE_ROOT=.*dirname -- "\$\{SANDBOX_DIR_PARENT\}"/);
 });
 
 // T-038 blocker 2: the deployment path must self-contain the native managed-storage

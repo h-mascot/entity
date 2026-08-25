@@ -64,6 +64,22 @@ test("migrateEntityWikiConfigFile preserves a backup and is safe to rerun", asyn
   assert.equal(await readFile(`${configPath}.before-openwiki-html`, "utf8"), CONFIG);
 });
 
+test("migrateEntityWikiConfigFile accepts the managed current presentation alias for immutable releases", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "entity-wiki-config-managed-current-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sha = "a".repeat(40);
+  const configPath = path.join(root, "entity.config.yaml");
+  const presentationPath = path.join(root, "releases", sha, "openwiki-html");
+  await mkdir(presentationPath, { recursive: true });
+  await writeFile(configPath, CONFIG.replace("./openwiki", "./openwiki-html"));
+  await symlink(path.join("current", "openwiki-html"), path.join(root, "openwiki-html"), "dir");
+
+  const result = await migrateEntityWikiConfigFile(configPath, { presentationPath });
+  assert.equal(result.changed, false);
+  assert.equal(result.presentationLink, path.join(root, "openwiki-html"));
+  assert.equal(await readlink(path.join(root, "openwiki-html")), path.join("current", "openwiki-html"));
+});
+
 test("migrateEntityWikiConfigFile refuses to replace an existing custom presentation symlink", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "entity-wiki-config-link-"));
   t.after(() => rm(root, { recursive: true, force: true }));
