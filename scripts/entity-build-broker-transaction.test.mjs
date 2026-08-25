@@ -591,9 +591,13 @@ test('broker publication is a coherent transaction guarded by an exclusive build
       const toolDir = await mkdtemp(resolve(tmpdir(), 'entity-broker-lock-'));
       const goFile = resolve(toolDir, 'go');
       const blockingCc = resolve(toolDir, 'blocking-cc');
+      // The holder blocks while compiling the broker core — the first staging
+      // compile that happens AFTER lock acquisition. (The fs_guard bootstrap
+      // compile legitimately precedes the lock; it only writes this run's
+      // nonce temp and runs the selftest.)
       await writeFile(
         blockingCc,
-        `#!/bin/sh\nwhile [ ! -f ${shellQuote(goFile)} ]; do sleep 0.05; done\nexec ${shellQuote(realCc)} "$@"\n`,
+        `#!/bin/sh\nfor arg in "$@"; do\n  case "$arg" in *managed_storage_broker.c)\n    while [ ! -f ${shellQuote(goFile)} ]; do sleep 0.05; done\n    ;; esac\ndone\nexec ${shellQuote(realCc)} "$@"\n`,
       );
       await chmod(blockingCc, 0o755);
       const holder = spawnHolderBuild({ CC: blockingCc });

@@ -245,6 +245,7 @@ const nonce = `${process.pid}-${Date.now()}`;
 const lockRecord = { pid: process.pid, hostname: hostname(), startedAt: new Date().toISOString(), nonce };
 const lockPayload = `${JSON.stringify(lockRecord)}\n`;
 let lockHeld = false;
+let lockIdentity = null; // inode this run's lock record occupies, for guarded release
 
 function isPidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -333,18 +334,52 @@ function stealStaleLockOrThrow() {
     // Lock content changed between reads: treat as contention, retry.
     return true;
   }
+  const lockStat = lstatOrNull(lockPath);
+  if (lockStat === null) {
+    return true; // vanished between reads: retry the claim
+  }
+  if (lockStat.isSymbolicLink() || !lockStat.isFile()) {
+    throw new Error(`Unsafe broker build lock (must be absent or a regular file): ${lockPath}`);
+  }
+  const staleIdentity = inodeOf(lockStat);
+  const dirAnchor = [out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino)];
   const claim = resolve(out, `.broker-build.lock.stale-${nonce}`);
-  renameSync(lockPath, claim);
+  // Move the stale lock aside through kernel no-replace steps: the claim is
+  // created only if absent (linkat) and only the exact verified inode is
+  // detached (conditional move), so nothing at either name can be
+  // overwritten or removed by the steal itself.
+  runGuard(
+    ['link-absent', ...dirAnchor, basename(lockPath), String(staleIdentity.dev), String(staleIdentity.ino), basename(claim), '--token', 'lock-steal-claim'],
+    `broker build lock steal refused (${lockPath})`,
+  );
+  runGuard(
+    ['remove-owned', ...dirAnchor, basename(lockPath), String(staleIdentity.dev), String(staleIdentity.ino), '--token', 'lock-steal-detach'],
+    `broker build lock steal refused (${lockPath})`,
+  );
   let claimed = '';
   if (lstatOrNull(claim) !== null) claimed = readFileSync(claim, 'utf8');
   if (claimed !== raw) {
-    // Lost a race while stealing. Restore the claim only when the lock path
-    // is truly absent (ENOENT) so no unexpected replacement — including a
-    // symlink — is ever overwritten, then fail closed.
-    if (lstatOrNull(lockPath) === null) renameSync(claim, lockPath);
+    // Lost a race while stealing. Restore the claim only through kernel
+    // no-replace steps so no unexpected replacement — including a symlink —
+    // is ever overwritten, then fail closed.
+    const claimStat = lstatOrNull(claim);
+    if (claimStat !== null && claimStat.isFile() && lstatOrNull(lockPath) === null) {
+      const claimIdentity = inodeOf(claimStat);
+      runGuard(
+        ['link-absent', ...dirAnchor, basename(claim), String(claimIdentity.dev), String(claimIdentity.ino), basename(lockPath), '--token', 'lock-steal-restore'],
+        `broker build lock steal refused (${lockPath})`,
+      );
+      runGuard(
+        ['remove-owned', ...dirAnchor, basename(claim), String(claimIdentity.dev), String(claimIdentity.ino), '--token', 'lock-steal-restore-drop'],
+        `broker build lock steal refused (${lockPath})`,
+      );
+    }
     throw new Error(`Broker build lock changed while stealing stale lock (${detail}) — refusing to run concurrently`);
   }
-  rmSync(claim, { force: true });
+  runGuard(
+    ['remove-owned', ...dirAnchor, basename(claim), String(staleIdentity.dev), String(staleIdentity.ino), '--token', 'lock-steal-drop'],
+    `broker build lock steal refused (${claim})`,
+  );
   return true;
 }
 
@@ -352,18 +387,29 @@ function acquireLockOrThrow() {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const temp = resolve(out, `.broker-build.lock.tmp-${nonce}-${attempt}`);
     writeFileSync(temp, lockPayload, { flag: 'wx' });
+    const tempIdentity = inodeOf(lstatOrNull(temp));
     try {
       try {
         // Hardlink claim: the lock path never exists in a half-written state.
         linkSync(temp, lockPath);
         lockHeld = true;
+        lockIdentity = tempIdentity;
         return;
       } catch (error) {
         if (error.code !== 'EEXIST') throw error;
         if (stealStaleLockOrThrow()) continue; // stale lock removed — retry claim
       }
     } finally {
-      rmSync(temp, { force: true });
+      // Guarded cleanup of this attempt's temp: only the exact inode this
+      // run just wrote is ever removed.
+      try {
+        runGuard(
+          ['remove-owned', out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino), basename(temp), String(tempIdentity.dev), String(tempIdentity.ino), '--token', `lock-temp-cleanup:${attempt}`],
+          `broker build lock temp cleanup refused (${temp})`,
+        );
+      } catch (error) {
+        if (!/absent/.test(error.message)) throw error; // already gone: nothing to clean
+      }
     }
   }
   throw new Error(`Broker build lock could not be acquired after stale cleanup (${lockPath}) — concurrent build may have claimed it`);
@@ -374,14 +420,26 @@ function releaseLock() {
   lockHeld = false;
   try {
     const current = readFileSync(lockPath, 'utf8');
-    if (current === lockPayload) {
-      rmSync(lockPath, { force: true });
-    } else {
+    if (current !== lockPayload) {
       // The lock no longer contains our record: never remove someone else's.
       console.error(`broker build lock content changed before release (${lockPath}) — leaving it in place`);
+      return;
     }
+    if (lockIdentity === null || !pathAnchors(lockPath, lockIdentity)) {
+      console.error(`broker build lock identity changed before release (${lockPath}) — leaving it in place`);
+      return;
+    }
+    // Kernel-conditional removal of exactly the inode this run claimed; an
+    // in-interval replacement is relocated and restored, never removed.
+    runGuard(
+      ['remove-owned', out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino), basename(lockPath), String(lockIdentity.dev), String(lockIdentity.ino), '--token', 'lock-release'],
+      `broker build lock release refused — leaving the lock in place (${lockPath})`,
+    );
   } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
+    if (error.code !== 'ENOENT') {
+      // Never let lock-release trouble mask the build outcome: report loudly.
+      console.error(`broker build lock release failed: ${error.message}`);
+    }
   }
 }
 
@@ -461,6 +519,10 @@ const publication = [
   { name: 'broker', temp: tempBroker, final: finalBroker },
   { name: 'runtime', temp: runtimeTemp, final: runtimeBroker },
 ];
+
+function artifactNameForTemp(tempPath) {
+  return publication.find((entry) => entry.temp === tempPath)?.name;
+}
 
 // Restore the exact prior generation for every artifact that was published.
 // Reverse publication order. Every mutation is identity-guarded through the
@@ -574,6 +636,17 @@ function anchorForDirectory(artifact) {
 try {
   verifyDirectoryAnchor(out, sourceAnchor);
   verifyDirectoryAnchor(runtimeOut, runtimeAnchor);
+  // The guarded-mutation helper is compiled before the lock is acquired (all
+  // lock mutations themselves are guarded) and self-tested against this
+  // volume's kernel primitives before any final path or the lock is touched.
+  // A filesystem (or kernel) without the atomic exchange / no-replace
+  // primitives fails the build closed here — no unsafe fallback anywhere.
+  execFileSync(cc, [...common, guardSource, '-o', tempGuard], { stdio: 'inherit' });
+  guardTempIdentity = inodeOf(lstatSync(tempGuard, { bigint: true }));
+  runGuard(
+    ['selftest', out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino)],
+    'broker guard helper selftest failed — this volume lacks the kernel primitives the guarded transaction requires',
+  );
   acquireLockOrThrow();
   let primaryFailure = null;
   // Tracks what each staging temp currently anchors, updated after every
@@ -585,18 +658,6 @@ try {
       for (const path of [finalObject, finalTest, finalBroker, runtimeBroker]) {
         assertReplaceableRegularFile(path);
       }
-
-      // The guarded-mutation helper is compiled first, from the same trusted
-      // sources with the same compiler, and self-tested against this volume's
-      // kernel primitives before any final path is touched. A filesystem (or
-      // kernel) without the atomic exchange / no-replace primitives fails the
-      // build closed here — there is no unsafe fallback anywhere.
-      execFileSync(cc, [...common, guardSource, '-o', tempGuard], { stdio: 'inherit' });
-      guardTempIdentity = inodeOf(lstatSync(tempGuard, { bigint: true }));
-      runGuard(
-        ['selftest', out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino)],
-        'broker guard helper selftest failed — this volume lacks the kernel primitives the guarded transaction requires',
-      );
 
       // Staging: every fallible compile/test/copy/chmod step happens on temp
       // paths before any final path is touched.
@@ -742,15 +803,15 @@ try {
       throw error;
     }
   } finally {
-    // Guarded temp cleanup: every staging temp (and the helper itself) is
-    // removed only while it still anchors exactly the identity this run last
-    // recorded for it — an unexpected entry at a temp path is never removed.
-    // Secondary cleanup failures never mask the primary failure.
+    // Guarded temp cleanup: every staging temp is removed only while it still
+    // anchors exactly the identity this run last recorded for it — an
+    // unexpected entry at a temp path is never removed. The lock is released
+    // (also guarded) before the helper itself is removed. Secondary cleanup
+    // failures never mask the primary failure.
     const secondary = [];
-    for (const path of [...publication.map((entry) => entry.temp), tempGuard]) {
+    for (const path of publication.map((entry) => entry.temp)) {
       try {
-        const artifact = publication.find((entry) => entry.temp === path);
-        const identity = artifact === undefined ? guardTempIdentity : tempCurrent.get(artifact.name);
+        const identity = tempCurrent.get(artifactNameForTemp(path));
         if (identity === undefined || identity === null) {
           rmSync(path, { force: true }); // never staged/tracked this run
           continue;
@@ -770,6 +831,19 @@ try {
       }
     }
     releaseLock();
+    try {
+      runGuard(
+        [
+          'remove-owned',
+          out, String(sourceAnchor.identity.dev), String(sourceAnchor.identity.ino),
+          basename(tempGuard), String(guardTempIdentity.dev), String(guardTempIdentity.ino),
+          '--token', 'temp-cleanup:fs-guard',
+        ],
+        `Broker build temp cleanup refused for ${tempGuard}`,
+      );
+    } catch (error) {
+      secondary.push(`${tempGuard}: ${error.message}`);
+    }
     if (secondary.length > 0) {
       const combined = `Broker build temp cleanup incomplete (${secondary.join('; ')})`;
       if (primaryFailure === null) {
