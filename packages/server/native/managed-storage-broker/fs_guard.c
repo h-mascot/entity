@@ -266,7 +266,13 @@ static int maybe_inner_swap(int dirfd, const struct options *opt, const char *ta
   if (fd < 0) return -1;
   dprintf(fd, "inner-canary-%s\n", opt->token);
   close(fd);
-  renameat(dirfd, canary, dirfd, target_name); // attacker-style replace
+  if (renameat(dirfd, canary, dirfd, target_name) != 0) {
+    // The attacker-style replacement could not run: clean up this helper's
+    // canary (created O_EXCL microseconds ago) and refuse, so the caller
+    // never mutates unguarded by an injection that was requested.
+    unlinkat(dirfd, canary, 0);
+    return -1;
+  }
   return 0;
 }
 
