@@ -64,6 +64,15 @@ function createMemoryActivityRepository(): ActivityRepository {
     listActivities: (limit = 100) => records.slice(0, limit),
     listActivitiesByTaskId: (taskId: number, limit = 100) =>
       records.filter((record) => record.task_id === taskId).slice(0, limit),
+    listActivitiesFiltered: () => ({ activities: [], total: 0 }),
+    getActivityReport: () => ({
+      totals: { count: 0 },
+      byAction: [],
+      byActor: [],
+      byDay: [],
+      bySource: [],
+      byType: [],
+    }),
     createActivity: (input: CreateActivityInput) => {
       const requestedEventType = String(input.activity_event_type ?? '');
       const knownEventType = (ACTIVITY_EVENT_TYPES as readonly string[]).includes(requestedEventType)

@@ -91,6 +91,15 @@ function createMemoryActivityRepository(): ActivityRepository & { created: Creat
     created,
     listActivities: vi.fn(() => []),
     listActivitiesByTaskId: vi.fn(() => []),
+    listActivitiesFiltered: () => ({ activities: [], total: 0 }),
+    getActivityReport: () => ({
+      totals: { count: 0 },
+      byAction: [],
+      byActor: [],
+      byDay: [],
+      bySource: [],
+      byType: [],
+    }),
     createActivity: vi.fn((input: CreateActivityInput): ActivityRecord => {
       created.push(input);
       return {
