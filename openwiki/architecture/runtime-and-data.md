@@ -50,7 +50,8 @@ Major canonical route families include:
 - `/api/documents/*` for scoped agent-native document collaboration;
 - `/api/agents/*` and `/api/agent/*` for registry/runtime surfaces and Task Master;
 - `/api/plugins/*`, plugin-declared bases, `/api/entity-services/*`, and `/api/swarm/*`;
-- `/api/search/*`, `/api/docs/*`, `/api/chat/*`, `/api/notifications/*`, and runtime/config routes.
+- `/api/search/*`, `/api/docs/*`, `/api/chat/*`, `/api/notifications/*`, and runtime/config routes;
+- the server-started due-date reminder scheduler in `packages/server/src/due-reminders.ts`, which scans the task sync layer for open tasks with due dates and routes `task_nudge` inbox notifications through `/api/notifications/*`.
 
 Tasks, activities, agent automation, runtime, projects, and other areas also expose legacy unprefixed mirrors. Global bearer middleware explicitly protects known mirrors when authentication is enabled. New code should prefer canonical `/api/*` paths and verify route-order behavior in `packages/server/src/index.ts`.
 
@@ -99,7 +100,7 @@ Important distinctions:
 
 ## Cross-domain flows
 
-[Files and documents](../features/files-and-documents.md) use file-source and collaboration repositories, then link outputs back to tasks. The file index runner now strips HTML wrappers and decodes entities before it derives titles and previews, so generated HTML presentation files stay searchable as human-readable content rather than markup blobs. [Agents](../features/agents-and-collaboration.md) consume registry, activity, metrics, and task data. [Execution and proof](../platform/execution-and-proof.md) references tasks but maintains separate Swarm tables and completion evidence. [Configuration](../platform/configuration-and-plugins.md) seeds agents, file sources, and plugin defaults into runtime persistence.
+[Files and documents](../features/files-and-documents.md) use file-source and collaboration repositories, then link outputs back to tasks. The file index runner now strips HTML wrappers and decodes entities before it derives titles and previews, so generated HTML presentation files stay searchable as human-readable content rather than markup blobs. [Mission Control](../features/mission-control.md) now also drives due-date reminders through the shared notification repository and `/api/notifications/*` inbox routes. [Agents](../features/agents-and-collaboration.md) consume registry, activity, metrics, and task data. [Execution and proof](../platform/execution-and-proof.md) references tasks but maintains separate Swarm tables and completion evidence. [Configuration](../platform/configuration-and-plugins.md) seeds agents, file sources, and plugin defaults into runtime persistence.
 
 ## Change guidance
 

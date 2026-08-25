@@ -64,7 +64,7 @@
 <li><a class="wiki-nav-link" href="/docs/source/entity-wiki/runtime-and-release.html" target="_top"><span>Runtime and release</span><small>Overview</small></a></li></ul></nav></details>
 <article class="wiki-article">
 <header class="page-header"><div class="eyebrow"><span>Entity Wiki</span><span class="eyebrow-type">Product Guide</span></div><h1>Entity Quickstart</h1><p class="description">Entry point to Entity, an AI-native workspace for files, tasks, agents, collaboration, execution providers, plugins, and operational proof.</p><div class="tags" aria-label="Tags"><span class="tag">entity</span><span class="tag">quickstart</span><span class="tag">product</span><span class="tag">engineering</span></div></header>
-<div class="prose"><p>Entity is a local-first, server-backed workspace where humans can inspect, steer, and review agent work. Its implemented product surfaces bring tasks, files, documents, agent state, activity, chat, services, plugins, and operational evidence into one React application. Source presence does <strong>not</strong> prove deployment rollout: <code>/api/version</code>, release metadata, sandbox validation, and deployment receipts remain authoritative for any live environment. The release/runtime boundary now also owns the exact-SHA sandbox handoff and the pull-request-head docs gate, which are documented on <a href="/docs/source/entity-wiki/runtime-and-release.html" target="_top">Runtime and release</a>.</p>
+<div class="prose"><p>Entity is a local-first, server-backed workspace where humans can inspect, steer, and review agent work. Its implemented product surfaces bring tasks, files, documents, agent state, activity, notifications, chat, services, plugins, and operational evidence into one React application. Source presence does <strong>not</strong> prove deployment rollout: <code>/api/version</code>, release metadata, sandbox validation, and deployment receipts remain authoritative for any live environment. The release/runtime boundary now also owns the exact-SHA sandbox handoff and the pull-request-head docs gate, which are documented on <a href="/docs/source/entity-wiki/runtime-and-release.html" target="_top">Runtime and release</a>.</p>
 <h2 id="start-locally">Start locally</h2>
 <p>Prerequisites are Node.js 20+ and npm.</p>
 <pre><code class="language-bash">npm install
@@ -108,6 +108,11 @@ npm run dev
 <td>Chat</td>
 <td>Use channel/thread UI and model-routing plumbing</td>
 <td>ClickClack compatibility routing is optional and sidecar-dependent</td>
+</tr>
+<tr>
+<td>Notifications</td>
+<td>Receive task due-date reminders in the inbox and inspect notification state through the notification API</td>
+<td>The scheduler is started from <code>packages/server/src/index.ts</code>, scans open tasks, and dedupes by canonical event id</td>
 </tr>
 <tr>
 <td>Admin</td>
