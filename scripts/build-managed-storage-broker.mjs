@@ -410,6 +410,11 @@ const runtimeTemp = resolve(runtimeOut, `.broker.tmp-${nonce}`);
 let guardTempIdentity = null;
 
 function runGuard(args, refuseMessage) {
+  // The helper itself is a mutation-capable executable created this run:
+  // execute it only while it still anchors exactly the inode cc produced.
+  if (guardTempIdentity === null || !pathAnchors(tempGuard, guardTempIdentity)) {
+    throw new Error(`broker guard helper identity changed (${tempGuard}) — refusing to execute it`);
+  }
   let stdout = '';
   try {
     stdout = execFileSync(tempGuard, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });

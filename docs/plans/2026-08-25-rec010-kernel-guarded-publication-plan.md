@@ -57,13 +57,18 @@ FAIL_AT labels, native broker build, permissions, clean-checkout wiring.
 
 ## Residual limit (honest)
 
-The final `unlinkat` of the helper-created, fd-pinned, just-verified tomb is
-the one operation no kernel makes conditional (no unlink-by-inode exists).
-Its protection is structural: unguessable O_EXCL nonce name created
-microseconds earlier, fd-pinned identity verification, immediate adjacency in
-single-threaded native code, and a post-unlink link-count audit that converts
-any impossible-to-win replacement into a loud failure. No deterministic or
+The final `unlinkat` of the helper-created tomb in `remove-owned` is the one
+operation no kernel makes conditional (no unlink-by-inode exists on macOS or
+Linux). Its protection is structural: an unguessable name that did not exist
+until the same helper invocation, fd-pinned identity verification, immediate
+adjacency in single-threaded native code, and a post-unlink link-count audit
+that converts any replacement into a loud failure. No deterministic or
 schedulable injection point can reach it; documented rather than hidden.
+Defense-in-depth: the helper binary itself is identity-checked before every
+execution. Parent-directory swaps inside the helper's own interval are
+structurally harmless: every mutation is relative to the verified directory
+descriptor, so it lands in the anchored (possibly moved) directory and never
+in a replacement directory.
 
 ## Steps
 
