@@ -18,15 +18,16 @@
 //                place, before failing closed.
 //   link-absent  linkat(dirfd, src, dirfd, dst, 0): kernel no-replace creation;
 //                EEXIST fails closed if anything occupies the destination.
-//   remove-owned move the entry to a fresh O_EXCL tomb with the kernel
-//                no-replace conditional rename (RENAME_EXCL on macOS — note
-//                macOS has no RENAME_NOREPLACE; its 0x1 flag is the unrelated
-//                RENAME_SECLUDE — and RENAME_NOREPLACE on Linux), so a foreign
-//                entry can only be relocated, never destroyed; it is moved
-//                back on verification mismatch. The tomb is unlinked only
-//                after the pinned descriptor verified it anchors exactly the
-//                expected inode, and the unlink is audited via the pinned
-//                descriptor: precisely that inode must lose its link.
+//   remove-owned move the entry to a fresh unpredictable tomb name with the
+//                kernel no-replace conditional rename (RENAME_EXCL on macOS —
+//                note macOS has no RENAME_NOREPLACE; its 0x1 flag is the
+//                unrelated RENAME_SECLUDE — and RENAME_NOREPLACE on Linux),
+//                so a foreign entry can only be relocated, never destroyed;
+//                it is moved back on verification mismatch. The tomb is
+//                unlinked only after the pinned descriptor verified it
+//                anchors exactly the expected inode, and the unlink is
+//                audited via the pinned descriptor: precisely that inode must
+//                lose its link.
 //   selftest     prove SWAP/NOREPLACE/linkat work on the target volume before
 //                the transaction relies on them; missing primitives fail the
 //                build closed (there is NO unsafe fallback anywhere).
