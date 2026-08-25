@@ -192,9 +192,9 @@ describe('CH-A-01 ClickClack/chat/outbound inventory', () => {
     expect(inventory.missionChat.orgScopedRoutes).toEqual(['object-refs']);
   });
 
-  it('notification routing is inbox-first, unwired, and adapter enum matches', () => {
+  it('notification routing is inbox-first and wired through the MC #1370 due-reminder scheduler', () => {
     expect(inventory.notifications.canonicalChannel).toBe('entity_inbox');
-    expect(inventory.notifications.routingService.mountedInIndex).toBe(false);
+    expect(inventory.notifications.routingService.mountedInIndex).toBe(true);
     expect(inventory.notifications.routingService.inboxFirst).toBe(true);
     expect(inventory.notifications.routingService.adapterInterface).toBe(
       'NotificationDeliveryAdapter',
@@ -203,7 +203,8 @@ describe('CH-A-01 ClickClack/chat/outbound inventory', () => {
     expect(inventory.notifications.inboundIntakeToTaskOrActivityEvent).toBe(false);
 
     expect(indexSource).toContain('createNotificationRouter');
-    expect(indexSource).not.toContain('createNotificationRoutingService');
+    expect(indexSource).toContain('createNotificationRoutingService');
+    expect(indexSource).toContain('createDueReminderScheduler');
     expect(indexSource).toContain('registerClickClackProxyRoutes');
     expect(indexSource).toContain('registerChatRoutes');
 
