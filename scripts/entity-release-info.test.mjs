@@ -472,7 +472,8 @@ test("deploy self-contains the native managed-storage broker build and runtime i
   assert.ok(buildInvoked < syncBegins, "broker build must complete before the server-dist sync");
   // The build/install tool must place the executable at the deployed runtime path
   // the compiled server resolves (dist/server/native/.../.build/broker).
-  assert.match(buildSource, /packages\/server\/dist\/server\/native\/managed-storage-broker\/\.build\/broker/);
+  assert.match(buildSource, /packages\/server\/dist\/server\/native\/managed-storage-broker\/\.build/);
+  assert.match(buildSource, /const runtimeBroker = resolve\(runtimeOut, 'broker'\)/);
   assert.match(buildSource, /copyFileSync/);
 });
 
