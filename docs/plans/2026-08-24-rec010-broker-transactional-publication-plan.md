@@ -1,6 +1,13 @@
 # Plan: REC-010 broker transactional publication + build lock (repair round 2)
 
 Run: `entity-deploy-reconciliation-20260824` — bounded repair round 2 of 3.
+Generation 17 addendum (Henry-authorized bounded repair of the two accepted
+generation-15 P1 findings, clean base 2071998): dangling final symlinks were
+treated as absent (`existsSync` follows links) and publication/rollback were
+pathname-based TOCTOU. Fixed by ENOENT-only absence semantics plus the
+descriptor-anchored no-replace design described in steps 13–15 and the script
+header comment; acceptance = the new preservation/swap tests plus every
+existing lock/transaction/rollback/cleanup/wiring behavior unchanged.
 Round 3 addendum: generation 9's RED run deadlocked — the holder fixture
 orphaned the blocking compiler wrapper, which kept the test runner alive via
 inherited stdio pipes after the TAP summary. Round 3 makes holder teardown
@@ -96,6 +103,50 @@ Exclusive build lock (P2):
 - [x] 12. Round 4 proofs: full `test:release-deploy`, root build,
       fingerprint-metadata refresh + `docs:wiki:verify` (08c5653 precedent),
       `git diff --check`, private-default scan, full diff review, commit.
+- [x] 13. Generation 17 (Henry-authorized, manager-run, bounded, non-
+      production): RED table-driven preservation test over all four final
+      artifacts × two flavors (dangling symlink / symlink to an outside
+      canary) — dangling flavor proven failing against 2071998 (the build
+      succeeded and renamed over the symlink). GREEN: `lstatOrNull()` makes
+      ENOENT the only absence everywhere `existsSync()` was used on a
+      build-owned path (final artifacts, rollback backups, lock-steal claim
+      and restore check, output-directory components). Commit f2a7223.
+- [x] 14. Generation 17 GREEN (second P1): descriptor-anchored ownership —
+      per-final `{dev, ino}` pinned via open/fstat (lstat-classified first,
+      cross-checked against the fd), per-directory anchors re-verified at
+      every mutation boundary, absent finals published via `linkSync`
+      no-replace (EEXIST + pre-check fail closed), existing finals identity-
+      verified immediately before the atomic rename and post-verified as the
+      staged inode, rollback only renames/removes the exact file this run
+      published (unexpected replacement/vanished final/changed backup/
+      swapped parent dir fail closed with forensics kept), backups dropped
+      only while still anchoring the exact hardlink this run made. Test-only
+      swap hooks (`ENTITY_BROKER_BUILD_SWAP_AT`, `_SWAP_DIR_AT`,
+      `_SWAP_AT_ROLLBACK`) drive deterministic publish/rollback/parent-dir
+      swap cases with outside-canary preservation. Commit 7dd7407.
+- [x] 15. Generation 17 proofs (serial node@22.22.2): transaction+wiring
+      suites 31/31 with `--test-concurrency=1`; `npm run test:release-deploy`
+      97/97; root build green (direct native C broker tests exit 0);
+      `npm run scan:private-defaults` exit 0; fingerprint-metadata refresh
+      only (`writeGenerationMetadata`, 7d00bbfe…) + `docs:wiki:verify` green;
+      `git diff --check 5169cce..HEAD` clean; full diff + status review.
+
+## Generation 17 residual limits (recorded, not hidden)
+
+- Node 22 has no conditional-rename binding (`renameat2`/`renamex_np`) and no
+  `flock`/`linkat(fd)`. The interval between the last identity pre-check and
+  the replace rename is the exact boundary pure Node cannot close; every
+  post-check converts a lost race there into a loud fail-closed with forensic
+  backups kept. Closing it fully would need a native helper (out of scope).
+- The pre-check→rename window is the only unclosable one. A swap landing
+  between the anchor-open and the backup hardlink is caught by the backup
+  inode cross-check (fail closed); a swap landing between the anchor and the
+  publish pre-check is caught by the pre-check; a swap landing between the
+  pre-check and the rename is caught by the post-check. Each guard fails
+  closed rather than publishing over an entry the run cannot account for.
+- `scripts/build-managed-storage-broker.mjs` is now 596 lines, above the
+  ~500-line style guideline; kept intact for auditability of the security
+  boundary rather than split mid-repair.
 
 ## Files touched (expected)
 
