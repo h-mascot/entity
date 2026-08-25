@@ -213,7 +213,10 @@ applySecurityHardening(app);
 app.use(cors());
 app.use(compression());
 app.use("/api/clickclack", express.raw({ type: "*/*", limit: "50mb" }));
-app.use(express.json());
+// The upload API accepts up to 10 MB decoded content encoded as JSON/base64.
+// Keep enough headroom for base64 expansion and JSON metadata; the route still
+// enforces the decoded 10 MB cap after parsing.
+app.use(express.json({ limit: '20mb' }));
 app.use("/api", setApiNoStoreHeaders);
 const notificationRepository = createNotificationRepository();
 

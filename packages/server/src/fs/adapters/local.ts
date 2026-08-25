@@ -302,6 +302,61 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     };
   }
 
+  async writeRaw(relativePath: string, content: Buffer): Promise<{ updatedAt?: string }> {
+    this.assertWritable();
+    const basePath = this.source.base_path?.trim();
+    if (!basePath) {
+      throw new Error('Local source basePath is not configured.');
+    }
+
+    const normalizedRelative = normalizeSourceRelativePath(relativePath);
+    if (!normalizedRelative) {
+      throw new Error('Path is required.');
+    }
+
+    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    await assertWriteTargetRealpathContained(basePath, absolutePath);
+    await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
+    await assertWriteTargetRealpathContained(basePath, absolutePath);
+    await fs.promises.writeFile(absolutePath, content);
+    const updatedStats = await fs.promises.stat(absolutePath);
+    return {
+      updatedAt: toIsoTimestamp(updatedStats.mtime),
+    };
+  }
+
+
+  async writeRawExclusive(relativePath: string, content: Buffer): Promise<{ updatedAt?: string }> {
+    this.assertWritable();
+    const basePath = this.source.base_path?.trim();
+    if (!basePath) {
+      throw new Error('Local source basePath is not configured.');
+    }
+
+    const normalizedRelative = normalizeSourceRelativePath(relativePath);
+    if (!normalizedRelative) {
+      throw new Error('Path is required.');
+    }
+
+    const absolutePath = resolveLocalPath(basePath, normalizedRelative);
+    await assertWriteTargetRealpathContained(basePath, absolutePath);
+    await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
+    await assertWriteTargetRealpathContained(basePath, absolutePath);
+    try {
+      await fs.promises.writeFile(absolutePath, content, { flag: 'wx' });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === 'EEXIST') {
+        throw new Error('File already exists.');
+      }
+      throw err;
+    }
+    const updatedStats = await fs.promises.stat(absolutePath);
+    return {
+      updatedAt: toIsoTimestamp(updatedStats.mtime),
+    };
+  }
+
   async mkdir(relativePath: string): Promise<void> {
     this.assertWritable();
     const basePath = this.source.base_path?.trim();

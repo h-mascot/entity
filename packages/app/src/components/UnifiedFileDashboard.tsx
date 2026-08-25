@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getFileAgentFilterOptions } from '../lib/agentRegistry';
 import { FILE_SORT_OPTIONS, sortSearchResults, type FileResultSort } from '../lib/fileSearchSort';
 import { useUserProfile } from '../lib/userProfile';
@@ -11,8 +11,17 @@ interface UnifiedFileDashboardProps {
   onOpen: (sourceId: string, path: string) => void;
 }
 
+function sourceIsReadOnly(source: FileSource): boolean {
+  try {
+    const capabilities = JSON.parse(source.capabilities) as { write?: unknown };
+    return capabilities.write === false;
+  } catch {
+    return false;
+  }
+}
+
 export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onOpen }: UnifiedFileDashboardProps) {
-  const { sources, searchFiles } = useFileSources({ apiBase, enabled });
+  const { sources, searchFiles, uploadFile } = useFileSources({ apiBase, enabled });
   const [userProfile] = useUserProfile();
   const [query, setQuery] = useState('');
   const [sourceId, setSourceId] = useState('all');
@@ -23,6 +32,10 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const [searchNonce, setSearchNonce] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sortedResults = useMemo(() => sortSearchResults(results, sort), [results, sort]);
 
   const sourceOptions = useMemo(() => ['all', ...sources.map((source) => source.id)], [sources]);
@@ -33,6 +46,7 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
     }
     return map;
   }, [sources]);
+  const writableSources = useMemo(() => sources.filter((source) => !sourceIsReadOnly(source)), [sources]);
   const activeSourceTabs = useMemo(() => sourceOptions.slice(0, 6), [sourceOptions]);
 
   useEffect(() => {
@@ -61,7 +75,41 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
     }, 180);
 
     return () => window.clearTimeout(timer);
-  }, [agent, enabled, origin, query, searchFiles, sourceId, type]);
+  }, [agent, enabled, origin, query, searchFiles, searchNonce, sourceId, type]);
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleUploadChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    // Upload into the selected source when one is picked; otherwise the first
+    // source that advertises write capability.
+    const selectedSource = sourceId !== 'all' ? sourceLabelById.get(sourceId) : undefined;
+    if (selectedSource && sourceIsReadOnly(selectedSource)) {
+      setUploadNotice('The selected file source is read-only.');
+      return;
+    }
+    const targetSourceId = selectedSource?.id ?? writableSources[0]?.id;
+    if (!targetSourceId) {
+      setUploadNotice('No writable file source available.');
+      return;
+    }
+    setUploading(true);
+    setUploadNotice(null);
+    try {
+      const uploaded = await uploadFile(targetSourceId, file);
+      setUploadNotice(`Uploaded ${uploaded.displayName} → ${uploaded.path}${uploaded.teamId ? ` (team: ${uploaded.teamId})` : ''}`);
+      setSearchNonce((n) => n + 1);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed.';
+      setUploadNotice(message);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   if (!enabled) {
     return null;
@@ -165,6 +213,22 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
             })}
           </div>
           <div className="flex items-center gap-2 max-md:w-full">
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={handleUploadChange}
+              aria-label="Upload file"
+            />
+            <button
+              type="button"
+              onClick={handleUploadClick}
+              disabled={uploading || Boolean(sourceLabelById.get(sourceId) && sourceIsReadOnly(sourceLabelById.get(sourceId)!)) || (sourceId === 'all' && writableSources.length === 0)}
+              title="Upload a file to the selected source"
+              className="mc-shell-input min-h-9 px-3 py-1.5 text-xs max-md:flex-1 disabled:opacity-50"
+            >
+              {uploading ? 'Uploading…' : '⬆ Upload'}
+            </button>
             <span className="whitespace-nowrap text-xs text-[var(--text-muted)]">
               {loading ? 'Searching…' : `${results.length} result${results.length === 1 ? '' : 's'}`}
             </span>
@@ -189,6 +253,11 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
+        {uploadNotice && (
+          <div className="mb-2 rounded-md border border-[var(--border-secondary)] bg-[var(--bg-secondary)] px-3 py-2 text-xs text-[var(--text-primary)]">
+            {uploadNotice}
+          </div>
+        )}
         {loading && <div className="text-xs text-[var(--text-muted)]">Searching files...</div>}
         {error && <div className="text-xs text-[var(--error)]">{error}</div>}
         {!loading && !error && results.length === 0 && (
@@ -203,7 +272,7 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
             // source + path so nothing appears twice.
             const metadata = restricted
               ? `${result.sourceName} • Access restricted • snippets and previews hidden`
-              : `${result.sourceName} • ${result.path}`;
+              : `${result.sourceName} • ${result.path}${result.owner ? ` • Uploaded${result.owner.teamId ? ` · team ${result.owner.teamId}` : ''}${result.owner.ownerPrincipalId ? ` · by ${result.owner.ownerPrincipalId}` : ''}` : ''}`;
 
             return (
               <button

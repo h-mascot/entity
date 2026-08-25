@@ -77,6 +77,14 @@ export interface UnifiedSearchResult {
   restricted?: boolean;
   placeholder?: boolean;
   permission_reasons?: string[];
+  owner?: {
+    orgId: string;
+    teamId: string | null;
+    ownerPrincipalId: string | null;
+    displayName: string | null;
+    origin: string;
+    uploadedAt: string;
+  };
   connectorState?: {
     health?: FileSourceHealth;
     lastSyncedAt?: string | null;

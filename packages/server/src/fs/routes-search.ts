@@ -16,6 +16,8 @@ import type { FileSourceAdapter } from './adapters/types';
 import { assertSourceEnabled, emitFsAudit } from './security';
 import { recordFsOperation } from './metrics';
 import { permissionSafeRecord, readRequestOrg, readRequestPrincipal, type RequestOrgBinding } from '../request-permissions';
+import { createFsFileOwnershipRepository, type FsFileOwnershipRecord, type FsFileOwnershipRepository } from '../../../db/src/file-ownership';
+import { LOCAL_ADMIN_PRINCIPAL_ID } from '../principals/admin-identity';
 
 const MAX_FALLBACK_DEPTH = 5;
 const MAX_FALLBACK_DIRECTORIES_PER_SOURCE = 50;
@@ -26,7 +28,56 @@ const INDEXED_FILTER_VALUES = new Set(['indexed', 'fallback', 'all']);
 export interface SearchRouteDeps {
   indexRepo?: Pick<FileIndexRepository, 'search' | 'getLatestSyncRun'>;
   sourceRepo?: Pick<FileSourceRepository, 'listSources' | 'getSource'>;
+  ownershipRepo?: Pick<FsFileOwnershipRepository, 'getOwnership'>;
   createAdapter?: (source: FileSourceRecord) => FileSourceAdapter;
+}
+
+/**
+ * MC #1365 ownership/team scope: uploaded files carry an fs_file_ownership row
+ * (org + team + owner principal). Callers with an org-wide grant (or local
+ * admin / trusted service) see every owned file; team-scoped callers only see
+ * uploads owned by their own teams. Unowned (legacy/shared) files stay visible
+ * to everyone as before.
+ */
+interface OwnershipScope {
+  orgId: string;
+  isAdmin: boolean;
+  hasOrgWide: boolean;
+  visibleTeamIds: Set<string>;
+}
+
+function resolveOwnershipScope(binding: RequestOrgBinding): OwnershipScope {
+  const grants = binding.principal.grants.filter((grant) => !grant.org_id || grant.org_id === binding.orgId);
+  const isAdmin = binding.principal.principal_id === LOCAL_ADMIN_PRINCIPAL_ID || grants.some(
+    (grant) => grant.role === 'admin' && !grant.org_id && !grant.team_id && !grant.project_id,
+  );
+  return {
+    orgId: binding.orgId,
+    isAdmin,
+    hasOrgWide: isAdmin || grants.some((grant) => !grant.team_id),
+    visibleTeamIds: new Set(grants.filter((grant) => grant.team_id).map((grant) => grant.team_id as string)),
+  };
+}
+
+function ownershipVisible(scope: OwnershipScope, ownership: FsFileOwnershipRecord | undefined): boolean {
+  if (!ownership) return true;
+  // Ownership is a tenant boundary, not merely a label. A team name can be
+  // reused in another org, so never let a matching team_id cross org scope.
+  if (!scope.isAdmin && ownership.org_id !== scope.orgId) return false;
+  if (scope.isAdmin || scope.hasOrgWide) return true;
+  return ownership.team_id != null && scope.visibleTeamIds.has(ownership.team_id);
+}
+
+function ownershipEnvelope(ownership: FsFileOwnershipRecord | undefined): Record<string, unknown> | null {
+  if (!ownership) return null;
+  return {
+    orgId: ownership.org_id,
+    teamId: ownership.team_id ?? null,
+    ownerPrincipalId: ownership.owner_principal_id ?? null,
+    displayName: ownership.display_name ?? null,
+    origin: ownership.origin,
+    uploadedAt: ownership.uploaded_at,
+  };
 }
 
 function normalizeDirectoryPath(value: string): string {
@@ -367,6 +418,7 @@ function fallbackResultEnvelope(input: {
 export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {}): void {
   const indexRepo = deps.indexRepo ?? createFileIndexRepository();
   const sourceRepo = deps.sourceRepo ?? createFileSourceRepository();
+  const ownershipRepo = deps.ownershipRepo ?? createFsFileOwnershipRepository();
   const createAdapter = deps.createAdapter ?? createFileSourceAdapter;
 
   router.get('/search', async (req: Request, res: Response) => {
@@ -400,6 +452,8 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
         return latestRunsBySourceId.get(id);
       };
       let indexedResults = indexRepo.search(query, {
+        orgId: binding.orgId,
+        includeUnscoped: true,
         sourceId,
         type,
         agent,
@@ -432,7 +486,13 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
             if (!source) {
               return null;
             }
+            const ownership = ownershipRepo.getOwnership(entry.source_id, entry.path);
+            if (!ownershipVisible(resolveOwnershipScope(binding), ownership)) {
+              return null;
+            }
             const record = indexedResultEnvelope(entry, source, latestRunFor(entry.source_id));
+            const owned = ownershipEnvelope(ownership);
+            const enriched = owned ? { ...record, owner: owned } : record;
             return permissionSafeSearchResult(binding, {
               object_id: entry.id,
               org_id: entry.org_id ?? binding.orgId,
@@ -441,7 +501,7 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
               sensitivity: entry.sensitivity,
               acl_json: entry.acl_json,
               entity_visibility_policy_json: entry.entity_visibility_policy_json,
-            }, record);
+            }, enriched);
           }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
         });
       }
@@ -595,6 +655,10 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
                 aclJson?: string | null;
                 entityVisibilityPolicyJson?: string | null;
               };
+              const ownership = ownershipRepo.getOwnership(source.id, node.path);
+              if (!ownershipVisible(resolveOwnershipScope(binding), ownership)) {
+                continue;
+              }
               const record = fallbackResultEnvelope({
                 source,
                 latestRun,
@@ -602,6 +666,8 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
                 title: node.name,
                 updatedAt: node.updatedAt ?? null,
               });
+              const owned = ownershipEnvelope(ownership);
+              const enriched = owned ? { ...record, owner: owned } : record;
               results.push(permissionSafeSearchResult(binding, {
                 object_id: `${source.id}:${node.path}`,
                 org_id: nodeWithPolicy.orgId ?? binding.orgId,
@@ -610,7 +676,7 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
                 sensitivity: nodeWithPolicy.sensitivity ?? null,
                 acl_json: nodeWithPolicy.aclJson ?? null,
                 entity_visibility_policy_json: nodeWithPolicy.entityVisibilityPolicyJson ?? null,
-              }, record));
+              }, enriched));
             }
           }
         } catch (err) {

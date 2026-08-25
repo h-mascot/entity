@@ -379,6 +379,59 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
     [apiBase]
   );
 
+  const uploadFile = useCallback(
+    async (
+      sourceId: string,
+      file: File,
+      options?: { teamId?: string }
+    ): Promise<{ sourceId: string; path: string; orgId: string; teamId: string | null; displayName: string; size: number; updatedAt: string | null }> => {
+      const isText =
+        file.type.startsWith('text/') ||
+        file.type === 'application/json' ||
+        file.type === 'application/javascript' ||
+        /\.(md|markdown|txt|csv|tsv|html?|css|js|mjs|cjs|ts|tsx|jsx|json|ya?ml|xml|sh|bash|zsh|py|go|rs|sql|toml|env|log)$/i.test(file.name);
+      const filePayload: Record<string, unknown> = {
+        name: file.name,
+        ...(file.type ? { mimeType: file.type } : {}),
+      };
+      const payload: Record<string, unknown> = { sourceId, file: filePayload };
+      if (options?.teamId) {
+        payload.teamId = options.teamId;
+      }
+      if (isText) {
+        filePayload.text = await file.text();
+      } else {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+          binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+        }
+        filePayload.contentBase64 = btoa(binary);
+      }
+      const response = await requestWithFallback(
+        buildApiOnlyUrls('/fs/upload', apiBase),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+        'Failed to upload file.'
+      );
+      return (await response.json()) as {
+        sourceId: string;
+        path: string;
+        orgId: string;
+        teamId: string | null;
+        displayName: string;
+        size: number;
+        updatedAt: string | null;
+      };
+    },
+    [apiBase]
+  );
+
   return {
     sources,
     loading,
@@ -394,6 +447,7 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
     createFile,
     writeFile,
     createFolder,
+    uploadFile,
     searchFiles,
   };
 }
