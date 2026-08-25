@@ -99,7 +99,7 @@
     "routingService": {
       "file": "packages/server/src/notification-routing.ts",
       "export": "createNotificationRoutingService",
-      "mountedInIndex": false,
+      "mountedInIndex": true, "mountedAs": "due-reminder scheduler (MC #1370)",
       "inboxFirst": true,
       "adapterInterface": "NotificationDeliveryAdapter"
     },
