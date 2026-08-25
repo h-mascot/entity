@@ -7,12 +7,13 @@ tags: [entity, mission-control, tasks, review, handoff, receipts, activity]
 
 # Mission Control
 
-Mission Control is the primary execution surface for the workspace. In the UI it appears as the task board plus task detail panel; on the server it is backed by task routes, review-gate routes, handoff routes, and the task sync layer. Customizable Mission Control board navigation now filters out the `geordi-swarm` plugin so execution-only Swarm controls do not reappear as a standalone board tab, while the task-detail `Run with agents` action and the `/swarm/*` execution routes remain available inside Mission Control. Task handoffs are also part of this surface: the task detail panel now renders a dedicated `Handoffs` section via `TaskHandoffSection`, and the server exposes local handoff history, handoff creation, and rollback through `packages/server/src/routes/tasks.ts`, with board/detail UI refreshes when those mutations broadcast updates. The implemented handoff path is local-only: requests that set `mode=cloud` fail closed with `503 cloud_handoffs_unavailable` before any local task or repository access, and the read endpoint returns a merged `history` view alongside the direct `handoffs`, `incoming`, and `outgoing` arrays so the client can keep one ordering path while still marking only direct handoffs as rollback-capable.
+Mission Control is the primary execution surface for the workspace. In the UI it appears as the task board plus task detail panel; on the server it is backed by task routes, review-gate routes, handoff routes, due-date reminder scans, and the task sync layer. Customizable Mission Control board navigation now filters out the `geordi-swarm` plugin so execution-only Swarm controls do not reappear as a standalone board tab, while the task-detail `Run with agents` action and the `/swarm/*` execution routes remain available inside Mission Control. Task handoffs are also part of this surface: the task detail panel now renders a dedicated `Handoffs` section via `TaskHandoffSection`, and the server exposes local handoff history, handoff creation, and rollback through `packages/server/src/routes/tasks.ts`, with board/detail UI refreshes when those mutations broadcast updates. Due-date reminders are part of the same task workflow: `packages/server/src/due-reminders.ts` scans open tasks with due dates, routes `task_nudge` notifications through the canonical notification service and inbox API, and uses canonical event ids so retries and scheduler restarts stay idempotent. The implemented handoff path is local-only: requests that set `mode=cloud` fail closed with `503 cloud_handoffs_unavailable` before any local task or repository access, and the read endpoint returns a merged `history` view alongside the direct `handoffs`, `incoming`, and `outgoing` arrays so the client can keep one ordering path while still marking only direct handoffs as rollback-capable.
 
 The important source seams are:
 
 - `packages/app/src/components/mission-control/*` for the board, detail drawer, review actions, and task creation UI.
 - `packages/server/src/routes/tasks.ts` for task listing, filtering, stale detection, duplicate detection, owner inboxes, and task mutations.
+- `packages/server/src/due-reminders.ts` for due-date reminder stages, canonical event ids, and notification routing.
 - `packages/server/src/routes/task-review-gates.ts` for review acceptance, fix requests, human-gate requests, and human-gate decisions.
 - `packages/db/src/index.ts` for task columns, policy envelopes, worktype registry, review-state fields, and task metadata.
 - `packages/db/src/task-sync.ts` for local/cloud adapter selection.
@@ -94,7 +95,8 @@ When changing Mission Control, check these seams together:
 
 1. `packages/app/src/components/mission-control/TaskDetailPanel.tsx` for what the user sees.
 2. `packages/server/src/routes/tasks.ts` for read/write behavior and query filters.
-3. `packages/server/src/routes/task-review-gates.ts` for review and human-gate state transitions.
-4. `packages/db/src/index.ts` and `packages/db/src/task-sync.ts` for data shape and adapter mode.
+3. `packages/server/src/due-reminders.ts` and `packages/server/src/routes/notifications.ts` for due-date reminder generation and inbox exposure.
+4. `packages/server/src/routes/task-review-gates.ts` for review and human-gate state transitions.
+5. `packages/db/src/index.ts` and `packages/db/src/task-sync.ts` for data shape and adapter mode.
 
-Be careful not to claim that a route alone proves a workflow works. For Mission Control, the task board, detail panel, backing routes, and persistence layer all have to agree.
+Be careful not to claim that a route alone proves a workflow works. For Mission Control, the task board, detail panel, backing routes, notification routing, and persistence layer all have to agree.

@@ -111,6 +111,8 @@ import { createChannelAdapterRouter } from "./channels/router";
 import { registerClickClackProxyRoutes } from "./clickclack/proxy";
 import { registerConfigRoutes } from "./config/routes";
 import { createNotificationRouter } from "./routes/notifications";
+import { createNotificationRoutingService } from "./notification-routing";
+import { createDueReminderScheduler } from "./due-reminders";
 import { buildEffectiveConfig } from "./config/effective";
 import {
   applyBootstrapRuntimeEnv,
@@ -359,6 +361,20 @@ app.use("/api", createCuracelOperationsRouter());
 const documentObjectRepository = createDocumentObjectRepository();
 const evidenceArtifactRepository = createEvidenceArtifactRepository();
 const taskSyncLayer = createTaskSyncLayer();
+
+// MC #1370 — due-date notifications: scan open tasks with due dates and route
+// task_nudge notifications per recipient (assignee/executor/owner/initiator).
+// Deduped by canonical_event_id, so restarts and retries are idempotent.
+const dueReminderRoutingService = createNotificationRoutingService({ notificationRepository });
+const dueReminderScheduler = createDueReminderScheduler({
+  notificationRepository,
+  routingService: dueReminderRoutingService,
+  listTasks: () => taskSyncLayer.listTasks(),
+  intervalMs: Number(process.env.DUE_REMINDER_INTERVAL_MS) > 0
+    ? Number(process.env.DUE_REMINDER_INTERVAL_MS)
+    : undefined,
+});
+dueReminderScheduler.start();
 app.use("/api", createWorkspaceRouter({ workspaceRepo }));
 app.use("/api", createBusinessOnboardingRouter({
   workspaceRepo,
