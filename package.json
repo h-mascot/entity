@@ -33,7 +33,7 @@
     "test:promotion-gate": "bash scripts/entity-promotion-gate.test.sh",
     "release:info": "node scripts/entity-release-info.mjs",
     "release:check": "node scripts/entity-release-info.mjs --check",
-    "test:release-deploy": "node --test --test-concurrency=1 scripts/entity-build-broker-wiring.test.mjs scripts/entity-release-info.test.mjs scripts/entity-deploy-target-guard.test.mjs scripts/entity-deploy-live-verify.test.mjs",
+    "test:release-deploy": "node --test --test-concurrency=1 scripts/entity-build-broker-wiring.test.mjs scripts/entity-build-broker-transaction.test.mjs scripts/entity-release-info.test.mjs scripts/entity-deploy-target-guard.test.mjs scripts/entity-deploy-live-verify.test.mjs",
     "test:wiki-html": "node --test scripts/entity-openwiki-html.test.mjs scripts/entity-wiki-config-migrate.test.mjs",
     "docs:wiki:init": "node scripts/entity-openwiki.mjs init",
     "docs:wiki:update": "node scripts/entity-openwiki.mjs update",

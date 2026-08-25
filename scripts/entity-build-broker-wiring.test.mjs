@@ -1,87 +1,23 @@
 import assert from 'node:assert/strict';
-import {
-  access,
-  chmod,
-  copyFile,
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { access, chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { constants, existsSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { basename, dirname, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+import {
+  buildScript,
+  executables,
+  failureDetail,
+  preserveOutputs,
+  root,
+  run,
+  runtimeOut,
+  shellQuote,
+  sourceOut,
+} from './broker-build-test-helpers.mjs';
+
 const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
-const buildScript = resolve(root, 'scripts/build-managed-storage-broker.mjs');
-const sourceOut = resolve(root, 'packages/server/native/managed-storage-broker/.build');
-const runtimeOut = resolve(root, 'packages/server/dist/server/native/managed-storage-broker/.build');
-const executables = [resolve(sourceOut, 'broker'), resolve(runtimeOut, 'broker')];
-
-function run(command, args, options = {}) {
-  return spawnSync(command, args, {
-    cwd: root,
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-    ...options,
-  });
-}
-
-function failureDetail(result) {
-  return [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n').slice(-8000);
-}
-
-function shellQuote(value) {
-  return `'${value.replaceAll("'", "'\"'\"'")}'`;
-}
-
-// Back up both broker output directories outside the repository so every
-// adversarial subtest can replace, delete, or symlink their parent directories
-// while the suite still restores the exact prior repository artifacts.
-async function preserveOutputs() {
-  const backupRoots = [];
-  const backedUp = [];
-  for (const output of [sourceOut, runtimeOut]) {
-    if (!existsSync(output)) continue;
-    const backupRoot = await mkdtemp(resolve(tmpdir(), 'entity-broker-outputs-'));
-    const backup = resolve(backupRoot, basename(output));
-    await mkdir(backup);
-    for (const entry of await readdir(output, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      const info = await stat(resolve(output, entry.name));
-      await copyFile(resolve(output, entry.name), resolve(backup, entry.name));
-      await chmod(resolve(backup, entry.name), info.mode & 0o777);
-    }
-    await rm(output, { recursive: true, force: true });
-    backupRoots.push(backupRoot);
-    backedUp.push([output, backup]);
-  }
-  return async () => {
-    for (const output of [sourceOut, runtimeOut]) {
-      await rm(output, { recursive: true, force: true });
-    }
-    for (const [output, backup] of backedUp.reverse()) {
-      await mkdir(output, { recursive: true });
-      for (const entry of await readdir(backup, { withFileTypes: true })) {
-        if (!entry.isFile()) continue;
-        const info = await stat(resolve(backup, entry.name));
-        await copyFile(resolve(backup, entry.name), resolve(output, entry.name));
-        await chmod(resolve(output, entry.name), info.mode & 0o777);
-      }
-    }
-    for (const backupRoot of backupRoots) {
-      await rm(backupRoot, { recursive: true, force: true });
-    }
-  };
-}
 
 test('clean root build owns a portable, fail-closed managed-storage broker build', async (t) => {
   const restoreOutputs = await preserveOutputs();
