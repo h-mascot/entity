@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { constants, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { hostname, tmpdir } from 'node:os';
@@ -107,6 +107,51 @@ async function settleHolderTree(holder, groupPid, goFile, closePromise, log) {
   const closed = await Promise.race([closePromise.then(() => true), sleep(2_000).then(() => false)]);
   if (!closed) throw new Error(`holder build process tree refused to terminate:\n${log()}`);
 }
+
+test('unexpected final-artifact entries fail closed and are never replaced', { timeout: 120_000 }, async (t) => {
+  // existsSync() follows symlinks, so a DANGLING symlink at a final-artifact
+  // path used to read as "absent" and publication renamed over it. Every
+  // unexpected entry — dangling or pointing elsewhere — must fail the build
+  // closed with the entry left byte-identical and nothing published.
+  const restoreOutputs = await preserveOutputs();
+  try {
+    for (const flavor of ['dangling', 'pointing']) {
+      await t.test(`preserves a ${flavor} symlink at each final artifact path`, async () => {
+        for (const [name, path] of Object.entries(finalArtifacts)) {
+          await freshOutputs();
+          await mkdir(sourceOut, { recursive: true });
+          await mkdir(runtimeOut, { recursive: true });
+          const guardDir = await mkdtemp(resolve(tmpdir(), `entity-broker-final-${flavor}-`));
+          const target = resolve(guardDir, flavor === 'dangling' ? 'definitely-missing' : 'canary');
+          if (flavor === 'pointing') await writeFile(target, 'do not touch');
+          await symlink(target, path, 'file');
+          try {
+            const result = run(process.execPath, [buildScript]);
+            assert.notEqual(result.status, 0, `${name} (${flavor} symlink) must fail closed:
+${failureDetail(result)}`);
+            assert.match(result.stderr, /Unsafe broker output/, `${name} (${flavor}) must report the unsafe output:\n${failureDetail(result)}`);
+            const entry = await lstat(path);
+            assert.equal(entry.isSymbolicLink(), true, `${name} entry must remain a symlink`);
+            assert.equal(await readlink(path), target, `${name} symlink target must be unchanged`);
+            if (flavor === 'pointing') {
+              assert.equal(await readFile(target, 'utf8'), 'do not touch', `${name} canary must be untouched`);
+            }
+            for (const [otherName, otherPath] of Object.entries(finalArtifacts)) {
+              if (otherName === name) continue;
+              assert.equal(existsSync(otherPath), false, `${otherName} must not be published`);
+            }
+            assert.equal(existsSync(lockPath), false, 'lock must be released');
+          } finally {
+            await rm(path, { force: true });
+            await rm(guardDir, { recursive: true, force: true });
+          }
+        }
+      });
+    }
+  } finally {
+    await restoreOutputs();
+  }
+});
 
 test('broker publication is a coherent transaction guarded by an exclusive build lock', { timeout: 300_000 }, async (t) => {
   const restoreOutputs = await preserveOutputs();

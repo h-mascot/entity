@@ -3,7 +3,6 @@ import {
   chmodSync,
   constants,
   copyFileSync,
-  existsSync,
   linkSync,
   lstatSync,
   mkdirSync,
@@ -48,7 +47,7 @@ function ensureRealDirectoryTree(base, target) {
   let current = base;
   for (const part of rel.split(sep).filter(Boolean)) {
     current = resolve(current, part);
-    if (!existsSync(current)) {
+    if (lstatOrNull(current) === null) {
       mkdirSync(current);
       continue;
     }
@@ -66,8 +65,21 @@ function assertRegularSource(path) {
   }
 }
 
+// Existence test that treats ENOENT as the ONLY form of absence. existsSync()
+// follows symlinks, so a dangling symlink at a final-artifact path read as
+// "absent" and publication renamed over it; lstat() keeps the entry visible
+// so every unexpected entry (including dangling symlinks) fails closed.
+function lstatOrNull(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 function assertReplaceableRegularFile(path) {
-  if (!existsSync(path)) return;
+  if (lstatOrNull(path) === null) return;
   const stat = lstatSync(path);
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error(`Unsafe broker output (must be absent or a regular file): ${path}`);
@@ -199,11 +211,12 @@ function stealStaleLockOrThrow() {
   const claim = resolve(out, `.broker-build.lock.stale-${nonce}`);
   renameSync(lockPath, claim);
   let claimed = '';
-  if (existsSync(claim)) claimed = readFileSync(claim, 'utf8');
+  if (lstatOrNull(claim) !== null) claimed = readFileSync(claim, 'utf8');
   if (claimed !== raw) {
-    // Lost a race while stealing. Restore the claim when the lock path is
-    // absent so a live lock is never left missing, then fail closed.
-    if (!existsSync(lockPath)) renameSync(claim, lockPath);
+    // Lost a race while stealing. Restore the claim only when the lock path
+    // is truly absent (ENOENT) so no unexpected replacement — including a
+    // symlink — is ever overwritten, then fail closed.
+    if (lstatOrNull(lockPath) === null) renameSync(claim, lockPath);
     throw new Error(`Broker build lock changed while stealing stale lock (${detail}) — refusing to run concurrently`);
   }
   rmSync(claim, { force: true });
@@ -284,7 +297,7 @@ function rollbackPublication(published, backups) {
     try {
       injectFailure(`rollback-${artifact.name}`);
       const backup = backups.get(artifact.name);
-      if (backup !== undefined && existsSync(backup)) {
+      if (backup !== undefined && lstatOrNull(backup) !== null) {
         renameSync(backup, artifact.final);
       } else {
         rmSync(artifact.final, { force: true });
@@ -324,7 +337,7 @@ try {
   try {
     for (const artifact of publication) {
       injectFailure(`snapshot-${artifact.name}`);
-      if (existsSync(artifact.final)) {
+      if (lstatOrNull(artifact.final) !== null) {
         assertReplaceableRegularFile(artifact.final);
         const backup = resolve(dirname(artifact.final), `${basename(artifact.final)}.bak-${nonce}`);
         linkSync(artifact.final, backup);
