@@ -17,7 +17,7 @@ import {
 import { ChatModelRegistry, type ChatModelOption } from './chat-model-registry';
 import { requireRequestOrg, sendPermissionDenied, type RequestOrgBinding } from '../request-permissions';
 import { isTrustedServiceContext, requireOrgAuthority } from '../principals/request-context';
-import { type PrincipalGrant } from '../permissions';
+import { type PermissionRole, type PrincipalGrant, roleMeets } from '../permissions';
 import { createAgentNoiseGuard, type AgentNoiseGuard, type NoiseReservation } from './agent-noise-guard';
 import { getEntityDatabase } from '../../../db/src/entity-db';
 import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../config/settings-store';
@@ -98,6 +98,43 @@ function applicableChatGrants(binding: RequestOrgBinding): PrincipalGrant[] {
   return binding.principal.grants.filter((g) =>
     g.role !== 'none' && (!g.org_id || g.org_id === binding.orgId),
   );
+}
+
+/**
+ * D-R6-MUTATION-GATES (KRCL fix): chat-wide mutation authority check.
+ *
+ * `requireOrgAuthority` resolves the effective role at ORG scope, so a
+ * team-scoped grant (org_id set, team_id set) covers nothing and a
+ * team-scoped manager is denied as 'none'. That is wrong for chat: the
+ * authoritative tenant boundary is the scoped chat repository
+ * (resolveChatReadScope / resolveChatCreationScope), which already honors
+ * team-scoped grants — every write below the gate is scoped server-side.
+ * This gate therefore admits any non-none applicable grant for the request
+ * org whose role meets `requiredRole` (team-scoped or org-wide), and keeps
+ * fail-closed semantics: no applicable grant -> denied. The trusted
+ * service/admin path is preserved via isTrustedServiceContext.
+ */
+function requireChatMutationAuthority(
+  req: express.Request,
+  res: express.Response,
+  binding: RequestOrgBinding,
+  requiredRole: PermissionRole,
+): boolean {
+  if (isTrustedServiceContext(req)) return true;
+  const grants = applicableChatGrants(binding);
+  if (grants.length === 0) {
+    sendPermissionDenied(res, `${requiredRole} role required for org ${binding.orgId}`);
+    return false;
+  }
+  const effectiveRole = grants.reduce<PermissionRole>(
+    (role, grant) => (roleMeets(grant.role, requiredRole) ? grant.role : role),
+    'none',
+  );
+  if (!roleMeets(effectiveRole, requiredRole)) {
+    sendPermissionDenied(res, `${requiredRole} role required for org ${binding.orgId}`);
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -1161,7 +1198,7 @@ export function registerChatRoutes({
     }
     const binding = requireRequestOrg(req, res);
     if (!binding) return; // scope resolution already wrote 400/403; do not double-respond
-    if (!requireOrgAuthority(req, res, binding.orgId, 'contributor')) return;
+    if (!requireChatMutationAuthority(req, res, binding, 'contributor')) return;
     next();
   });
 

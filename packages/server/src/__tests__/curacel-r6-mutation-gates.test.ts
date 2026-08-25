@@ -34,7 +34,7 @@ import {
 interface Fixture {
   baseUrl: string;
   apiToken: string;
-  tokens: { viewerAcme: string; managerAcme: string; globalAdmin: string };
+  tokens: { viewerAcme: string; managerAcme: string; managerAcmeTeam: string; viewerAcmeTeam: string; globalAdmin: string };
   org: { acme: string };
   server: http.Server;
 }
@@ -87,7 +87,9 @@ async function bootApp(): Promise<Fixture> {
   const tokenRepo = createAccessTokenRepository();
 
   const ORG_ACME = 'org-acme';
+  const TEAM_ACME = 'team-acme';
   workspaceRepo.createOrg({ id: ORG_ACME, name: 'Acme', mission: 'Acme mission' });
+  workspaceRepo.createTeam({ orgId: ORG_ACME }, { id: TEAM_ACME, name: 'Acme Team' });
 
   const mk = (id: string, display: string, type: 'human' | 'agent' | 'service_account' = 'human') =>
     principalRepo.createPrincipal({ id, principal_type: type, display_name: display });
@@ -95,6 +97,10 @@ async function bootApp(): Promise<Fixture> {
   principalRepo.createGrant({ principal_id: 'viewer-acme', role: 'viewer', org_id: ORG_ACME });
   mk('manager-acme', 'Acme Manager');
   principalRepo.createGrant({ principal_id: 'manager-acme', role: 'manager', org_id: ORG_ACME });
+  mk('manager-acme-team', 'Acme Team Manager');
+  principalRepo.createGrant({ principal_id: 'manager-acme-team', role: 'manager', org_id: ORG_ACME, team_id: TEAM_ACME });
+  mk('viewer-acme-team', 'Acme Team Viewer');
+  principalRepo.createGrant({ principal_id: 'viewer-acme-team', role: 'viewer', org_id: ORG_ACME, team_id: TEAM_ACME });
   mk('global-admin', 'Global Admin');
   principalRepo.createGrant({ principal_id: 'global-admin', role: 'admin' });
   mk('svc-admin', 'Service Admin', 'service_account');
@@ -105,6 +111,8 @@ async function bootApp(): Promise<Fixture> {
   const tokens = {
     viewerAcme: token('viewer-acme'),
     managerAcme: token('manager-acme'),
+    managerAcmeTeam: token('manager-acme-team'),
+    viewerAcmeTeam: token('viewer-acme-team'),
     globalAdmin: token('global-admin'),
   };
 
@@ -184,6 +192,30 @@ describe('D-R6-MUTATION-GATES /api/chat — contributor role gates writes', () =
       body: JSON.stringify({ channelId: 'general', content: 'hi', targetAgent: 'ada' }),
     });
     expect(send.status).toBe(403);
+  });
+
+  it('team-scoped manager is allowed (chat writes are repository-scoped, not org-wide)', async () => {
+    const setup = await fetch(`${f.baseUrl}/api/chat/setup`, {
+      method: 'POST',
+      headers: authHeaders(f.apiToken, f.tokens.managerAcmeTeam),
+    });
+    expect(setup.status).toBe(200);
+
+    const send = await fetch(`${f.baseUrl}/api/chat/send`, {
+      method: 'POST',
+      headers: authHeaders(f.apiToken, f.tokens.managerAcmeTeam, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ channelId: 'general', content: 'hi from team manager', targetAgent: 'ada' }),
+    });
+    // 404 = passed the gate, denied later by the scoped repo (no owned general channel yet)
+    expect([201, 202, 400, 404]).toContain(send.status);
+  });
+
+  it('team-scoped viewer is denied chat mutations (403, contributor required)', async () => {
+    const setup = await fetch(`${f.baseUrl}/api/chat/setup`, {
+      method: 'POST',
+      headers: authHeaders(f.apiToken, f.tokens.viewerAcmeTeam),
+    });
+    expect(setup.status).toBe(403);
   });
 
   it('manager (>= contributor) succeeds at setup and create mutations', async () => {
