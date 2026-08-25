@@ -96,6 +96,13 @@ try {
   copyFileSync(tempBroker, runtimeTemp, constants.COPYFILE_EXCL);
   chmodSync(runtimeTemp, 0o755);
 
+  // Revalidate destinations immediately before publishing so a swapped final
+  // path fails closed instead of receiving or redirecting the staged
+  // generation (under the single-writer authority documented above).
+  for (const path of [finalObject, finalTest, finalBroker, runtimeBroker]) {
+    assertReplaceableRegularFile(path);
+  }
+
   renameSync(tempObject, finalObject);
   renameSync(tempTest, finalTest);
   renameSync(tempBroker, finalBroker);
