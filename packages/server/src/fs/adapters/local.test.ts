@@ -102,6 +102,20 @@ describe('LocalFileSourceAdapter managed-storage integration', () => {
     await expect(adapter.readRaw('read-link.md')).rejects.toThrow('Access outside source root is not allowed.');
   });
 
+  it('omits broker-rejected child symlinks without failing the containing directory', async () => {
+    const broker = controlledBroker();
+    broker.list.mockResolvedValue(['visible.md', 'secret-link']);
+    broker.stat.mockImplementation(async (childPath: string) => {
+      if (childPath === 'secret-link') throw new ManagedStorageBrokerError('invalid');
+      return { size: 7, mode: 0o644, isDirectory: false };
+    });
+    const adapter = new LocalFileSourceAdapter(sourceFor('/managed/root'), { brokerClient: broker });
+
+    await expect(adapter.list('')).resolves.toEqual([
+      { sourceId: 'local-test', path: 'visible.md', name: 'visible.md', isDirectory: false, kind: 'file', size: 7 },
+    ]);
+  });
+
   it('applies the default 16 MiB read ceiling to oversized local reads without an explicit maxBytes', async () => {
     const broker = controlledBroker();
     broker.stat.mockResolvedValue({ size: (16 * 1024 * 1024) + 1, mode: 0o644, isDirectory: false });

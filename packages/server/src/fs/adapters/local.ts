@@ -125,13 +125,25 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
   async list(relativePath: string): Promise<SourceNode[]> {
     const normalized = normalizePath(relativePath);
     const names = await this.broker.list(normalized || '.');
-    const nodes = await Promise.all(names.filter((name) => !name.startsWith('.')).map(async (name) => {
+    const nodes = await Promise.all(names.filter((name) => !name.startsWith('.')).map(async (name): Promise<SourceNode | null> => {
       const childPath = normalized ? `${normalized}/${name}` : name;
-      const stats = await this.broker.stat(childPath);
-      const isDirectory = stats.isDirectory;
-      return { sourceId: this.source.id, path: childPath, name, isDirectory, kind: isDirectory ? 'directory' : 'file', size: isDirectory ? undefined : stats.size } satisfies SourceNode;
+      try {
+        const stats = await this.broker.stat(childPath);
+        const isDirectory = stats.isDirectory;
+        return { sourceId: this.source.id, path: childPath, name, isDirectory, kind: isDirectory ? 'directory' : 'file', size: isDirectory ? undefined : stats.size } satisfies SourceNode;
+      } catch (error) {
+        // Directory listings can legitimately contain child symlinks, which the
+        // broker rejects fail-closed, or entries removed between list and stat.
+        // Omit only those inaccessible children; preserve IO/limit failures so
+        // a real broker fault cannot masquerade as an empty/partial directory.
+        if (error instanceof ManagedStorageBrokerError && (error.code === 'invalid' || error.code === 'not_found')) {
+          return null;
+        }
+        throw error;
+      }
     }));
-    return nodes.sort((a, b) => a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1);
+    return nodes.filter((node): node is SourceNode => node !== null)
+      .sort((a, b) => a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1);
   }
 
   private async readBytes(relativePath: string, options?: SourceReadOptions): Promise<{ content: Buffer; size: number }> {
