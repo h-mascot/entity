@@ -45,13 +45,13 @@ flowchart TD
 
 Major canonical route families include:
 
-- `/api/tasks` and task subroutes for board mutations, projects, history, comments, review, gates, dependencies, and receipts;
+- `/api/tasks` and task subroutes for board mutations, projects, history, comments, review, gates, dependencies, receipts, and handoffs;
 - `/api/fs/*` and `/api/sources/*` for source management, trees, file I/O, indexing, and search;
 - `/api/documents/*` for scoped agent-native document collaboration;
 - `/api/agents/*` and `/api/agent/*` for registry/runtime surfaces and Task Master;
 - `/api/plugins/*`, plugin-declared bases, `/api/entity-services/*`, and `/api/swarm/*`;
 - `/api/search/*`, `/api/docs/*`, `/api/chat/*`, `/api/notifications/*`, and runtime/config routes;
-- the server-started due-date reminder scheduler in `packages/server/src/due-reminders.ts`, which scans the task sync layer for open tasks in backlog, todo, doing, and review, classifies due-soon versus overdue stages, deduplicates per recipient with canonical event ids, and routes `task_nudge` inbox notifications through `/api/notifications/*`.
+- the server-started due-date reminder scheduler in `packages/server/src/due-reminders.ts`, which scans the task sync layer for open tasks in backlog, todo, doing, and review, classifies due-soon versus overdue stages, deduplicates per recipient with canonical event ids, and routes `task_nudge` inbox notifications through the shared notification service and `/api/notifications/*`.
 
 Tasks, activities, agent automation, runtime, projects, and other areas also expose legacy unprefixed mirrors. Global bearer middleware explicitly protects known mirrors when authentication is enabled. New code should prefer canonical `/api/*` paths and verify route-order behavior in `packages/server/src/index.ts`.
 

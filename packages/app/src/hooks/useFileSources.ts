@@ -1,13 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
-import { buildApiCandidates, requestJsonWithFallback, toErrorMessage, withApiToken } from '../lib/http';
+import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
 import { cacheApiPayload, readCachedApiPayloadEntry } from '../lib/offline';
-import { shouldUseOfflineFileCache } from '../lib/fileCacheFallback';
 import type {
   FileSource,
   SourceFileResponse,
   SourceTreeResponse,
   UnifiedSearchResponse,
 } from '../types/filesystem';
+
+export interface SourceSyncResult {
+  sourceId: string;
+  status: string;
+  durationMs?: number;
+  latestSyncRun?: {
+    id: string;
+    status: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    filesScanned: number | null;
+    filesIndexed: number | null;
+    error: string | null;
+  } | null;
+}
 
 interface UseFileSourcesOptions {
   apiBase?: string;
@@ -20,6 +34,8 @@ interface CreateFileSourceInput {
   baseUrl?: string;
   basePath?: string;
   manifestPath?: string;
+  authType?: FileSource['authType'];
+  authRef?: string;
   icon?: string;
 }
 
@@ -29,6 +45,8 @@ interface UpdateFileSourceInput {
   baseUrl?: string;
   basePath?: string;
   manifestPath?: string;
+  authType?: FileSource['authType'];
+  authRef?: string;
   icon?: string;
   enabled?: boolean;
 }
@@ -56,11 +74,7 @@ async function requestWithFallback(urls: string[], init: RequestInit, fallbackEr
   let lastError: Error | null = null;
   for (const url of urls) {
     try {
-      // Attach the configured API bearer token so file tree/file/write calls
-      // keep working when the server runs with ENTITY_API_TOKEN. Without this,
-      // fetchFile 401s in API-auth mode, which makes the doc viewer mark every
-      // opened document read-only and blocks the Convert UI.
-      const response = await fetch(url, withApiToken(init));
+      const response = await fetch(url, init);
       if (!response.ok) {
         const payload = await response.text();
         throw new Error(payload || `Request failed (${response.status})`);
@@ -204,6 +218,31 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
     [apiBase]
   );
 
+  const syncSource = useCallback(
+    async (id: string): Promise<SourceSyncResult> => {
+      const payload = await requestJsonWithFallback<SourceSyncResult>(
+        {
+          urls: [
+            ...buildApiOnlyUrls(`/sources/${encodeURIComponent(id)}/sync`, apiBase),
+            ...buildApiOnlyUrls(`/fs/sources/${encodeURIComponent(id)}/sync`, apiBase),
+          ],
+          init: {
+            method: 'POST',
+          },
+          fallbackError: 'Failed to sync source.',
+        }
+      );
+
+      return {
+        sourceId: payload.sourceId ?? id,
+        status: payload.status ?? 'unknown',
+        durationMs: payload.durationMs,
+        latestSyncRun: payload.latestSyncRun ?? null,
+      };
+    },
+    [apiBase]
+  );
+
   const fetchTree = useCallback(
     async (sourceId: string, treePath = ''): Promise<SourceTreeResponse> => {
       const encodedSourceId = encodeURIComponent(sourceId);
@@ -216,7 +255,7 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
 
       for (const url of urls) {
         try {
-          const response = await fetch(url, withApiToken({ method: 'GET' }));
+          const response = await fetch(url, { method: 'GET' });
           if (!response.ok) {
             throw new Error(`Request failed (${response.status})`);
           }
@@ -248,14 +287,11 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
         ...buildApiOnlyUrls(path, apiBase),
       ]);
       let lastError: Error | null = null;
-      let cacheFallbackAllowed = true;
 
       for (const url of urls) {
         try {
-          const response = await fetch(url, withApiToken({ method: 'GET' }));
+          const response = await fetch(url, { method: 'GET' });
           if (!response.ok) {
-            cacheFallbackAllowed =
-              cacheFallbackAllowed && shouldUseOfflineFileCache(response.status);
             throw new Error(`Request failed (${response.status})`);
           }
 
@@ -280,16 +316,14 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
         }
       }
 
-      if (cacheFallbackAllowed) {
-        const cachedEntry = await readCachedApiPayloadEntry<SourceFileResponse>(urls);
-        if (cachedEntry) {
-          return {
-            ...cachedEntry.payload,
-            cached: true,
-            cachedAt: new Date(cachedEntry.updatedAt).toISOString(),
-            cacheAgeMs: Math.max(0, Date.now() - cachedEntry.updatedAt),
-          };
-        }
+      const cachedEntry = await readCachedApiPayloadEntry<SourceFileResponse>(urls);
+      if (cachedEntry) {
+        return {
+          ...cachedEntry.payload,
+          cached: true,
+          cachedAt: new Date(cachedEntry.updatedAt).toISOString(),
+          cacheAgeMs: Math.max(0, Date.now() - cachedEntry.updatedAt),
+        };
       }
 
       throw lastError ?? new Error('Failed to load source file.');
@@ -391,6 +425,7 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
     setSourceEnabled,
     deleteSource,
     testSource,
+    syncSource,
     fetchTree,
     fetchFile,
     createFile,

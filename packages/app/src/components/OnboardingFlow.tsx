@@ -1108,12 +1108,45 @@ export default function OnboardingFlow({
       const payload = state.firstSourceMode === 'github'
         ? { displayName: 'GitHub source', type: 'github', baseUrl: profileDraft.githubUrl, icon: '⚡' }
         : { displayName: 'Entity source', type: 'local', basePath: profileDraft.sourcePath, icon: '⚡' };
-      const res = await fetch(apiPath(apiBase, '/api/sources'), {
+
+      // Create (or reuse) the source, then run the real connection test.
+      // Configuration being saved is NOT the same as the source being reachable.
+      let sourceId: string | null = null;
+      const createRes = await fetch(apiPath(apiBase, '/api/sources'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok && res.status !== 409) throw new Error(`source ${res.status}`);
+      if (createRes.ok) {
+        const created = (await createRes.json()) as { id?: string };
+        sourceId = created.id ?? null;
+      } else if (createRes.status !== 409) {
+        throw new Error(`source create ${createRes.status}`);
+      }
+
+      if (!sourceId) {
+        // 409 or missing id: find the existing source by display name.
+        const listRes = await fetch(apiPath(apiBase, '/api/sources?includeDisabled=true'));
+        if (listRes.ok) {
+          const list = (await listRes.json()) as { sources?: Array<{ id: string; displayName: string }> };
+          sourceId = list.sources?.find((item) => item.displayName === payload.displayName)?.id ?? null;
+        }
+      }
+
+      if (!sourceId) {
+        throw new Error('source id unavailable after create');
+      }
+
+      const testRes = await fetch(apiPath(apiBase, `/api/sources/${encodeURIComponent(sourceId)}/test`), {
+        method: 'POST',
+      });
+      if (!testRes.ok) {
+        throw new Error(`source test ${testRes.status}`);
+      }
+      const test = (await testRes.json()) as { status?: string };
+      if (test.status !== 'ok') {
+        throw new Error(test.status ? `source test ${test.status}` : 'source test failed');
+      }
       setSourceStatus('ok');
     } catch {
       setSourceStatus('error');
@@ -1995,7 +2028,7 @@ export default function OnboardingFlow({
                   [`${state.selectedTheme} theme`, THEMES.find((theme) => theme.id === state.selectedTheme)?.hint ?? 'Selected', 'Selected', 'palette' as IconName],
                   [`${providerTitle(selectedProviderId)} default AI`, defaultModelLabel, selectedProviderModel?.provider ?? providerTitle(selectedProviderId), 'code' as IconName],
                   ['Starter preset', selectedPreset.title, `${enabledModules.length} modules enabled`, 'users' as IconName],
-                  ['Source connected', 'Local documents', sourceStatus === 'ok' ? 'Healthy' : 'Optional', 'folder' as IconName],
+                  [sourceStatus === 'error' ? 'Source needs attention' : 'Source connected', state.firstSourceMode === 'github' ? 'GitHub repository' : 'Local documents', sourceStatus === 'ok' ? 'Healthy' : sourceStatus === 'error' ? 'Test failed — review in Admin' : 'Optional', 'folder' as IconName],
                 ].map(([title, line1, line2, icon]) => (
                   <div key={title as string} className="rounded-2xl border border-[var(--border-secondary)] bg-white/50 p-4">
                     <span className="onboarding-small-icon"><Icon name={icon as IconName} className="h-5 w-5" /></span>
