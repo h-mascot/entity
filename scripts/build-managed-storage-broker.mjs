@@ -446,7 +446,15 @@ function releaseLock() {
       `broker build lock release refused — leaving the lock in place (${lockPath})`,
     );
   } catch (error) {
-    if (error.code !== 'ENOENT') {
+    if (error.code === 'ENOENT') {
+      // REC-010 generation 29, unit 3: unexpected lock disappearance. The
+      // lock this run HELD is gone (or its directory is), so exclusivity can
+      // no longer be proven — another build may already hold a new lock at
+      // this path. The build fails closed instead of reporting success over
+      // an unprovable claim; nothing is deleted or recreated in reaction.
+      lockReleaseFailure = `broker build lock disappeared before release (${lockPath}) — cannot prove exclusivity; failing the build`;
+      console.error(lockReleaseFailure);
+    } else {
       // The lock state itself is left untouched above; report loudly and
       // fail the build — never let lock-release trouble masquerade as
       // success (a primary failure may still take precedence over this).

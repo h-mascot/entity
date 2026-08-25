@@ -36,7 +36,10 @@
 //                never authorize the deletion.
 //   selftest     prove SWAP/NOREPLACE/linkat work on the target volume before
 //                the transaction relies on them; missing primitives fail the
-//                build closed (there is NO unsafe fallback anywhere). The
+//                build closed (there is NO unsafe fallback anywhere). Every
+//                scratch write, close, and cleanup mutation is checked, so a
+//                failure at any of those points fails the selftest (and the
+//                build) closed. The
 //                selftest's own scratch cleanup is ownership-preserving and
 //                fully checked: every cleanup unlink runs only while the
 //                scratch name still anchors exactly the inode the selftest
@@ -69,8 +72,12 @@
 // ENTITY_BROKER_GUARD_HOOK_FAULT=<mode> (write|close|rename|rename-replace)
 // makes the inner-swap canary's staging fail deterministically at its exact
 // decision point; ENTITY_BROKER_GUARD_SELFTEST_FAULT=<token>:<mode>
-// (replace-entry|unlink-fail) injects a replaced scratch entry or a failing
-// cleanup unlink into the selftest. Neither selector ever fires in
+// (replace-entry|unlink-fail|write-fail|close-fail) injects a replaced
+// scratch entry, a failing cleanup unlink, a failing scratch write, or a
+// failing scratch close into the selftest; write-fail/close-fail force the
+// checked result at the syscall's exact decision point, and every selftest
+// write and close is checked so none of these failures can false-pass
+// (REC-010 generation 29, unit 2). Neither selector ever fires in
 // production.
 //
 // Compile: cc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -pedantic
@@ -657,6 +664,24 @@ static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const 
   return 0;
 }
 
+// Test-only fault selector parsing shared by the selftest fault modes
+// (REC-010 generation 29, unit 2): returns the mode requested for THIS
+// invocation's token via ENTITY_BROKER_GUARD_SELFTEST_FAULT=<token>:<mode>,
+// or NULL when nothing matches. "write-fail" and "close-fail" force the
+// checked result of the scratch write / the first checked scratch close at
+// their exact decision points inside op_selftest; "replace-entry" and
+// "unlink-fail" fire at the cleanup position (maybe_selftest_fault). Never
+// fires in production.
+static const char *selftest_fault_mode(const struct options *opt) {
+  const char *want = getenv("ENTITY_BROKER_GUARD_SELFTEST_FAULT");
+  if (want == NULL || *want == '\0' || opt->token == NULL) return NULL;
+  const char *colon = strchr(want, ':');
+  if (colon == NULL || colon == want) return NULL;
+  size_t token_len = (size_t)(colon - want);
+  if (strlen(opt->token) != token_len || strncmp(want, opt->token, token_len) != 0) return NULL;
+  return colon + 1;
+}
+
 // Test-only selftest hook (see header comment): fire at most once, between
 // the scratch entries' creation and the ownership-preserving cleanup, in one
 // of two deterministic modes selected by ENTITY_BROKER_GUARD_SELFTEST_FAULT=
@@ -664,19 +689,18 @@ static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const 
 // canary over the scratch entry "d" — a faithful emulation of a racing
 // external actor replacing a scratch entry before cleanup. "unlink-fail"
 // strips the scratch directory's write permission so the cleanup unlinks
-// fail. Returns 0 when nothing was requested or the injection ran; -1 when
-// the requested injection could not be performed, so the selftest fails
-// closed instead of cleaning up unguarded by a hook the test environment
-// demanded. The injected canary's own staging is checked and cleaned up
+// fail. ("write-fail"/"close-fail" are consumed at their own exact decision
+// points inside op_selftest and are not handled here.) Returns 0 when
+// nothing was requested or the injection ran; -1 when the requested
+// injection could not be performed, so the selftest fails closed instead of
+// cleaning up unguarded by a hook the test environment demanded. The
+// injected canary's own staging is checked and cleaned up
 // ownership-preservingly on failure.
-static int maybe_selftest_fault(int dirfd, const struct options *opt) {
-  const char *want = getenv("ENTITY_BROKER_GUARD_SELFTEST_FAULT");
-  if (want == NULL || *want == '\0' || opt->token == NULL || selftest_fault_fired != 0) return 0;
-  const char *colon = strchr(want, ':');
-  if (colon == NULL || colon == want) return 0;
-  size_t token_len = (size_t)(colon - want);
-  if (strlen(opt->token) != token_len || strncmp(want, opt->token, token_len) != 0) return 0;
-  const char *mode = colon + 1;
+static int maybe_selftest_fault(int dirfd, const char *mode) {
+  if (mode == NULL || selftest_fault_fired != 0) return 0;
+  if (strcmp(mode, "write-fail") == 0 || strcmp(mode, "close-fail") == 0) {
+    return 0; // consumed at their own exact decision points in op_selftest
+  }
   selftest_fault_fired = 1;
   if (strcmp(mode, "unlink-fail") == 0) {
     return fchmod(dirfd, 0500) == 0 ? 0 : -1;
@@ -706,6 +730,11 @@ static int maybe_selftest_fault(int dirfd, const struct options *opt) {
 
 static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const struct options *opt) {
   const char *op = "selftest";
+  // Test-only deterministic fault mode for this invocation (see
+  // selftest_fault_mode): write-fail / close-fail force the checked result
+  // of the scratch write / first checked scratch close at their exact
+  // decision points; replace-entry / unlink-fail fire at the cleanup.
+  const char *fault_mode = selftest_fault_mode(opt);
   int parent = -1;
   if (anchor_directory(dir, ddev, dino, &parent) != 0) return 1;
   char entropy[33];
@@ -775,14 +804,22 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
     }
     expect[1].dev = (uint64_t)created_b.st_dev;
     expect[1].ino = (uint64_t)created_b.st_ino;
-    if (write(fa, "A", 1) != 1 || write(fb, "B", 1) != 1) {
+    int wa = write(fa, "A", 1);
+    int wb = write(fb, "B", 1);
+    if (fault_mode != NULL && strcmp(fault_mode, "write-fail") == 0) wa = -1;
+    if (wa != 1 || wb != 1) {
       close(fa);
       close(fb);
       fail_reason = "write";
       break;
     }
-    close(fa);
-    close(fb);
+    int close_a = close(fa);
+    int close_b = close(fb);
+    if (fault_mode != NULL && strcmp(fault_mode, "close-fail") == 0) close_a = -1;
+    if (close_a != 0 || close_b != 0) {
+      fail_reason = "close";
+      break;
+    }
     struct stat sa;
     struct stat sb;
     if (fstatat(dfd, a, &sa, AT_SYMLINK_NOFOLLOW) != 0 || fstatat(dfd, b, &sb, AT_SYMLINK_NOFOLLOW) != 0) {
@@ -811,8 +848,12 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
       fail_reason = "swap-verify";
       break;
     }
-    close(fa);
-    close(fb);
+    int reread_close_a = close(fa);
+    int reread_close_b = close(fb);
+    if (reread_close_a != 0 || reread_close_b != 0) {
+      fail_reason = "close";
+      break;
+    }
     if (ca != 'B' || cb != 'A') {
       fail_reason = "swap-content";
       break;
@@ -836,7 +877,10 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
     }
     expect[3].dev = (uint64_t)created_d.st_dev;
     expect[3].ino = (uint64_t)created_d.st_ino;
-    close(fd_d);
+    if (close(fd_d) != 0) {
+      fail_reason = "close";
+      break;
+    }
     errno = 0;
     if (renameatx_np(dfd, c, dfd, d, GUARD_NOREPLACE) == 0 || errno != EEXIST) {
       fail_reason = "noreplace-refused";
@@ -860,7 +904,7 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
   // Test-only fault hook (see header comment): fires between the scratch
   // entries' creation and the cleanup below — exactly where an external
   // actor or a failing volume interferes with the cleanup.
-  int hook_failed = maybe_selftest_fault(dfd, opt) != 0 ? 1 : 0;
+  int hook_failed = maybe_selftest_fault(dfd, fault_mode) != 0 ? 1 : 0;
   // Ownership-preserving, fully checked cleanup (Luna generation 28,
   // finding 2): every scratch mutation below runs only while the name still
   // anchors exactly the inode this helper recorded for it, and the first
@@ -879,9 +923,9 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
                cleanup_names[i]);
     }
   }
-  close(dfd);
+  int dfd_closed = close(dfd);
   int rmd = unlinkat(parent, scratch, AT_REMOVEDIR);
-  close(parent);
+  int parent_closed = close(parent);
   if (fail_reason != NULL) {
     fail(op, fail_reason, 0, NULL, NULL, detail);
     return 1;
@@ -897,6 +941,10 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
   }
   if (rmd != 0) {
     fail(op, "scratch-cleanup", 0, NULL, NULL, scratch);
+    return 1;
+  }
+  if (dfd_closed != 0 || parent_closed != 0) {
+    fail(op, "close", 0, NULL, scratch, "closing the scratch directory descriptors failed");
     return 1;
   }
   print_result(1, op, "", 0, NULL, NULL, "");

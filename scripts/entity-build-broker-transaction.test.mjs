@@ -633,6 +633,7 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.equal(parsed.reason, 'cleanup-refused');
       const leftovers = (await readdir(scratch)).filter((name) => name.startsWith('.guard-selftest-'));
       assert.equal(leftovers.length, 1, 'the un-cleaned scratch dir must remain visible');
+      assert.equal(parsed.tomb, leftovers[0], 'the result must name where the unresolved entries are preserved');
       const leftoverDir = resolve(scratch, leftovers[0]);
       try {
         assert.deepEqual(
@@ -646,6 +647,43 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
         await chmod(leftoverDir, 0o700);
         await rm(leftoverDir, { recursive: true, force: true });
       }
+    });
+
+    await t.test('selftest write failure fails closed with no debris', async () => {
+      // REC-010 generation 29, unit 2: ENTITY_BROKER_GUARD_SELFTEST_FAULT=
+      // <token>:write-fail forces the scratch write to fail at its exact
+      // decision point. A write failure must fail the selftest closed with
+      // the failure attributed to the write — never a pass, and never a
+      // misattributed refusal — while the ownership-preserving cleanup still
+      // tidies the scratch directory.
+      const token = 'selftest-fixture';
+      const { result, parsed } = guard(['selftest', ...dirArgs, '--token', token], null, null, {
+        ENTITY_BROKER_GUARD_SELFTEST_FAULT: `${token}:write-fail`,
+      });
+      assert.notEqual(result.status, 0, 'a selftest write failure must fail the selftest closed');
+      assert.equal(parsed.ok, false, 'the selftest must never report success after a failed write');
+      assert.equal(parsed.reason, 'write', 'the failure must be attributed to the write');
+      const debris = (await readdir(scratch)).filter((name) => name.startsWith('.guard-'));
+      assert.deepEqual(debris, [], 'the ownership-preserving cleanup must still tidy the scratch dir');
+    });
+
+    await t.test('selftest close failure fails closed with no debris', async () => {
+      // REC-010 generation 29, unit 2: ENTITY_BROKER_GUARD_SELFTEST_FAULT=
+      // <token>:close-fail forces the first checked scratch close to fail
+      // at its exact decision point — the classic delayed-write error
+      // surfacing at close. Before generation 32 the selftest's close
+      // results were discarded entirely, so a close failure FALSE-PASSED
+      // (exit 0, ok:true). It must instead fail the selftest closed with
+      // the failure attributed to the close, and the cleanup must still run.
+      const token = 'selftest-fixture';
+      const { result, parsed } = guard(['selftest', ...dirArgs, '--token', token], null, null, {
+        ENTITY_BROKER_GUARD_SELFTEST_FAULT: `${token}:close-fail`,
+      });
+      assert.notEqual(result.status, 0, 'a selftest close failure must fail the selftest closed');
+      assert.equal(parsed.ok, false, 'the selftest must never report success after a failed close');
+      assert.equal(parsed.reason, 'close', 'the failure must be attributed to the close');
+      const debris = (await readdir(scratch)).filter((name) => name.startsWith('.guard-'));
+      assert.deepEqual(debris, [], 'the ownership-preserving cleanup must still tidy the scratch dir');
     });
 
     await t.test('refuses wrong identities, foreign directories, and escaping names', async () => {
@@ -1077,6 +1115,79 @@ test('broker publication is a coherent transaction guarded by an exclusive build
       assert.deepEqual(sourceBroker, runtimeBroker, 'artifacts published before the release refusal must stay coherent');
       await rm(lockPath, { force: true });
       await assertNoTransientDebris('lock release refusal');
+    });
+
+    await t.test('fails closed when the held lock disappears unexpectedly mid-build', { timeout: 120_000 }, async () => {
+      // REC-010 generation 29, unit 3: unexpected lock disappearance. While
+      // the holder is parked deterministically inside its staging compile
+      // (blocking-cc, strictly after lock acquisition), an external actor
+      // deletes the lock this build OWNS. Exclusivity can no longer be
+      // proven — another build may already have claimed a new lock at the
+      // same path — so the build must fail closed at release instead of
+      // reporting success over an unprovable claim. Before generation 32
+      // the ENOENT from the release read was swallowed and the build exited 0.
+      await freshOutputs();
+      const realCc = run('sh', ['-c', 'command -v cc']).stdout.trim();
+      assert.ok(realCc, 'test host must expose a C compiler on PATH');
+      const toolDir = await mkdtemp(resolve(tmpdir(), 'entity-broker-lock-gone-'));
+      const goFile = resolve(toolDir, 'go');
+      const blockingCc = resolve(toolDir, 'blocking-cc');
+      await writeFile(
+        blockingCc,
+        `#!/bin/sh\nfor arg in "$@"; do\n  case "$arg" in *managed_storage_broker.c)\n    while [ ! -f ${shellQuote(goFile)} ]; do sleep 0.05; done\n    ;; esac\ndone\nexec ${shellQuote(realCc)} "$@"\n`,
+      );
+      await chmod(blockingCc, 0o755);
+      const holder = spawnHolderBuild({ CC: blockingCc });
+      const holderGroupPid = holder.pid;
+      let holderLog = '';
+      const holderClosed = new Promise((resolveClose) => {
+        holder.once('close', (code, signal) => resolveClose({ code, signal }));
+      });
+      holder.stdout.setEncoding('utf8');
+      holder.stderr.setEncoding('utf8');
+      holder.stdout.on('data', (chunk) => {
+        holderLog += chunk;
+      });
+      holder.stderr.on('data', (chunk) => {
+        holderLog += chunk;
+      });
+      const settle = () => settleHolderTree(holder, holderGroupPid, goFile, holderClosed, () => holderLog);
+      try {
+        const deadline = Date.now() + 30_000;
+        while (!existsSync(lockPath)) {
+          if (holder.exitCode !== null) throw new Error(`holder build exited before acquiring the lock:\n${holderLog}`);
+          if (Date.now() > deadline) {
+            try {
+              if (supportsProcessGroups) process.kill(-holderGroupPid, 'SIGKILL');
+              else holder.kill('SIGKILL');
+            } catch {
+              // already gone
+            }
+            throw new Error(`holder build never acquired the lock:\n${holderLog}`);
+          }
+          await sleep(50);
+        }
+        // The external actor: the lock this holder owns disappears.
+        await rm(lockPath);
+        await writeFile(goFile, 'release\n');
+        await settle();
+        assert.notEqual(holder.exitCode, 0, 'a build whose lock vanished underneath it must fail closed, not report success');
+        assert.match(
+          holderLog,
+          /lock disappeared|lock release/i,
+          `the vanished lock must be reported loudly:\n${holderLog}`,
+        );
+        // Publication completed before the failed release: the generation
+        // is coherent, nothing recreates the vanished lock, and no transient
+        // debris remains (retained tombs are the honest terminal state).
+        const [sourceBroker, runtimeBroker] = await Promise.all(executables.map((path) => readFile(path)));
+        assert.deepEqual(sourceBroker, runtimeBroker, 'artifacts published before the failed release must stay coherent');
+        assert.equal(existsSync(lockPath), false, 'nothing may recreate the vanished lock');
+        await assertNoTransientDebris('vanished lock');
+      } finally {
+        await settle();
+        await rm(toolDir, { recursive: true, force: true });
+      }
     });
 
     await t.test('fails closed on a symlinked lock path', async () => {
