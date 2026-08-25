@@ -266,8 +266,11 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
   // mutation. The ENTITY_BROKER_GUARD_INNER_SWAP hook fires EXACTLY between
   // the helper's final ownership precheck and the mutation syscall — the
   // interval the previous unconditional renameSync/rmSync design left open.
-  // Every case must fail closed (or succeed cleanly) with the injected
-  // canary byte-identical and nothing unexpected removed.
+  // The ENTITY_BROKER_GUARD_PRE_DELETE_SWAP hook fires between remove-owned's
+  // tomb verification and the tomb's deletion — the post-verify/pre-delete
+  // interval Luna generation 23 flagged. Every case must fail closed (or
+  // succeed cleanly) with the injected canary byte-identical and nothing
+  // unexpected removed.
   const realCc = run('sh', ['-c', 'command -v cc']).stdout.trim();
   assert.ok(realCc, 'test host must expose a C compiler on PATH');
   const toolDir = await mkdtemp(resolve(tmpdir(), 'entity-broker-fs-guard-'));
@@ -281,9 +284,10 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
   const dirArgs = [scratch, String(dirStat.dev), String(dirStat.ino)];
   const canaryOf = (token) => `inner-canary-${token}\n`;
 
-  const guard = (args, innerSwap = null) => {
+  const guard = (args, innerSwap = null, preDeleteSwap = null) => {
     const env = { ...process.env };
     if (innerSwap !== null) env.ENTITY_BROKER_GUARD_INNER_SWAP = innerSwap;
+    if (preDeleteSwap !== null) env.ENTITY_BROKER_GUARD_PRE_DELETE_SWAP = preDeleteSwap;
     const result = run(guardBin, args, { env });
     let parsed = null;
     try {
@@ -379,6 +383,31 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.equal(parsed.reason, 'replaced-and-restored');
       assert.equal(parsed.recovered, true);
       assert.equal(await read('victim'), canaryOf(token), 'the canary must remain byte-identical at its path');
+    });
+
+    await t.test('post-verify/pre-delete replacement of the tomb is restored; never unlinked', async () => {
+      // The replacement lands AFTER remove-owned has verified the tomb
+      // anchors exactly the expected inode and BEFORE the tomb is deleted.
+      // The old code name-unlinked the tomb on the strength of that earlier
+      // verification, destroying the replacement while the link-count audit
+      // false-passed (the attacker's rename had already dropped the pinned
+      // inode's link). The removal must instead fail closed with the
+      // replacement restored byte-identically, the removal never reported as
+      // succeeded, and no path deleted.
+      await write('victim', 'mine');
+      const pathsBefore = (await readdir(scratch)).sort();
+      const token = 'rollback-remove:predelete';
+      const { result, parsed } = guard(
+        ['remove-owned', ...dirArgs, 'victim', ...(await ident('victim')), '--token', token],
+        null,
+        token,
+      );
+      assert.notEqual(result.status, 0, 'a replacement inside the post-verify/pre-delete interval must fail the removal');
+      assert.equal(parsed.ok, false, 'the removal must never be falsely reported as succeeded');
+      assert.equal(parsed.reason, 'replaced-and-restored');
+      assert.equal(parsed.recovered, true);
+      assert.equal(await read('victim'), `pre-delete-canary-${token}\n`, 'the injected replacement must survive byte-identically at its path');
+      assert.deepEqual((await readdir(scratch)).sort(), pathsBefore, 'no unexpected path may be deleted or left behind');
     });
 
     await t.test('refuses wrong identities, foreign directories, and escaping names', async () => {

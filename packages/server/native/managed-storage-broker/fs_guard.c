@@ -24,10 +24,16 @@
 //                unrelated RENAME_SECLUDE — and RENAME_NOREPLACE on Linux),
 //                so a foreign entry can only be relocated, never destroyed;
 //                it is moved back on verification mismatch. The tomb is
-//                unlinked only after the pinned descriptor verified it
-//                anchors exactly the expected inode, and the unlink is
-//                audited via the pinned descriptor: precisely that inode must
-//                lose its link.
+//                unlinked only after a FRESH name-to-inode re-verification
+//                immediately adjacent to the unlink (no hookable point
+//                between that match and the syscall), and the unlink is
+//                audited via the pinned descriptor: precisely that inode
+//                must lose its link and the tomb name must be gone. A
+//                replacement injected anywhere in the earlier
+//                post-verify/pre-delete interval is caught by the fresh
+//                re-verification and restored byte-identically — never
+//                unlinked; the earlier check and the tomb name's entropy
+//                never authorize the deletion.
 //   selftest     prove SWAP/NOREPLACE/linkat work on the target volume before
 //                the transaction relies on them; missing primitives fail the
 //                build closed (there is NO unsafe fallback anywhere).
@@ -44,7 +50,9 @@
 // syscall: it creates a canary (O_CREAT|O_EXCL) and destructively renames it
 // over the guarded entry, as a real racing attacker would. The build must
 // still fail closed with the canary byte-identical and nothing unexpected
-// removed. The hook never fires in production.
+// removed. ENTITY_BROKER_GUARD_PRE_DELETE_SWAP=<token> is the remove-owned
+// sibling that fires between the tomb's ownership verification and the
+// tomb's deletion. Neither hook ever fires in production.
 //
 // Compile: cc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -pedantic
 // Supported hosts: macOS (10.12+) and Linux (3.15+); anything else fails at
@@ -95,6 +103,7 @@ struct options {
 };
 
 static int hook_fired = 0;
+static int pre_delete_hook_fired = 0;
 
 // 16 bytes of OS entropy for helper-internal names (tomb, inner-swap canary,
 // selftest scratch). /dev/urandom is the portable source on both supported
@@ -243,6 +252,50 @@ static int entry_matches(int dirfd, const char *name, struct file_id expected) {
   if (fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW) != 0) return 0;
   if (S_ISLNK(st.st_mode) || !S_ISREG(st.st_mode)) return 0;
   return (uint64_t)st.st_dev == expected.dev && (uint64_t)st.st_ino == expected.ino;
+}
+
+// Test-only post-verify/pre-delete hook (see header comment): fire at most
+// once, exactly between remove-owned's tomb verification and the tomb's
+// deletion, by destructively renaming an exclusive-create canary over the
+// verified tomb — a faithful emulation of the racing external attacker. The
+// removal must then fail closed with the canary restored byte-identically
+// and nothing deleted. Returns 0 when no injection was requested or the
+// injection was performed; -1 when the requested injection could not be
+// performed, so the caller fails closed instead of deleting unguarded by a
+// hook the test environment demanded. The canary's own cleanup is
+// checked: the cleanup unlink runs only while the canary name still anchors exactly
+// the inode this helper just created (an ownership check, never name
+// entropy), and any write/close/rename failure refuses the injection.
+static int maybe_pre_delete_swap(int dirfd, const struct options *opt, const char *tomb) {
+  const char *want = getenv("ENTITY_BROKER_GUARD_PRE_DELETE_SWAP");
+  if (want == NULL || *want == '\0' || opt->token == NULL || pre_delete_hook_fired != 0) return 0;
+  if (strcmp(want, opt->token) != 0) return 0;
+  pre_delete_hook_fired = 1;
+  char entropy[33];
+  if (fill_random_hex(entropy, sizeof(entropy) - 1) != 0) return -1;
+  char canary[176];
+  snprintf(canary, sizeof(canary), ".guard-predelete-canary-%ld-%s", (long)getpid(), entropy);
+  int fd = openat(dirfd, canary, O_CREAT | O_EXCL | O_WRONLY, 0600);
+  if (fd < 0) return -1;
+  struct stat created;
+  if (fstat(fd, &created) != 0) {
+    close(fd);
+    return -1;
+  }
+  int written = dprintf(fd, "pre-delete-canary-%s\n", opt->token);
+  int closed = close(fd);
+  int moved = (written > 0 && closed == 0) ? renameat(dirfd, canary, dirfd, tomb) : -1;
+  if (moved == 0) return 0;
+  // The injection could not run: remove the leftover only while it still
+  // anchors exactly the inode this helper created microseconds ago, then
+  // refuse so the caller never deletes unguarded.
+  struct stat leftover;
+  if (fstatat(dirfd, canary, &leftover, AT_SYMLINK_NOFOLLOW) == 0 && S_ISREG(leftover.st_mode) &&
+      (uint64_t)leftover.st_dev == (uint64_t)created.st_dev &&
+      (uint64_t)leftover.st_ino == (uint64_t)created.st_ino) {
+    unlinkat(dirfd, canary, 0);
+  }
+  return -1;
 }
 
 // Test-only inner-interval hook (see header comment): fire at most once, at
@@ -403,6 +456,31 @@ static int op_link_absent(const char *dir, uint64_t ddev, uint64_t dino, const c
   return 0;
 }
 
+// Shared refusal path once the tomb no longer anchors the expected inode:
+// restore the relocated entry to its original name through the kernel
+// no-replace rename or, if that name is occupied, preserve the entry
+// untouched at the tomb path reported in the result. Nothing is ever
+// deleted on this path and success is never claimed. Closes dirfd and fd.
+static int restore_or_preserve(int dirfd, int fd, const char *name, const char *tomb) {
+  const char *op = "remove-owned";
+  if (renameatx_np(dirfd, tomb, dirfd, name, GUARD_NOREPLACE) == 0) {
+    close(fd);
+    close(dirfd);
+    fail(op, "replaced-and-restored", 1, NULL, NULL,
+         "the removed path had been replaced; the replacement was restored in place");
+    return 1;
+  }
+  int e = errno;
+  close(fd);
+  close(dirfd);
+  char detail[320];
+  // EEXIST: a new entry appeared at the original name; the replacement is
+  // preserved untouched at the tomb path reported here. Nothing is deleted.
+  snprintf(detail, sizeof(detail), "replacement preserved at tomb entry %s (%s)", tomb, strerror(e));
+  fail(op, "replaced-not-restorable", 0, NULL, tomb, detail);
+  return 1;
+}
+
 static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const char *name,
                            struct file_id expected, const struct options *opt) {
   const char *op = "remove-owned";
@@ -458,25 +536,30 @@ static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const 
   if (!entry_matches(dirfd, tomb, expected)) {
     // The moved entry is NOT the one we owned: it was replaced inside the
     // guarded interval and must be restored byte-identically — never deleted.
-    if (renameatx_np(dirfd, tomb, dirfd, name, GUARD_NOREPLACE) == 0) {
-      close(fd);
-      close(dirfd);
-      fail(op, "replaced-and-restored", 1, NULL, NULL,
-           "the removed path had been replaced; the replacement was restored in place");
-      return 1;
-    }
-    int e = errno;
+    return restore_or_preserve(dirfd, fd, name, tomb);
+  }
+  // Test-only injection point: an attacker replaces the VERIFIED tomb entry
+  // exactly here, in the post-verify/pre-delete interval.
+  if (maybe_pre_delete_swap(dirfd, opt, tomb) != 0) {
     close(fd);
     close(dirfd);
-    char detail[320];
-    // EEXIST: a new entry appeared at the original name; the replacement is
-    // preserved untouched at the tomb path reported here. Nothing is deleted.
-    snprintf(detail, sizeof(detail), "replacement preserved at tomb entry %s (%s)", tomb, strerror(e));
-    fail(op, "replaced-not-restorable", 0, NULL, tomb, detail);
+    fail(op, "hook-entropy", 0, NULL, NULL,
+         "the requested pre-delete injection could not be performed — refusing to delete unguarded");
     return 1;
   }
+  // Fresh re-verification immediately adjacent to the unlink: the deletion
+  // is authorized by THIS kernel identity match — the name must still anchor
+  // exactly the expected inode — never by the earlier verification, the
+  // tomb name's entropy, or link-count arithmetic. Any replacement injected
+  // into the earlier interval is caught here and restored byte-identically;
+  // the unlink below is reached only while the verified match still holds,
+  // with no hookable point between the match and the syscall.
+  if (!entry_matches(dirfd, tomb, expected)) {
+    return restore_or_preserve(dirfd, fd, name, tomb);
+  }
   // The tomb anchors exactly the pinned inode: unlink it and prove via the
-  // pinned descriptor that precisely that inode lost this link.
+  // pinned descriptor that precisely that inode lost this link and that the
+  // tomb name is gone.
   if (unlinkat(dirfd, tomb, 0) != 0) {
     int e = errno;
     close(fd);
@@ -487,7 +570,9 @@ static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const 
     return 1;
   }
   struct stat after;
-  int audit_ok = fstat(fd, &after) == 0 && after.st_nlink == nlink_before - 1;
+  struct stat gone;
+  int audit_ok = fstat(fd, &after) == 0 && after.st_nlink == nlink_before - 1 &&
+                 fstatat(dirfd, tomb, &gone, AT_SYMLINK_NOFOLLOW) != 0 && errno == ENOENT;
   close(fd);
   close(dirfd);
   if (!audit_ok) {
