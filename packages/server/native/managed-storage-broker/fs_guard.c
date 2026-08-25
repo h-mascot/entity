@@ -57,8 +57,10 @@
 // over the guarded entry, as a real racing attacker would. The build must
 // still fail closed with the canary byte-identical and nothing unexpected
 // removed. ENTITY_BROKER_GUARD_PRE_DELETE_SWAP=<token> is the remove-owned
-// sibling that fires between the tomb's ownership verification and the
-// tomb's deletion. Neither hook ever fires in production. Both hooks' own
+// sibling that fires AFTER the tomb's final identity validation, at the
+// exact spot where the removed terminal tomb unlink used to run — the
+// post-final-validation replacement race. Neither hook ever fires in
+// production. Both hooks' own
 // canary staging is checked end-to-end (write and close) and their failure
 // cleanup is ownership-preserving: a canary this helper could not fully
 // stage or move is removed only while it still anchors the inode staged
@@ -289,15 +291,16 @@ static int entry_matches(int dirfd, const char *name, struct file_id expected) {
   return (uint64_t)st.st_dev == expected.dev && (uint64_t)st.st_ino == expected.ino;
 }
 
-// Test-only post-verify/pre-delete hook (see header comment): fire at most
-// once, exactly between remove-owned's tomb verification and the tomb's
-// deletion, by destructively renaming an exclusive-create canary over the
+// Test-only post-final-validation hook (see header comment): fire at most
+// once, exactly AFTER remove-owned's final identity validation of the tomb
+// and at the exact spot where generations 20–28 performed the terminal tomb
+// unlink, by destructively renaming an exclusive-create canary over the
 // verified tomb — a faithful emulation of the racing external attacker. The
 // removal must then fail closed with the canary restored byte-identically
 // and nothing deleted. Returns 0 when no injection was requested or the
 // injection was performed; -1 when the requested injection could not be
-// performed, so the caller fails closed instead of deleting unguarded by a
-// hook the test environment demanded. The canary's own cleanup is
+// performed, so the caller fails closed instead of reconciling unguarded by
+// a hook the test environment demanded. The canary's own cleanup is
 // checked: the cleanup unlink runs only while the canary name still anchors exactly
 // the inode this helper just created (an ownership check, never name
 // entropy), and any write/close/rename failure refuses the injection.
@@ -577,14 +580,6 @@ static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const 
     fail(op, reason == NULL ? "entry" : reason, 0, NULL, NULL, name);
     return 1;
   }
-  struct stat pinned;
-  if (fstat(fd, &pinned) != 0) { // unreachable: anchor_entry just fstat'ed it
-    close(fd);
-    close(dirfd);
-    fail(op, "pin-fstat", 0, NULL, NULL, name);
-    return 1;
-  }
-  nlink_t nlink_before = pinned.st_nlink;
   // The tomb is a cryptographically unpredictable name that is NOT
   // pre-created: the kernel no-replace conditional rename (RENAME_EXCL on
   // macOS / RENAME_NOREPLACE on Linux) refuses to move onto any existing
@@ -623,48 +618,42 @@ static int op_remove_owned(const char *dir, uint64_t ddev, uint64_t dino, const 
     return restore_or_preserve(dirfd, fd, name, tomb);
   }
   // Test-only injection point: an attacker replaces the VERIFIED tomb entry
-  // exactly here, in the post-verify/pre-delete interval.
+  // exactly here — AFTER the final identity validation, at the exact spot
+  // where generations 20–28 performed the terminal tomb unlink (REC-010
+  // generation 29, unit 1: the post-final-validation replacement race; a
+  // destructive pathname deletion after identity validation can never be
+  // made safe, so no such deletion exists anymore — see the retention below).
   if (maybe_pre_delete_swap(dirfd, opt, tomb) != 0) {
     close(fd);
     close(dirfd);
     fail(op, "hook-entropy", 0, NULL, NULL,
-         "the requested pre-delete injection could not be performed — refusing to delete unguarded");
+         "the requested pre-delete injection could not be performed — refusing to reconcile unguarded");
     return 1;
   }
-  // Fresh re-verification immediately adjacent to the unlink: the deletion
-  // is authorized by THIS kernel identity match — the name must still anchor
-  // exactly the expected inode — never by the earlier verification, the
-  // tomb name's entropy, or link-count arithmetic. Any replacement injected
-  // into the earlier interval is caught here and restored byte-identically;
-  // the unlink below is reached only while the verified match still holds,
-  // with no hookable point between the match and the syscall.
+  // Reconciliation re-check AFTER the injection window. Whatever the tomb
+  // anchors now decides the outcome, and because NOTHING below deletes any
+  // pathname, a replacement landing anywhere in the rest of this operation
+  // can only ever be restored or preserved — never destroyed. A lost race
+  // here fails the removal loudly instead of false-passing.
   if (!entry_matches(dirfd, tomb, expected)) {
     return restore_or_preserve(dirfd, fd, name, tomb);
   }
-  // The tomb anchors exactly the pinned inode: unlink it and prove via the
-  // pinned descriptor that precisely that inode lost this link and that the
-  // tomb name is gone.
-  if (unlinkat(dirfd, tomb, 0) != 0) {
-    int e = errno;
-    close(fd);
-    close(dirfd);
-    char detail[256];
-    snprintf(detail, sizeof(detail), "tomb unlink failed: %s", strerror(e));
-    fail(op, "unlink-syscall", 0, NULL, tomb, detail);
-    return 1;
-  }
-  struct stat after;
-  struct stat gone;
-  int audit_ok = fstat(fd, &after) == 0 && after.st_nlink == nlink_before - 1 &&
-                 fstatat(dirfd, tomb, &gone, AT_SYMLINK_NOFOLLOW) != 0 && errno == ENOENT;
+  // RETENTION — the honest terminal state (REC-010 generation 29, unit 1):
+  // the tomb anchors exactly the pinned inode this run owned, but no
+  // supported kernel offers an unlink whose effect is conditional on the
+  // identity of the entry at the path, so deleting the tomb by name here
+  // would be precisely the banned destructive pathname deletion after
+  // identity validation (check-then-unlink). The verified entry is
+  // therefore RETAINED in place at the unpredictable tomb name as visible,
+  // reconcilable debris, and the result reports the retained tomb with
+  // reconciliation details. The guarded name itself is already gone — the
+  // kernel no-replace move above owns that — so the removal is complete
+  // and honestly reported, with nothing deleted after validation.
   close(fd);
   close(dirfd);
-  if (!audit_ok) {
-    fail(op, "unlink-audit", 0, NULL, tomb,
-         "the unlinked entry did not match the pinned inode — the removal is reported, not hidden");
-    return 1;
-  }
-  print_result(1, op, "", 0, NULL, NULL, "");
+  print_result(1, op, "", 0, NULL, tomb,
+               "removal complete; the verified inode is retained at the tomb entry for reconciliation "
+               "(no supported kernel offers an identity-conditional unlink)");
   return 0;
 }
 

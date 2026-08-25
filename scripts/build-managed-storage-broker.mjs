@@ -479,6 +479,13 @@ const runtimeTemp = resolve(runtimeOut, `.broker.tmp-${nonce}`);
 // dirfd-anchored). Refusals are loud and include the helper's structured
 // reason plus the recovery outcome (restored in place / preserved at tomb).
 let guardTempIdentity = null;
+// Every guarded removal now RETAINS the verified inode at an unpredictable
+// tomb entry instead of unlinking it after identity validation (REC-010
+// generation 29, unit 1: no supported kernel offers an identity-conditional
+// unlink, so a terminal tomb unlink would be a destructive check-then-unlink
+// race whose post-hoc audit can false-pass). The retained tombs are visible,
+// gitignored reconciliation debris and are surfaced in the build summary.
+const retainedGuardTombs = [];
 
 function runGuard(args, refuseMessage) {
   // The helper itself is a mutation-capable executable created this run:
@@ -514,6 +521,9 @@ function runGuard(args, refuseMessage) {
   }
   if (result.ok !== true) {
     throw new Error(`${refuseMessage}: ${JSON.stringify(result)}`);
+  }
+  if (typeof result.tomb === 'string' && result.tomb.startsWith('.guard-tomb-')) {
+    retainedGuardTombs.push(result.tomb);
   }
   return result;
 }
@@ -931,3 +941,8 @@ try {
 }
 
 console.log(`managed-storage-broker native core and IPC entrypoint: compile and direct tests passed; installed broker at ${runtimeOut}`);
+if (retainedGuardTombs.length > 0) {
+  console.log(
+    `fs_guard retained ${retainedGuardTombs.length} verified-removal tomb(s) for reconciliation: ${retainedGuardTombs.join(', ')}`,
+  );
+}

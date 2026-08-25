@@ -44,7 +44,11 @@ async function freshOutputs() {
 
 async function assertNoTransientDebris(context) {
   for (const dir of [sourceOut, runtimeOut]) {
-    const debris = (await readdir(dir)).filter((name) => isTransientBuildName(name));
+    // Retained `.guard-tomb-` entries are the honest terminal state of every
+    // guarded removal (REC-010 generation 29, unit 1): the verified inode is
+    // deliberately never unlinked, so tombs are visible, gitignored
+    // reconciliation debris. Everything else transient must be gone.
+    const debris = (await readdir(dir)).filter((name) => isTransientBuildName(name) && !name.startsWith('.guard-tomb-'));
     assert.deepEqual(debris, [], `${context} must leave no transient build debris in ${dir}`);
   }
 }
@@ -266,9 +270,11 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
   // mutation. The ENTITY_BROKER_GUARD_INNER_SWAP hook fires EXACTLY between
   // the helper's final ownership precheck and the mutation syscall — the
   // interval the previous unconditional renameSync/rmSync design left open.
-  // The ENTITY_BROKER_GUARD_PRE_DELETE_SWAP hook fires between remove-owned's
-  // tomb verification and the tomb's deletion — the post-verify/pre-delete
-  // interval Luna generation 23 flagged. ENTITY_BROKER_GUARD_HOOK_FAULT and
+  // The ENTITY_BROKER_GUARD_PRE_DELETE_SWAP hook fires AFTER remove-owned's
+  // final identity validation of the tomb, exactly where the removed
+  // terminal tomb unlink used to run — the post-final-validation replacement
+  // race REC-010 generation 29 flagged (unit 1: verified entries are now
+  // RETAINED at the tomb instead of unlinked). ENTITY_BROKER_GUARD_HOOK_FAULT and
   // ENTITY_BROKER_GUARD_SELFTEST_FAULT make the hook's own staging/cleanup
   // steps fail deterministically (Luna generation 28 findings 2 and 3).
   // Every case must fail closed (or succeed cleanly) with the injected
@@ -367,11 +373,93 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.equal(await read('src'), 'staged');
     });
 
-    await t.test('remove-owned removes the verified inode and nothing else', async () => {
+    await t.test('remove-owned frees the name and retains the verified inode at a reported tomb', async () => {
+      // REC-010 generation 29, unit 1: with the terminal tomb unlink gone, a
+      // clean removal completes by RETAINING the verified inode at the
+      // unpredictable tomb name — reported with reconciliation details —
+      // instead of ever deleting a pathname after identity validation.
       await write('victim', 'mine');
-      const { result } = guard(['remove-owned', ...dirArgs, 'victim', ...(await ident('victim'))]);
+      const pathsBefore = (await readdir(scratch)).sort();
+      const { result, parsed } = guard(['remove-owned', ...dirArgs, 'victim', ...(await ident('victim'))]);
       assert.equal(result.status, 0, failureDetail(result));
-      assert.equal(existsSync(resolve(scratch, 'victim')), false, 'the owned entry must be removed');
+      assert.equal(parsed.ok, true);
+      assert.ok(
+        typeof parsed.tomb === 'string' && parsed.tomb.startsWith('.guard-tomb-'),
+        `the retained tomb must be reported: ${JSON.stringify(parsed)}`,
+      );
+      assert.equal(existsSync(resolve(scratch, 'victim')), false, 'the owned name must be freed');
+      assert.equal(await read(parsed.tomb), 'mine', 'the verified inode must survive byte-identical at the retained tomb');
+      assert.deepEqual(
+        (await readdir(scratch)).sort(),
+        [...pathsBefore.filter((entry) => entry !== 'victim'), parsed.tomb].sort(),
+        'exactly the reported tomb may remain',
+      );
+      await rm(resolve(scratch, parsed.tomb), { force: true });
+    });
+
+    await t.test('replacement survival across every remove-owned cleanup interval (table)', async () => {
+      // Compact table-driven proof (REC-010 generation 29, unit 1): for every
+      // deterministically injectable interval of the guarded-removal cleanup
+      // — the precheck→move interval and the post-final-validation interval
+      // where the terminal tomb unlink used to run — an injected replacement
+      // must survive byte-identically, the operation must fail rather than
+      // false-pass, and no unexpected path may be deleted. The clean row
+      // proves the honest retention terminal state.
+      const rows = [
+        {
+          name: 'clean removal retains the verified inode at a reported tomb',
+          innerSwap: false,
+          preDeleteSwap: false,
+          expectOk: true,
+        },
+        {
+          name: 'precheck→move replacement is restored, never removed',
+          innerSwap: true,
+          preDeleteSwap: false,
+          expectOk: false,
+          survivorBytes: (token) => `inner-canary-${token}\n`,
+        },
+        {
+          name: 'post-final-validation replacement is restored, never removed',
+          innerSwap: false,
+          preDeleteSwap: true,
+          expectOk: false,
+          survivorBytes: (token) => `pre-delete-canary-${token}\n`,
+        },
+      ];
+      for (const [index, row] of rows.entries()) {
+        await write('victim', 'mine');
+        const pathsBefore = (await readdir(scratch)).sort();
+        const token = `rollback-remove:table:${index}`;
+        const { result, parsed } = guard(
+          ['remove-owned', ...dirArgs, 'victim', ...(await ident('victim')), '--token', token],
+          row.innerSwap ? token : null,
+          row.preDeleteSwap ? token : null,
+        );
+        if (row.expectOk) {
+          assert.equal(result.status, 0, `${row.name}: ${failureDetail(result)}`);
+          assert.equal(parsed.ok, true, `${row.name}: clean removal succeeds honestly`);
+          assert.ok(
+            typeof parsed.tomb === 'string' && parsed.tomb.startsWith('.guard-tomb-'),
+            `${row.name}: the retained tomb must be reported`,
+          );
+          assert.equal(existsSync(resolve(scratch, 'victim')), false, `${row.name}: the guarded name is freed`);
+          assert.equal(await read(parsed.tomb), 'mine', `${row.name}: the verified inode survives at the tomb`);
+          await rm(resolve(scratch, parsed.tomb), { force: true });
+          assert.deepEqual(
+            (await readdir(scratch)).sort(),
+            pathsBefore.filter((entry) => entry !== 'victim'),
+            `${row.name}: no unexpected path deleted or left behind`,
+          );
+        } else {
+          assert.notEqual(result.status, 0, `${row.name}: a replacement must fail the removal rather than false-pass`);
+          assert.equal(parsed.ok, false, `${row.name}: the removal must never be falsely reported as succeeded`);
+          assert.equal(parsed.reason, 'replaced-and-restored', `${row.name}: the replacement is restored in place`);
+          assert.equal(parsed.recovered, true, `${row.name}: the restoration is verified`);
+          assert.equal(await read('victim'), row.survivorBytes(token), `${row.name}: injected replacement bytes survive unchanged`);
+          assert.deepEqual((await readdir(scratch)).sort(), pathsBefore, `${row.name}: no unexpected path deleted or left behind`);
+        }
+      }
     });
 
     await t.test('inner-interval replacement is relocated then restored; never removed', async () => {
@@ -387,15 +475,16 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.equal(await read('victim'), canaryOf(token), 'the canary must remain byte-identical at its path');
     });
 
-    await t.test('post-verify/pre-delete replacement of the tomb is restored; never unlinked', async () => {
-      // The replacement lands AFTER remove-owned has verified the tomb
-      // anchors exactly the expected inode and BEFORE the tomb is deleted.
-      // The old code name-unlinked the tomb on the strength of that earlier
-      // verification, destroying the replacement while the link-count audit
-      // false-passed (the attacker's rename had already dropped the pinned
-      // inode's link). The removal must instead fail closed with the
-      // replacement restored byte-identically, the removal never reported as
-      // succeeded, and no path deleted.
+    await t.test('post-final-validation replacement of the tomb is restored; never unlinked', async () => {
+      // REC-010 generation 29, unit 1 — the post-final-validation replacement
+      // race. The replacement lands AFTER remove-owned's FINAL identity
+      // validation of the tomb and exactly at the old terminal tomb unlink:
+      // the unlink was a destructive pathname deletion after identity
+      // validation, so this race let it destroy the replacement while the
+      // link-count audit FALSE-PASSED (the attacker's own rename had already
+      // dropped the pinned inode's link). The removal must instead fail
+      // closed with the replacement restored byte-identically, the removal
+      // never reported as succeeded, and no path deleted.
       await write('victim', 'mine');
       const pathsBefore = (await readdir(scratch)).sort();
       const token = 'rollback-remove:predelete';
@@ -404,7 +493,7 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
         null,
         token,
       );
-      assert.notEqual(result.status, 0, 'a replacement inside the post-verify/pre-delete interval must fail the removal');
+      assert.notEqual(result.status, 0, 'a replacement after the final validation must fail the removal');
       assert.equal(parsed.ok, false, 'the removal must never be falsely reported as succeeded');
       assert.equal(parsed.reason, 'replaced-and-restored');
       assert.equal(parsed.recovered, true);
