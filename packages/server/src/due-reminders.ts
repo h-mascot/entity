@@ -7,10 +7,9 @@
  * `task_nudge` notifications per recipient (assignee first, initiator and
  * owner as escalation recipients) through the canonical routing service.
  *
- * Dedupe is by canonical_event_id: `due-reminder:{taskId}:{kind}` — one
- * notification per task per reminder kind for the lifetime of the due date,
- * so scheduler retries and restarts are idempotent. When a task's due date
- * changes, updateTask clears stale reminder ids via markDueDateChanged.
+ * Dedupe is by canonical_event_id: `due-reminder:{taskId}:{kind}:{dueDate}` —
+ * one notification per task per reminder kind per due date, so scheduler
+ * retries and restarts are idempotent while a moved due date re-notifies.
  */
 
 import type {
@@ -41,8 +40,14 @@ export const DEFAULT_DUE_REMINDER_STAGES: DueReminderStage[] = [
   { kind: 'overdue', fromHours: -168, toHours: 0, urgency: 'high' },
 ];
 
-export function reminderEventId(taskId: number | string, kind: DueReminderKind): string {
-  return `due-reminder:${taskId}:${kind}`;
+export function reminderEventId(
+  taskId: number | string,
+  kind: DueReminderKind,
+  dueDate: string
+): string {
+  const dueMs = Date.parse(dueDate);
+  const dueKey = Number.isFinite(dueMs) ? new Date(dueMs).toISOString() : dueDate;
+  return `due-reminder:${taskId}:${kind}:${dueKey}`;
 }
 
 const TASK_OPEN_COLUMNS = new Set(['backlog', 'todo', 'doing', 'review']);
@@ -158,7 +163,7 @@ export async function scanDueDateReminders(deps: DueReminderScanDeps): Promise<D
     if (!stage) continue;
 
     result.consideredTasks += 1;
-    const eventId = reminderEventId(task.id, stage.kind);
+    const eventId = reminderEventId(task.id, stage.kind, task.due_date);
     const recipients = recipientCandidates(task);
     if (recipients.length === 0) {
       result.skippedNoRecipient += 1;
@@ -272,20 +277,3 @@ export function createDueReminderScheduler(
   };
 }
 
-// ---- due-date-change invalidation hook -------------------------------------
-// Called by task update paths: clears the tracked "already reminded" marker so
-// a moved due date can fire fresh reminders. Implemented as a repo-level
-// delete by canonical_event_id when available; otherwise a no-op marker the
-// scanner's dedupe check consults (see hasAlreadyNotified).
-
-const invalidatedEventIds = new Set<string>();
-
-export function markDueDateChanged(taskId: number | string): void {
-  for (const stage of DEFAULT_DUE_REMINDER_STAGES) {
-    invalidatedEventIds.add(reminderEventId(taskId, stage.kind));
-  }
-}
-
-export function isReminderEventInvalidated(eventId: string): boolean {
-  return invalidatedEventIds.has(eventId);
-}
