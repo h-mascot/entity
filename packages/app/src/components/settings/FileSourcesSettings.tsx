@@ -14,6 +14,8 @@ interface SourceFormState {
   baseUrl: string;
   basePath: string;
   manifestPath: string;
+  authType: FileSource['authType'];
+  authRef: string;
   icon: string;
 }
 
@@ -23,11 +25,49 @@ const INITIAL_FORM: SourceFormState = {
   baseUrl: '',
   basePath: '',
   manifestPath: '',
+  authType: 'none',
+  authRef: '',
   icon: '',
 };
 
+const TYPE_LABELS: Record<FileSource['type'], string> = {
+  local: 'Local folder',
+  docsify: 'Docsify site',
+  'http-markdown': 'HTTP markdown',
+  github: 'GitHub repository',
+  s3: 'S3 bucket (connector not shipped yet)',
+  custom: 'Custom (connector not shipped yet)',
+};
+
+const TYPES_WITH_LIVE_ADAPTER: readonly FileSource['type'][] = ['local', 'docsify', 'http-markdown', 'github'];
+
+const TYPE_HELP: Record<FileSource['type'], string> = {
+  local: 'Server-visible absolute folder path.',
+  docsify: 'Base URL of a docsify site; Entity fetches _sidebar.md.',
+  'http-markdown': 'Base URL serving markdown files. Optional manifest enables search.',
+  github: 'Repository URL like https://github.com/owner/repo. Private repos need a token.',
+  s3: 'No live connector yet: Test reports degraded and this source cannot be browsed.',
+  custom: 'No live connector yet: Test reports degraded and this source cannot be browsed.',
+};
+
+function typeHasLiveAdapter(type: FileSource['type']): boolean {
+  return TYPES_WITH_LIVE_ADAPTER.includes(type);
+}
+
+function timeAgo(iso: string | null): string | null {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 export default function FileSourcesSettings({ apiBase = '', enabled = true }: FileSourcesSettingsProps) {
-  const { sources, loading, error, createSource, updateSource, deleteSource, setSourceEnabled, testSource, reloadSources } = useFileSources({
+  const { sources, loading, error, createSource, updateSource, deleteSource, setSourceEnabled, testSource, syncSource, reloadSources } = useFileSources({
     apiBase,
     enabled,
   });
@@ -36,9 +76,17 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
   const [localError, setLocalError] = useState<string | null>(null);
   const [testFeedback, setTestFeedback] = useState<Record<string, string>>({});
 
+  const needsBaseUrl = form.type !== 'local';
+  const needsBasePath = form.type === 'local';
+  const needsAuth = form.type === 'github';
+
   const canSubmit = useMemo(() => {
-    return form.displayName.trim().length > 0 && (form.basePath.trim().length > 0 || form.baseUrl.trim().length > 0);
-  }, [form.basePath, form.baseUrl, form.displayName]);
+    if (!form.displayName.trim()) return false;
+    if (needsBasePath && !form.basePath.trim()) return false;
+    if (needsBaseUrl && !form.baseUrl.trim()) return false;
+    if (needsAuth && form.authType === 'bearer' && !form.authRef.trim()) return false;
+    return true;
+  }, [form.authRef, form.authType, form.basePath, form.baseUrl, form.displayName, needsAuth, needsBaseUrl, needsBasePath]);
 
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -51,6 +99,8 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
         baseUrl: form.baseUrl.trim() || undefined,
         basePath: form.basePath.trim() || undefined,
         manifestPath: form.type === 'http-markdown' ? form.manifestPath.trim() || undefined : undefined,
+        authType: needsAuth && form.authType !== 'none' ? form.authType : undefined,
+        authRef: needsAuth && form.authType !== 'none' ? form.authRef.trim() || undefined : undefined,
         icon: form.icon.trim() || undefined,
       });
       setForm(INITIAL_FORM);
@@ -125,6 +175,24 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
     }
   };
 
+  const handleSync = async (source: FileSource) => {
+    setBusyId(source.id);
+    setTestFeedback((prev) => ({ ...prev, [source.id]: 'Syncing…' }));
+    try {
+      const result = await syncSource(source.id);
+      const run = result.latestSyncRun;
+      const summary = run
+        ? `${run.status}${typeof run.filesScanned === 'number' ? `, ${run.filesScanned} scanned` : ''}${run.error ? `, ${run.error}` : ''}`
+        : result.status;
+      setTestFeedback((prev) => ({ ...prev, [source.id]: `SYNC: ${summary}` }));
+      await reloadSources();
+    } catch (err) {
+      setTestFeedback((prev) => ({ ...prev, [source.id]: `SYNC ERROR: ${toErrorMessage(err, 'Failed to sync source.')}` }));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (!enabled) {
     return (
       <div className="mc-shell-card border border-[var(--border-secondary)] p-4 text-xs text-[var(--text-muted)]">
@@ -146,28 +214,30 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
           />
           <select
             value={form.type}
-            onChange={(event) => setForm((prev) => ({ ...prev, type: event.target.value as FileSource['type'] }))}
+            onChange={(event) => setForm((prev) => ({ ...prev, type: event.target.value as FileSource['type'], authType: 'none', authRef: '' }))}
             className="mc-shell-input px-2 py-1 text-xs"
           >
-            <option value="local">local</option>
-            <option value="docsify">docsify</option>
-            <option value="http-markdown">http-markdown</option>
-            <option value="github">github</option>
-            <option value="s3">s3</option>
-            <option value="custom">custom</option>
+            {(Object.keys(TYPE_LABELS) as FileSource['type'][]).map((type) => (
+              <option key={type} value={type}>{TYPE_LABELS[type]}</option>
+            ))}
           </select>
-          <input
-            value={form.basePath}
-            onChange={(event) => setForm((prev) => ({ ...prev, basePath: event.target.value }))}
-            className="mc-shell-input px-2 py-1 text-xs"
-            placeholder="Base path (local)"
-          />
-          <input
-            value={form.baseUrl}
-            onChange={(event) => setForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
-            className="mc-shell-input px-2 py-1 text-xs"
-            placeholder="Base URL (remote)"
-          />
+          <div className="text-[10px] text-[var(--text-muted)]">{TYPE_HELP[form.type]}</div>
+          {needsBasePath && (
+            <input
+              value={form.basePath}
+              onChange={(event) => setForm((prev) => ({ ...prev, basePath: event.target.value }))}
+              className="mc-shell-input px-2 py-1 text-xs"
+              placeholder="Base path (server-local absolute path)"
+            />
+          )}
+          {needsBaseUrl && (
+            <input
+              value={form.baseUrl}
+              onChange={(event) => setForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
+              className="mc-shell-input px-2 py-1 text-xs"
+              placeholder={form.type === 'github' ? 'https://github.com/owner/repo' : 'Base URL'}
+            />
+          )}
           {form.type === 'http-markdown' && (
             <input
               value={form.manifestPath}
@@ -175,6 +245,26 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
               className="mc-shell-input px-2 py-1 text-xs"
               placeholder="Manifest path under base URL (optional)"
             />
+          )}
+          {needsAuth && (
+            <>
+              <select
+                value={form.authType}
+                onChange={(event) => setForm((prev) => ({ ...prev, authType: event.target.value as FileSource['authType'] }))}
+                className="mc-shell-input px-2 py-1 text-xs"
+              >
+                <option value="none">No token (public repos only)</option>
+                <option value="bearer">Token (bearer)</option>
+              </select>
+              {form.authType === 'bearer' && (
+                <input
+                  value={form.authRef}
+                  onChange={(event) => setForm((prev) => ({ ...prev, authRef: event.target.value }))}
+                  className="mc-shell-input px-2 py-1 text-xs"
+                  placeholder="Env var name holding the GitHub token (e.g. ENTITY_GITHUB_TOKEN)"
+                />
+              )}
+            </>
           )}
           <input
             value={form.icon}
@@ -215,18 +305,43 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
                 <div className="truncate font-medium text-[var(--text-primary)]">
                   {source.icon ? `${source.icon} ` : ''}{source.displayName}
                 </div>
-                <div className={`rounded px-1.5 py-0.5 text-[10px] ${source.enabled ? 'bg-[var(--accent-dim)] text-[var(--text-primary)]' : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]'}`}>
-                  {source.enabled ? 'ENABLED' : 'DISABLED'}
+                <div className="flex items-center gap-1">
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[10px] ${
+                      !source.enabled
+                        ? 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]'
+                        : source.health === 'ok'
+                          ? 'bg-[var(--accent-dim)] text-[var(--text-primary)]'
+                          : source.health === 'degraded'
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-[var(--error)] text-white'
+                    }`}
+                  >
+                    {!source.enabled ? 'DISABLED' : source.health === 'ok' ? 'HEALTHY' : source.health === 'degraded' ? 'DEGRADED' : 'ERROR'}
+                  </span>
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] ${source.enabled ? 'bg-[var(--accent-dim)] text-[var(--text-primary)]' : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]'}`}>
+                    {source.enabled ? 'ENABLED' : 'DISABLED'}
+                  </span>
                 </div>
               </div>
               <div className="mt-1 text-[10px] text-[var(--text-muted)]">
                 {source.type} • {source.basePath || source.baseUrl || 'No location'}
+              </div>
+              <div className="text-[10px] text-[var(--text-muted)]">
+                {typeHasLiveAdapter(source.type)
+                  ? `Live connector: yes${source.lastSyncedAt ? ` • synced ${timeAgo(source.lastSyncedAt)}` : ''}`
+                  : 'Live connector: not shipped yet (test will report degraded)'}
               </div>
               {source.type === 'http-markdown' && (
                 <div className="mt-1 text-[10px] text-[var(--text-muted)]">
                   {source.searchability === 'manifest-backed'
                     ? 'Manifest-backed search (test to validate)'
                     : 'Exact-read only; configure a manifest for search'}
+                </div>
+              )}
+              {testFeedback[source.id] && (
+                <div className={`mt-1 text-[10px] ${testFeedback[source.id].startsWith('ERROR') || testFeedback[source.id].startsWith('SYNC ERROR') ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'}`}>
+                  {testFeedback[source.id]}
                 </div>
               )}
               <div className="mt-2 flex flex-wrap gap-1">
@@ -246,6 +361,16 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
                 >
                   Test
                 </button>
+                {typeHasLiveAdapter(source.type) && source.enabled && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSync(source)}
+                    disabled={busyId === source.id}
+                    className="mc-shell-btn px-2 py-1 text-[10px]"
+                  >
+                    Sync now
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void handleEdit(source)}
@@ -258,12 +383,11 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
                   type="button"
                   onClick={() => void handleDelete(source)}
                   disabled={busyId === source.id}
-                  className="mc-shell-btn px-2 py-1 text-[10px] text-[var(--error)]"
+                  className="mc-shell-btn px-2 py-1 text-[10px]"
                 >
                   Delete
                 </button>
               </div>
-              {testFeedback[source.id] && <div className="mt-1 text-[10px] text-[var(--text-muted)]">{testFeedback[source.id]}</div>}
             </div>
           ))}
         </div>

@@ -12,7 +12,7 @@ import {
 } from '../../../db/src/file-sources';
 import { createFileIndexRepository } from '../../../db/src/file-index';
 import { localSourceCapabilitiesJson } from './adapters/local';
-import { createFileSourceAdapter } from './adapters/registry';
+import { adapterSupportsLiveValidation, createFileSourceAdapter } from './adapters/registry';
 import { FileIndexRunner } from './index-runner';
 import { recordFsOperation } from './metrics';
 import { resolvePathThroughNearestExistingAncestor } from './security';
@@ -498,15 +498,18 @@ export function registerSourceRoutes(app: Express): void {
       await adapter.validate(source);
       const durationMs = Date.now() - startedAt;
       recordFsOperation({ operation: 'sources.test', sourceId: source.id, durationMs, success: true });
+      const live = adapterSupportsLiveValidation(source.type);
       repo.updateSource(source.id, {
-        health: 'ok',
+        health: live ? 'ok' : 'degraded',
         last_synced_at: new Date().toISOString(),
       });
 
       return res.json({
         sourceId: source.id,
-        status: 'ok',
-        message: 'Connection test passed.',
+        status: live ? 'ok' : 'degraded',
+        message: live
+          ? 'Connection test passed.'
+          : 'Source configuration is valid, but this source type has no live connector yet; browsing and sync are unavailable until one ships.',
         durationMs,
         capabilities: adapter.capabilities(),
       });

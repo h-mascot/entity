@@ -69,6 +69,37 @@ async function withSourceAndFileServer(run: (baseUrl: string) => Promise<void>):
 }
 
 describe('source registration routes', () => {
+  it('test reports degraded (never ok) for placeholder source types', async () => {
+    const dbRoot = await makeTempRoot();
+    process.env.ENTITY_TASK_DB_PATH = path.join(dbRoot, 'entity.sqlite');
+
+    await withSourceServer(async (baseUrl) => {
+      const created = await fetch(`${baseUrl}/api/fs/sources`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: 'placeholder-bucket',
+          displayName: 'Placeholder Bucket',
+          type: 's3',
+          baseUrl: 'https://example-bucket.s3.amazonaws.com',
+        }),
+      });
+      expect(created.status).toBe(201);
+
+      const tested = await fetch(`${baseUrl}/api/fs/sources/placeholder-bucket/test`, { method: 'POST' });
+      expect(tested.status).toBe(200);
+      const payload = await tested.json();
+      // Before this fix, validate() on the placeholder passed and status was 'ok'.
+      expect(payload.status).toBe('error');
+      expect(payload.message).toContain('not implemented yet');
+
+      const listed = await fetch(`${baseUrl}/api/fs/sources`);
+      const listPayload = await listed.json();
+      const stored = listPayload.sources.find((item: { id: string }) => item.id === 'placeholder-bucket');
+      expect(stored.health).toBe('error');
+    });
+  });
+
   it('rejects local sources outside the workspace allowlist and accepts workspace roots', async () => {
     const workspaceRoot = await makeTempRoot();
     const dbRoot = await makeTempRoot();
