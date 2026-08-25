@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "openwikiVersion": "0.2.5",
-  "sourceFingerprint": "7d00bbfe41bf2b2d9fcdf5c7bb6bb1bbbfc55a072657ffade53c332164fdd65c",
+  "sourceFingerprint": "61b1060b042abba533339040c3095967e01a5870dc68b718734ca97980dff2ea",
   "provider": "openai-chatgpt",
   "model": "gpt-5.4-mini",
-  "generatedAt": "2026-08-25T12:10:10.620Z"
+  "generatedAt": "2026-08-25T13:02:42.270Z"
 }

@@ -131,7 +131,7 @@ Exclusive build lock (P2):
       only (`writeGenerationMetadata`, 7d00bbfe…) + `docs:wiki:verify` green;
       `git diff --check 5169cce..HEAD` clean; full diff + status review.
 
-## Generation 17 residual limits (recorded, not hidden)
+## Generation 17 residual limits (as recorded then — CORRECTED by generation 20 below)
 
 - Node 22 has no conditional-rename binding (`renameat2`/`renamex_np`) and no
   `flock`/`linkat(fd)`. The interval between the last identity pre-check and
@@ -147,6 +147,23 @@ Exclusive build lock (P2):
 - `scripts/build-managed-storage-broker.mjs` is now 596 lines, above the
   ~500-line style guideline; kept intact for auditability of the security
   boundary rather than split mid-repair.
+
+## Generation 20 correction (repair round 1 of 3, Luna generation-19 P1)
+
+Luna generation 19 rejected the two claims above as a security conclusion:
+**detection after an unconditional destructive syscall is not prevention** —
+`renameSync`/`rmSync` executing after the last ownership check could already
+have overwritten or removed an unexpected replacement before any post-check
+ran. That boundary is now closed by the native `fs_guard` helper
+(`packages/server/native/managed-storage-broker/fs_guard.c`, plan
+`2026-08-25-rec010-kernel-guarded-publication-plan.md`): every publish/rollback
+mutation is a kernel-conditional, dirfd-anchored operation (atomic
+`RENAME_SWAP`/`RENAME_EXCHANGE` exchange reversed with the unexpected entry
+restored byte-identically in place on drift; kernel no-replace `linkat` /
+conditional move). Deterministic `ENTITY_BROKER_GUARD_INNER_SWAP` tests inject
+the swap exactly inside the former interval. The honest residual is now only
+the tomb-unlink adjacency documented in the generation-20 plan — never the
+publication/rollback mutation itself.
 
 ## Files touched (expected)
 
