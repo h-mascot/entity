@@ -67,9 +67,18 @@ Verify:
 
 Evidence: `receipts/gqr002-server-RED.log` (15 expected failures), `receipts/gqr002-app-RED.log` (6 expected failures + caret addendum), `receipts/gqr002-server-GREEN.log`, `receipts/gqr002-app-GREEN.log`, `receipts/gqr002-live-api.log` (typed 501s against a live local server), `receipts/GQR-002-evidence/browser/` (15/15 Chromium checks PASS: tree badge/disabled/no-request/neutral caret; Admin coming-soon options; badge; fail-closed Test diagnostics). Full suites: app 532/532, server 2589/2589; app+server builds clean under Node 22.22.3. Known behavior change: writes on unimplemented connectors now return typed 501 instead of the misleading 403 `Source is read-only.` (existing expectation updated in `routes-files.test.ts`).
 
-### GQR-003: Supported server-test entry point and broker startup race — COMPLETE (single scoped commit atop `6e1f175`)
+### GQR-003: Supported server-test entry point and broker startup race — COMPLETE (repaired after Luna CHANGES_REQUESTED)
 
 Depends on: GQR-002
+
+Luna-high review of `6501da3` returned CHANGES_REQUESTED with exactly one actionable blocker: the deferred arbitration only protected requests already in `pending`; a request issued between child `exit` and stdout delivery of the buffered typed diagnostic still received the generic `closed` rejection. Bounded repair (single save-point atop `6501da3`, strict RED→GREEN):
+
+- [x] Added deterministic failing regression emitting `exit` first, issuing a request in the intervening window, then delivering the buffered typed `not_found`; expected RED preserved (`gqr003-repair-postdeath-RED.log`: observed generic `managed storage broker is closed`, expected typed `not_found`).
+- [x] Extended the response-drain grace to cover post-death requests: while a drain arbitration is pending, `request()` parks the caller and the drain settle rejects it with the recorded terminal typed error (`failPostDeath`), so the buffered typed diagnostic wins. Spawn-failure (`failed` checked first), genuinely-closed-after-drain (immediate `terminalError ?? closed`), and absent-broker fail-closed behavior are unchanged (all pre-existing broker/race tests pass unmodified).
+
+Repair evidence (Node 22.22.3, `receipts/`): RED `gqr003-repair-postdeath-RED.log`; focused GREEN `gqr003-repair-postdeath-GREEN.log` (21/21); repeated determinism `gqr003-repair-postdeath-repeated-GREEN.log` (10 consecutive runs, 21/21 each); neighbors `gqr003-repair-neighbors-GREEN.log` (broker + local adapter + integration, 36/36); root entry point from absent outputs `gqr003-repair-root-test-server-full-GREEN.log` (2596/2596, exit 0, broker rebuilt by the script); server build `gqr003-repair-server-build-GREEN.log` (tsc clean); hygiene `gqr003-repair-git-diff-check.log` (exactly the broker client + colocated test), `gqr003-repair-git-status-check.log`. Worker receipt: `receipts/GQR-003-repair-worker-summary.json`.
+
+Original GQR-003 work:
 
 - [x] Add failing entry-point ordering regression from absent generated broker outputs.
 - [x] Add supported root `test:server` command that builds before server tests; wire Geordi/CI docs to use it.
@@ -158,6 +167,7 @@ Real Google/Microsoft live writes require approved isolated synthetic tenants, d
 
 Update as work proceeds.
 
+- GQR-003 repair: `packages/server/src/fs/managed-storage-broker.ts` (+ `managed-storage-broker.test.ts`)
 - GQR-003: `package.json` (root `test:server` + `test:release-deploy` wiring), `scripts/entity-test-server-entrypoint.test.mjs` (new), `packages/server/src/fs/managed-storage-broker.ts` (+ `managed-storage-broker.test.ts`), `AGENTS.md`, `CONTEXT.md`, `docs/plans/ACTIVE_PLAN.md`
 
 - GQR-002: `packages/server/src/fs/errors.ts`, `packages/server/src/fs/adapters/registry.ts` (+ `registry.test.ts`), `packages/server/src/fs/routes-files.ts` (+ test), `packages/server/src/fs/routes-sources.ts` (+ test), `packages/app/src/types/filesystem.ts`, `packages/app/src/lib/sourceAvailability.ts` (+ test), `packages/app/src/components/SourceUnavailableBadge.tsx` (new), `packages/app/src/components/SourceFileTree.tsx` (+ test), `packages/app/src/components/settings/FileSourcesSettings.tsx`, `packages/app/scripts/gqr002-file-sources-ui-proof.mjs` (new)

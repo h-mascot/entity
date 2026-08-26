@@ -168,6 +168,23 @@ describe('managed storage broker IPC client', () => {
     stdout.destroy();
   });
 
+  it('surfaces the typed outcome for a request issued between child exit and its buffered typed diagnostic', async () => {
+    const { child, stdout } = controllableChild();
+    const client = controlledClient(child);
+    // Real child lifecycle: 'exit' can be delivered before the parent has
+    // consumed the broker's buffered stdout diagnostic. A request issued in
+    // that intervening window must share the response-drain arbitration and
+    // surface the typed outcome, never a generic closed rejection.
+    child.emit('exit', 1, null);
+    const duringWindow = client.read('a.txt');
+    stdout.write('err\tnot_found\n');
+    await expect(duringWindow).rejects.toMatchObject({ code: 'not_found' });
+    // Once the drain grace has settled, later requests still fail closed
+    // immediately with the recorded typed terminal error.
+    await expect(client.read('b.txt')).rejects.toMatchObject({ code: 'not_found' });
+    stdout.destroy();
+  });
+
   it.each(['', 'wat', 'ok\tdata\tzz', 'ok\tstat\t1\t2'])('rejects malformed responses: %j', async (response) => {
     const client = new ManagedStorageBrokerClient({ executable: fake(response), root: '/bound/root' });
     await expect(client.read('a')).rejects.toThrow('malformed managed storage response');

@@ -70,6 +70,13 @@ export class ManagedStorageBrokerClient {
   private closed = false;
   private failed = false;
   /**
+   * A response-drain arbitration is scheduled: the child died and its buffered
+   * stdout may still deliver a typed terminal diagnostic. While true, requests
+   * are post-death requests that must share that arbitration instead of being
+   * rejected immediately with the generic closed error.
+   */
+  private drainPending = false;
+  /**
    * The broker's terminal typed diagnostic: an unsolicited protocol error line
    * (no request was pending), which is how a broker whose startup root cannot
    * be opened reports `not_found` before exiting. Kept so requests that can no
@@ -77,6 +84,13 @@ export class ManagedStorageBrokerClient {
    * raw pipe/exit error.
    */
   private terminalError: ManagedStorageBrokerError | undefined;
+  /**
+   * Requests issued after the child died but while the response-drain grace is
+   * still pending. They can never receive a response, so they carry only a
+   * rejecter and are settled exactly once, at drain arbitration, with the
+   * broker's recorded terminal typed error or a fail-closed closed rejection.
+   */
+  private readonly postDeath: Array<{ reject: (error: Error) => void }> = [];
 
   constructor(options: { executable: string; root: string; spawn?: SpawnFn }) {
     // root is startup configuration only. It is never included in an operation request.
@@ -189,18 +203,41 @@ export class ManagedStorageBrokerClient {
    * the same or an earlier event-loop turn than the pipe failure. Defer the
    * generic rejection by one macrotask so a typed response settles its own
    * request first; still-unanswered requests then fail closed to the broker's
-   * recorded terminal error (its dying words) or the transport error.
+   * recorded terminal error (its dying words) or the transport error. The same
+   * grace covers requests issued after death but before the drain settles
+   * (Node may deliver 'exit' before the parent consumes the buffered typed
+   * diagnostic): they are parked and arbitrated identically.
    */
   private deferPendingFailure(fallback: Error): void {
+    if (this.drainPending) return;
+    this.drainPending = true;
     setImmediate(() => {
+      this.drainPending = false;
       this.lines?.close();
       this.failPending(this.terminalError ?? fallback);
+      this.failPostDeath();
     });
+  }
+
+  private failPostDeath(): void {
+    const error = this.terminalError ?? new Error('managed storage broker is closed');
+    while (this.postDeath.length) this.postDeath.shift()!.reject(error);
   }
 
   private request(request: BrokerRequest): Promise<BrokerResponse> {
     if (this.failed) return Promise.reject(this.spawnError ?? new ManagedStorageBrokerSpawnError());
-    if (this.closed) return Promise.reject(this.terminalError ?? new Error('managed storage broker is closed'));
+    if (this.closed) {
+      if (this.drainPending) {
+        // The child just died and its buffered stdout is still being drained.
+        // Park this post-death request so the drain arbitration settles it with
+        // the broker's typed terminal outcome when that line arrives, instead
+        // of racing it against the generic closed rejection.
+        return new Promise<BrokerResponse>((_resolve, reject) => {
+          this.postDeath.push({ reject });
+        });
+      }
+      return Promise.reject(this.terminalError ?? new Error('managed storage broker is closed'));
+    }
     if (!this.child) return Promise.reject(new ManagedStorageBrokerSpawnError());
     // The UI/API represent source-root traversal as an empty relative path. The
     // native broker deliberately accepts `.` as its only root descriptor and
