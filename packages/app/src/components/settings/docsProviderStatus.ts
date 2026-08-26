@@ -10,7 +10,7 @@
 
 import type { ProviderSettingsModel, ProviderWriteMode, ProviderConfirmationPolicy, ProviderDestination } from '../document-integrations/ProviderSettings';
 
-export type ProviderMutationLaneState = 'supported' | 'unsupported' | 'unknown';
+export type ProviderMutationLaneState = 'supported' | 'unsupported' | 'degraded' | 'unknown';
 
 export interface ProviderAdminMutationSupportView {
   agent_text_mutation: ProviderMutationLaneState;

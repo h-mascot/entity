@@ -123,10 +123,12 @@ export async function buildProviderAdminStatus(deps: {
 }): Promise<ProviderAdminStatus> {
   const { runtime, db, workspaceId } = deps;
   const providers = {} as Record<DocumentProvider, ProviderAdminProviderStatus>;
+  // Sandbox reads share one store handle (idempotent DDL once, not per provider).
+  const store = runtime.mode === 'sandbox' ? createProviderFixtureStore(db) : null;
 
   for (const provider of DOCUMENT_PROVIDERS) {
     const adapter = runtime.adapters(provider);
-    if (runtime.mode !== 'sandbox' || !adapter) {
+    if (!store || !adapter) {
       // Fail-closed modes (and fixture-less providers in sandbox) report pure defaults.
       // adapterRegistered reflects the runtime truth even in fail-closed modes (always false
       // there by construction).
@@ -135,8 +137,7 @@ export async function buildProviderAdminStatus(deps: {
     }
 
     // Sandbox: read this provider's authoritative fixtures for the requesting workspace.
-    const store = createProviderFixtureStore(db);
-    const connections = store
+    const connections = store!
       .listConnections()
       .filter((c) => c.enabled && c.workspaceId === workspaceId && c.provider === provider);
     const policies = store

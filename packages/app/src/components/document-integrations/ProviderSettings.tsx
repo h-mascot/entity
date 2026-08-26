@@ -11,9 +11,9 @@ export interface ProviderDestination {
 }
 
 export interface ProviderMutationSupport {
-  agent_text_mutation: 'supported' | 'unsupported' | 'unknown';
-  agent_range_mutation: 'supported' | 'unsupported' | 'unknown';
-  agent_slide_mutation: 'supported' | 'unsupported' | 'unknown';
+  agent_text_mutation: 'supported' | 'unsupported' | 'degraded' | 'unknown';
+  agent_range_mutation: 'supported' | 'unsupported' | 'degraded' | 'unknown';
+  agent_slide_mutation: 'supported' | 'unsupported' | 'degraded' | 'unknown';
 }
 
 export interface ProviderSettingsModel {
@@ -66,10 +66,11 @@ const MUTATION_LANE_LABELS: Array<{ key: keyof NonNullable<ProviderSettingsModel
   { key: 'agent_slide_mutation', lane: 'Presentation slides' },
 ];
 
-function mutationLaneLabel(state: 'supported' | 'unsupported' | 'unknown'): string {
+function mutationLaneLabel(state: 'supported' | 'unsupported' | 'degraded' | 'unknown'): string {
   if (state === 'supported') return 'Supported';
   if (state === 'unsupported') return 'Not supported';
-  return 'Unavailable (no provider adapter registered)';
+  if (state === 'degraded') return 'Degraded (connection impaired — writes suppressed)';
+  return 'Unavailable (no capability evidence)';
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

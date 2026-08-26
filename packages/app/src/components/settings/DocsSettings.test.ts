@@ -76,7 +76,7 @@ test('DocsSettings renders capability-honest unsupported mutation states (GQR-00
     React.createElement(ProviderAdminCards, { status: sandboxStatus }),
   );
   assert.ok(markup.includes('Not supported'), 'unsupported lane visible');
-  assert.ok(markup.includes('Unavailable (no provider adapter registered)'), 'unknown lane visible');
+  assert.ok(markup.includes('Unavailable (no capability evidence)'), 'unknown lane visible');
 });
 
 test('DocsSettings keeps cards fail closed when the status API is unreachable (GQR-004)', () => {

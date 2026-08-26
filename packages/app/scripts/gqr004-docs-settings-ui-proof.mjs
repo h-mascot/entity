@@ -108,8 +108,8 @@ async function main() {
     bodyText.includes('Not supported'),
   );
   note(
-    'docs: unknown lane explains the missing adapter',
-    bodyText.includes('Unavailable (no provider adapter registered)'),
+    'docs: unknown lane explains missing capability evidence',
+    bodyText.includes('Unavailable (no capability evidence)'),
   );
   note(
     'docs: fixture-less providers keep write lanes locked',

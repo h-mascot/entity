@@ -29,18 +29,38 @@ const mutationModel: ProviderSettingsModel = {
   },
 };
 
+const degradedModel: ProviderSettingsModel = {
+  ...mutationModel,
+  connectionState: 'degraded',
+  mutationSupport: {
+    agent_text_mutation: 'degraded',
+    agent_range_mutation: 'unsupported',
+    agent_slide_mutation: 'unknown',
+  },
+};
+
 test('mutation lanes render capability-honest states (GQR-004)', () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProviderSettings, { model: mutationModel, onChange: () => undefined }),
   );
-  // unknown lane names the missing adapter; unsupported says not supported; supported says supported.
-  assert.ok(markup.includes('Unavailable (no provider adapter registered)'), 'unknown lane labeled');
+  // unknown lane names missing evidence; unsupported says not supported; supported says supported.
+  assert.ok(markup.includes('Unavailable (no capability evidence)'), 'unknown lane labeled');
   assert.ok(markup.includes('Not supported'), 'unsupported lane labeled');
   assert.ok(markup.includes('Supported'), 'supported lane labeled');
   // Lane names are visible so the states are attributable.
   assert.ok(markup.includes('Document text'));
   assert.ok(markup.includes('Spreadsheet ranges'));
   assert.ok(markup.includes('Presentation slides'));
+});
+
+test('a degraded connection renders suppressed mutation lanes honestly (GQR-004)', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ProviderSettings, { model: degradedModel, onChange: () => undefined }),
+  );
+  assert.ok(
+    markup.includes('Degraded (connection impaired — writes suppressed)'),
+    'degraded lane labeled as connection-impaired, not unsupported',
+  );
 });
 
 test('an unknown connection state renders an explicit status-unknown label (GQR-004)', () => {

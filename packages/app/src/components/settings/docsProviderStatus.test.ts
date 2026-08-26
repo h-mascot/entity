@@ -187,6 +187,29 @@ test('connection states map to honest UI vocabulary', () => {
   assert.equal(providerCardsFromStatus(withStates('unknown'))[0].model.connectionState, 'unknown');
 });
 
+test('a degraded connection lane passes through and is never upgraded', () => {
+  const degraded: ProviderAdminStatusView = {
+    runtime: sandboxStatus.runtime,
+    providers: {
+      ...sandboxStatus.providers,
+      google_workspace: {
+        ...sandboxStatus.providers.google_workspace,
+        connectionState: 'degraded',
+        mutationSupport: {
+          agent_text_mutation: 'degraded',
+          agent_range_mutation: 'unsupported',
+          agent_slide_mutation: 'unknown',
+        },
+      },
+    },
+  };
+  const google = providerCardsFromStatus(degraded).find(
+    (card) => card.model.provider === 'Google Workspace',
+  );
+  assert.equal(google?.model.connectionState, 'degraded');
+  assert.equal(google?.model.mutationSupport?.agent_text_mutation, 'degraded');
+});
+
 test('the Local Office card keeps its bridge-not-installed readiness fact', () => {
   const cards = providerCardsFromStatus(sandboxStatus);
   const local = cards.find((card) => card.model.provider === 'Local Office');
