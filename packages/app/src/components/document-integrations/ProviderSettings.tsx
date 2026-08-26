@@ -10,8 +10,14 @@ export interface ProviderDestination {
   enabled: boolean;
 }
 
+export interface ProviderMutationSupport {
+  agent_text_mutation: 'supported' | 'unsupported' | 'unknown';
+  agent_range_mutation: 'supported' | 'unsupported' | 'unknown';
+  agent_slide_mutation: 'supported' | 'unsupported' | 'unknown';
+}
+
 export interface ProviderSettingsModel {
-  connectionState: 'ready' | 'reauthorization_required' | 'admin_consent_required' | 'permission_denied' | 'degraded' | 'configuration_required';
+  connectionState: 'ready' | 'reauthorization_required' | 'admin_consent_required' | 'permission_denied' | 'degraded' | 'configuration_required' | 'unknown';
   provider: 'Google Workspace' | 'Microsoft 365' | 'Local Office';
   writeMode: ProviderWriteMode;
   adminWriteAuthorized: boolean;
@@ -21,6 +27,8 @@ export interface ProviderSettingsModel {
   localReadiness?: 'ready' | 'bridge_not_installed' | 'bridge_not_running' | 'engine_unavailable' | 'degraded';
   diagnostics?: string[];
   policyControlsEnabled?: boolean;
+  /** Capability-honest agent mutation lanes (GQR-004) — rendered verbatim, never upgraded. */
+  mutationSupport?: ProviderMutationSupport;
 }
 
 const DESTINATION_KIND_LABELS: Record<ProviderDestination['kind'], string> = {
@@ -48,7 +56,21 @@ const CONNECTION_LABELS: Record<ProviderSettingsModel['connectionState'], string
   permission_denied: 'Permission denied',
   degraded: 'Degraded',
   configuration_required: 'Configuration required',
+  unknown: 'Status unknown',
 };
+
+/** Capability-honest labels for agent mutation lanes (never upgraded by the UI). */
+const MUTATION_LANE_LABELS: Array<{ key: keyof NonNullable<ProviderSettingsModel['mutationSupport']>; lane: string }> = [
+  { key: 'agent_text_mutation', lane: 'Document text' },
+  { key: 'agent_range_mutation', lane: 'Spreadsheet ranges' },
+  { key: 'agent_slide_mutation', lane: 'Presentation slides' },
+];
+
+function mutationLaneLabel(state: 'supported' | 'unsupported' | 'unknown'): string {
+  if (state === 'supported') return 'Supported';
+  if (state === 'unsupported') return 'Not supported';
+  return 'Unavailable (no provider adapter registered)';
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -88,6 +110,9 @@ export default function ProviderSettings({ model, onChange }: { model: ProviderS
         {model.connectionState !== 'ready' && (
           <p className="text-xs text-amber-200">Writes and other capabilities remain fail-closed until this connection is healthy.</p>
         )}
+        {model.connectionState === 'unknown' && (
+          <p className="text-xs text-amber-200">Connection status is unknown — no evidence backs any capability claim, so everything stays fail-closed.</p>
+        )}
         <p className="text-[10px] text-[var(--text-muted)]">Credentials are never displayed in Entity settings or diagnostics.</p>
       </Section>
 
@@ -122,6 +147,23 @@ export default function ProviderSettings({ model, onChange }: { model: ProviderS
         </div>
         <p className="text-[10px] text-[var(--text-muted)]">Confirmation policy is not a write switch. A request’s caller-attested <code>confirmed</code> value is not evidence of human confirmation; it cannot activate this lane.</p>
       </Section>
+
+      {model.mutationSupport ? (
+        <Section title="Agent mutation support">
+          <ul className="space-y-1 text-xs">
+            {MUTATION_LANE_LABELS.map(({ key, lane }) => {
+              const state = model.mutationSupport?.[key] ?? 'unknown';
+              return (
+                <li key={key} className="flex items-center justify-between gap-2">
+                  <span className="text-[var(--text-secondary)]">{lane}</span>
+                  <span className={state === 'supported' ? 'text-[var(--accent)]' : 'text-amber-400'}>{mutationLaneLabel(state)}</span>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="text-[10px] text-[var(--text-muted)]">States come from the active provider adapter. Unsupported and unavailable lanes reject mutations with typed errors — the UI never upgrades them.</p>
+        </Section>
+      ) : null}
 
       <Section title="Diagnostics and local readiness">
         <div className="grid gap-2 sm:grid-cols-2 text-xs">
