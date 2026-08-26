@@ -667,6 +667,30 @@ static int selftest_fault_is(const char *mode, const char *name) {
   return mode != NULL && strcmp(mode, name) == 0;
 }
 
+static void selftest_close_trace(const char *mode, const char *label) {
+  if (!selftest_fault_is(mode, "close-fail-create-b")) return;
+  const char *path = getenv("ENTITY_BROKER_GUARD_SELFTEST_CLOSE_TRACE");
+  if (path == NULL || *path == '\0') return;
+  FILE *trace = fopen(path, "a");
+  if (trace == NULL) return;
+  fprintf(trace, "%s\n", label);
+  fclose(trace);
+}
+
+static int selftest_fault_is_known(const char *mode) {
+  static const char *const known[] = {
+    "write-fail", "close-fail", "replace-entry",
+    "close-fail-entropy", "close-fail-scratch-mkdir", "close-fail-scratch-open",
+    "close-fail-create-stat-a", "close-fail-create-b", "close-fail-create-stat-b",
+    "close-fail-write", "close-fail-swap-verify", "close-fail-create-d-stat",
+  };
+  if (mode == NULL) return 1;
+  for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); i += 1) {
+    if (strcmp(mode, known[i]) == 0) return 1;
+  }
+  return 0;
+}
+
 // Test-only selftest hook (see header comment): fire at most once, between
 // the scratch entries' creation and the non-destructive integrity check, in
 // the deterministic "replace-entry" mode selected by
@@ -684,12 +708,16 @@ static int selftest_fault_is(const char *mode, const char *name) {
 // in place (generation 36): nothing is ever unlinked here.
 static int maybe_selftest_fault(int dirfd, const char *mode) {
   if (mode == NULL || selftest_fault_fired != 0) return 0;
+  if (!selftest_fault_is_known(mode)) {
+    selftest_fault_fired = 1;
+    return -1; // unknown mode: refuse
+  }
   if (strcmp(mode, "write-fail") == 0 || strcmp(mode, "close-fail") == 0 ||
       strncmp(mode, "close-fail-", 11) == 0) {
     return 0; // consumed at their own exact decision points in op_selftest
   }
   selftest_fault_fired = 1;
-  if (strcmp(mode, "replace-entry") != 0) return -1; // unknown mode: refuse
+  if (strcmp(mode, "replace-entry") != 0) return -1; // defensive
   char entropy[33];
   if (fill_random_hex(entropy, sizeof(entropy) - 1) != 0) return -1;
   char canary[176];
@@ -793,11 +821,21 @@ static int op_selftest(const char *dir, uint64_t ddev, uint64_t dino, const stru
     expect[0].dev = (uint64_t)created_a.st_dev;
     expect[0].ino = (uint64_t)created_a.st_ino;
     int fb = openat(dfd, b, O_CREAT | O_EXCL | O_WRONLY, 0600);
-    if (selftest_fault_is(fault_mode, "close-fail-create-b")) fb = -1;
-    if (fb < 0) {
-      int closed = close(fa);
-      if (selftest_fault_is(fault_mode, "close-fail-create-b")) closed = -1;
-      fail_reason = closed != 0 ? "close" : "create";
+    int create_b_result = fb;
+    if (selftest_fault_is(fault_mode, "close-fail-create-b")) create_b_result = -1;
+    if (create_b_result < 0) {
+      selftest_close_trace(fault_mode, "create-b:fa");
+      int closed_a = close(fa);
+      int closed_b = 0;
+      if (fb >= 0) {
+        selftest_close_trace(fault_mode, "create-b:fb");
+        closed_b = close(fb);
+      }
+      if (selftest_fault_is(fault_mode, "close-fail-create-b")) {
+        closed_a = -1;
+        closed_b = -1;
+      }
+      fail_reason = (closed_a != 0 || closed_b != 0) ? "close" : "create";
       break;
     }
     struct stat created_b;

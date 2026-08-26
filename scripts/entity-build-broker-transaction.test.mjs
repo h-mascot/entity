@@ -738,7 +738,7 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.notEqual(result.status, 0, 'close-fail-create-b must fail closed');
       assert.equal(parsed.reason, 'close');
       assert.deepEqual(
-        (await readFile(trace, 'utf8')).trim().split('\\n').filter(Boolean),
+        (await readFile(trace, 'utf8')).trim().split('\n').filter(Boolean),
         ['create-b:fa', 'create-b:fb'],
         'every successfully opened create-b descriptor must receive a close attempt',
       );

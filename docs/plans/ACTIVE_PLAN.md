@@ -10,12 +10,12 @@
 - Preserve REC-010 and merged main features.
 
 ## Plan
-- [ ] Step 1: Add deterministic descriptor-accounting RED regression for `close-fail-create-b`; verify it fails at base.
+- [x] Step 1: Add deterministic descriptor-accounting RED regression for `close-fail-create-b`; verify it fails at base.
   - **Files:** `packages/server/native/managed-storage-broker/fs_guard.c`, `scripts/entity-build-broker-transaction.test.mjs`
   - **Verify:** focused native transaction test fails specifically on leaked `fb`.
-- [ ] Step 2: Commit isolated RED save-point.
+- [x] Step 2: Commit isolated RED save-point.
   - **Verify:** `git status`, commit SHA.
-- [ ] Step 3: Fix descriptor preservation/close propagation and strengthen token fail-closed coverage.
+- [x] Step 3: Fix descriptor preservation/close propagation and strengthen token fail-closed coverage.
   - **Files:** same source/test files
   - **Verify:** focused native tests pass.
 - [ ] Step 4: Run required serial proof suite under Node 22.
