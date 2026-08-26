@@ -45,6 +45,22 @@ That bootstrap path now persists the chosen principal binding as `accessControl.
 
 Admin settings themselves are now stored through a dedicated settings store and routed through the admin config endpoints, so save/reset behavior is persisted rather than purely derived from the UI session. `packages/app/src/components/settings/AdminSettingsForm.tsx` loads a section, edits the draft locally, and saves or resets through `/api/admin/settings/:section`; `packages/app/src/components/settings/UsersAndRolesSettings.tsx` manages the principals list, bootstrap admin creation, disable flow, and grant editing through `/api/admin/principals`. The same admin binding also matters for file-source access because `packages/app/src/hooks/useFileSources.ts` and the authenticated file-source routes rely on admin-request credentials when reading protected sources.
 
+## Activity, usage, audit, and access reports
+
+The Admin shell now also lazy-loads `ActivityAuditSettings` from `packages/app/src/components/settings/ActivityAuditSettings.tsx`, and `packages/app/src/views/AdminView.tsx` includes it as the `activity` section. That panel is a reporting workspace rather than a single chart: it loads organizations and, when an org is selected, its teams, then issues parallel reads for activity, usage, audit, and access data with the current filters applied.
+
+The panel filters by organization, team, actor, source, and date range. Its report tabs show:
+
+- activity totals and paginated activity rows from `/api/activity-report`;
+- usage totals and breakdowns from `/api/usage-report`;
+- audit events and outcome summaries from `/api/audit-report`;
+- access principals, grants, tokens, and summary counts from `/api/access-report`.
+
+The server routes in `packages/server/src/routes/admin-reports.ts` parse the same query shape for each endpoint and also expose resource-shaped aliases under `/api/reports/usage`, `/api/reports/audit`, and `/api/reports/access`. Access reporting is the only tab that goes through the explicit access guard in that router, which matches the UI's use of the access tab for principals, grants, and active tokens.
+
+`packages/db/src/admin-reports.ts` computes the underlying aggregates from the SQLite-backed repositories. It derives activity actors from stored payload JSON when available, groups usage by actor, model, day, and event, summarizes audit outcomes and actors, and builds the access report from principals, grants, and access tokens while respecting the `active`, `disabled`, and `all` status filter.
+
+This reporting surface belongs with the rest of Admin because it is another operator-facing control and observability seam, but it is distinct from the general settings forms above. Use this page as the canonical description of the reports; the quickstart should only mention the surface at a high level.
 ## File sources and docs settings
 
 File source configuration is one of the most important Admin responsibilities because it determines what the Files / Doc Hub surface can browse.
