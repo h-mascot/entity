@@ -103,23 +103,32 @@ Evidence (all under Node 22.22.3, `receipts/`):
 
 Implementation notes: `test:server` = `node scripts/build-managed-storage-broker.mjs && npm --prefix packages/server run test` (explicit prerequisite ordering; `--` filters forward to vitest). Client arbitration defers stdin-EPIPE/exit pending-rejections one macrotask so the broker's buffered typed response wins, records unsolicited protocol error lines as the terminal typed diagnostic (missing-root startup), and maps post-death request rejections to it; spawn failures, closed rejections, and absent-broker behavior stay fail-closed.
 
-### GQR-004: Provider runtime composition and administration
+### GQR-004: Provider runtime composition and administration — COMPLETE
 
 Depends on: GQR-002, GQR-003
 
-- [ ] Add a test/sandbox-only deterministic provider bootstrap that refuses production startup.
-- [ ] Exercise fake provider through the real mounted `/api/document-integrations` composition.
-- [ ] Persist/load authoritative connection state, policies, and destinations for sandbox fixtures.
-- [ ] Add redacted provider-admin status endpoint.
-- [ ] Make DocsSettings API-backed.
-- [ ] Add Microsoft 365 card and capability-honest unsupported mutation states.
-- [ ] Keep Google/Local/Microsoft write gates fail closed.
+- [x] Add a test/sandbox-only deterministic provider bootstrap that refuses production startup.
+- [x] Exercise fake provider through the real mounted `/api/document-integrations` composition.
+- [x] Persist/load authoritative connection state, policies, and destinations for sandbox fixtures.
+- [x] Add redacted provider-admin status endpoint.
+- [x] Make DocsSettings API-backed.
+- [x] Add Microsoft 365 card and capability-honest unsupported mutation states.
+- [x] Keep Google/Local/Microsoft write gates fail closed.
+
+Implementation (four scoped commits, strict RED→GREEN each):
+
+- `b77ce59` — fixture store (`document_provider_{connections,policies,destinations}`, idempotent additive tables, typed rejection of invalid fixture values) + `sandbox-runtime.ts` (mode resolution: production / sandbox-active via NODE_ENV=test or non-production `ENTITY_DOCUMENT_PROVIDER_SANDBOX=1` / inactive; `activateSandboxDocumentProviders` throws typed `SandboxProviderRuntimeRefusedError` in production — even with the flag set — and in non-opted dev; `composeDocumentProviderRuntime` stays fail closed and reports `sandboxBootstrap: refused` for a production sandbox request). Fake adapters boot per provider with an enabled connection fixture; providers without fixtures stay undefined (fail closed).
+- `564914b` — `GET /api/document-integrations/admin/status`: workspace-scoped, structurally redacted per-provider status (adapter registration, connection state, fail-closed effective write mode via the exact `resolvedWriteMode` predicate, approved destinations as display metadata with `externalId` omitted, capability-honest mutation lanes from the active adapter; `unknown` when no adapter — health never fabricated). Redaction proven by recursive key allowlist; fail-closed modes never touch the fixture store; unresolvable workspace → typed `WORKSPACE_REQUIRED`.
+- `4600b2d` — `mountDocumentIntegrations` helper (migration + registry + composed runtime + admin status router + T-008 router) now used by `index.ts` AND the integration suite, so the tested mount is literally the production mount. Composition suite: create→get→mutate→versions + idempotent replay over HTTP with persisted fixtures; write gates fail closed per provider (google: 409 DESTINATION_REQUIRED / 403 WRITE_DISABLED; microsoft: typed 503 without fixture, 403 without admin authorization; local: create_only blocks mutation; unapproved destination → 422 with no fallback). Live dev-server proof on localhost (isolated temp DB): sandbox status active, HTTP 201 create / 200 mutation, typed 503 microsoft, and NODE_ENV=production + flag → `sandboxBootstrap: refused` + typed 503.
+- `cc84e87d` — DocsSettings API-backed: new `docsProviderStatus` pure mapper + `ProviderAdminCards`; staged local-only write-gate state removed; Microsoft 365 card added; `ProviderSettings` gains `unknown` connection state and an Agent-mutation-support section (Supported / Not supported / Unavailable (no provider adapter registered) — never upgraded); unreachable status API → honest fail-closed defaults + diagnostic. Browser proof (real Chromium, sandbox server, seeded fixtures): 10/10 PASS with screenshot.
 
 Verify:
-- runtime-composition integration suite
-- DocsSettings/ProviderSettings UI suites
-- no network, secrets, or external writes
-- production fake-provider guard test
+- [x] runtime-composition integration suite (`runtime-composition.test.ts` 9/9)
+- [x] DocsSettings/ProviderSettings UI suites (app 551/551 incl. new docsProviderStatus 8, DocsSettings 4, ProviderSettings +3)
+- [x] no network, secrets, or external writes (fixtures carry no secret columns; structural redaction tested)
+- [x] production fake-provider guard test (typed refusal + fail-closed compose + live production posture)
+
+Evidence (Node 22.22.3, `receipts/`): RED `gqr004-bootstrap-RED.log`, `gqr004-admin-status-RED.log`, `gqr004-composition-RED.log`, `gqr004-app-RED.log`; GREEN `gqr004-bootstrap-GREEN.log` (10/10), `gqr004-bootstrap-neighbors-GREEN.log` (62/62), `gqr004-admin-status-GREEN.log` (6/6), `gqr004-composition-live-api.log` (live HTTP), `gqr004-app-GREEN.log` (15/15), `gqr004-app-full-final-GREEN.log` (551/551), `gqr004-docs-settings-browser.log` + `GQR-004-evidence/browser/` (Chromium 10/10 PASS + screenshot); full gates `gqr004-A-full-server-GREEN.log` (2615), `gqr004-B-full-server-GREEN.log` (2621), `gqr004-C-full-server-GREEN.log` (2630), `gqr004-full-server-FINAL-GREEN.log` (2630/2630), `gqr004-release-deploy-GREEN.log` (133/133), `gqr004-server-build-FINAL-GREEN.log`, `gqr004-app-build-final-GREEN.log`. Worker receipt: `receipts/GQR-004-worker-summary.json`.
 
 ### GQR-005: GitHub and S3 connector contracts
 
@@ -168,6 +177,7 @@ Real Google/Microsoft live writes require approved isolated synthetic tenants, d
 Update as work proceeds.
 
 - GQR-003 repair: `packages/server/src/fs/managed-storage-broker.ts` (+ `managed-storage-broker.test.ts`)
+- GQR-004: `packages/server/src/document-providers/fixture-store.ts` (+ `fixture-store.test.ts`), `packages/server/src/document-providers/sandbox-runtime.ts` (+ `sandbox-runtime.test.ts`), `packages/server/src/routes/provider-admin-status.ts` (+ `provider-admin-status.test.ts`), `packages/server/src/routes/document-integrations-mount.ts`, `packages/server/src/document-providers/runtime-composition.test.ts`, `packages/server/src/index.ts`, `packages/app/src/components/settings/docsProviderStatus.ts` (+ test), `packages/app/src/components/settings/DocsSettings.tsx` (+ `DocsSettings.test.ts`), `packages/app/src/components/document-integrations/ProviderSettings.tsx` (+ test), `packages/app/scripts/gqr004-docs-settings-ui-proof.mjs` (new)
 - GQR-003: `package.json` (root `test:server` + `test:release-deploy` wiring), `scripts/entity-test-server-entrypoint.test.mjs` (new), `packages/server/src/fs/managed-storage-broker.ts` (+ `managed-storage-broker.test.ts`), `AGENTS.md`, `CONTEXT.md`, `docs/plans/ACTIVE_PLAN.md`
 
 - GQR-002: `packages/server/src/fs/errors.ts`, `packages/server/src/fs/adapters/registry.ts` (+ `registry.test.ts`), `packages/server/src/fs/routes-files.ts` (+ test), `packages/server/src/fs/routes-sources.ts` (+ test), `packages/app/src/types/filesystem.ts`, `packages/app/src/lib/sourceAvailability.ts` (+ test), `packages/app/src/components/SourceUnavailableBadge.tsx` (new), `packages/app/src/components/SourceFileTree.tsx` (+ test), `packages/app/src/components/settings/FileSourcesSettings.tsx`, `packages/app/scripts/gqr002-file-sources-ui-proof.mjs` (new)
