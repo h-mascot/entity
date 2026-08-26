@@ -66,7 +66,7 @@ function registerReportGet(
 
 export function registerAdminReportRoutes(
   app: Express,
-  prefix: '' | '/api',
+  prefix: '' | '/api' | '/api/admin',
   deps: RegisterAdminReportRoutesDeps,
 ): void {
   const { reportRepository, authorizeAccess } = deps;
