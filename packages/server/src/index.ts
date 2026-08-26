@@ -122,9 +122,7 @@ import {
 import { registerDocsApiRoutes } from "./routes/docs";
 import { createWorktypeRegistryRouter } from "./routes/worktype-registry";
 import { createDocumentObjectRouter } from "./document-objects";
-import { createDocumentIntegrationsRouter } from "./routes/document-integrations";
-import { createDocumentRegistry } from "./document-providers/registry";
-import { applyDocumentIntegrationsMigration } from "./document-providers/migrations";
+import { mountDocumentIntegrations } from "./routes/document-integrations-mount";
 import { registerTtsRoutes } from "./routes/tts";
 import { registerLegacyFileRoutes } from "./routes/legacy-files";
 import { registerDocumentRoutes } from "./routes/documents";
@@ -468,22 +466,12 @@ runInferenceProviderMigrations({
 // Mounted under /api/document-integrations per PRD §12, following the
 // /api/document-objects precedent (~:329). NOT added to the editor router.
 // Workspace/tenant isolation is enforced at the route boundary (THE-945 r3 F3
-// predicate holds) via the injected resolver below; adapters/policies are
-// deliberately unpopulated (fail closed) until T-012+ wires real providers.
+// predicate holds) via the injected resolver below. Provider composition is
+// the GQR-004 mount helper: fail closed (no adapters, no policies) in
+// production and plain development; the deterministic sandbox bootstrap only
+// activates in test runs or an explicit non-production sandbox opt-in.
 // ---------------------------------------------------------------------------
 {
-  // Apply the ADDITIVE unified document schema (T-003). Safe to run repeatedly
-  // (IF NOT EXISTS); does not touch legacy document data (R-036).
-  const documentIntegrationsMigration = applyDocumentIntegrationsMigration(entityDb);
-  if (!documentIntegrationsMigration.success) {
-    // Collision or ensure failure is a startup concern; log it loudly. The
-    // registry still mounts and surfaces typed errors at the route boundary.
-    console.error(
-      "[document-integrations] T-003 additive schema not applied:",
-      documentIntegrationsMigration.collisionCheck,
-    );
-  }
-  const documentIntegrationsRegistry = createDocumentRegistry(entityDb);
   /**
    * Resolve the request's workspace/tenant scope for the T-008 API. A bound
    * customer principal must map to exactly one authorized org (their workspace);
@@ -513,19 +501,13 @@ runInferenceProviderMigrations({
       return null;
     }
   }
-  app.use(
-    "/api/document-integrations",
-    createDocumentIntegrationsRouter({
-      registry: documentIntegrationsRegistry,
-      // No real provider adapters are wired until T-012+; the API fails closed
-      // with typed PROVIDER_UNAVAILABLE rather than inventing a provider.
-      adapters: () => undefined,
-      policies: [],
-      destinations: [],
-      flags: phase2Flags,
-      resolveWorkspace: resolveDocumentIntegrationsWorkspace,
-    }),
-  );
+  mountDocumentIntegrations(app, {
+    db: entityDb,
+    env: process.env,
+    flags: phase2Flags,
+    resolveWorkspace: resolveDocumentIntegrationsWorkspace,
+    logger: console,
+  });
 }
 const pluginHooks = new PluginHookEmitter(console);
 const startupEffectiveConfig = buildEffectiveConfig({ db: entityDb });
