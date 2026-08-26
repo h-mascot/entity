@@ -176,7 +176,7 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
   const loadReport = useCallback(
     async (query: string) => {
       const reportRes = await fetch(
-        apiPath(apiBase, `/api/activity-report?${query}`),
+        apiPath(apiBase, `/api/admin/activity-report?${query}`),
         withApiToken()
       );
       if (!reportRes.ok) throw new Error(`activity report ${reportRes.status}`);
@@ -188,7 +188,7 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
 
   const loadUsageReport = useCallback(
     async (query: string) => {
-      const response = await fetch(apiPath(apiBase, `/api/usage-report?${query}`), withApiToken());
+      const response = await fetch(apiPath(apiBase, `/api/admin/usage-report?${query}`), withApiToken());
       if (!response.ok) throw new Error(`usage report ${response.status}`);
       setUsageReport(await response.json() as UsageReport);
     },
@@ -197,7 +197,7 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
 
   const loadAuditReport = useCallback(
     async (query: string) => {
-      const response = await fetch(apiPath(apiBase, `/api/audit-report?${query}`), withApiToken());
+      const response = await fetch(apiPath(apiBase, `/api/admin/audit-report?${query}`), withApiToken());
       if (!response.ok) throw new Error(`audit report ${response.status}`);
       setAuditReport(await response.json() as AuditReport);
     },
@@ -208,7 +208,7 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
     async (query: string) => {
       setAccessError(null);
       try {
-        const response = await fetch(apiPath(apiBase, `/api/access-report?${query}`), withApiToken());
+        const response = await fetch(apiPath(apiBase, `/api/admin/access-report?${query}`), withApiToken());
         if (!response.ok) throw new Error(`access report ${response.status}`);
         setAccessReport(await response.json() as AccessReport);
       } catch (err) {

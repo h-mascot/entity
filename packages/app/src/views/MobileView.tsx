@@ -204,6 +204,7 @@ const ADMIN_MOBILE_SECTIONS: Array<{ id: string; label: string }> = [
   { id: 'navigation', label: 'Modules' },
   { id: 'accessControl', label: 'Users & Access' },
   { id: 'missionControl', label: 'Mission Control' },
+  { id: 'activity', label: 'Audit & Activity' },
   { id: 'agents', label: 'Agents' },
   { id: 'integrations', label: 'Integrations' },
   { id: 'plugins', label: 'Plugins' },

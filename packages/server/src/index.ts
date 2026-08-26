@@ -684,6 +684,13 @@ registerAdminReportRoutes(app, "/api", {
   reportRepository: adminReportRepository,
   authorizeAccess: adminReportAccessGuard,
 });
+// MC #1369: control-plane mounting. /api/admin/* is classified control by the
+// data-plane credential guard, so admin reports stay reachable for admin
+// principals when ENTITY_API_TOKEN + customer credentials are in force.
+registerAdminReportRoutes(app, "/api/admin", {
+  reportRepository: adminReportRepository,
+  authorizeAccess: adminReportAccessGuard,
+});
 app.use("/worktype-registry", createWorktypeRegistryRouter({ flags: phase2Flags }));
 app.use("/api/worktype-registry", createWorktypeRegistryRouter({ flags: phase2Flags }));
 registerTaskRoutes(app, "", taskRouteDeps);

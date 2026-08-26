@@ -91,3 +91,5 @@ packages/db/*.db*
 
 # Operator-local FS link helper (private paths; never commit)
 scripts/entity-fs-link.sh
+# MC #1369: native broker test backups must never be committed
+packages/server/native/managed-storage-broker/.build.entity-test-backup-*/
