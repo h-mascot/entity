@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
-import { cacheApiPayload, readCachedApiPayloadEntry } from '../lib/offline';
+import { buildApiCandidates, requestJsonWithFallback, toErrorMessage, withApiToken } from '../lib/http.ts';
+import { cacheApiPayload, readCachedApiPayloadEntry } from '../lib/offline.ts';
+import { shouldUseOfflineFileCache } from '../lib/fileCacheFallback.ts';
 import type {
   FileSource,
   SourceFileResponse,
   SourceTreeResponse,
   UnifiedSearchResponse,
-} from '../types/filesystem';
+} from '../types/filesystem.ts';
 
 export interface SourceSyncResult {
   sourceId: string;
@@ -74,7 +75,10 @@ async function requestWithFallback(urls: string[], init: RequestInit, fallbackEr
   let lastError: Error | null = null;
   for (const url of urls) {
     try {
-      const response = await fetch(url, init);
+      // Keep source CRUD requests authenticated when API bearer auth is enabled.
+      // withApiToken merges headers, so callers retain Content-Type and any
+      // explicit Authorization value.
+      const response = await fetch(url, withApiToken(init));
       if (!response.ok) {
         const payload = await response.text();
         throw new Error(payload || `Request failed (${response.status})`);
@@ -255,7 +259,7 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
 
       for (const url of urls) {
         try {
-          const response = await fetch(url, { method: 'GET' });
+          const response = await fetch(url, withApiToken({ method: 'GET' }));
           if (!response.ok) {
             throw new Error(`Request failed (${response.status})`);
           }
@@ -287,11 +291,14 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
         ...buildApiOnlyUrls(path, apiBase),
       ]);
       let lastError: Error | null = null;
+      let cacheFallbackAllowed = true;
 
       for (const url of urls) {
         try {
-          const response = await fetch(url, { method: 'GET' });
+          const response = await fetch(url, withApiToken({ method: 'GET' }));
           if (!response.ok) {
+            cacheFallbackAllowed =
+              cacheFallbackAllowed && shouldUseOfflineFileCache(response.status);
             throw new Error(`Request failed (${response.status})`);
           }
 
@@ -316,14 +323,16 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
         }
       }
 
-      const cachedEntry = await readCachedApiPayloadEntry<SourceFileResponse>(urls);
-      if (cachedEntry) {
-        return {
-          ...cachedEntry.payload,
-          cached: true,
-          cachedAt: new Date(cachedEntry.updatedAt).toISOString(),
-          cacheAgeMs: Math.max(0, Date.now() - cachedEntry.updatedAt),
-        };
+      if (cacheFallbackAllowed) {
+        const cachedEntry = await readCachedApiPayloadEntry<SourceFileResponse>(urls);
+        if (cachedEntry) {
+          return {
+            ...cachedEntry.payload,
+            cached: true,
+            cachedAt: new Date(cachedEntry.updatedAt).toISOString(),
+            cacheAgeMs: Math.max(0, Date.now() - cachedEntry.updatedAt),
+          };
+        }
       }
 
       throw lastError ?? new Error('Failed to load source file.');
