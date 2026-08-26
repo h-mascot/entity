@@ -49,6 +49,7 @@ import {
 } from "../../db/src";
 import { getEntityDatabase } from "../../db/src/entity-db";
 import { createFileSourceRepository } from "../../db/src/file-sources";
+import { createAdminReportRepository } from "../../db/src/admin-reports";
 import { registerFileSystemRoutes } from "./fs";
 import { closeManagedStorageBrokerPool } from "./fs/managed-storage-broker";
 import { registerEditorModule } from "./editor";
@@ -170,6 +171,8 @@ import { registerWorkplaneAgentRoutes } from "./routes/workplane-agents";
 import { registerWorkplaneChiefRoutingRoutes } from "./routes/workplane-chief-routing";
 import { registerWorkplaneAskRoutes } from "./routes/workplane-asks";
 import { registerActivityRoutes, registerDbModeRoutes, registerRuntimeRoutes } from "./routes/runtime";
+import { registerAdminReportRoutes } from "./routes/admin-reports";
+import { createRequireAdminPrincipal } from "./middleware/admin-auth";
 import { registerDocIntelligenceRoutes } from "./routes/doc-intelligence";
 import { createBusinessOnboardingRouter, createTaskSyncLayerRepoFactory } from "./routes/business-onboarding";
 import { registerOperationalStatusRoutes } from "./routes/operational-status";
@@ -423,6 +426,7 @@ function broadcast(data: unknown) {
 }
 
 const activityRepository = createActivityRepository();
+const adminReportRepository = createAdminReportRepository();
 const activityEventSpineRepository = createActivityEventSpineRepository();
 const taskCommentRepository = createTaskCommentRepository();
 const fileSourceRepository = createFileSourceRepository();
@@ -687,6 +691,15 @@ app.use(createTaskMasterClaimRouter(taskMasterClaimService));
 app.use("/api", createTaskMasterClaimRouter(taskMasterClaimService));
 registerActivityRoutes(app, "", { activityRepository });
 registerActivityRoutes(app, "/api", { activityRepository });
+const adminReportAccessGuard = createRequireAdminPrincipal();
+registerAdminReportRoutes(app, "", {
+  reportRepository: adminReportRepository,
+  authorizeAccess: adminReportAccessGuard,
+});
+registerAdminReportRoutes(app, "/api", {
+  reportRepository: adminReportRepository,
+  authorizeAccess: adminReportAccessGuard,
+});
 app.use("/worktype-registry", createWorktypeRegistryRouter({ flags: phase2Flags }));
 app.use("/api/worktype-registry", createWorktypeRegistryRouter({ flags: phase2Flags }));
 registerTaskRoutes(app, "", taskRouteDeps);

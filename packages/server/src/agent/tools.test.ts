@@ -111,6 +111,15 @@ function makeDependencies(): {
   const activityRepository: ActivityRepository = {
     listActivities: vi.fn().mockReturnValue([]),
     listActivitiesByTaskId: vi.fn().mockReturnValue([makeActivity()]),
+    listActivitiesFiltered: () => ({ activities: [], total: 0 }),
+    getActivityReport: () => ({
+      totals: { count: 0 },
+      byAction: [],
+      byActor: [],
+      byDay: [],
+      bySource: [],
+      byType: [],
+    }),
     createActivity: vi.fn(),
   };
 
