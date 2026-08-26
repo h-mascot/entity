@@ -727,6 +727,23 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       await rm(resolve(scratch, leftovers[0]), { recursive: true, force: true });
     });
 
+    await t.test('close-fail-create-b attempts to close both successfully opened descriptors', async () => {
+      const token = 'selftest-create-b-close-accounting';
+      const trace = resolve(toolDir, 'create-b-close.trace');
+      await rm(trace, { force: true });
+      const { result, parsed } = guard(['selftest', ...dirArgs, '--token', token], null, null, {
+        ENTITY_BROKER_GUARD_SELFTEST_FAULT: `${token}:close-fail-create-b`,
+        ENTITY_BROKER_GUARD_SELFTEST_CLOSE_TRACE: trace,
+      });
+      assert.notEqual(result.status, 0, 'close-fail-create-b must fail closed');
+      assert.equal(parsed.reason, 'close');
+      assert.deepEqual(
+        (await readFile(trace, 'utf8')).trim().split('\\n').filter(Boolean),
+        ['create-b:fa', 'create-b:fb'],
+        'every successfully opened create-b descriptor must receive a close attempt',
+      );
+    });
+
     await t.test('every selftest failure-path close is checked and propagated (site table)', async () => {
       // REC-010 generation 36, Luna scope item 3: each close-fail-<site>
       // selector forces the enclosing failure AND its failure-path close(s)
