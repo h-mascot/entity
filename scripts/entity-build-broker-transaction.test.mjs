@@ -44,11 +44,16 @@ async function freshOutputs() {
 
 async function assertNoTransientDebris(context) {
   for (const dir of [sourceOut, runtimeOut]) {
-    // Retained `.guard-tomb-` entries are the honest terminal state of every
-    // guarded removal (REC-010 generation 29, unit 1): the verified inode is
-    // deliberately never unlinked, so tombs are visible, gitignored
-    // reconciliation debris. Everything else transient must be gone.
-    const debris = (await readdir(dir)).filter((name) => isTransientBuildName(name) && !name.startsWith('.guard-tomb-'));
+    // Retained `.guard-tomb-` entries and `.guard-selftest-` scratch
+    // directories are the honest terminal state of every guarded removal
+    // and selftest (REC-010 generations 29 and 36): the verified inode and
+    // the scratch entries are deliberately never unlinked — no supported
+    // kernel offers an identity-conditional unlink — so they are visible,
+    // gitignored reconciliation debris. Everything else transient must be
+    // gone.
+    const debris = (await readdir(dir)).filter(
+      (name) => isTransientBuildName(name) && !name.startsWith('.guard-tomb-') && !name.startsWith('.guard-selftest-'),
+    );
     assert.deepEqual(debris, [], `${context} must leave no transient build debris in ${dir}`);
   }
 }
@@ -313,10 +318,45 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
   const read = async (name) => readFile(resolve(scratch, name), 'utf8');
 
   try {
-    await t.test('selftest proves the volume supports the kernel primitives', () => {
+    await t.test('selftest proves the volume supports the kernel primitives and retains its scratch directory', async () => {
+      // REC-010 generation 36: the selftest's final destructive pathname
+      // cleanup is gone — no supported kernel offers an identity-conditional
+      // unlink, so the scratch directory (with its verified entries) is
+      // RETAINED in place and reported for reconciliation, exactly like the
+      // remove-owned tomb.
       const { result, parsed } = guard(['selftest', ...dirArgs]);
       assert.equal(result.status, 0, `selftest must pass:\n${failureDetail(result)}`);
       assert.equal(parsed.ok, true);
+      assert.ok(
+        typeof parsed.tomb === 'string' && parsed.tomb.startsWith('.guard-selftest-'),
+        `the retained scratch directory must be reported: ${JSON.stringify(parsed)}`,
+      );
+      const leftovers = (await readdir(scratch)).filter((name) => name.startsWith('.guard-selftest-'));
+      assert.equal(leftovers.length, 1, `exactly the reported scratch directory may remain: ${leftovers}`);
+      const leftoverDir = resolve(scratch, parsed.tomb);
+      try {
+        assert.deepEqual((await readdir(leftoverDir)).sort(), ['a', 'b', 'd', 'e'], 'the verified scratch entries must be retained, never unlinked');
+        assert.equal(await readFile(resolve(leftoverDir, 'a'), 'utf8'), 'B', 'swapped content must be intact');
+        assert.equal(await readFile(resolve(leftoverDir, 'b'), 'utf8'), 'A', 'swapped content must be intact');
+      } finally {
+        await rm(leftoverDir, { recursive: true, force: true });
+      }
+    });
+
+    await t.test('selftest fault selectors are token-scoped and never fire for another token', async () => {
+      const { result, parsed } = guard(['selftest', ...dirArgs, '--token', 'selftest-fixture'], null, null, {
+        ENTITY_BROKER_GUARD_SELFTEST_FAULT: 'different-token:replace-entry',
+      });
+      assert.equal(result.status, 0, 'a selector naming another token must never fire');
+      assert.equal(parsed.ok, true, 'the selftest must succeed untouched');
+      try {
+        assert.ok(parsed.tomb?.startsWith('.guard-selftest-'), 'the clean run still reports its retained scratch');
+        await rm(resolve(scratch, parsed.tomb), { recursive: true, force: true });
+      } finally {
+        for (const name of await readdir(scratch)) {
+          if (name.startsWith('.guard-selftest-')) await rm(resolve(scratch, name), { recursive: true, force: true });
+        }
+      }
     });
 
     await t.test('clean exchange atomically swaps exactly the anchored identities', async () => {
@@ -501,11 +541,14 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.deepEqual((await readdir(scratch)).sort(), pathsBefore, 'no unexpected path may be deleted or left behind');
     });
 
-    await t.test('inner-swap canary staging: write failure fails closed with no debris', async () => {
+    await t.test('inner-swap canary staging: write failure fails closed and retains the owned canary', async () => {
       // ENTITY_BROKER_GUARD_HOOK_FAULT=write makes the hook's canary dprintf
       // fail at its exact decision point: the hook must refuse (the caller
-      // fails closed as hook-entropy), never perform a half-staged
-      // replacement, and never leave canary debris.
+      // fails closed as hook-entropy) and never perform a half-staged
+      // replacement. REC-010 generation 36: staging failures RETAIN the
+      // owned canary in place — it is never pathname-unlinked — because no
+      // supported kernel offers an identity-conditional unlink; the debris
+      // stays visible for reconciliation.
       await write('victim', 'mine');
       const token = 'rollback-remove:object';
       const { result, parsed } = guard(
@@ -518,10 +561,12 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.equal(parsed.reason, 'hook-entropy');
       assert.equal(await read('victim'), 'mine', 'the guarded entry must be untouched');
       const debris = (await readdir(scratch)).filter((name) => name.startsWith('.guard-inner-'));
-      assert.deepEqual(debris, [], 'no half-staged canary may be left behind');
+      assert.equal(debris.length, 1, `the owned canary must be retained in place: ${debris}`);
+      assert.equal(await read(debris[0]), canaryOf(token), 'the retained canary must be byte-identical');
+      await rm(resolve(scratch, debris[0]), { force: true });
     });
 
-    await t.test('inner-swap canary staging: close failure fails closed with no debris', async () => {
+    await t.test('inner-swap canary staging: close failure fails closed and retains the owned canary', async () => {
       await write('victim', 'mine');
       const token = 'rollback-remove:object';
       const { result, parsed } = guard(
@@ -534,13 +579,16 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.equal(parsed.reason, 'hook-entropy');
       assert.equal(await read('victim'), 'mine', 'the guarded entry must be untouched');
       const debris = (await readdir(scratch)).filter((name) => name.startsWith('.guard-inner-'));
-      assert.deepEqual(debris, [], 'no unclosed canary may be left behind');
+      assert.equal(debris.length, 1, `the owned canary must be retained in place: ${debris}`);
+      assert.equal(await read(debris[0]), canaryOf(token), 'the retained canary must be byte-identical');
+      await rm(resolve(scratch, debris[0]), { force: true });
     });
 
-    await t.test('inner-swap move failure cleans only the inode the hook created', async () => {
+    await t.test('inner-swap move failure retains the owned canary and fails closed', async () => {
       // ENTITY_BROKER_GUARD_HOOK_FAULT=rename makes the attacker-style rename
-      // fail: the hook must remove its own canary (ownership check holds) and
-      // refuse, and the guarded entry must survive untouched.
+      // fail: the fully staged canary is RETAINED at its unpredictable name
+      // (generation 36: no pathname unlink on staging failure) and the
+      // guarded entry survives untouched while the caller fails closed.
       await write('victim', 'mine');
       const token = 'rollback-remove:object';
       const { result, parsed } = guard(
@@ -553,15 +601,18 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.equal(parsed.reason, 'hook-entropy');
       assert.equal(await read('victim'), 'mine', 'the guarded entry must be untouched');
       const debris = (await readdir(scratch)).filter((name) => name.startsWith('.guard-inner-'));
-      assert.deepEqual(debris, [], 'the failed-move canary must be cleaned up');
+      assert.equal(debris.length, 1, `the failed-move canary must be retained in place: ${debris}`);
+      assert.equal(await read(debris[0]), canaryOf(token), 'the retained canary must be byte-identical');
+      await rm(resolve(scratch, debris[0]), { force: true });
     });
 
     await t.test('inner-swap move failure preserves a replacement of the canary itself', async () => {
       // ENTITY_BROKER_GUARD_HOOK_FAULT=rename-replace: the move fails AND an
       // attacker replaces the staged canary at its own unpredictable name.
-      // The hook's cleanup may unlink only the inode it created — the
-      // replacement must survive byte-identically and the caller must still
-      // fail closed.
+      // The replacement must survive byte-identically (generation 36: the
+      // hook never unlinks anything, so both the replacement at the canary
+      // name and any staging remains are retained) and the caller must
+      // still fail closed.
       await write('victim', 'mine');
       const token = 'rollback-remove:object';
       const { result, parsed } = guard(
@@ -588,74 +639,59 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       }
     });
 
-    await t.test('selftest cleanup preserves a replaced scratch entry and fails closed', async () => {
-      // ENTITY_BROKER_GUARD_SELFTEST_FAULT=<token>:replace-entry injects an
-      // attacker replacement over the scratch entry "d" right before the
-      // cleanup: the cleanup must refuse to unlink it, preserve it in place
-      // with the scratch directory, report failure honestly, and exit
-      // nonzero so the build fails closed.
+    await t.test('selftest replacement after the identity record survives byte-identically and fails closed', async () => {
+      // REC-010 generation 36: ENTITY_BROKER_GUARD_SELFTEST_FAULT=
+      // <token>:replace-entry injects an attacker replacement over the
+      // scratch entry "d" AFTER its identity was recorded — after the
+      // post-check, exactly where the removed pathname cleanup used to
+      // unlink. With no unlink anywhere, the replacement must survive
+      // byte-identically, every other scratch entry must be preserved in
+      // place inside the retained (and reported) scratch directory, and the
+      // selftest must fail closed.
       const token = 'selftest-fixture';
       const { result, parsed } = guard(['selftest', ...dirArgs, '--token', token], null, null, {
         ENTITY_BROKER_GUARD_SELFTEST_FAULT: `${token}:replace-entry`,
       });
       assert.notEqual(result.status, 0, 'a replaced scratch entry must fail the selftest closed');
-      assert.equal(parsed.ok, false, 'the selftest must never report success after a refused cleanup');
-      assert.equal(parsed.reason, 'cleanup-refused');
+      assert.equal(parsed.ok, false, 'the selftest must never report success after a detected replacement');
+      assert.equal(parsed.reason, 'scratch-replaced');
       const leftovers = (await readdir(scratch)).filter((name) => name.startsWith('.guard-selftest-'));
-      assert.equal(leftovers.length, 1, `the scratch dir holding the preserved replacement must remain: ${leftovers}`);
+      assert.equal(leftovers.length, 1, `the retained scratch dir holding the replacement must remain: ${leftovers}`);
       assert.equal(parsed.tomb, leftovers[0], 'the result must name where the unexpected entry is preserved');
       const leftoverDir = resolve(scratch, leftovers[0]);
       try {
-        // a and b were this helper's own entries and are legitimately cleaned
-        // before the refusal at d; the replacement at d and the later entry
-        // e must be preserved untouched.
-        assert.deepEqual((await readdir(leftoverDir)).sort(), ['d', 'e']);
+        assert.deepEqual((await readdir(leftoverDir)).sort(), ['a', 'b', 'd', 'e'], 'every scratch entry must be preserved — nothing is ever unlinked');
         assert.equal(await readFile(resolve(leftoverDir, 'd'), 'utf8'), 'selftest-canary\n', 'the replacement must survive byte-identically');
+        assert.equal(await readFile(resolve(leftoverDir, 'a'), 'utf8'), 'B', 'untouched entries stay intact');
       } finally {
         await rm(leftoverDir, { recursive: true, force: true });
       }
     });
 
-    await t.test('selftest cleanup fails closed when a cleanup unlink fails', async (t2) => {
-      // ENTITY_BROKER_GUARD_SELFTEST_FAULT=<token>:unlink-fail strips the
-      // scratch directory's write permission so the first cleanup unlink
-      // fails: every cleanup mutation is checked, nothing is removed, and
-      // the selftest/build fails closed with the debris visible.
-      if (typeof process.geteuid === 'function' && process.geteuid() === 0) {
-        return t2.skip('root ignores directory write permission');
-      }
+    await t.test('the removed unlink-fail selector fails closed as an unknown selector', async () => {
+      // REC-010 generation 36 removed the destructive scratch cleanup, so
+      // the unlink-fail selector no longer names a real fault point: it
+      // must be refused as unknown (fail closed) rather than silently
+      // ignored, and the scratch must still be retained.
       const token = 'selftest-fixture';
       const { result, parsed } = guard(['selftest', ...dirArgs, '--token', token], null, null, {
         ENTITY_BROKER_GUARD_SELFTEST_FAULT: `${token}:unlink-fail`,
       });
-      assert.notEqual(result.status, 0, 'a failing cleanup unlink must fail the selftest closed');
-      assert.equal(parsed.ok, false, 'the selftest must never report success after a failed cleanup');
-      assert.equal(parsed.reason, 'cleanup-refused');
+      assert.notEqual(result.status, 0, 'an unknown selftest fault selector must fail the selftest closed');
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.reason, 'selftest-hook');
       const leftovers = (await readdir(scratch)).filter((name) => name.startsWith('.guard-selftest-'));
-      assert.equal(leftovers.length, 1, 'the un-cleaned scratch dir must remain visible');
-      assert.equal(parsed.tomb, leftovers[0], 'the result must name where the unresolved entries are preserved');
-      const leftoverDir = resolve(scratch, leftovers[0]);
-      try {
-        assert.deepEqual(
-          (await readdir(leftoverDir)).sort(),
-          ['a', 'b', 'd', 'e'],
-          'no scratch entry may be removed when the cleanup refuses',
-        );
-        assert.equal(await readFile(resolve(leftoverDir, 'a'), 'utf8'), 'B', 'swapped content must be intact');
-        assert.equal(await readFile(resolve(leftoverDir, 'b'), 'utf8'), 'A', 'swapped content must be intact');
-      } finally {
-        await chmod(leftoverDir, 0o700);
-        await rm(leftoverDir, { recursive: true, force: true });
-      }
+      assert.equal(leftovers.length, 1, 'the scratch directory is still retained');
+      await rm(resolve(scratch, leftovers[0]), { recursive: true, force: true });
     });
 
-    await t.test('selftest write failure fails closed with no debris', async () => {
+    await t.test('selftest write failure fails closed with the scratch retained', async () => {
       // REC-010 generation 29, unit 2: ENTITY_BROKER_GUARD_SELFTEST_FAULT=
       // <token>:write-fail forces the scratch write to fail at its exact
       // decision point. A write failure must fail the selftest closed with
       // the failure attributed to the write — never a pass, and never a
-      // misattributed refusal — while the ownership-preserving cleanup still
-      // tidies the scratch directory.
+      // misattributed refusal — and (generation 36) the scratch directory
+      // is retained and reported rather than pathname-cleaned.
       const token = 'selftest-fixture';
       const { result, parsed } = guard(['selftest', ...dirArgs, '--token', token], null, null, {
         ENTITY_BROKER_GUARD_SELFTEST_FAULT: `${token}:write-fail`,
@@ -663,18 +699,21 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.notEqual(result.status, 0, 'a selftest write failure must fail the selftest closed');
       assert.equal(parsed.ok, false, 'the selftest must never report success after a failed write');
       assert.equal(parsed.reason, 'write', 'the failure must be attributed to the write');
-      const debris = (await readdir(scratch)).filter((name) => name.startsWith('.guard-'));
-      assert.deepEqual(debris, [], 'the ownership-preserving cleanup must still tidy the scratch dir');
+      const leftovers = (await readdir(scratch)).filter((name) => name.startsWith('.guard-selftest-'));
+      assert.equal(leftovers.length, 1, 'the scratch directory must be retained, never pathname-cleaned');
+      assert.equal(parsed.tomb, leftovers[0], 'the retained scratch must be reported');
+      await rm(resolve(scratch, leftovers[0]), { recursive: true, force: true });
     });
 
-    await t.test('selftest close failure fails closed with no debris', async () => {
+    await t.test('selftest close failure fails closed with the scratch retained', async () => {
       // REC-010 generation 29, unit 2: ENTITY_BROKER_GUARD_SELFTEST_FAULT=
       // <token>:close-fail forces the first checked scratch close to fail
       // at its exact decision point — the classic delayed-write error
       // surfacing at close. Before generation 32 the selftest's close
       // results were discarded entirely, so a close failure FALSE-PASSED
       // (exit 0, ok:true). It must instead fail the selftest closed with
-      // the failure attributed to the close, and the cleanup must still run.
+      // the failure attributed to the close, and (generation 36) the scratch
+      // is retained and reported rather than pathname-cleaned.
       const token = 'selftest-fixture';
       const { result, parsed } = guard(['selftest', ...dirArgs, '--token', token], null, null, {
         ENTITY_BROKER_GUARD_SELFTEST_FAULT: `${token}:close-fail`,
@@ -682,8 +721,43 @@ test('native fs_guard helper: kernel-conditional mutations survive swaps inside 
       assert.notEqual(result.status, 0, 'a selftest close failure must fail the selftest closed');
       assert.equal(parsed.ok, false, 'the selftest must never report success after a failed close');
       assert.equal(parsed.reason, 'close', 'the failure must be attributed to the close');
-      const debris = (await readdir(scratch)).filter((name) => name.startsWith('.guard-'));
-      assert.deepEqual(debris, [], 'the ownership-preserving cleanup must still tidy the scratch dir');
+      const leftovers = (await readdir(scratch)).filter((name) => name.startsWith('.guard-selftest-'));
+      assert.equal(leftovers.length, 1, 'the scratch directory must be retained, never pathname-cleaned');
+      assert.equal(parsed.tomb, leftovers[0], 'the retained scratch must be reported');
+      await rm(resolve(scratch, leftovers[0]), { recursive: true, force: true });
+    });
+
+    await t.test('every selftest failure-path close is checked and propagated (site table)', async () => {
+      // REC-010 generation 36, Luna scope item 3: each close-fail-<site>
+      // selector forces the enclosing failure AND its failure-path close(s)
+      // at one exact site of op_selftest (the previously unchecked closes).
+      // The propagated close failure must be the reported reason, and
+      // whatever was created stays retained — nothing is ever cleaned by
+      // pathname, so an unexpected replacement can never be destroyed by a
+      // cleanup racing the fault.
+      const token = 'selftest-fixture';
+      const modes = [
+        'close-fail-entropy',
+        'close-fail-scratch-mkdir',
+        'close-fail-scratch-open',
+        'close-fail-create-stat-a',
+        'close-fail-create-b',
+        'close-fail-create-stat-b',
+        'close-fail-write',
+        'close-fail-swap-verify',
+        'close-fail-create-d-stat',
+      ];
+      for (const mode of modes) {
+        const { result, parsed } = guard(['selftest', ...dirArgs, '--token', token], null, null, {
+          ENTITY_BROKER_GUARD_SELFTEST_FAULT: `${token}:${mode}`,
+        });
+        assert.notEqual(result.status, 0, `${mode} must fail the selftest closed`);
+        assert.equal(parsed.ok, false, `${mode} must never report success`);
+        assert.equal(parsed.reason, 'close', `${mode} must propagate the failed close as the reason: ${JSON.stringify(parsed)}`);
+        for (const name of await readdir(scratch)) {
+          if (name.startsWith('.guard-')) await rm(resolve(scratch, name), { recursive: true, force: true });
+        }
+      }
     });
 
     await t.test('refuses wrong identities, foreign directories, and escaping names', async () => {
