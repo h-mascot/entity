@@ -9,17 +9,8 @@ export function htmlPreviewSandboxForSource(sourceId: string | null | undefined)
   return isStaticHtmlPreviewSource(sourceId) ? STATIC_HTML_SANDBOX : INTERACTIVE_HTML_SANDBOX;
 }
 
-type CreateObjectUrl = (blob: Blob) => string;
-
-export function createStaticHtmlPreviewUrl(
-  content: string,
-  routeHash: string,
-  createObjectUrl: CreateObjectUrl = (blob) => URL.createObjectURL(blob),
-): { objectUrl: string; src: string } {
-  const objectUrl = createObjectUrl(new Blob([content], { type: 'text/html' }));
-  const fragment = routeHash.startsWith('#') ? routeHash : '';
-  return {
-    objectUrl,
-    src: `${objectUrl}${fragment}`,
-  };
-}
+// Static Entity Wiki previews render through `srcdoc`, not blob URLs: WebKit's
+// CSP source-expression matching rejects `blob:` URLs for `frame-src`, so a
+// blob-URL frame is blocked (blank) in Safari/WebKit under the app CSP while
+// Chromium renders it. `srcdoc` frames are not frame-src-gated, stay scriptless
+// and opaque via the sandbox attribute, and inherit the app CSP.
