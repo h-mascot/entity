@@ -258,6 +258,15 @@ function joinPath(parent: string, leaf: string): string {
   return p ? `${p}/${l}` : l;
 }
 
+/**
+ * Sources the tree may search: enabled and with a connector implemented in
+ * this build. Search auto-expansion and per-source search dispatch both use
+ * this so unavailable connectors are never expanded or queried.
+ */
+export function sourcesEligibleForSearch(sources: FileSource[]): FileSource[] {
+  return sources.filter((source) => source.enabled && sourceIsAvailableInBuild(source));
+}
+
 export default function SourceFileTree({
   apiBase = '',
   selectedSourceId,
@@ -736,7 +745,7 @@ export default function SourceFileTree({
 
   useEffect(() => {
     const timers: number[] = [];
-    for (const source of enabledSources) {
+    for (const source of sourcesEligibleForSearch(enabledSources)) {
       const query = searchQueryBySource[source.id] ?? '';
       const timer = window.setTimeout(() => {
         void runSearch(source.id, query);
@@ -906,9 +915,9 @@ export default function SourceFileTree({
               for (const s of enabledSources) { next[s.id] = val; }
               return next;
             });
-            // Auto-expand all sources when typing
+            // Auto-expand only sources this build can actually search.
             if (val.trim()) {
-              setExpandedSources(new Set(enabledSources.map((s) => s.id)));
+              setExpandedSources(new Set(sourcesEligibleForSearch(enabledSources).map((s) => s.id)));
             }
           }}
           placeholder="Search files and folders"

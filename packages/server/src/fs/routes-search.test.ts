@@ -442,6 +442,114 @@ describe('file-source search routes', () => {
     });
   });
 
+  it('excludes unimplemented connectors from indexed search results', async () => {
+    const githubSource = source({
+      id: 'github-upstream',
+      display_name: 'GitHub upstream',
+      type: 'github',
+      base_path: null,
+      base_url: 'https://github.com/example/example',
+    });
+    const workspaceSource = source();
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [githubSource, workspaceSource]),
+        getSource: vi.fn((id: string) =>
+          id === githubSource.id ? githubSource : id === workspaceSource.id ? workspaceSource : undefined
+        ),
+      },
+      indexRepo: {
+        // Stale rows from a source whose connector is not implemented in this
+        // build must never surface as actionable search results.
+        search: vi.fn(() => [
+          indexRecord({
+            id: 'github-upstream:legacy/upstream-plan.md',
+            source_id: githubSource.id,
+            path: 'legacy/upstream-plan.md',
+            title: 'Legacy upstream plan',
+          }),
+          indexRecord(),
+        ]),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=renewal`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.indexed).toBe(true);
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0].sourceId).toBe('workspace');
+      expect(JSON.stringify(body)).not.toContain('github-upstream');
+      expect(JSON.stringify(body)).not.toContain('Legacy upstream plan');
+    });
+  });
+
+  it('never dispatches fallback search to unimplemented connectors', async () => {
+    const githubSource = source({
+      id: 'github-upstream',
+      display_name: 'GitHub upstream',
+      type: 'github',
+      base_path: null,
+      base_url: 'https://github.com/example/example',
+    });
+    const workspaceSource = source();
+    const adapter: FileSourceAdapter = {
+      key: 'fake',
+      validate: vi.fn(async () => undefined),
+      capabilities: vi.fn(() => ({ read: true, write: false, rename: false, delete: false, list: true, search: false })),
+      list: vi.fn(async () => [
+        { sourceId: workspaceSource.id, path: 'plans/renewal.md', name: 'renewal.md', isDirectory: false, kind: 'file' as const, updatedAt: '2026-06-24T02:00:00.000Z' },
+      ]),
+      read: vi.fn(async () => ({ content: '', contentType: 'text/markdown' })),
+      write: vi.fn(async () => ({})),
+      mkdir: vi.fn(async () => undefined),
+    };
+    const deps: SearchRouteDeps = {
+      sourceRepo: {
+        listSources: vi.fn(() => [githubSource, workspaceSource]),
+        getSource: vi.fn((id: string) =>
+          id === githubSource.id ? githubSource : id === workspaceSource.id ? workspaceSource : undefined
+        ),
+      },
+      indexRepo: {
+        search: vi.fn(() => []),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+      createAdapter: vi.fn((candidate: FileSourceRecord) => {
+        if (candidate.id === githubSource.id) {
+          throw new Error('fallback search must not create an adapter for an unimplemented connector');
+        }
+        return adapter;
+      }),
+    };
+
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/fs/search?q=renewal&indexState=fallback`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+
+      expect(body.indexed).toBe(false);
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0]).toMatchObject({
+        id: 'workspace:plans/renewal.md',
+        sourceId: 'workspace',
+      });
+      expect(deps.createAdapter).not.toHaveBeenCalledWith(githubSource);
+      expect(deps.createAdapter).toHaveBeenCalledWith(workspaceSource);
+
+      // An explicit sourceId pointed at an unavailable source yields no
+      // results and no dispatch either.
+      const scoped = await fetch(`${baseUrl}/api/fs/search?q=renewal&sourceId=${githubSource.id}&indexState=fallback`);
+      expect(scoped.status).toBe(200);
+      const scopedBody = await scoped.json() as any;
+      expect(scopedBody.results).toHaveLength(0);
+      expect(deps.createAdapter).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('rejects invalid connector/index filters before searching', async () => {
     const deps: SearchRouteDeps = {
       sourceRepo: { listSources: vi.fn(() => []), getSource: vi.fn(() => undefined) },

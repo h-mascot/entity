@@ -37,9 +37,21 @@ Evidence:
 
 Known accepted delta for review: a top-level fragment no longer auto-scrolls a freshly opened preview; in-frame anchor links still work. Luna-high must independently decide whether this is acceptable.
 
-### GQR-002: Truthful unavailable File Sources — COMPLETE
+### GQR-002: Truthful unavailable File Sources — COMPLETE (repaired after Luna CHANGES_REQUESTED)
 
 Depends on: GQR-001
+
+Luna-high review of `8c5f702` returned CHANGES_REQUESTED with three actionable findings. Bounded repair (single save-point atop `8c5f702`, strict RED→GREEN per finding):
+
+- [x] Sync truthfulness: failing server test first (`POST /api/sources/:id/sync` on unimplemented connector expected typed 501, observed 200 envelope); route now rejects unimplemented connectors with typed 501 `{error, code: CONNECTOR_NOT_IMPLEMENTED, connectorType}` before dispatch/indexing; supported sources keep the normal envelope; diagnostic `/test` 200/error preserved.
+- [x] Failing UI test first (`FileSourcesSettings.test.ts`, new); Admin `Sync now` extracted as exported `SourceSyncButton` and disabled for unavailable sources (busy/disabled/unavailable), supported sources stay actionable.
+- [x] Availability fail closed: failing regression for `{ type: 'github', implemented: true }` first; `sourceIsAvailableInBuild` now requires local build support AND `implemented !== false` — server metadata can only veto, never enable.
+- [x] Search exclusion: failing server regressions first; `routes-search` filters unimplemented connectors from indexed results (stale rows can't surface) and never creates adapters/dispatches fallback listing for them (explicit `sourceId` on unavailable → empty, no dispatch). Supported connector search preserved.
+- [x] Failing app regression first; `SourceFileTree` exports `sourcesEligibleForSearch` (enabled + available) used by search auto-expansion and per-source search dispatch, so unavailable sources are never expanded or queried.
+
+Repair evidence: `receipts/gqr002-repair-sync-server-RED.log` (+GREEN), `gqr002-repair-sync-app-RED.log` (+GREEN), `gqr002-repair-availability-RED.log` (+GREEN), `gqr002-repair-search-server-RED.log` (+GREEN), `gqr002-repair-search-app-RED.log` (+GREEN), focused `gqr002-repair-server-focused-GREEN.log` (45/45) + `gqr002-repair-app-focused-GREEN.log` (15/15), full `gqr002-repair-server-full-GREEN.log` (2592/2592, isolated reruns after one concurrent-load flake), `gqr002-repair-app-full-GREEN.log` (537/537), live API `gqr002-repair-live-api.log`, browser `receipts/GQR-002-repair-evidence/browser/` (8/8 PASS: search never dispatches to unavailable source; supported search returns results; unavailable not auto-expanded; Sync now disabled + forced click dispatches nothing; supported Sync stays enabled). App/server builds clean under Node 22.22.3. Worker receipt: `receipts/GQR-002-repair-worker-summary.json`.
+
+Original GQR-002 evidence:
 
 - [x] Add failing server tests for typed `CONNECTOR_NOT_IMPLEMENTED` and non-500 mapping.
 - [x] Add failing app tests proving unavailable sources are not expandable/actionable.
@@ -135,6 +147,8 @@ Real Google/Microsoft live writes require approved isolated synthetic tenants, d
 Update as work proceeds.
 
 - GQR-002: `packages/server/src/fs/errors.ts`, `packages/server/src/fs/adapters/registry.ts` (+ `registry.test.ts`), `packages/server/src/fs/routes-files.ts` (+ test), `packages/server/src/fs/routes-sources.ts` (+ test), `packages/app/src/types/filesystem.ts`, `packages/app/src/lib/sourceAvailability.ts` (+ test), `packages/app/src/components/SourceUnavailableBadge.tsx` (new), `packages/app/src/components/SourceFileTree.tsx` (+ test), `packages/app/src/components/settings/FileSourcesSettings.tsx`, `packages/app/scripts/gqr002-file-sources-ui-proof.mjs` (new)
+
+- GQR-002 repair: `packages/server/src/fs/routes-sources.ts` (+test), `packages/server/src/fs/routes-search.ts` (+test), `packages/app/src/lib/sourceAvailability.ts` (+test), `packages/app/src/components/settings/FileSourcesSettings.tsx` (+ `FileSourcesSettings.test.ts` new), `packages/app/src/components/SourceFileTree.tsx` (+test), `packages/app/scripts/gqr002-repair-ui-proof.mjs` (new)
 
 ## Resume
 

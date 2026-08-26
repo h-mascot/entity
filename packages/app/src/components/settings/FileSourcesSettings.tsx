@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { toErrorMessage } from '../../lib/http.ts';
-import { sourceIsAvailableInBuild, sourceTypeIsAvailableInBuild } from '../../lib/sourceAvailability.ts';
+import { sourceIsAvailableInBuild, sourceTypeIsAvailableInBuild, SOURCE_UNAVAILABLE_NOTICE } from '../../lib/sourceAvailability.ts';
 import { useFileSources } from '../../hooks/useFileSources.ts';
 import type { FileSource } from '../../types/filesystem.ts';
 import SourceUnavailableBadge from '../SourceUnavailableBadge.tsx';
@@ -64,6 +64,38 @@ function formatSyncedAt(value: string | null): string {
   }
 
   return `Synced ${parsed.toLocaleString()}`;
+}
+
+interface SourceSyncButtonProps {
+  source: Pick<FileSource, 'enabled' | 'type' | 'implemented'>;
+  busy: boolean;
+  onSync: () => void;
+}
+
+/**
+ * Admin Sync action. Connectors without an implementation in this build can
+ * never index, so the action stays visibly labeled but disabled — Admin
+ * cannot dispatch a sync run that cannot succeed.
+ */
+export function SourceSyncButton({ source, busy, onSync }: SourceSyncButtonProps) {
+  const unavailable = !sourceIsAvailableInBuild(source);
+  const disabled = busy || !source.enabled || unavailable;
+  const title = unavailable
+    ? SOURCE_UNAVAILABLE_NOTICE
+    : source.enabled
+      ? 'Run an index sync now'
+      : 'Enable the source to sync';
+  return (
+    <button
+      type="button"
+      onClick={onSync}
+      disabled={disabled}
+      title={title}
+      className="mc-shell-btn px-2 py-1 text-[10px]"
+    >
+      Sync now
+    </button>
+  );
 }
 
 export default function FileSourcesSettings({ apiBase = '', enabled = true }: FileSourcesSettingsProps) {
@@ -358,15 +390,11 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
                 >
                   Test
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void handleSync(source)}
-                  disabled={busyId === source.id || !source.enabled}
-                  title={source.enabled ? 'Run an index sync now' : 'Enable the source to sync'}
-                  className="mc-shell-btn px-2 py-1 text-[10px]"
-                >
-                  Sync now
-                </button>
+                <SourceSyncButton
+                  source={source}
+                  busy={busyId === source.id}
+                  onSync={() => void handleSync(source)}
+                />
                 <button
                   type="button"
                   onClick={() => void handleEdit(source)}

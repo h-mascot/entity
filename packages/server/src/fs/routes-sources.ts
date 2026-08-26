@@ -456,6 +456,18 @@ export function registerSourceRoutes(app: Express): void {
         return res.status(403).json({ error: 'source is disabled.' });
       }
 
+      // Typed refusal before any dispatch/indexing: unimplemented connectors
+      // cannot sync, so the runner must never start a run for them.
+      if (!isFileSourceTypeImplemented(source.type)) {
+        const notImplemented = new ConnectorNotImplementedError(source.type);
+        recordFsOperation({ operation: 'sources.sync', sourceId: source.id, success: false, error: notImplemented.message });
+        return res.status(501).json({
+          error: notImplemented.message,
+          code: notImplemented.code,
+          connectorType: notImplemented.connectorType,
+        });
+      }
+
       const startedAt = Date.now();
       await runner.runOnceForSource(source.id);
       const durationMs = Date.now() - startedAt;

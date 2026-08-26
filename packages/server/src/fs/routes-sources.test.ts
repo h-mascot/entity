@@ -273,6 +273,75 @@ describe("placeholder source connectors", () => {
     });
   });
 
+  it("rejects sync for unimplemented connectors with a typed 501 before dispatch", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const dbRoot = await makeTempRoot();
+    process.env.WORKSPACE = workspaceRoot;
+    process.env.ENTITY_TASK_DB_PATH = path.join(dbRoot, "entity.sqlite");
+
+    await withSourceServer(async (baseUrl) => {
+      const createdGithub = await fetch(`${baseUrl}/api/sources`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: "GitHub upstream",
+          type: "github",
+          baseUrl: "https://github.com/example/example",
+        }),
+      });
+      expect(createdGithub.status).toBe(201);
+      const github = (await createdGithub.json()) as { id: string };
+
+      const createdLocal = await fetch(`${baseUrl}/api/sources`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: "Workspace docs",
+          type: "local",
+          basePath: workspaceRoot,
+        }),
+      });
+      expect(createdLocal.status).toBe(201);
+      const local = (await createdLocal.json()) as { id: string };
+
+      // Unimplemented connectors must be refused up front with the typed 501,
+      // never a generic 500 and never the normal sync envelope.
+      const syncedGithub = await fetch(`${baseUrl}/api/sources/${github.id}/sync`, { method: "POST" });
+      expect(syncedGithub.status).toBe(501);
+      const githubBody = (await syncedGithub.json()) as {
+        error: string;
+        code?: string;
+        connectorType?: string;
+        latestSyncRun?: unknown;
+        status?: unknown;
+      };
+      expect(githubBody).toMatchObject({
+        code: "CONNECTOR_NOT_IMPLEMENTED",
+        connectorType: "github",
+      });
+      expect(githubBody.error).toContain("not implemented");
+      expect(githubBody.latestSyncRun).toBeUndefined();
+      expect(githubBody.status).toBeUndefined();
+
+      // Supported connectors keep the normal sync envelope.
+      const syncedLocal = await fetch(`${baseUrl}/api/sources/${local.id}/sync`, { method: "POST" });
+      expect(syncedLocal.status).toBe(200);
+      const localBody = (await syncedLocal.json()) as { sourceId: string; status: string; latestSyncRun: { status: string } | null };
+      expect(localBody.sourceId).toBe(local.id);
+      expect(localBody.latestSyncRun?.status).toBe("ok");
+
+      // Diagnostic /test keeps its fail-closed 200/error envelope.
+      const tested = await fetch(`${baseUrl}/api/sources/${github.id}/test`, { method: "POST" });
+      expect(tested.status).toBe(200);
+      const testBody = (await tested.json()) as { status: string; code?: string };
+      expect(testBody.status).toBe("error");
+      expect(testBody.code).toBe("CONNECTOR_NOT_IMPLEMENTED");
+
+      await fetch(`${baseUrl}/api/sources/${github.id}`, { method: "DELETE" });
+      await fetch(`${baseUrl}/api/sources/${local.id}`, { method: "DELETE" });
+    });
+  });
+
   it("fails the connection test closed for unimplemented adapters instead of reporting healthy", async () => {
     const dbRoot = await makeTempRoot();
     process.env.ENTITY_TASK_DB_PATH = path.join(dbRoot, "test.db");

@@ -145,3 +145,39 @@ test('Add Source labels unsupported connector types as coming soon and keeps the
     assert.ok(!/\bdisabled\b/.test(tag), `the supported ${type} option must stay selectable: ${tag}`);
   }
 });
+
+test('search only targets sources with an implemented connector in this build', async () => {
+  const mod = (await import('./SourceFileTree.tsx')) as unknown as {
+    sourcesEligibleForSearch?: (sources: FileSource[]) => FileSource[];
+  };
+  assert.ok(
+    mod.sourcesEligibleForSearch,
+    'SourceFileTree must export sourcesEligibleForSearch so search expansion/dispatch skips unavailable connectors'
+  );
+
+  const enabledGithub = {
+    ...baseSource,
+    displayName: 'GitHub upstream',
+    type: 'github',
+  } as unknown as FileSource;
+  const enabledS3 = {
+    ...baseSource,
+    id: 'source-3',
+    displayName: 'S3 archive',
+    type: 's3',
+  } as unknown as FileSource;
+  const disabledLocal: FileSource = {
+    ...baseSource,
+    id: 'source-4',
+    displayName: 'Archived docs',
+    type: 'local',
+    enabled: false,
+  };
+
+  const eligible = mod.sourcesEligibleForSearch([localSource, enabledGithub, enabledS3, disabledLocal]);
+  assert.deepEqual(
+    eligible.map((source) => source.id),
+    ['source-2'],
+    `expected only the enabled available source to stay searchable, got: ${eligible.map((s) => s.id).join(', ')}`
+  );
+});

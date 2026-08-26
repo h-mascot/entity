@@ -15,13 +15,11 @@ export function sourceTypeIsAvailableInBuild(type: FileSource['type']): boolean 
 }
 
 /**
- * Truthful build availability for a configured source. The server-reported
- * `implemented` flag wins when present; otherwise fall back to the build's
- * known connector list.
+ * Truthful build availability for a configured source. Fail closed: the
+ * connector type must be implemented in this local build, and the
+ * server-reported `implemented` flag can only veto (`false`), never
+ * positively enable a type this build cannot serve.
  */
 export function sourceIsAvailableInBuild(source: Pick<FileSource, 'type' | 'implemented'>): boolean {
-  if (typeof source.implemented === 'boolean') {
-    return source.implemented;
-  }
-  return sourceTypeIsAvailableInBuild(source.type);
+  return sourceTypeIsAvailableInBuild(source.type) && source.implemented !== false;
 }
