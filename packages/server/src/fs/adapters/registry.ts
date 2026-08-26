@@ -73,6 +73,15 @@ const factories: Record<FileSourceType, AdapterFactory> = {
   local: (source) => new LocalFileSourceAdapter(source),
   docsify: (source) => new DocsifyFileSourceAdapter(source),
   'http-markdown': (source) => new HttpMarkdownFileSourceAdapter(source),
+  // GQR-005 boundary: complete synthetic connector contracts exist for github
+  // (github.ts + github-client.ts) and s3 (s3.ts + s3-client.ts) over
+  // injectable clients, but no live client implementation ships in this
+  // build and no repository authority requires one yet (see
+  // docs/FilesystemBuild/MC-FILE-SYSTEM-IMPROVEMENT.md: connector expansion;
+  // docs/context/entity-phase-2-integration-boundary-inventory.md: placeholder
+  // adapters). Until authority approves a networked client, these types keep
+  // the truthful fail-closed placeholder: configuration is saved, operations
+  // and connectivity checks stay unavailable (501 CONNECTOR_NOT_IMPLEMENTED).
   github: (source) => new PlaceholderAdapter('github', source),
   s3: (source) => new PlaceholderAdapter('s3', source),
   custom: (source) => new PlaceholderAdapter('custom', source),

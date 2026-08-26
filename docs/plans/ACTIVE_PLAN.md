@@ -134,15 +134,17 @@ Evidence (Node 22.22.3, `receipts/`): RED `gqr004-bootstrap-RED.log`, `gqr004-ad
 
 Depends on: GQR-002, GQR-004
 
-- [ ] Introduce injectable clients and shared adapter contract tests.
-- [ ] GitHub: tree/read, pagination, path bounds, bearer redaction, typed auth/rate/5xx behavior, cache policy.
-- [ ] S3: URI parsing, ListObjectsV2 pagination, bounded GetObject, traversal rejection, ETag/version normalization, typed auth/not-found/throttle behavior.
-- [ ] Decide from source authority whether live connectors ship now or remain truthful Coming soon. If no authority exists, stop at complete synthetic contracts and surface the exact product decision.
+- [x] Introduce injectable clients and shared adapter contract tests. (`adapter-contract.ts` harness: capabilities truthfulness, root/subtree path bounds, traversal rejection, exact known-file reads, unknown-file rejection, read-only enforcement, secret-redaction scanning; self-test proves every violation class.)
+- [x] GitHub: tree/read, pagination, path bounds, bearer redaction, typed auth/rate/5xx behavior, cache policy. (`github.ts` + `github-client.ts` over injectable `GitHubClient`: paged tree walks with typed pagination guard, subtree scoping, defense-in-depth bearer redaction, canonical `githubErrorFromStatus` auth/rate/5xx/404 mapping, bounded reads, explicit opt-in memory cache policy — default none.)
+- [x] S3: URI parsing, ListObjectsV2 pagination, bounded GetObject, traversal rejection, ETag/version normalization, typed auth/not-found/throttle behavior. (`s3.ts` + `s3-client.ts` over injectable `S3Client`: `s3://` prefix normalization, continuation-token pagination with typed guard and out-of-scope key filtering, bounded GetObject via shared limiter, ETag/version-id normalization, canonical `interpretS3Response` auth/not-found/throttle mapping from status + XML `<Code>`.)
+- [x] Decide from source authority whether live connectors ship now or remain truthful Coming soon. Decision: **remain Coming soon.** No repository authority requires live connectors (MC-FILE-SYSTEM-IMPROVEMENT.md lists "GitHub/S3 connectors beyond basic stubs" as deferred connector expansion; entity-phase-2-integration-boundary-inventory.md records them as placeholder adapters). Boundary recorded in `registry.ts`: complete synthetic contracts exist (`github.ts`, `s3.ts` + injectable clients), no networked client ships, registry keeps the fail-closed 501 `CONNECTOR_NOT_IMPLEMENTED` placeholder, and the UI keeps the truthful "Not available in this build" badge. Shipping a live client later requires: a real transport implementation behind the existing client interfaces, credential handling authority, and re-review of the GQR-002 truthful-availability contract.
 
 Verify:
-- deterministic fake client suites
-- no credentials or live network
-- unavailable/ready UI truthfulness
+- [x] deterministic fake client suites (github.contract 27/27, s3.contract 24/24, adapter-contract 11/11; fakes only — zero live network)
+- [x] no credentials or live network (synthetic tokens exist only as test literals; redaction proven; no fetch/network code shipped in client modules)
+- [x] unavailable/ready UI truthfulness (registry placeholders unchanged; registry.test.ts + GQR-002 app availability suites still green — no app changes needed)
+
+Commits: `ae41ced` (contract harness), `46f6276` (GitHub), `c34222f` (S3). Evidence in `receipts/gqr005-*`.
 
 ### GQR-006: QA harness correction and final closure
 
@@ -183,6 +185,7 @@ Update as work proceeds.
 - GQR-002: `packages/server/src/fs/errors.ts`, `packages/server/src/fs/adapters/registry.ts` (+ `registry.test.ts`), `packages/server/src/fs/routes-files.ts` (+ test), `packages/server/src/fs/routes-sources.ts` (+ test), `packages/app/src/types/filesystem.ts`, `packages/app/src/lib/sourceAvailability.ts` (+ test), `packages/app/src/components/SourceUnavailableBadge.tsx` (new), `packages/app/src/components/SourceFileTree.tsx` (+ test), `packages/app/src/components/settings/FileSourcesSettings.tsx`, `packages/app/scripts/gqr002-file-sources-ui-proof.mjs` (new)
 
 - GQR-002 repair: `packages/server/src/fs/routes-sources.ts` (+test), `packages/server/src/fs/routes-search.ts` (+test), `packages/app/src/lib/sourceAvailability.ts` (+test), `packages/app/src/components/settings/FileSourcesSettings.tsx` (+ `FileSourcesSettings.test.ts` new), `packages/app/src/components/SourceFileTree.tsx` (+test), `packages/app/scripts/gqr002-repair-ui-proof.mjs` (new)
+- GQR-005: `packages/server/src/fs/adapters/adapter-contract.ts` (+ `adapter-contract.test.ts`), `packages/server/src/fs/adapters/github-client.ts`, `packages/server/src/fs/adapters/github.ts` (+ `github.contract.test.ts`), `packages/server/src/fs/adapters/s3-client.ts`, `packages/server/src/fs/adapters/s3.ts` (+ `s3.contract.test.ts`), `packages/server/src/fs/adapters/types.ts` (additive optional etag/versionId), `packages/server/src/fs/adapters/registry.ts` (boundary comment only; placeholder behavior unchanged)
 
 ## Resume
 
