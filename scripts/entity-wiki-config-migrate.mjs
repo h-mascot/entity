@@ -90,8 +90,16 @@ async function ensurePresentationLink(configPath, presentationPath) {
       throw new Error(`refusing to replace non-symlink presentation path: ${linkPath}`);
     }
     const currentTarget = await readlink(linkPath);
-    const resolvedTarget = path.resolve(path.dirname(linkPath), currentTarget);
-    if (resolvedTarget !== resolvedPresentation) {
+    const linkDirectory = path.dirname(linkPath);
+    const resolvedTarget = path.resolve(linkDirectory, currentTarget);
+    const presentationRelative = path.relative(linkDirectory, resolvedPresentation).split(path.sep);
+    const managedCurrentAlias =
+      path.normalize(currentTarget) === path.join("current", "openwiki-html") &&
+      presentationRelative.length === 3 &&
+      presentationRelative[0] === "releases" &&
+      /^[0-9a-f]{40}$/.test(presentationRelative[1]) &&
+      presentationRelative[2] === "openwiki-html";
+    if (resolvedTarget !== resolvedPresentation && !managedCurrentAlias) {
       throw new Error(`refusing to replace custom presentation symlink: ${linkPath}`);
     }
     return linkPath;
