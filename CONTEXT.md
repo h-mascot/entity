@@ -126,13 +126,13 @@ Common commands:
 npm install
 npm --prefix packages/app run build
 cd packages/server && npm run build
-cd packages/server && npx vitest run
+npm run test:server
 ```
 
 After editing `packages/server/`, follow the repo rule:
 - add/update colocated Vitest coverage where practical
-- run `cd packages/server && npx vitest run`
-- before commit or deploy, run `cd packages/server && npm run build && npx vitest run`
+- run `npm run test:server` (root; it builds the generated managed-storage broker outputs before the Vitest suite)
+- before commit or deploy, run `cd packages/server && npm run build && npm run test:server`
 
 ## Durable Sharp Edges
 

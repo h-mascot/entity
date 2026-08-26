@@ -67,20 +67,32 @@ Verify:
 
 Evidence: `receipts/gqr002-server-RED.log` (15 expected failures), `receipts/gqr002-app-RED.log` (6 expected failures + caret addendum), `receipts/gqr002-server-GREEN.log`, `receipts/gqr002-app-GREEN.log`, `receipts/gqr002-live-api.log` (typed 501s against a live local server), `receipts/GQR-002-evidence/browser/` (15/15 Chromium checks PASS: tree badge/disabled/no-request/neutral caret; Admin coming-soon options; badge; fail-closed Test diagnostics). Full suites: app 532/532, server 2589/2589; app+server builds clean under Node 22.22.3. Known behavior change: writes on unimplemented connectors now return typed 501 instead of the misleading 403 `Source is read-only.` (existing expectation updated in `routes-files.test.ts`).
 
-### GQR-003: Supported server-test entry point and broker startup race
+### GQR-003: Supported server-test entry point and broker startup race — COMPLETE (single scoped commit atop `6e1f175`)
 
 Depends on: GQR-002
 
-- [ ] Add failing entry-point ordering regression from absent generated broker outputs.
-- [ ] Add supported root `test:server` command that builds before server tests; wire Geordi/CI docs to use it.
-- [ ] Add repeated missing-root startup regression where typed `not_found` must beat stdin EPIPE.
-- [ ] Fix the client race without weakening fail-closed behavior.
+- [x] Add failing entry-point ordering regression from absent generated broker outputs.
+- [x] Add supported root `test:server` command that builds before server tests; wire Geordi/CI docs to use it.
+- [x] Add repeated missing-root startup regression where typed `not_found` must beat stdin EPIPE.
+- [x] Fix the client race without weakening fail-closed behavior.
 
 Verify:
-- smallest red loop then green
-- `npm run test:server`
-- release packaging/build tests
-- broker absent still fails closed in real release verification
+- [x] smallest red loop then green
+- [x] `npm run test:server`
+- [x] release packaging/build tests
+- [x] broker absent still fails closed in real release verification
+
+Evidence (all under Node 22.22.3, `receipts/`):
+- Race reproduced before fix: `gqr003-race-probe-RED.log` — 200 repeated missing-root startups → 47 typed `not_found`, 127 `closed`, 19 `exited`, 7 stdin EPIPE `input failed` (canonical outcome won only 24%).
+- Entry point RED: `gqr003-entrypoint-RED.log` (no supported `test:server`; direct server tests fail from absent broker outputs) → GREEN `gqr003-entrypoint-GREEN.log` (4/4).
+- Broker race RED: `gqr003-broker-race-RED.log` (3 new regressions fail: EPIPE beat typed answer; post-death request `input failed`; repeated startup `closed`) → GREEN `gqr003-broker-race-GREEN.log` (20/20).
+- Determinism: `gqr003-broker-race-repeated-GREEN.log` (10 consecutive full-file runs, 20/20 each) and `gqr003-race-probe-GREEN.log` (200/200 repeated missing-root startups all typed `not_found`).
+- Focused neighbors: `gqr003-focused-neighbors-GREEN.log` (broker client + local adapter + integration, 35/35).
+- Root entry point from absent outputs: `gqr003-root-test-server-full-GREEN.log` (2595/2595, exit 0, broker rebuilt by the script itself).
+- Release gates: `gqr003-release-deploy-GREEN.log` (133/133 incl. new entry-point suite, wiring/transaction fail-closed, deploy live-verify fail-closed); `gqr003-server-build-GREEN.log` (tsc clean).
+- Hygiene: `gqr003-git-diff-check.log` (clean), `gqr003-git-status-final.log`; worker receipt `GQR-003-worker-summary.json`.
+
+Implementation notes: `test:server` = `node scripts/build-managed-storage-broker.mjs && npm --prefix packages/server run test` (explicit prerequisite ordering; `--` filters forward to vitest). Client arbitration defers stdin-EPIPE/exit pending-rejections one macrotask so the broker's buffered typed response wins, records unsolicited protocol error lines as the terminal typed diagnostic (missing-root startup), and maps post-death request rejections to it; spawn failures, closed rejections, and absent-broker behavior stay fail-closed.
 
 ### GQR-004: Provider runtime composition and administration
 
@@ -145,6 +157,8 @@ Real Google/Microsoft live writes require approved isolated synthetic tenants, d
 ## Files touched
 
 Update as work proceeds.
+
+- GQR-003: `package.json` (root `test:server` + `test:release-deploy` wiring), `scripts/entity-test-server-entrypoint.test.mjs` (new), `packages/server/src/fs/managed-storage-broker.ts` (+ `managed-storage-broker.test.ts`), `AGENTS.md`, `CONTEXT.md`, `docs/plans/ACTIVE_PLAN.md`
 
 - GQR-002: `packages/server/src/fs/errors.ts`, `packages/server/src/fs/adapters/registry.ts` (+ `registry.test.ts`), `packages/server/src/fs/routes-files.ts` (+ test), `packages/server/src/fs/routes-sources.ts` (+ test), `packages/app/src/types/filesystem.ts`, `packages/app/src/lib/sourceAvailability.ts` (+ test), `packages/app/src/components/SourceUnavailableBadge.tsx` (new), `packages/app/src/components/SourceFileTree.tsx` (+ test), `packages/app/src/components/settings/FileSourcesSettings.tsx`, `packages/app/scripts/gqr002-file-sources-ui-proof.mjs` (new)
 
