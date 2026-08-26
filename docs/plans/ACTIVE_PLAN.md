@@ -18,9 +18,9 @@
 - [x] Step 3: Fix descriptor preservation/close propagation and strengthen token fail-closed coverage.
   - **Files:** same source/test files
   - **Verify:** focused native tests pass.
-- [ ] Step 4: Run required serial proof suite under Node 22.
+- [x] Step 4: Run required serial proof suite under Node 22.
   - **Verify:** focused tests, release-deploy, build, ctrl:gate.
-- [ ] Step 5: Refresh/commit OpenWiki generated output and run docs/private-default/diff checks.
+- [x] Step 5: Refresh/commit OpenWiki generated output and run docs/private-default/diff checks.
   - **Verify:** docs fingerprint, wiki HTML, scan, diff check, clean status.
 
 ## Files Touched
