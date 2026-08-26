@@ -21,3 +21,24 @@ export class SourceTextUnsupportedError extends Error {
     this.name = 'SourceTextUnsupportedError';
   }
 }
+
+export const CONNECTOR_NOT_IMPLEMENTED = 'CONNECTOR_NOT_IMPLEMENTED';
+
+/**
+ * Thrown by placeholder adapters (github/s3/custom) whose connector has no
+ * implementation in this build. Routes must map this to a typed 501 response
+ * instead of a generic 500 so clients can show truthful unavailability.
+ */
+export class ConnectorNotImplementedError extends Error {
+  readonly code: string = CONNECTOR_NOT_IMPLEMENTED;
+  readonly connectorType: string;
+
+  constructor(connectorType: string, message?: string) {
+    super(
+      message ??
+        `${connectorType} sources are not implemented in this build. Configuration is saved, but file operations and connectivity checks stay unavailable until the ${connectorType} adapter ships.`
+    );
+    this.name = 'ConnectorNotImplementedError';
+    this.connectorType = connectorType;
+  }
+}

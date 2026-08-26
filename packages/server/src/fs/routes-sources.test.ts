@@ -220,6 +220,59 @@ describe('source registration routes', () => {
 });
 
 describe("placeholder source connectors", () => {
+  it("labels placeholder connectors as not implemented in listings and typed test diagnostics", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const dbRoot = await makeTempRoot();
+    process.env.WORKSPACE = workspaceRoot;
+    process.env.ENTITY_TASK_DB_PATH = path.join(dbRoot, "entity.sqlite");
+
+    await withSourceServer(async (baseUrl) => {
+      const createdGithub = await fetch(`${baseUrl}/api/sources`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: "GitHub upstream",
+          type: "github",
+          baseUrl: "https://github.com/example/example",
+        }),
+      });
+      expect(createdGithub.status).toBe(201);
+      const github = (await createdGithub.json()) as { id: string; implemented?: boolean };
+      expect(github.implemented).toBe(false);
+
+      const createdLocal = await fetch(`${baseUrl}/api/sources`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: "Workspace docs",
+          type: "local",
+          basePath: workspaceRoot,
+        }),
+      });
+      expect(createdLocal.status).toBe(201);
+      const local = (await createdLocal.json()) as { id: string; implemented?: boolean };
+      expect(local.implemented).toBe(true);
+
+      const listed = await fetch(`${baseUrl}/api/sources?includeDisabled=true`);
+      const payload = (await listed.json()) as { sources: Array<{ id: string; implemented?: boolean }> };
+      const listedGithub = payload.sources.find((item) => item.id === github.id);
+      const listedLocal = payload.sources.find((item) => item.id === local.id);
+      expect(listedGithub?.implemented).toBe(false);
+      expect(listedLocal?.implemented).toBe(true);
+
+      const tested = await fetch(`${baseUrl}/api/sources/${github.id}/test`, { method: "POST" });
+      expect(tested.status).toBe(200);
+      const result = (await tested.json()) as { status: string; message: string; code?: string; connectorType?: string };
+      expect(result.status).toBe("error");
+      expect(result.message).toContain("not implemented");
+      expect(result.code).toBe("CONNECTOR_NOT_IMPLEMENTED");
+      expect(result.connectorType).toBe("github");
+
+      await fetch(`${baseUrl}/api/sources/${github.id}`, { method: "DELETE" });
+      await fetch(`${baseUrl}/api/sources/${local.id}`, { method: "DELETE" });
+    });
+  });
+
   it("fails the connection test closed for unimplemented adapters instead of reporting healthy", async () => {
     const dbRoot = await makeTempRoot();
     process.env.ENTITY_TASK_DB_PATH = path.join(dbRoot, "test.db");

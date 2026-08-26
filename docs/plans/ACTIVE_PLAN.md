@@ -37,21 +37,23 @@ Evidence:
 
 Known accepted delta for review: a top-level fragment no longer auto-scrolls a freshly opened preview; in-frame anchor links still work. Luna-high must independently decide whether this is acceptable.
 
-### GQR-002: Truthful unavailable File Sources
+### GQR-002: Truthful unavailable File Sources — COMPLETE
 
 Depends on: GQR-001
 
-- [ ] Add failing server tests for typed `CONNECTOR_NOT_IMPLEMENTED` and non-500 mapping.
-- [ ] Add failing app tests proving unavailable sources are not expandable/actionable.
-- [ ] Set placeholder capabilities false.
-- [ ] Return typed 501 or typed 503, never generic 500.
-- [ ] Show `Not available in this build`; preserve Admin diagnostics.
-- [ ] Hide unsupported source types from Add Source or label Coming soon.
+- [x] Add failing server tests for typed `CONNECTOR_NOT_IMPLEMENTED` and non-500 mapping.
+- [x] Add failing app tests proving unavailable sources are not expandable/actionable.
+- [x] Set placeholder capabilities false.
+- [x] Return typed 501 or typed 503, never generic 500.
+- [x] Show `Not available in this build`; preserve Admin diagnostics.
+- [x] Hide unsupported source types from Add Source or label Coming soon.
 
 Verify:
-- FS adapter/route/hook/tree/settings focused tests
-- 401/403 cache protections remain green
-- live sandbox Files proof after deployment
+- [x] FS adapter/route/hook/tree/settings focused tests (server 35/35 focused, app focused green)
+- [x] 401/403 cache protections remain green (useFileSources + fileCacheFallback)
+- [ ] live sandbox Files proof after deployment (deferred to deploy phase; local browser proof captured)
+
+Evidence: `receipts/gqr002-server-RED.log` (15 expected failures), `receipts/gqr002-app-RED.log` (6 expected failures + caret addendum), `receipts/gqr002-server-GREEN.log`, `receipts/gqr002-app-GREEN.log`, `receipts/gqr002-live-api.log` (typed 501s against a live local server), `receipts/GQR-002-evidence/browser/` (15/15 Chromium checks PASS: tree badge/disabled/no-request/neutral caret; Admin coming-soon options; badge; fail-closed Test diagnostics). Full suites: app 532/532, server 2589/2589; app+server builds clean under Node 22.22.3. Known behavior change: writes on unimplemented connectors now return typed 501 instead of the misleading 403 `Source is read-only.` (existing expectation updated in `routes-files.test.ts`).
 
 ### GQR-003: Supported server-test entry point and broker startup race
 
@@ -131,6 +133,8 @@ Real Google/Microsoft live writes require approved isolated synthetic tenants, d
 ## Files touched
 
 Update as work proceeds.
+
+- GQR-002: `packages/server/src/fs/errors.ts`, `packages/server/src/fs/adapters/registry.ts` (+ `registry.test.ts`), `packages/server/src/fs/routes-files.ts` (+ test), `packages/server/src/fs/routes-sources.ts` (+ test), `packages/app/src/types/filesystem.ts`, `packages/app/src/lib/sourceAvailability.ts` (+ test), `packages/app/src/components/SourceUnavailableBadge.tsx` (new), `packages/app/src/components/SourceFileTree.tsx` (+ test), `packages/app/src/components/settings/FileSourcesSettings.tsx`, `packages/app/scripts/gqr002-file-sources-ui-proof.mjs` (new)
 
 ## Resume
 

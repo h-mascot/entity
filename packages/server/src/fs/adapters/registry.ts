@@ -3,13 +3,27 @@ import type { FileSourceAdapter, SourceCapability } from './types';
 import { LocalFileSourceAdapter } from './local';
 import { DocsifyFileSourceAdapter } from './docsify';
 import { HttpMarkdownFileSourceAdapter } from './http-markdown';
+import { ConnectorNotImplementedError } from '../errors';
 
-const DEFAULT_CAPABILITIES: SourceCapability = {
-  read: true,
+const IMPLEMENTED_SOURCE_TYPES: ReadonlySet<FileSourceType> = new Set<FileSourceType>([
+  'local',
+  'docsify',
+  'http-markdown',
+]);
+
+/** True when the connector type has a real adapter in this build. */
+export function isFileSourceTypeImplemented(type: FileSourceType): boolean {
+  return IMPLEMENTED_SOURCE_TYPES.has(type);
+}
+
+// Placeholder connectors cannot serve anything: advertising read/list would
+// let UIs offer expand/browse actions that can only fail.
+const PLACEHOLDER_CAPABILITIES: SourceCapability = {
+  read: false,
   write: false,
   rename: false,
   delete: false,
-  list: true,
+  list: false,
   search: false,
 };
 
@@ -29,29 +43,27 @@ class PlaceholderAdapter implements FileSourceAdapter {
 
     // Fail closed: placeholder adapters cannot reach the upstream yet, so a
     // connection test must not report success for an unimplemented connector.
-    throw new Error(
-      `${this.key} sources are not implemented yet. Configuration is saved, but live connectivity cannot be verified until the ${this.key} adapter ships.`
-    );
+    throw new ConnectorNotImplementedError(this.key);
   }
 
   capabilities(): SourceCapability {
-    return DEFAULT_CAPABILITIES;
+    return PLACEHOLDER_CAPABILITIES;
   }
 
   async list(_path: string): Promise<never> {
-    throw new Error(`${this.key} adapter not implemented yet.`);
+    throw new ConnectorNotImplementedError(this.key);
   }
 
   async read(_path: string): Promise<never> {
-    throw new Error(`${this.key} adapter not implemented yet.`);
+    throw new ConnectorNotImplementedError(this.key);
   }
 
   async write(_path: string, _content: string): Promise<never> {
-    throw new Error(`${this.key} adapter not implemented yet.`);
+    throw new ConnectorNotImplementedError(this.key);
   }
 
   async mkdir(_path: string): Promise<never> {
-    throw new Error(`${this.key} adapter not implemented yet.`);
+    throw new ConnectorNotImplementedError(this.key);
   }
 }
 

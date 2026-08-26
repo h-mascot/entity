@@ -252,8 +252,100 @@ describe('file routes', () => {
           content: '# Should not write\n',
         }),
       });
-      expect(remoteWrite.status).toBe(403);
-      await expect(remoteWrite.json()).resolves.toEqual({ error: 'Source is read-only.' });
+      expect(remoteWrite.status).toBe(501);
+      await expect(remoteWrite.json()).resolves.toMatchObject({
+        code: 'CONNECTOR_NOT_IMPLEMENTED',
+        connectorType: 'github',
+        error: expect.stringContaining('not implemented'),
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+});
+
+describe('unimplemented connector operations', () => {
+  it('maps placeholder connector operations to typed 501 responses, never a generic 500', async () => {
+    const workspaceRoot = await makeTempRoot();
+    await fs.promises.writeFile(path.join(workspaceRoot, 'readme.md'), '# Local\n', 'utf-8');
+
+    const sources = new Map<string, FileSourceRecord>([
+      ['workspace', source({ id: 'workspace', base_path: workspaceRoot })],
+      ['github-upstream', source({ id: 'github-upstream', type: 'github', base_path: null, base_url: 'https://github.com/example/example' })],
+      ['s3-upstream', source({ id: 's3-upstream', type: 's3', base_path: null, base_url: 's3://bucket/prefix' })],
+    ]);
+    const repo: FileSourceRepository = {
+      listSources: vi.fn(() => Array.from(sources.values())),
+      getSource: vi.fn((id: string) => sources.get(id)),
+      createSource: vi.fn(() => source()),
+      updateSource: vi.fn(() => undefined),
+      setEnabled: vi.fn(() => undefined),
+      deleteSource: vi.fn(() => false),
+    };
+
+    const { registerFileRoutes } = await import('./routes-files');
+    const app = express();
+    app.use(express.json());
+    const router = Router();
+    registerFileRoutes(router, { sourceRepo: repo });
+    app.use('/api/fs', router);
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+
+    try {
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      const githubTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=github-upstream&path=`);
+      expect(githubTree.status).toBe(501);
+      await expect(githubTree.json()).resolves.toMatchObject({
+        code: 'CONNECTOR_NOT_IMPLEMENTED',
+        connectorType: 'github',
+        error: expect.stringContaining('not implemented'),
+      });
+
+      const githubRead = await fetch(`${baseUrl}/api/fs/file?sourceId=github-upstream&path=README.md`);
+      expect(githubRead.status).toBe(501);
+      await expect(githubRead.json()).resolves.toMatchObject({
+        code: 'CONNECTOR_NOT_IMPLEMENTED',
+        connectorType: 'github',
+      });
+
+      const githubWrite = await fetch(`${baseUrl}/api/fs/file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceId: 'github-upstream', path: 'README.md', content: 'edit' }),
+      });
+      expect(githubWrite.status).toBe(501);
+      await expect(githubWrite.json()).resolves.toMatchObject({
+        code: 'CONNECTOR_NOT_IMPLEMENTED',
+        connectorType: 'github',
+      });
+
+      const githubMkdir = await fetch(`${baseUrl}/api/fs/folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceId: 'github-upstream', path: 'docs' }),
+      });
+      expect(githubMkdir.status).toBe(501);
+      await expect(githubMkdir.json()).resolves.toMatchObject({
+        code: 'CONNECTOR_NOT_IMPLEMENTED',
+        connectorType: 'github',
+      });
+
+      const s3Tree = await fetch(`${baseUrl}/api/fs/tree?sourceId=s3-upstream&path=`);
+      expect(s3Tree.status).toBe(501);
+      await expect(s3Tree.json()).resolves.toMatchObject({
+        code: 'CONNECTOR_NOT_IMPLEMENTED',
+        connectorType: 's3',
+      });
+
+      // Supported connectors must keep working in the same deployment.
+      const localTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=`);
+      expect(localTree.status).toBe(200);
+      const localBody = (await localTree.json()) as { nodes: Array<{ name: string }> };
+      expect(localBody.nodes.map((node) => node.name)).toContain('readme.md');
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }

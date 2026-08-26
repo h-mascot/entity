@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
-import { toErrorMessage } from '../../lib/http';
-import { useFileSources } from '../../hooks/useFileSources';
-import type { FileSource } from '../../types/filesystem';
+import { toErrorMessage } from '../../lib/http.ts';
+import { sourceIsAvailableInBuild, sourceTypeIsAvailableInBuild } from '../../lib/sourceAvailability.ts';
+import { useFileSources } from '../../hooks/useFileSources.ts';
+import type { FileSource } from '../../types/filesystem.ts';
+import SourceUnavailableBadge from '../SourceUnavailableBadge.tsx';
 
 interface FileSourcesSettingsProps {
   apiBase?: string;
@@ -31,6 +33,10 @@ const INITIAL_FORM: SourceFormState = {
 };
 
 const AUTH_TYPE_OPTIONS: FileSource['authType'][] = ['none', 'bearer', 'api-key', 'basic', 'ssh'];
+
+// All registry types stay listed so operators can see what exists; unsupported
+// connectors are clearly labeled coming soon and cannot be selected.
+const SOURCE_TYPE_OPTIONS: FileSource['type'][] = ['local', 'docsify', 'http-markdown', 'github', 's3', 'custom'];
 
 const SOURCE_TYPE_HINTS: Record<FileSource['type'], { locationLabel: string; locationPlaceholder: string; localOnly: boolean }> = {
   local: { locationLabel: 'Base path', locationPlaceholder: '/absolute/path (allowlisted root)', localOnly: true },
@@ -84,6 +90,11 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLocalError(null);
+
+    if (!sourceTypeIsAvailableInBuild(form.type)) {
+      setLocalError('This source type is not available in this build yet.');
+      return;
+    }
 
     try {
       await createSource({
@@ -213,13 +224,16 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
             value={form.type}
             onChange={(event) => setForm((prev) => ({ ...prev, type: event.target.value as FileSource['type'] }))}
             className="mc-shell-input px-2 py-1 text-xs"
+            aria-label="Source type"
           >
-            <option value="local">local</option>
-            <option value="docsify">docsify</option>
-            <option value="http-markdown">http-markdown</option>
-            <option value="github">github</option>
-            <option value="s3">s3</option>
-            <option value="custom">custom</option>
+            {SOURCE_TYPE_OPTIONS.map((type) => {
+              const available = sourceTypeIsAvailableInBuild(type);
+              return (
+                <option key={type} value={type} disabled={!available}>
+                  {available ? type : `${type} (coming soon)`}
+                </option>
+              );
+            })}
           </select>
           {typeHint.localOnly ? (
             <input
@@ -311,6 +325,7 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
                   {source.icon ? `${source.icon} ` : ''}{source.displayName}
                 </div>
                 <div className="flex items-center gap-1">
+                  {!sourceIsAvailableInBuild(source) && <SourceUnavailableBadge />}
                   <div className={`rounded px-1.5 py-0.5 text-[10px] ${HEALTH_STYLES[source.health] ?? HEALTH_STYLES.degraded}`}>
                     {String(source.health ?? 'degraded').toUpperCase()}
                   </div>

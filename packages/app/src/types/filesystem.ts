@@ -13,6 +13,8 @@ export interface FileSource {
   icon: string | null;
   capabilities: string;
   searchability?: 'exact-read-only' | 'manifest-backed' | 'adapter-defined';
+  /** Server-reported connector status; false means no adapter in this build. */
+  implemented?: boolean;
   health: FileSourceHealth;
   lastSyncedAt: string | null;
   createdAt: string;
