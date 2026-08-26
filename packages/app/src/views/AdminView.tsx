@@ -16,6 +16,7 @@ const AdminSettingsForm = lazy(() => import('../components/settings/AdminSetting
 // communication controls surfaces, re-grounded on main's trust model.
 const CommunicationControlsSettings = lazy(() => import('../components/settings/CommunicationControlsSettings'));
 const CuracelOperationsCenter = lazy(() => import('../components/CuracelOperationsCenter'));
+const ActivityAuditSettings = lazy(() => import('../components/settings/ActivityAuditSettings'));
 
 type AdminSection =
   | 'general'
@@ -24,6 +25,7 @@ type AdminSection =
   | 'accessControl'
   | 'businessOnboarding'
   | 'missionControl'
+  | 'activity'
   | 'engineering'
   | 'workplanes'
   | 'strategicRoadmap'
@@ -662,6 +664,14 @@ export default function AdminView({
               </button>
             </div>
           </div>
+        )}
+
+
+
+        {adminSection === 'activity' && (
+          <Suspense fallback={<LazySurfaceFallback label="Loading activity audit" />}>
+            <ActivityAuditSettings apiBase={apiBase} />
+          </Suspense>
         )}
 
 

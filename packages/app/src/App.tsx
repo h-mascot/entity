@@ -584,6 +584,7 @@ type AdminSection =
   | 'accessControl'
   | 'businessOnboarding'
   | 'missionControl'
+  | 'activity'
   | 'engineering'
   | 'workplanes'
   | 'strategicRoadmap'
@@ -604,6 +605,7 @@ const ADMIN_SECTION_LABELS: Record<AdminSection, string> = {
   accessControl: 'Users & Access',
   businessOnboarding: 'Business Onboarding',
   missionControl: 'Mission Control',
+  activity: 'Audit & Activity',
   engineering: 'Engineering',
   workplanes: 'Workplanes',
   strategicRoadmap: 'Strategic Roadmap',
@@ -4931,6 +4933,7 @@ export default function App() {
         label: 'Work',
         items: [
           { key: 'missionControl', title: 'Tasks', hint: 'Board and data behavior' },
+          { key: 'activity', title: 'Audit & Activity', hint: 'Org/team/user reports' },
           { key: 'workplanes', title: 'Workplanes', hint: 'Task cockpit and proof panels' },
           { key: 'engineering', title: 'Engineering', hint: 'Domain board and import gates' },
           { key: 'strategicRoadmap', title: 'Strategic roadmap', hint: 'Roadmap lanes and ordering' },
@@ -5617,6 +5620,7 @@ export default function App() {
         { key: 'navigation', icon: '◫', label: 'Workspace modules' },
         { key: 'accessControl', icon: '🔐', label: 'Users & Access' },
         { key: 'missionControl', icon: '📋', label: 'Mission Control' },
+        { key: 'activity', icon: '🧾', label: 'Audit & Activity' },
         { key: 'docs', icon: '📄', label: 'Docs' },
         { key: 'enterprise', icon: '🧭', label: 'Openclaw' },
         { key: 'integrations', icon: '🔌', label: 'Integrations' },
