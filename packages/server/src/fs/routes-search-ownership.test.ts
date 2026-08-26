@@ -6,7 +6,7 @@ import type { FileSourceRecord, FileSourceRepository } from '../../../db/src/fil
 import type { FileIndexRecord, FileIndexRepository } from '../../../db/src/file-index';
 import type { FsFileOwnershipRecord, FsFileOwnershipRepository } from '../../../db/src/file-ownership';
 import type { PrincipalGrant } from '../permissions';
-import { registerSearchRoutes, type SearchRouteDeps } from './routes-search';
+import { ownershipVisible, registerSearchRoutes, resolveOwnershipScope, type SearchRouteDeps } from './routes-search';
 
 function source(): FileSourceRecord {
   const timestamp = '2026-06-24T02:45:00.000Z';
@@ -135,6 +135,25 @@ async function withSearchServer(
   }
 }
 
+
+type TestGrant = { principal_id: string; org_id: string | null; team_id: string | null; project_id: string | null; role: string };
+
+function scopeFor(grants: TestGrant[]) {
+  // RequestOrgBinding comes from internal middleware; pass a structurally
+  // compatible binding via a narrowed rebind of the exported helper.
+  const resolveScope = resolveOwnershipScope as unknown as (binding: {
+    orgId: string;
+    principal: { principal_id: string; grants: Array<TestGrant & { sensitivity_categories: string[] }> };
+  }) => { orgId: string; isAdmin: boolean; hasOrgWide: boolean; visibleTeamIds: Set<string> };
+  return resolveScope({
+    orgId: 'curacel',
+    principal: {
+      principal_id: grants[0]?.principal_id ?? 'x',
+      grants: grants.map((g) => ({ ...g, sensitivity_categories: [] })),
+    },
+  });
+}
+
 describe('search ownership scoping (MC #1365)', () => {
   const owned = indexRecord('uploads/curacel/pilot/acme-proposal.md');
   const otherTeam = indexRecord('uploads/curacel/growth/growth-deck.md');
@@ -147,6 +166,24 @@ describe('search ownership scoping (MC #1365)', () => {
       ownershipRepo: makeOwnershipRepo(ownershipRows),
     };
   }
+
+  it('project-scoped caller does not get org-wide ownership visibility', async () => {
+    // A grant with project_id set and team_id unset must NOT count as org-wide
+    // (regression for resolveOwnershipScope hasOrgWide check).
+    const scope = scopeFor([
+      { principal_id: 'proj-user', org_id: 'curacel', team_id: null, project_id: 'apollo', role: 'contributor' },
+    ]);
+    expect(scope.hasOrgWide).toBe(false);
+    expect(scope.visibleTeamIds.size).toBe(0);
+    const growth = ownershipRecord('uploads/curacel/growth/growth-deck.md', { team_id: 'growth' });
+    expect(ownershipVisible(scope, growth)).toBe(false);
+    // Org-wide grant (no team, no project) still sees everything in-org.
+    const orgWide = scopeFor([
+      { principal_id: 'org-user', org_id: 'curacel', team_id: null, project_id: null, role: 'contributor' },
+    ]);
+    expect(orgWide.hasOrgWide).toBe(true);
+    expect(ownershipVisible(orgWide, growth)).toBe(true);
+  });
 
   it('team-scoped caller sees only own-team uploads plus unowned files', async () => {
     // Simulate a team-scoped principal via stored grants: use customer context is

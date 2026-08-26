@@ -46,7 +46,7 @@ interface OwnershipScope {
   visibleTeamIds: Set<string>;
 }
 
-function resolveOwnershipScope(binding: RequestOrgBinding): OwnershipScope {
+export function resolveOwnershipScope(binding: RequestOrgBinding): OwnershipScope {
   const grants = binding.principal.grants.filter((grant) => !grant.org_id || grant.org_id === binding.orgId);
   const isAdmin = binding.principal.principal_id === LOCAL_ADMIN_PRINCIPAL_ID || grants.some(
     (grant) => grant.role === 'admin' && !grant.org_id && !grant.team_id && !grant.project_id,
@@ -54,12 +54,12 @@ function resolveOwnershipScope(binding: RequestOrgBinding): OwnershipScope {
   return {
     orgId: binding.orgId,
     isAdmin,
-    hasOrgWide: isAdmin || grants.some((grant) => !grant.team_id),
+    hasOrgWide: isAdmin || grants.some((grant) => !grant.team_id && !grant.project_id),
     visibleTeamIds: new Set(grants.filter((grant) => grant.team_id).map((grant) => grant.team_id as string)),
   };
 }
 
-function ownershipVisible(scope: OwnershipScope, ownership: FsFileOwnershipRecord | undefined): boolean {
+export function ownershipVisible(scope: OwnershipScope, ownership: FsFileOwnershipRecord | undefined): boolean {
   if (!ownership) return true;
   // Ownership is a tenant boundary, not merely a label. A team name can be
   // reused in another org, so never let a matching team_id cross org scope.
