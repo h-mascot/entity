@@ -27,8 +27,8 @@ Preserve every historically deployed code line, reconcile every unique still-val
 - [x] Phase 4: Reconcile Curacel readiness unique behavior and tests.
 - [x] Phase 5: Reconcile OpenWiki deployment unique behavior and tests.
 - [x] Phase 6: Cross-feature integration, generated docs, full CTRL, and exact-diff review.
-- [ ] Phase 7: Push PR, require CI, merge when clean, immutable sandbox deploy, browser/API proof.
-- [ ] Phase 8: Close receipts, update Entity LIVE context, and leave production pending approval.
+- [x] Phase 7: Push PR, require CI, merge when clean, immutable sandbox deploy, browser/API proof.
+- [x] Phase 8: Close receipts, update Entity LIVE context, and leave production pending approval.
 
 ## Approved queue
 `REC-001` through `REC-010` in `recovery-matrix.json`. No opportunistic work.
@@ -65,3 +65,12 @@ Preserve every historically deployed code line, reconcile every unique still-val
 
 ## Status
 **Implementation complete (REC-002..REC-008)** — see implementation-summary.md. All gates green: server 2544/2544, db 214/214, app 524/524, ctrl:gate pass, docs:wiki:verify pass (fingerprint a6be0e49…), scan:private-defaults exit 0, test:release-deploy 57/57, clean status. Two blocked slices await Henry (WS tenant scoping, invite acceptance). Manager owns REC-009/REC-010.
+
+
+## 2026-08-26 terminal completion
+- REC-010 is **PASS** at reviewed candidate `3fd4c22c4aa048932635863140c65255a6e5bfd5` and merge `777b20f77dc85b2cf62cdc17067a0e526ef14ae6`.
+- Direct OpenAI Fast Terra-medium generation 49 approved exact range `5169cce5592d930227bb28953c13607d245c5f80..3fd4c22c4aa048932635863140c65255a6e5bfd5` with no findings.
+- PR #105 merged after exact-head CI; candidate and merge tree are identical.
+- Immutable sandbox `777b20f77dc85b2cf62cdc17067a0e526ef14ae6` passed release identity, served-index, DB integrity (50 tasks), API, and real Files browser QA.
+- All 78 audited SHAs remain preserved in two verified archive copies. Production remains untouched pending explicit Henry approval.
+- Receipt: `/Users/enterprise/Library/Application Support/EntityRunner/entity-deploy-reconciliation-20260824/receipts/20260826T092154Z-rec010-terminal-pass.json`
