@@ -491,9 +491,12 @@ let guardTempIdentity = null;
 // tomb entry instead of unlinking it after identity validation (REC-010
 // generation 29, unit 1: no supported kernel offers an identity-conditional
 // unlink, so a terminal tomb unlink would be a destructive check-then-unlink
-// race whose post-hoc audit can false-pass). The retained tombs are visible,
-// gitignored reconciliation debris and are surfaced in the build summary.
+// race whose post-hoc audit can false-pass). The selftest is equally honest
+// (REC-010 generation 36): its scratch directory is retained and reported —
+// never pathname-cleaned, never AT_REMOVEDIR'd. Both are visible, gitignored
+// reconciliation debris surfaced in the build summary.
 const retainedGuardTombs = [];
+const retainedSelftestScratch = [];
 
 function runGuard(args, refuseMessage) {
   // The helper itself is a mutation-capable executable created this run:
@@ -532,6 +535,9 @@ function runGuard(args, refuseMessage) {
   }
   if (typeof result.tomb === 'string' && result.tomb.startsWith('.guard-tomb-')) {
     retainedGuardTombs.push(result.tomb);
+  }
+  if (typeof result.tomb === 'string' && result.tomb.startsWith('.guard-selftest-')) {
+    retainedSelftestScratch.push(result.tomb);
   }
   return result;
 }
@@ -695,7 +701,9 @@ try {
   // primitives fails the build closed here — no unsafe fallback anywhere.
   // (cc creates the guard temp itself on an unpredictable name; a failed
   // compile normally leaves nothing, and any untracked leftover is refused
-  // loudly at cleanup rather than blindly removed.)
+  // loudly at cleanup rather than blindly removed.) The selftest retains its
+  // scratch directory in the build output (reported in the summary) instead
+  // of cleaning it by pathname — the same retained-debris honesty as tombs.
   execFileSync(cc, [...common, guardSource, '-o', tempGuard], { stdio: 'inherit' });
   guardTempIdentity = markStaged('guard', tempGuard);
   runGuard(
@@ -952,5 +960,10 @@ console.log(`managed-storage-broker native core and IPC entrypoint: compile and 
 if (retainedGuardTombs.length > 0) {
   console.log(
     `fs_guard retained ${retainedGuardTombs.length} verified-removal tomb(s) for reconciliation: ${retainedGuardTombs.join(', ')}`,
+  );
+}
+if (retainedSelftestScratch.length > 0) {
+  console.log(
+    `fs_guard selftest retained ${retainedSelftestScratch.length} scratch directory(ies) for reconciliation: ${retainedSelftestScratch.join(', ')}`,
   );
 }
