@@ -1,0 +1,41 @@
+{
+  "id": "refresh",
+  "surface": "Module visibility persistence across refresh",
+  "purpose": "Deterministically prove a reversible module visibility change persists across a page refresh, with a recovery path when native reload is unavailable.",
+  "target": "http://sandbox.entity/?tab=admin",
+  "preconditions": [
+    "Sandbox build identity verified against the approved SHA.",
+    "Record the current Modules visibility state before toggling."
+  ],
+  "steps": [
+    {
+      "action": "Open Admin > Modules and hide the Services module, then save.",
+      "expect": "The Services navigation entry disappears from the Work group."
+    },
+    {
+      "action": "Reload the page.",
+      "expect": "After refresh, Services remains hidden and the persisted visibility state survived the reload."
+    },
+    {
+      "action": "Restore the Services module visibility and save.",
+      "expect": "The Services navigation entry returns."
+    },
+    {
+      "action": "Reload the page once more.",
+      "expect": "The restored state persists across refresh."
+    }
+  ],
+  "expected": {
+    "persistsAcrossRefresh": true,
+    "hiddenModule": "Services",
+    "restoredState": "Services visible again after restore + refresh"
+  },
+  "recovery": "If native reload returns noWindowsAvailable or timeoutReached, recover with a native new-tab and same-origin navigation to the same URL, then re-check persistence.",
+  "cleanup": [
+    "Restore the original Modules visibility state even if a step fails."
+  ],
+  "forbidden": [
+    "Hiding a module that removes the control surface needed to restore it.",
+    "Entering credentials or approving permission prompts."
+  ]
+}

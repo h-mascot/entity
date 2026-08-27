@@ -1,0 +1,40 @@
+{
+  "id": "admin-navigation",
+  "surface": "Admin navigation",
+  "purpose": "Deterministically exercise grouped admin navigation, including Users & Access subview activation, without depending on improvised per-run state.",
+  "target": "http://sandbox.entity/?tab=admin",
+  "preconditions": [
+    "Sandbox build identity verified against the approved SHA.",
+    "No admin setting is mutated by this fixture."
+  ],
+  "steps": [
+    {
+      "action": "Activate the Admin group in the primary navigation.",
+      "expect": "The Admin settings container renders with grouped sections."
+    },
+    {
+      "action": "Read the admin section groups in order.",
+      "expect": "Workspace, People, and Work section groups are present with their section buttons."
+    },
+    {
+      "action": "Click the Users & Access section button.",
+      "expect": "The Users & Access subview activates and renders the users/roles/grants surface instead of leaving the previous section visible."
+    },
+    {
+      "action": "Return to the Admin landing via the Admin group button.",
+      "expect": "The Admin settings container is reachable again."
+    }
+  ],
+  "expected": {
+    "adminGroups": ["Workspace", "Work", "Team", "Admin"],
+    "adminSectionsInclude": ["General", "Profile", "Modules", "Users & Access", "Agents", "Tasks"],
+    "usersAccessActivation": "Users & Access subview activates on click"
+  },
+  "cleanup": [
+    "No mutations performed; nothing to restore."
+  ],
+  "forbidden": [
+    "Mutating roles, grants, or invitations.",
+    "Entering credentials or approving permission prompts."
+  ]
+}

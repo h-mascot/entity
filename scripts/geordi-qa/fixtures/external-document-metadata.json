@@ -1,0 +1,42 @@
+{
+  "id": "external-document-metadata",
+  "surface": "Doc Hub external document metadata",
+  "purpose": "Deterministically verify Doc Hub renders external document metadata exactly, matched semantically field-by-field rather than by substring.",
+  "target": "http://sandbox.entity/?tab=files",
+  "preconditions": [
+    "Sandbox build identity verified against the approved SHA.",
+    "Seed the workspace with exactly this file content: # GEORDI-QA external document metadata fixture\\n\\nDeterministic body for semantic metadata matching.\\n"
+  ],
+  "steps": [
+    {
+      "action": "Open the seeded GEORDI-QA metadata fixture document in Doc Hub.",
+      "expect": "The document opens with its metadata panel/details visible."
+    },
+    {
+      "action": "Read the displayed document metadata fields.",
+      "expect": "Title, source, MIME type, size, and modified time match the pinned values exactly (semantic field equality)."
+    },
+    {
+      "action": "Cross-check one metadata field against the Files API response for the same document.",
+      "expect": "The UI value and the API value agree exactly for the checked field."
+    }
+  ],
+  "expected": {
+    "matchMode": "semantic",
+    "documentMetadata": {
+      "title": "GEORDI-QA external document metadata fixture",
+      "sourceId": "workspace",
+      "sourceName": "Workspace",
+      "mimeType": "text/markdown",
+      "sizeBytes": 99,
+      "modifiedAt": "2026-08-27T00:00:00.000Z"
+    }
+  },
+  "cleanup": [
+    "Delete the seeded GEORDI-QA metadata fixture document."
+  ],
+  "forbidden": [
+    "Substring matching of displayed metadata against serialized metadata strings.",
+    "Entering credentials or approving permission prompts."
+  ]
+}

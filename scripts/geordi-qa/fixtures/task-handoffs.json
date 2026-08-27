@@ -1,0 +1,41 @@
+{
+  "id": "task-handoffs",
+  "surface": "Tasks board and task detail Handoffs",
+  "purpose": "Deterministically prove the Tasks board opens a task detail panel and renders the Handoffs section, using one isolated synthetic task.",
+  "target": "http://sandbox.entity/?tab=tasks",
+  "preconditions": [
+    "Sandbox build identity verified against the approved SHA.",
+    "Create exactly one synthetic task titled 'GEORDI-QA-20260827 handoff fixture' with a short deterministic description and no assignee."
+  ],
+  "steps": [
+    {
+      "action": "Open the Tasks board and locate the card 'GEORDI-QA-20260827 handoff fixture'.",
+      "expect": "The synthetic card is visible on the board."
+    },
+    {
+      "action": "Open the card's detail panel.",
+      "expect": "The task detail panel opens for the synthetic task."
+    },
+    {
+      "action": "Inspect the detail panel for the Handoffs section.",
+      "expect": "The Handoffs section renders: either handoff history entries or the honest empty state."
+    },
+    {
+      "action": "Close the detail panel.",
+      "expect": "The board remains usable."
+    }
+  ],
+  "expected": {
+    "detailPanelOpens": true,
+    "handoffsSection": "renders history entries or the honest empty state",
+    "syntheticTitle": "GEORDI-QA-20260827 handoff fixture"
+  },
+  "cleanup": [
+    "Delete the synthetic task 'GEORDI-QA-20260827 handoff fixture'.",
+    "Verify the board no longer shows the GEORDI-QA synthetic card."
+  ],
+  "forbidden": [
+    "Mutating any pre-existing task.",
+    "Dispatching swarm or agent jobs from the handoff surface."
+  ]
+}
