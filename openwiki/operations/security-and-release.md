@@ -11,7 +11,7 @@ Entity's default posture is local-first. Authentication, object authorization, e
 
 ## Network and authentication boundary
 
-`packages/server/src/security.ts` applies security headers/CSP. It keeps generated Entity Wiki previews scriptless and opaque while still allowing blob-backed fragment scrolling for static previews, and it preserves the richer inline-script preview mode for interactive HTML exports. `packages/server/src/security.test.ts` covers the CSP split plus the HTTPS and localhost isolation-header behavior. `middleware/api-auth.ts` adds shared bearer-token protection when `ENTITY_API_TOKEN` is configured:
+`packages/server/src/security.ts` applies security headers/CSP. It keeps generated Entity Wiki previews scriptless and opaque when static content is rendered through `srcDoc`, avoiding WebKit blob-navigation CSP failures, while interactive HTML exports keep the richer preview sandbox. `packages/server/src/security.test.ts` covers the CSP split plus the HTTPS and localhost isolation-header behavior. `middleware/api-auth.ts` adds shared bearer-token protection when `ENTITY_API_TOKEN` is configured:
 
 - `/api/health`, `/api/version`, ClickClack's self-authenticated prefix, tokenized onboarding resources, and enabled agent-native document routes have explicit exceptions;
 - known legacy unprefixed task/activity/agent/runtime route roots are also protected;

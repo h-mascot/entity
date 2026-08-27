@@ -102,7 +102,7 @@ test("renderOpenWikiHtml refuses a symlinked output directory", async () => {
 
 test("HTML wiki presentation is wired into setup, verification, CI, and deployment", async () => {
   const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-  const [rootPackage, appPackage, setup, example, docsExample, runner, deploy, workflow, loopWorkflow, ignore, viewer, runtimeDocs, renderedRuntimeDocs] = await Promise.all([
+  const [rootPackage, appPackage, setup, example, docsExample, runner, deploy, workflow, loopWorkflow, ignore, viewer, runtimeDocs, renderedRuntimeDocs, quickstartDocs, renderedQuickstartDocs, securityDocs, renderedSecurityDocs] = await Promise.all([
     readFile(path.join(repo, "package.json"), "utf8"),
     readFile(path.join(repo, "packages", "app", "package.json"), "utf8"),
     readFile(path.join(repo, "scripts", "entity-setup.js"), "utf8"),
@@ -116,6 +116,10 @@ test("HTML wiki presentation is wired into setup, verification, CI, and deployme
     readFile(path.join(repo, "packages", "app", "src", "components", "CodeMirrorFileViewer.tsx"), "utf8"),
     readFile(path.join(repo, "openwiki", "runtime-and-release.md"), "utf8"),
     readFile(path.join(repo, "openwiki-html", "runtime-and-release.html"), "utf8"),
+    readFile(path.join(repo, "openwiki", "quickstart.md"), "utf8"),
+    readFile(path.join(repo, "openwiki-html", "quickstart.html"), "utf8"),
+    readFile(path.join(repo, "openwiki", "operations", "security-and-release.md"), "utf8"),
+    readFile(path.join(repo, "openwiki-html", "operations", "security-and-release.html"), "utf8"),
   ]);
 
   assert.match(rootPackage, /"docs:wiki:render"/);
@@ -141,9 +145,11 @@ test("HTML wiki presentation is wired into setup, verification, CI, and deployme
   assert.doesNotMatch(viewer, /createStaticHtmlPreviewUrl/);
   assert.doesNotMatch(viewer, /createObjectURL/);
   assert.doesNotMatch(viewer, /setAttribute\('src', src\)/);
-  for (const docs of [runtimeDocs, renderedRuntimeDocs]) {
+  for (const docs of [runtimeDocs, renderedRuntimeDocs, quickstartDocs, renderedQuickstartDocs, securityDocs, renderedSecurityDocs]) {
     assert.match(docs, /srcDoc/);
     assert.doesNotMatch(docs, /rebuilds the static preview object URL/);
     assert.doesNotMatch(docs, /reloads that same iframe node/);
+    assert.doesNotMatch(docs, /reloading the same iframe source/);
+    assert.doesNotMatch(docs, /blob-backed fragment scrolling/);
   }
 });
