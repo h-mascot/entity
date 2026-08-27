@@ -150,12 +150,14 @@ Commits: `ae41ced` (contract harness), `46f6276` (GitHub), `c34222f` (S3). Evide
 
 Depends on: GQR-001..GQR-005
 
-- [ ] Add deterministic browser fixtures for admin navigation, task/Handoffs, provider preview, refresh, mobile viewport, and external document metadata.
-- [ ] Correct Geordi I2 from contract FAIL to invalid prerequisite/setup classification in the superseding report.
-- [ ] Make progress state live and watchdog self-pause at terminal.
-- [ ] Verify source cleanliness from the source cwd.
-- [ ] Make compact-index payload checks semantic, not substring checks against metadata.
-- [ ] Run focused tests, full tests, build, private scan, OpenWiki freshness, `ctrl:full`/`ctrl:gate` as available.
+Local implementation/artifact-gate subphase COMPLETE at `032750a` (five scoped commits, strict RED→GREEN each). Remaining items are manager-controlled (review → PR/CI/merge → sandbox deploy → Geordi reruns).
+
+- [x] Add deterministic browser fixtures for admin navigation, task/Handoffs, provider preview, refresh, mobile viewport, and external document metadata. (`scripts/geordi-qa/fixtures.mjs` + `fixtures/*.json`: closed id set, complete-shape validation, secret-like-key and base64 rejection, deterministic JSON; Users & Access activation, GEORDI-QA synthetic task with mandatory cleanup, honest provider-state vocabulary, reload-unavailable recovery path, 390px BLOCKED fallback, pinned metadata with `matchMode: semantic`.)
+- [x] Correct Geordi I2 from contract FAIL to invalid prerequisite/setup classification in the superseding report. (`supersede-report.mjs`: FAIL → `INVALID_PREREQUISITE`, guarded by the recorded broker-absence evidence quote; refuses non-FAIL rows and out-of-directory writes; counts recomputed without ever claiming a pass. Committed artifact `docs/reports/geordi-qa/20260826T103159Z-rerun1/superseding-report.{json,md}` generated from the untouched historical report, sha256 `70490b77…c1f51` — historical evidence preserved, no receipts rewritten.)
+- [x] Make progress state live and watchdog self-pause at terminal. (`progress-state.mjs`: atomic tmp+rename writes stamping `lastProgressTime` on every transition, idempotent lanes, monotonic percent, final terminal states, `complete` requires 100%. `watchdog.mjs`: observes/stalls-only, self-pauses with a structured receipt at terminal.)
+- [x] Verify source cleanliness from the source cwd. (`source-cleanliness.mjs`: realpath checkout, every git invocation with cwd = source path, refuses non-root paths. Live proof `gqr006-source-cleanliness-live.log`: this worktree clean at `7d97b6e` from its own cwd.)
+- [x] Make compact-index payload checks semantic, not substring checks against metadata. (`compact-index.mjs`: structural field equality, prefix-path trap diagnosis, lane allowlist, base64-free; historical rerun1 index 159/159 entries self-consistent with zero violations.)
+- [x] Run focused tests, full tests, build, private scan, OpenWiki freshness, `ctrl:full`/`ctrl:gate` as available. (Focused `test:geordi-qa` 54/54; server 2699/2699; app 553 suite + build; db 214/214; release-deploy 133/133; wiki-html 16/16; `ctrl:gate` PASS; private scan exit 0 errors 0 — 273 warnings incl. 13 new `enterprise-agent-name` warns from the mandated Geordi harness naming, none suppressed; OpenWiki regenerated at the final integration gate — verify PASS at fingerprint `816b1263…c15c12`, 24 HTML pages.)
 - [ ] Luna-high review to APPROVED.
 - [ ] Commit/push/open PR, CI, merge to main when green.
 - [ ] Deploy merged SHA to sandbox using approved deploy profile.
@@ -186,6 +188,7 @@ Update as work proceeds.
 
 - GQR-002 repair: `packages/server/src/fs/routes-sources.ts` (+test), `packages/server/src/fs/routes-search.ts` (+test), `packages/app/src/lib/sourceAvailability.ts` (+test), `packages/app/src/components/settings/FileSourcesSettings.tsx` (+ `FileSourcesSettings.test.ts` new), `packages/app/src/components/SourceFileTree.tsx` (+test), `packages/app/scripts/gqr002-repair-ui-proof.mjs` (new)
 - GQR-005: `packages/server/src/fs/adapters/adapter-contract.ts` (+ `adapter-contract.test.ts`), `packages/server/src/fs/adapters/github-client.ts`, `packages/server/src/fs/adapters/github.ts` (+ `github.contract.test.ts`), `packages/server/src/fs/adapters/s3-client.ts`, `packages/server/src/fs/adapters/s3.ts` (+ `s3.contract.test.ts`), `packages/server/src/fs/adapters/types.ts` (additive optional etag/versionId), `packages/server/src/fs/adapters/registry.ts` (boundary comment only; placeholder behavior unchanged)
+- GQR-006: `scripts/geordi-qa/` (new: `fixtures.mjs` + `fixtures.test.mjs` + six `fixtures/*.json`, `progress-state.mjs` (+test), `watchdog.mjs` (+test), `source-cleanliness.mjs` (+test), `compact-index.mjs` (+test), `supersede-report.mjs` (+test), `README.md`), `docs/reports/geordi-qa/20260826T103159Z-rerun1/superseding-report.{json,md}` (new generated artifact), `package.json` (`test:geordi-qa` script), `openwiki/` + `openwiki-html/` (final-gate regeneration), `docs/plans/ACTIVE_PLAN.md` + `docs/plans/2026-08-26-geordi-remediation-plan.md`
 
 ## Resume
 

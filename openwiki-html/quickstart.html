@@ -133,6 +133,10 @@ npm run dev
 </li>
 <li><p><strong>Managed-storage broker build internals</strong> — <code>scripts/build-managed-storage-broker.mjs</code>, <code>packages/server/native/managed-storage-broker/fs_guard.c</code>, and the broker transaction tests; the runtime/release page now covers the public boundary, but a deeper build-step page is still unnecessary unless the build flow expands again.</p>
 </li>
+<li><p><strong>Geordi QA harness</strong> — <code>scripts/geordi-qa/README.md</code>, <code>scripts/geordi-qa/*.mjs</code>, and the deterministic rerun fixtures; the new harness documentation explains the compact-index checks, source-cleanliness guard, watchdog, progress-state store, and superseding-report flow for recent QA remediation runs.</p>
+</li>
+<li><p><strong>Release/QA boundary refinement</strong> — <code>scripts/geordi-qa/README.md</code> and the release helpers; if the QA harness starts driving product release decisions directly, the runtime/release page should absorb that cross-over in more detail.</p>
+</li>
 </ul>
 </div>
 <nav class="pager" aria-label="Adjacent wiki pages"><a href="/docs/source/entity-wiki/platforms/index.html" target="_top" class="pager-link"><small>Previous</small><strong>← Files</strong></a><a href="/docs/source/entity-wiki/runtime-and-release.html" target="_top" class="pager-link pager-next"><small>Next</small><strong>Runtime and release →</strong></a></nav>

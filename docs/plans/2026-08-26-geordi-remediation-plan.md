@@ -104,12 +104,14 @@ Verify:
 
 Depends on: GQR-001..GQR-005
 
-- [ ] Add deterministic browser fixtures for admin navigation, task/Handoffs, provider preview, refresh, mobile viewport, and external document metadata.
-- [ ] Correct Geordi I2 from contract FAIL to invalid prerequisite/setup classification in the superseding report.
-- [ ] Make progress state live and watchdog self-pause at terminal.
-- [ ] Verify source cleanliness from the source cwd.
-- [ ] Make compact-index payload checks semantic, not substring checks against metadata.
-- [ ] Run focused tests, full tests, build, private scan, OpenWiki freshness, `ctrl:full`/`ctrl:gate` as available.
+Local implementation/artifact-gate subphase COMPLETE at `032750a`; remaining items manager-controlled.
+
+- [x] Add deterministic browser fixtures for admin navigation, task/Handoffs, provider preview, refresh, mobile viewport, and external document metadata.
+- [x] Correct Geordi I2 from contract FAIL to invalid prerequisite/setup classification in the superseding report.
+- [x] Make progress state live and watchdog self-pause at terminal.
+- [x] Verify source cleanliness from the source cwd.
+- [x] Make compact-index payload checks semantic, not substring checks against metadata.
+- [x] Run focused tests, full tests, build, private scan, OpenWiki freshness, `ctrl:full`/`ctrl:gate` as available.
 - [ ] Luna-high review to APPROVED.
 - [ ] Commit/push/open PR, CI, merge to main when green.
 - [ ] Deploy merged SHA to sandbox using approved deploy profile.
