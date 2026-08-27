@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -304,5 +304,40 @@ test("CLI proves the hardcoded quote against the cited evidence file and refuses
   assert.notEqual(refused.status, 0, refused.stdout);
   assert.match(refused.stderr, /not recorded|provenance|evidence/i);
   // No superseding report may be written without provenance.
+  await assert.rejects(() => readFile(path.join(outDir, "superseding-report.json")));
+});
+
+test("CLI refuses an in-run escaping symlink citation and writes no superseding output", async (t) => {
+  const script = path.join(import.meta.dirname, "supersede-report.mjs");
+  const sourceDir = await mkdtemp(path.join(tmpdir(), "geordi-supersede-symlink-"));
+  const outDir = await mkdtemp(path.join(tmpdir(), "geordi-supersede-symlink-out-"));
+  t.after(() => {
+    rm(sourceDir, { recursive: true, force: true });
+    rm(outDir, { recursive: true, force: true });
+  });
+  const sourceReport = path.join(sourceDir, "report.json");
+  await writeFile(sourceReport, JSON.stringify(historicalReportFixture()));
+  // The cited evidence path is lexically inside the historical run, but it is
+  // a symlink to a file outside it that genuinely records the hardcoded
+  // quote. Lexical containment alone would load it and "prove" provenance
+  // from outside the run; only realpath containment can refuse.
+  const outsideDir = await mkdtemp(path.join(tmpdir(), "geordi-supersede-outside-"));
+  t.after(() => rm(outsideDir, { recursive: true, force: true }));
+  const outsideEvidence = path.join(outsideDir, "planted-evidence.json");
+  await writeFile(outsideEvidence, evidenceContentFixture()["I/fresh-test-summary.json"]);
+  await mkdir(path.join(sourceDir, "I"), { recursive: true });
+  await symlink(outsideEvidence, path.join(sourceDir, "I", "fresh-test-summary.json"));
+
+  const { spawnSync } = await import("node:child_process");
+  const refused = spawnSync(process.execPath, [
+    script,
+    "--report",
+    sourceReport,
+    "--out",
+    outDir,
+  ], { encoding: "utf8" });
+  assert.notEqual(refused.status, 0, refused.stdout);
+  assert.match(refused.stderr, /symlink|outside|escap/i);
+  // No superseding report may be written from outside-the-run evidence.
   await assert.rejects(() => readFile(path.join(outDir, "superseding-report.json")));
 });

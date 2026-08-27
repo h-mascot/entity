@@ -11,7 +11,7 @@
 // broker-absence evidence, proven — exact or whitespace-normalized — inside
 // the loaded content of the historical evidence file the corrected row cites.
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -242,10 +242,13 @@ const CLI_CORRECTIONS = [
 
 // Load the historical evidence file each corrected row cites, resolved inside
 // the historical report's own run directory. Fails closed when a cited file
-// is missing, unreadable, or escapes the run directory: provenance must be
-// provable, never assumed.
+// is missing, unreadable, or escapes the run directory — lexically OR via a
+// symlink: containment is enforced on realpath against the realpath'd run
+// directory, so an in-run symlink that resolves outside the run is refused
+// before readFile can follow it. Provenance must be provable, never assumed.
 async function loadCitedEvidenceContent(historicalReport, corrections, reportDir) {
   const evidenceContent = {};
+  const realReportDir = await realpath(reportDir);
   for (const correction of corrections) {
     const row = Array.isArray(historicalReport.features)
       ? historicalReport.features.find((candidate) => rowId(candidate) === correction.rowId)
@@ -260,8 +263,25 @@ async function loadCitedEvidenceContent(historicalReport, corrections, reportDir
         `cited evidence path "${cited}" escapes the historical report directory; refusing to trust it`,
       );
     }
+    // realpath containment: resolve every symlink component and compare
+    // against the real run directory. A citation that is (or passes through)
+    // a symlink resolving outside the run is fabricated provenance.
+    let realResolved;
     try {
-      evidenceContent[cited] = await readFile(resolved, "utf8");
+      realResolved = await realpath(resolved);
+    } catch {
+      throw new Error(
+        `cannot load cited historical evidence file "${cited}"; evidenceQuote provenance is unprovable`,
+      );
+    }
+    const realRelative = path.relative(realReportDir, realResolved);
+    if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+      throw new Error(
+        `cited evidence path "${cited}" resolves via symlink outside the historical report directory; refusing to trust it`,
+      );
+    }
+    try {
+      evidenceContent[cited] = await readFile(realResolved, "utf8");
     } catch {
       throw new Error(
         `cannot load cited historical evidence file "${cited}"; evidenceQuote provenance is unprovable`,
