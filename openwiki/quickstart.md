@@ -7,7 +7,7 @@ tags: [entity, quickstart, product, engineering]
 
 # Entity quickstart
 
-Entity is a local-first, server-backed workspace where humans and agents can inspect, steer, and review work. Its implemented surfaces bring tasks, files, documents, agent state, activity, chat, services, plugins, reporting, and operational evidence into one React application. Source presence does **not** prove deployment rollout: `/api/version`, release metadata, sandbox validation, and deployment receipts remain authoritative for any live environment. The release/runtime boundary now also owns the exact-SHA sandbox handoff and the pull-request-head docs gate, which are documented on [Runtime and release](runtime-and-release.md).
+Entity is a local-first, server-backed workspace where humans and agents can inspect, steer, and review work. Its implemented surfaces bring tasks, files, documents, agent state, activity, chat, services, plugins, reporting, and operational evidence into one React application. Source presence does **not** prove deployment rollout: `/api/version`, release metadata, sandbox validation, and deployment receipts remain authoritative for any live environment. The release/runtime boundary now also owns the exact-SHA sandbox handoff, the HTML OpenWiki presentation path, and the pull-request-head docs gate, which are documented on [Runtime and release](runtime-and-release.md).
 
 ## Start locally
 
@@ -21,7 +21,7 @@ npm run doctor
 npm run dev
 ```
 
-Open `http://localhost:3000`. `npm run setup` creates local configuration, seeds the read-only Entity Wiki local file source at `./openwiki-html`, and normally prepares the optional ClickClack chat sidecar; use `npm run setup -- --skip-clickclack` when only the core workspace is needed. The Express server serves the built frontend, so rebuild `packages/app` after UI changes unless using the separate Vite development loop documented in `README.md`.
+Open `http://localhost:3000`. `npm run setup` creates local configuration, seeds the read-only Entity Wiki local file source at `./openwiki-html`, and normally prepares the optional ClickClack chat sidecar; use `npm run setup -- --skip-clickclack` when only the core workspace is needed. The Express server serves the built frontend, so rebuild `packages/app` after UI changes unless using the separate Vite development loop documented in `README.md`. OpenWiki’s generated wiki and rendered HTML presentation both live under the runtime/release boundary, so `npm run docs:wiki:render` and `npm run docs:wiki:verify` are the commands to check when that presentation changes.
 
 The default configuration is loopback-only and local-first. Do not expose it on a network without understanding the [security boundary](operations/security-and-release.md#network-and-authentication-boundary).
 
