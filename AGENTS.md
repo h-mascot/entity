@@ -23,8 +23,8 @@ Monorepo with npm workspaces:
 - Install deps: `npm install` (from root)
 - Build app: `npm --prefix packages/app run build`
 - Build server: `cd packages/server && npm run build`
-- **Run tests: `cd packages/server && npx vitest run`**
-- Run specific test: `cd packages/server && npx vitest run src/fs/classify.test.ts`
+- **Run server tests: `npm run test:server` (root; builds generated broker outputs first)**
+- Run specific server test: `npm run test:server -- src/fs/classify.test.ts` (from root)
 - Dev server: `cd packages/server && npm run dev`
 
 ## Git Delivery: Always Land on Main
@@ -32,7 +32,7 @@ Monorepo with npm workspaces:
 **Do not leave work stranded on a feature branch or an open PR.**
 - Every change must end up merged into `main` before the task is considered done.
 - If you work on a feature branch and/or open a PR, then after tests + verification pass: **merge it into `main`, push `main`, and delete the feature branch** (local and remote). The PR should end in the "Merged" state, never left open.
-- Run the full gate (`cd packages/server && npm run build && npx vitest run`, plus `npm --prefix packages/app run build` when the app is affected) on the merged result before pushing `main`.
+- Run the full gate (`npm run test:server`, plus `npm --prefix packages/app run build` when the app is affected) on the merged result before pushing `main`.
 - Only leave a PR open without merging if the user explicitly asks for review-before-merge on that task.
 
 ## Close the Loop Protocol
@@ -45,14 +45,14 @@ Monorepo with npm workspaces:
 
 **After writing ANY code in `packages/server/`:**
 1. Write or update colocated test (`source.test.ts` next to `source.ts`)
-2. Run `cd packages/server && npx vitest run`
+2. Run `npm run test:server` (root)
 3. If tests fail → fix code → rerun
 4. Only report "done" when tests pass
 5. Never commit with failing tests
 
 **Full gate before commit:**
 ```bash
-cd packages/server && npm run build && npx vitest run
+npm run test:server
 ```
 
 ## Review Gates (required before marking work done)
@@ -169,7 +169,7 @@ The deployment/`ada-gateway`/Mac-source guidance above is for the maintainer's p
 - You must `npm run build` before running: the server serves the prebuilt `packages/app/dist`, so UI changes are NOT reflected until you rebuild the frontend (`npm --prefix packages/app run build`). For a hot-reload UI loop, run Vite separately (see README "Frontend-only development", Vite on 5173 pointing at the server on 3000).
 - Start the server directly with `ENTITY_CLICKCLACK_SIDECAR=0 PORT=3000 npm run dev`.
 - No login is required in the default local config; an initial setup wizard appears on first UI load and can be skipped via "Skip setup".
-- Server tests: `cd packages/server && npx vitest run` (colocated `*.test.ts`).
+- Server tests: `npm run test:server` (root; builds generated broker outputs first, then runs the colocated Vitest suite)
 - `npm run doctor` reports the missing ClickClack checkout as FAIL and the server as unreachable when it isn't running — both are expected in the cloud VM and do not indicate a broken core setup.
 - The root `npm test` / `npm run test:e2e` browser smoke uses an external `agent-browser` binary and a different topology (Vite on 5173, API on 3001); it is not the primary test path here — prefer the server Vitest suite plus manual browser verification on port 3000.
 

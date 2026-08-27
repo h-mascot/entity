@@ -12,11 +12,12 @@ import {
 } from '../../../db/src/file-sources';
 import { createFileIndexRepository } from '../../../db/src/file-index';
 import { localSourceCapabilitiesJson } from './adapters/local';
-import { createFileSourceAdapter } from './adapters/registry';
+import { createFileSourceAdapter, isFileSourceTypeImplemented } from './adapters/registry';
 import { FileIndexRunner } from './index-runner';
 import { recordFsOperation } from './metrics';
 import { resolvePathThroughNearestExistingAncestor } from './security';
 import { assertAllowedLocalSourceBasePath } from './source-root-guard';
+import { ConnectorNotImplementedError } from './errors';
 
 interface SourcePayload {
   id?: string;
@@ -119,6 +120,9 @@ function toSourceResponse(source: FileSourceRecord) {
     lastSyncedAt: source.last_synced_at,
     createdAt: source.created_at,
     updatedAt: source.updated_at,
+    // Build-honest connector status so clients can label unimplemented types
+    // without guessing from capabilities.
+    implemented: isFileSourceTypeImplemented(source.type),
   };
 }
 
@@ -452,6 +456,18 @@ export function registerSourceRoutes(app: Express): void {
         return res.status(403).json({ error: 'source is disabled.' });
       }
 
+      // Typed refusal before any dispatch/indexing: unimplemented connectors
+      // cannot sync, so the runner must never start a run for them.
+      if (!isFileSourceTypeImplemented(source.type)) {
+        const notImplemented = new ConnectorNotImplementedError(source.type);
+        recordFsOperation({ operation: 'sources.sync', sourceId: source.id, success: false, error: notImplemented.message });
+        return res.status(501).json({
+          error: notImplemented.message,
+          code: notImplemented.code,
+          connectorType: notImplemented.connectorType,
+        });
+      }
+
       const startedAt = Date.now();
       await runner.runOnceForSource(source.id);
       const durationMs = Date.now() - startedAt;
@@ -520,10 +536,14 @@ export function registerSourceRoutes(app: Express): void {
           last_synced_at: new Date().toISOString(),
         });
       }
+      // Keep the fail-closed 200/error envelope for Admin diagnostics, but
+      // carry the typed code when the connector is simply not implemented.
+      const notImplemented = err instanceof ConnectorNotImplementedError ? err : null;
       return res.status(200).json({
         sourceId: id,
         status: 'error',
         message,
+        ...(notImplemented ? { code: notImplemented.code, connectorType: notImplemented.connectorType } : {}),
       });
     }
   });

@@ -11,7 +11,7 @@ import {
   type FileSourceRecord,
   type FileSourceRepository,
 } from '../../../db/src/file-sources';
-import { createFileSourceAdapter } from './adapters/registry';
+import { createFileSourceAdapter, isFileSourceTypeImplemented } from './adapters/registry';
 import type { FileSourceAdapter } from './adapters/types';
 import { assertSourceEnabled, emitFsAudit } from './security';
 import { recordFsOperation } from './metrics';
@@ -411,6 +411,12 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
       if (connectorHealth) {
         indexedResults = indexedResults.filter((entry) => sourcesById.get(entry.source_id)?.health === connectorHealth);
       }
+      // Unimplemented connectors are excluded from search entirely: stale
+      // index rows must not surface results this build cannot serve.
+      indexedResults = indexedResults.filter((entry) => {
+        const source = sourcesById.get(entry.source_id);
+        return Boolean(source && isFileSourceTypeImplemented(source.type));
+      });
       if (indexedFilter !== 'fallback' && indexedResults.length > 0) {
         const durationMs = Date.now() - startedAt;
         emitFsAudit('fs.search.indexed', { query, count: indexedResults.length, durationMs });
@@ -455,6 +461,8 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
       // Fallback: source listing when index has no matches yet.
       const candidateSources = (sourceId ? [sourceRepo.getSource(sourceId)] : sourceRepo.listSources(false))
         .filter((source): source is FileSourceRecord => Boolean(source))
+        // Never dispatch fallback listing to unimplemented connectors.
+        .filter((source) => isFileSourceTypeImplemented(source.type))
         .filter((source) => !connectorHealth || source.health === connectorHealth);
       const results: ReturnType<typeof fallbackResultEnvelope>[] = [];
 

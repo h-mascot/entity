@@ -1,0 +1,36 @@
+{
+  "id": "mobile-viewport",
+  "surface": "Mobile-width navigation coherence",
+  "purpose": "Deterministically check mobile-width navigation coherence against desktop module visibility at a pinned viewport width.",
+  "target": "http://sandbox.entity/",
+  "preconditions": [
+    "Sandbox build identity verified against the approved SHA.",
+    "Module visibility is at its default/restored state (no fixture toggles active)."
+  ],
+  "steps": [
+    {
+      "action": "Set the browser viewport/window width to 390 px.",
+      "expect": "The layout switches to the mobile navigation surface."
+    },
+    {
+      "action": "Inspect the navigation surface at mobile width.",
+      "expect": "Primary navigation remains reachable and coherent with desktop module visibility; no unreachable or hidden-only-in-mobile entries."
+    },
+    {
+      "action": "Return the viewport/window to desktop width.",
+      "expect": "The desktop navigation groups render again."
+    }
+  ],
+  "expected": {
+    "viewportWidthPx": 390,
+    "navigationState": "mobile navigation surface renders and stays coherent with desktop module visibility"
+  },
+  "blockedFallback": "If native window resize is unavailable, grade this row BLOCKED and record the exact blocker; do not simulate a mobile width by zoom or claim coverage from desktop-width evidence.",
+  "cleanup": [
+    "Restore the original window size."
+  ],
+  "forbidden": [
+    "Disturbing other windows or user sessions while resizing.",
+    "Entering credentials or approving permission prompts."
+  ]
+}

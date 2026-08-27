@@ -7,8 +7,9 @@ const SECURITY_HEADERS: Record<string, string> = {
     "connect-src 'self' http: https: ws: wss:",
     "form-action 'self'",
     "frame-ancestors 'none'",
-    // Static Entity Wiki previews use revocable blob URLs so the browser can
-    // perform fragment scrolling while the iframe remains scriptless and opaque.
+    // Frames may be same-origin app views; `blob:` is retained for plugin or
+    // future frame sources (WebKit CSP matching rejects blob: URLs, so core
+    // previews must not depend on it — see htmlPreviewPolicy.ts).
     "frame-src 'self' blob:",
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: https:",

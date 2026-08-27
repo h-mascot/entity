@@ -1,0 +1,37 @@
+{
+  "id": "provider-preview",
+  "surface": "Docs provider settings and preview",
+  "purpose": "Deterministically exercise the provider administration/preview surface and its honest connection states without any credential path.",
+  "target": "http://sandbox.entity/?tab=admin",
+  "preconditions": [
+    "Sandbox build identity verified against the approved SHA.",
+    "Sandbox document-provider fixtures may be seeded through the sandbox-only fixture store; never enter real credentials."
+  ],
+  "steps": [
+    {
+      "action": "Open the Docs provider settings surface.",
+      "expect": "Provider cards render for Google Workspace, Microsoft 365, and Local."
+    },
+    {
+      "action": "Read each provider card's connection state.",
+      "expect": "Each card shows an honest state: connected, disconnected, sandbox, or unknown; no fabricated health."
+    },
+    {
+      "action": "Open one provider preview/document surface exposed by the cards.",
+      "expect": "The preview either renders seeded sandbox content or shows the honest unavailable/disconnected state with a diagnostic."
+    }
+  ],
+  "expected": {
+    "providers": ["Google Workspace", "Microsoft 365", "Local"],
+    "connectionStates": ["connected", "disconnected", "sandbox", "unknown"],
+    "mutationSupport": "cards state Supported / Not supported / Degraded / Unavailable honestly"
+  },
+  "cleanup": [
+    "Remove any seeded sandbox provider fixtures created for this run."
+  ],
+  "forbidden": [
+    "Entering credentials, tokens, or OAuth approval.",
+    "Approving external provider permission prompts.",
+    "Any external provider write."
+  ]
+}

@@ -1,10 +1,14 @@
 import type { Request, Response, Router } from 'express';
-import { createFileSourceRepository, type FileSourceRepository } from '../../../db/src/file-sources';
+import {
+  createFileSourceRepository,
+  type FileSourceRecord,
+  type FileSourceRepository,
+} from '../../../db/src/file-sources';
 import { isTextualContentType } from '../file-types';
-import { createFileSourceAdapter } from './adapters/registry';
+import { createFileSourceAdapter, isFileSourceTypeImplemented } from './adapters/registry';
 import { assertSourceEnabled, emitFsAudit, normalizeSourceRelativePath } from './security';
 import { recordFsOperation } from './metrics';
-import { isMissingPathError, SourceTextUnsupportedError } from './errors';
+import { ConnectorNotImplementedError, isMissingPathError, SourceTextUnsupportedError } from './errors';
 import { SourceReadLimitError } from './adapters/bounded-read';
 
 export interface FileRouteDeps {
@@ -19,7 +23,26 @@ function parseSourceId(value: unknown): string {
   return value.trim();
 }
 
-function mapSourceError(message: string, res: Response): Response {
+function assertConnectorImplemented(source: FileSourceRecord): void {
+  if (!isFileSourceTypeImplemented(source.type)) {
+    // Typed refusal for placeholder connectors: never a generic 500, and it
+    // takes priority over read-only capability gates so clients see the real
+    // reason (no connector in this build) rather than a misleading 403.
+    throw new ConnectorNotImplementedError(source.type);
+  }
+}
+
+function mapSourceError(err: unknown, res: Response): Response {
+  if (err instanceof ConnectorNotImplementedError) {
+    return res.status(501).json({
+      error: err.message,
+      code: err.code,
+      connectorType: err.connectorType,
+    });
+  }
+
+  const message = err instanceof Error ? err.message : 'Unknown error';
+
   if (message === 'Source not found.') {
     return res.status(404).json({ error: message });
   }
@@ -88,6 +111,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
       normalizedPath = normalizeSourceRelativePath(typeof req.query.path === 'string' ? req.query.path : '');
       const source = sourceRepo.getSource(sourceId);
       assertSourceEnabled(source);
+      assertConnectorImplemented(source);
 
       const adapter = createFileSourceAdapter(source);
       const startedAt = Date.now();
@@ -122,7 +146,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
           last_synced_at: new Date().toISOString(),
         });
       }
-      return mapSourceError(message, res);
+      return mapSourceError(err, res);
     }
   });
 
@@ -139,6 +163,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
 
       const source = sourceRepo.getSource(sourceId);
       assertSourceEnabled(source);
+      assertConnectorImplemented(source);
 
       const adapter = createFileSourceAdapter(source);
       const startedAt = Date.now();
@@ -198,7 +223,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
           last_synced_at: new Date().toISOString(),
         });
       }
-      return mapSourceError(message, res);
+      return mapSourceError(err, res);
     }
   });
 
@@ -218,6 +243,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
 
       const source = sourceRepo.getSource(sourceId);
       assertSourceEnabled(source);
+      assertConnectorImplemented(source);
 
       const adapter = createFileSourceAdapter(source);
       const capabilities = adapter.capabilities();
@@ -269,7 +295,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
           last_synced_at: new Date().toISOString(),
         });
       }
-      return mapSourceError(message, res);
+      return mapSourceError(err, res);
     }
   });
 
@@ -286,6 +312,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
 
       const source = sourceRepo.getSource(sourceId);
       assertSourceEnabled(source);
+      assertConnectorImplemented(source);
 
       const adapter = createFileSourceAdapter(source);
       const capabilities = adapter.capabilities();
@@ -322,7 +349,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
           last_synced_at: new Date().toISOString(),
         });
       }
-      return mapSourceError(message, res);
+      return mapSourceError(err, res);
     }
   });
 }

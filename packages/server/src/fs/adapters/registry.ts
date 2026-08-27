@@ -3,13 +3,27 @@ import type { FileSourceAdapter, SourceCapability } from './types';
 import { LocalFileSourceAdapter } from './local';
 import { DocsifyFileSourceAdapter } from './docsify';
 import { HttpMarkdownFileSourceAdapter } from './http-markdown';
+import { ConnectorNotImplementedError } from '../errors';
 
-const DEFAULT_CAPABILITIES: SourceCapability = {
-  read: true,
+const IMPLEMENTED_SOURCE_TYPES: ReadonlySet<FileSourceType> = new Set<FileSourceType>([
+  'local',
+  'docsify',
+  'http-markdown',
+]);
+
+/** True when the connector type has a real adapter in this build. */
+export function isFileSourceTypeImplemented(type: FileSourceType): boolean {
+  return IMPLEMENTED_SOURCE_TYPES.has(type);
+}
+
+// Placeholder connectors cannot serve anything: advertising read/list would
+// let UIs offer expand/browse actions that can only fail.
+const PLACEHOLDER_CAPABILITIES: SourceCapability = {
+  read: false,
   write: false,
   rename: false,
   delete: false,
-  list: true,
+  list: false,
   search: false,
 };
 
@@ -29,29 +43,27 @@ class PlaceholderAdapter implements FileSourceAdapter {
 
     // Fail closed: placeholder adapters cannot reach the upstream yet, so a
     // connection test must not report success for an unimplemented connector.
-    throw new Error(
-      `${this.key} sources are not implemented yet. Configuration is saved, but live connectivity cannot be verified until the ${this.key} adapter ships.`
-    );
+    throw new ConnectorNotImplementedError(this.key);
   }
 
   capabilities(): SourceCapability {
-    return DEFAULT_CAPABILITIES;
+    return PLACEHOLDER_CAPABILITIES;
   }
 
   async list(_path: string): Promise<never> {
-    throw new Error(`${this.key} adapter not implemented yet.`);
+    throw new ConnectorNotImplementedError(this.key);
   }
 
   async read(_path: string): Promise<never> {
-    throw new Error(`${this.key} adapter not implemented yet.`);
+    throw new ConnectorNotImplementedError(this.key);
   }
 
   async write(_path: string, _content: string): Promise<never> {
-    throw new Error(`${this.key} adapter not implemented yet.`);
+    throw new ConnectorNotImplementedError(this.key);
   }
 
   async mkdir(_path: string): Promise<never> {
-    throw new Error(`${this.key} adapter not implemented yet.`);
+    throw new ConnectorNotImplementedError(this.key);
   }
 }
 
@@ -61,6 +73,15 @@ const factories: Record<FileSourceType, AdapterFactory> = {
   local: (source) => new LocalFileSourceAdapter(source),
   docsify: (source) => new DocsifyFileSourceAdapter(source),
   'http-markdown': (source) => new HttpMarkdownFileSourceAdapter(source),
+  // GQR-005 boundary: complete synthetic connector contracts exist for github
+  // (github.ts + github-client.ts) and s3 (s3.ts + s3-client.ts) over
+  // injectable clients, but no live client implementation ships in this
+  // build and no repository authority requires one yet (see
+  // docs/FilesystemBuild/MC-FILE-SYSTEM-IMPROVEMENT.md: connector expansion;
+  // docs/context/entity-phase-2-integration-boundary-inventory.md: placeholder
+  // adapters). Until authority approves a networked client, these types keep
+  // the truthful fail-closed placeholder: configuration is saved, operations
+  // and connectivity checks stay unavailable (501 CONNECTOR_NOT_IMPLEMENTED).
   github: (source) => new PlaceholderAdapter('github', source),
   s3: (source) => new PlaceholderAdapter('s3', source),
   custom: (source) => new PlaceholderAdapter('custom', source),

@@ -49,6 +49,10 @@ export interface SourceFileReadResult {
   updatedAt?: string;
   size?: number;
   isBinary?: boolean;
+  /** Normalized upstream content tag (e.g. S3 ETag without quotes), when available. */
+  etag?: string;
+  /** Normalized upstream object version id, when available. */
+  versionId?: string;
 }
 
 export interface SourceFileRawResult {

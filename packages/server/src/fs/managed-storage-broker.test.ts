@@ -113,10 +113,76 @@ describe('managed storage broker IPC client', () => {
     }
   });
 
+  it('returns the typed not_found outcome deterministically across repeated missing-root startups', async () => {
+    const executable = join(process.cwd(), 'native/managed-storage-broker/.build/broker');
+    const missingRoot = join(tmpdir(), 'msb-missing-root-startup-race');
+    rmSync(missingRoot, { recursive: true, force: true });
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      const client = new ManagedStorageBrokerClient({ executable, root: missingRoot });
+      try {
+        // Straddle the broker's death: on some attempts the request races the
+        // dying pipe; on others the child is long gone first. Every interleaving
+        // must surface the canonical typed outcome, never a raw stdin EPIPE or
+        // a generic exited/closed error.
+        if (attempt % 3 === 1) await new Promise((resolve) => setImmediate(resolve));
+        if (attempt % 3 === 2) await new Promise((resolve) => setTimeout(resolve, 5));
+        await expect(client.stat('.')).rejects.toMatchObject({ code: 'not_found' });
+      } finally {
+        await client.close();
+      }
+    }
+  });
+
   it('propagates typed broker errors', async () => {
     const client = new ManagedStorageBrokerClient({ executable: fake('err\tnot_found'), root: '/bound/root' });
     await expect(client.read('missing')).rejects.toMatchObject({ code: 'not_found' } satisfies Partial<ManagedStorageBrokerError>);
     await client.close();
+  });
+
+  it('lets the broker typed response win when a stdin EPIPE races its buffered answer', async () => {
+    const { child, stdin, stdout } = controllableChild();
+    const client = controlledClient(child);
+    const pending = client.stat('.');
+    // The pipe to the dead broker breaks before its buffered typed answer is
+    // read. The typed protocol outcome must win over the raw transport failure.
+    stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    stdout.write('err\tnot_found\n');
+    await expect(pending).rejects.toMatchObject({ code: 'not_found' });
+    stdout.destroy();
+  });
+
+  it('returns the broker terminal typed error for requests written after a missing-root startup death', async () => {
+    const { child, stdin, stdout } = controllableChild();
+    const client = controlledClient(child);
+    // A broker whose startup root cannot be opened prints its typed diagnostic
+    // and exits before any request is written (real missing-root startup).
+    stdout.write('err\tnot_found\n');
+    await new Promise((resolve) => setImmediate(resolve));
+    const pending = client.read('a.txt'); // written into the dead pipe
+    stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+    await expect(pending).rejects.toMatchObject({ code: 'not_found' });
+    child.emit('exit', 0, null);
+    // Later requests against the dead child keep the typed outcome too, never
+    // a raw stdin EPIPE or a generic closed error.
+    await expect(client.read('b.txt')).rejects.toMatchObject({ code: 'not_found' });
+    stdout.destroy();
+  });
+
+  it('surfaces the typed outcome for a request issued between child exit and its buffered typed diagnostic', async () => {
+    const { child, stdout } = controllableChild();
+    const client = controlledClient(child);
+    // Real child lifecycle: 'exit' can be delivered before the parent has
+    // consumed the broker's buffered stdout diagnostic. A request issued in
+    // that intervening window must share the response-drain arbitration and
+    // surface the typed outcome, never a generic closed rejection.
+    child.emit('exit', 1, null);
+    const duringWindow = client.read('a.txt');
+    stdout.write('err\tnot_found\n');
+    await expect(duringWindow).rejects.toMatchObject({ code: 'not_found' });
+    // Once the drain grace has settled, later requests still fail closed
+    // immediately with the recorded typed terminal error.
+    await expect(client.read('b.txt')).rejects.toMatchObject({ code: 'not_found' });
+    stdout.destroy();
   });
 
   it.each(['', 'wat', 'ok\tdata\tzz', 'ok\tstat\t1\t2'])('rejects malformed responses: %j', async (response) => {

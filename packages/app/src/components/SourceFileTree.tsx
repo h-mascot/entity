@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useFileSources } from '../hooks/useFileSources';
-import type { SourceNode } from '../types/filesystem';
+import { useFileSources } from '../hooks/useFileSources.ts';
+import { sourceIsAvailableInBuild } from '../lib/sourceAvailability.ts';
+import type { FileSource, SourceNode } from '../types/filesystem.ts';
+import SourceUnavailableBadge from './SourceUnavailableBadge.tsx';
 
 function getFileIcon(name: string, isDir: boolean, expanded?: boolean): string {
   if (isDir) return expanded ? '📂' : '📁';
@@ -169,6 +171,57 @@ interface SourceFileTreeProps {
   onSelect: (sourceId: string, path: string) => void;
 }
 
+interface SourceTreeSourceHeaderProps {
+  source: Pick<FileSource, 'id' | 'displayName' | 'icon'>;
+  expanded: boolean;
+  /** True when the connector type has no implementation in this build. */
+  unavailable: boolean;
+  pinnedCount: number;
+  onToggle: (sourceId: string) => void;
+}
+
+/**
+ * Source row header for the Files tree. Unavailable connectors render the
+ * visible build notice and a disabled toggle so they are not expandable or
+ * actionable, while remaining listed for management in Admin settings.
+ */
+export function SourceTreeSourceHeader({
+  source,
+  expanded,
+  unavailable,
+  pinnedCount,
+  onToggle,
+}: SourceTreeSourceHeaderProps) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(source.id)}
+      disabled={unavailable}
+      data-testid="source-tree-source-header"
+      title={unavailable ? 'This connector type is not available in this build' : undefined}
+      className={`flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs ${
+        unavailable
+          ? 'cursor-not-allowed text-[var(--text-secondary)] opacity-80'
+          : 'text-[var(--text-primary)]'
+      }`}
+    >
+      <span className="truncate">
+        {source.icon ? `${source.icon} ` : ''}{source.displayName}
+      </span>
+      <span className="flex shrink-0 items-center gap-2">
+        {unavailable && <SourceUnavailableBadge />}
+        {pinnedCount > 0 && (
+          <span className="text-[10px] text-[var(--accent)]" title={`${pinnedCount} pinned folder(s)`}>
+            📌{pinnedCount}
+          </span>
+        )}
+        {/* Unavailable connectors cannot expand, so never claim an expanded state. */}
+        <span>{unavailable ? '•' : expanded ? '▾' : '▸'}</span>
+      </span>
+    </button>
+  );
+}
+
 interface TreeState {
   loading: boolean;
   error: string | null;
@@ -203,6 +256,15 @@ function joinPath(parent: string, leaf: string): string {
   const p = parent.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
   const l = leaf.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
   return p ? `${p}/${l}` : l;
+}
+
+/**
+ * Sources the tree may search: enabled and with a connector implemented in
+ * this build. Search auto-expansion and per-source search dispatch both use
+ * this so unavailable connectors are never expanded or queried.
+ */
+export function sourcesEligibleForSearch(sources: FileSource[]): FileSource[] {
+  return sources.filter((source) => source.enabled && sourceIsAvailableInBuild(source));
 }
 
 export default function SourceFileTree({
@@ -364,14 +426,23 @@ export default function SourceFileTree({
 
   useEffect(() => {
     for (const sourceId of expandedSources) {
+      const source = enabledSources.find((item) => item.id === sourceId);
+      // Never fetch trees for connectors that are not implemented in this build.
+      if (!source || !sourceIsAvailableInBuild(source)) {
+        continue;
+      }
       const key = treeKey(sourceId, '');
       if (!treeByKey[key]) {
         void loadTree(sourceId, '');
       }
     }
-  }, [expandedSources, loadTree, treeByKey]);
+  }, [enabledSources, expandedSources, loadTree, treeByKey]);
 
   const toggleSource = (sourceId: string) => {
+    const source = enabledSources.find((item) => item.id === sourceId);
+    if (source && !sourceIsAvailableInBuild(source)) {
+      return; // unavailable sources are visible but not expandable
+    }
     setExpandedSources((prev) => {
       const next = new Set(prev);
       if (next.has(sourceId)) {
@@ -674,7 +745,7 @@ export default function SourceFileTree({
 
   useEffect(() => {
     const timers: number[] = [];
-    for (const source of enabledSources) {
+    for (const source of sourcesEligibleForSearch(enabledSources)) {
       const query = searchQueryBySource[source.id] ?? '';
       const timer = window.setTimeout(() => {
         void runSearch(source.id, query);
@@ -844,9 +915,9 @@ export default function SourceFileTree({
               for (const s of enabledSources) { next[s.id] = val; }
               return next;
             });
-            // Auto-expand all sources when typing
+            // Auto-expand only sources this build can actually search.
             if (val.trim()) {
-              setExpandedSources(new Set(enabledSources.map((s) => s.id)));
+              setExpandedSources(new Set(sourcesEligibleForSearch(enabledSources).map((s) => s.id)));
             }
           }}
           placeholder="Search files and folders"
@@ -862,6 +933,7 @@ export default function SourceFileTree({
         )}
         {enabledSources.map((source) => {
           const expanded = expandedSources.has(source.id);
+          const unavailable = !sourceIsAvailableInBuild(source);
           const rootKey = treeKey(source.id, '');
           const rootTree = treeByKey[rootKey];
           const canWrite = Boolean(rootTree?.capabilities?.write);
@@ -871,24 +943,14 @@ export default function SourceFileTree({
           const isSearching = Boolean(query.trim());
           return (
             <div key={source.id} className="mb-2 rounded border border-[var(--border-primary)]">
-              <button
-                type="button"
-                onClick={() => toggleSource(source.id)}
-                className="flex w-full items-center justify-between px-2 py-1.5 text-left text-xs text-[var(--text-primary)]"
-              >
-                <span className="truncate">
-                  {source.icon ? `${source.icon} ` : ''}{source.displayName}
-                </span>
-                <span className="flex items-center gap-2">
-                  {pinnedCount > 0 && (
-                    <span className="text-[10px] text-[var(--accent)]" title={`${pinnedCount} pinned folder(s)`}>
-                      📌{pinnedCount}
-                    </span>
-                  )}
-                  <span>{expanded ? '▾' : '▸'}</span>
-                </span>
-              </button>
-              {expanded && (
+              <SourceTreeSourceHeader
+                source={source}
+                expanded={expanded}
+                unavailable={unavailable}
+                pinnedCount={pinnedCount}
+                onToggle={toggleSource}
+              />
+              {expanded && !unavailable && (
                 <div className="border-t border-[var(--border-primary)] pb-1">
                   <div className="flex items-center gap-2 px-2 py-2">
                     <button

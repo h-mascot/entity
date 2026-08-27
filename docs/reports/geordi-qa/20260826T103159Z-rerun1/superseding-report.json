@@ -1,0 +1,489 @@
+{
+  "schemaVersion": 1,
+  "runId": "20260826T103159Z-release-recovery-all-features-rerun1",
+  "verdict": "PARTIAL",
+  "approvedSha": "777b20f77dc85b2cf62cdc17067a0e526ef14ae6",
+  "environment": "sandbox",
+  "target": "http://sandbox.entity",
+  "startEndIdentity": {
+    "start": "777b20f77dc85b2cf62cdc17067a0e526ef14ae6",
+    "end": "777b20f77dc85b2cf62cdc17067a0e526ef14ae6"
+  },
+  "native": {
+    "driver": "node_repl + @oai/sky",
+    "app": "com.apple.Safari",
+    "screenshots": 55,
+    "axCaptures": 54,
+    "actionReceipts": 50,
+    "driverErrors": [
+      "stale element IDs",
+      "noWindowsAvailable",
+      "timeoutReached"
+    ],
+    "consoleNetworkExposed": false
+  },
+  "counts": {
+    "visible": {
+      "PASS": 22,
+      "PARTIAL": 8,
+      "FAIL": 1,
+      "WRONG BUILD": 0,
+      "BLOCKED": 31
+    },
+    "contract": {
+      "PASS": 61,
+      "FAIL": 0,
+      "BLOCKED": 0,
+      "NOT_APPLICABLE": 0,
+      "INVALID_PREREQUISITE": 1
+    }
+  },
+  "features": [
+    [
+      "A1",
+      "PASS",
+      "PASS",
+      "00-baseline/api-and-release-identity.txt"
+    ],
+    [
+      "A2",
+      "PASS",
+      "PASS",
+      "00-baseline/live-verifier.json"
+    ],
+    [
+      "A3",
+      "PASS",
+      "PASS",
+      "00-baseline/live-verifier.json"
+    ],
+    [
+      "A4",
+      "PASS",
+      "PASS",
+      "A/api-probes.json"
+    ],
+    [
+      "A5",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "A6",
+      "PARTIAL",
+      "PASS",
+      "A/files-authenticated-source.ax.txt; A/api-probes.json"
+    ],
+    [
+      "B1",
+      "PASS",
+      "PASS",
+      "B/admin-sections.ax.txt"
+    ],
+    [
+      "B2",
+      "PASS",
+      "PASS",
+      "00-baseline/native-safari-baseline.json; C/chat-view.ax.txt"
+    ],
+    [
+      "B3",
+      "PASS",
+      "PASS",
+      "B/tasks-view.ax.txt; B/services-view-loaded.ax.txt"
+    ],
+    [
+      "B4",
+      "PASS",
+      "PASS",
+      "B/team-agents-loaded.ax.txt; C/agents-view.ax.txt"
+    ],
+    [
+      "B5",
+      "PASS",
+      "PASS",
+      "B/admin-sections.ax.txt; B/modules-restored-final.ax.txt"
+    ],
+    [
+      "B6",
+      "PARTIAL",
+      "PASS",
+      "B/modules-services-off-saved.ax.txt; B/modules-services-off-direct-link.ax.txt"
+    ],
+    [
+      "B7",
+      "BLOCKED",
+      "PASS",
+      "B/safari-recovered-after-refresh.ax.txt"
+    ],
+    [
+      "C1",
+      "BLOCKED",
+      "PASS",
+      "C/admin-tab.ax.txt; C/users-access-activation-retry.ax.txt"
+    ],
+    [
+      "C2",
+      "BLOCKED",
+      "PASS",
+      "C/api-probes.json"
+    ],
+    [
+      "C3",
+      "PASS",
+      "PASS",
+      "C/agents-view.ax.txt"
+    ],
+    [
+      "C4",
+      "PASS",
+      "PASS",
+      "C/chat-view.ax.txt"
+    ],
+    [
+      "C5",
+      "PARTIAL",
+      "PASS",
+      "C/chat-view.ax.txt; C/api-probes.json"
+    ],
+    [
+      "C6",
+      "PASS",
+      "PASS",
+      "B/services-view-loaded.ax.txt"
+    ],
+    [
+      "C7",
+      "PARTIAL",
+      "PASS",
+      "C/tasks-for-handoffs.ax.txt; C/task-detail-handoffs.receipt.json"
+    ],
+    [
+      "C8",
+      "BLOCKED",
+      "PASS",
+      "C/api-probes.json"
+    ],
+    [
+      "C9",
+      "PASS",
+      "PASS",
+      "C/tasks-for-handoffs.ax.txt; C/agents-view.ax.txt"
+    ],
+    [
+      "C10",
+      "PASS",
+      "PASS",
+      "B/tasks-view.ax.txt"
+    ],
+    [
+      "D1",
+      "PASS",
+      "PASS",
+      "D/openwiki-index-page.ax.txt; D/wiki-quickstart.ax.txt"
+    ],
+    [
+      "D2",
+      "PARTIAL",
+      "PASS",
+      "D/wiki-quickstart.ax.txt; D/wiki-admin-and-extensions.ax.txt; D/wiki-files-and-docs.ax.txt; D/wiki-runtime-and-release.ax.txt; D/wiki-security-and-release.ax.txt"
+    ],
+    [
+      "D3",
+      "FAIL",
+      "PASS",
+      "D/openwiki-runtime-render-recheck.jpeg; I/fresh-test-summary.json"
+    ],
+    [
+      "E1",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "E2",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "E3",
+      "BLOCKED",
+      "PASS",
+      "A/api-probes.json; I/fresh-test-summary.json"
+    ],
+    [
+      "E4",
+      "BLOCKED",
+      "PASS",
+      "A/api-probes.json; I/fresh-test-summary.json"
+    ],
+    [
+      "E5",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "E6",
+      "BLOCKED",
+      "PASS",
+      "C/tasks-for-handoffs.ax.txt; I/fresh-test-summary.json"
+    ],
+    [
+      "E7",
+      "BLOCKED",
+      "PASS",
+      "A/api-probes.json; I/fresh-test-summary.json"
+    ],
+    [
+      "E8",
+      "PARTIAL",
+      "PASS",
+      "A/files-open-local-markdown-loaded.ax.txt; D/openwiki-runtime-render-recheck.ax.txt"
+    ],
+    [
+      "E9",
+      "BLOCKED",
+      "PASS",
+      "B/admin-sections.ax.txt; A/api-probes.json"
+    ],
+    [
+      "E10",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "F1",
+      "BLOCKED",
+      "PASS",
+      "A/api-probes.json; I/fresh-test-summary.json"
+    ],
+    [
+      "F2",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "F3",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "F4",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "F5",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "F6",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "F7",
+      "PARTIAL",
+      "PASS",
+      "D/openwiki-runtime-render-recheck.ax.txt; I/fresh-test-summary.json"
+    ],
+    [
+      "G1",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "G2",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "G3",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "G4",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "G5",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "G6",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "H1",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json; 00-baseline/live-verifier.json"
+    ],
+    [
+      "H2",
+      "PASS",
+      "PASS",
+      "A/files-home.ax.txt; A/api-probes.json"
+    ],
+    [
+      "H3",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "H4",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "H5",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "H6",
+      "BLOCKED",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "H7",
+      "PASS",
+      "PASS",
+      "A/files-open-local-markdown-loaded.ax.txt"
+    ],
+    [
+      "I1",
+      "PASS",
+      "PASS",
+      "C/chat-view.ax.txt; C/agents-view.ax.txt; I/fresh-test-summary.json"
+    ],
+    [
+      "I2",
+      "PARTIAL",
+      "INVALID_PREREQUISITE",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "I3",
+      "PASS",
+      "PASS",
+      "I/fresh-test-summary.json"
+    ],
+    [
+      "I4",
+      "PASS",
+      "PASS",
+      "00-baseline/live-verifier.json; I/fresh-test-summary.json"
+    ],
+    [
+      "I5",
+      "PASS",
+      "PASS",
+      "I/final-identity-and-integrity.txt; 00-baseline/live-verifier.json"
+    ],
+    [
+      "I6",
+      "PASS",
+      "PASS",
+      "I/final-identity-and-integrity.txt"
+    ]
+  ],
+  "issueMapping": {
+    "T-001": "I4",
+    "T-002": "E1",
+    "T-003": "E1",
+    "T-004": "E1",
+    "T-005": "E2",
+    "T-006": "E2",
+    "T-007": "E3",
+    "T-008": "E4",
+    "T-009": "E5",
+    "T-010": "E6",
+    "T-011": "E7",
+    "T-012": "F1",
+    "T-013": "F2",
+    "T-014": "F3",
+    "T-015": "F4",
+    "T-016": "F5",
+    "T-017": "F6",
+    "T-018": "F7",
+    "T-019": "G1",
+    "T-020": "G2",
+    "T-021": "G3",
+    "T-022": "G4",
+    "T-023": "G5",
+    "T-024": "G6",
+    "T-025": "H1",
+    "T-026": "H1",
+    "T-027": "H2",
+    "T-028": "H3",
+    "T-029": "H4",
+    "T-030": "H5",
+    "T-031": "H6",
+    "T-032": "E10",
+    "T-033": "E8",
+    "T-034": "E9",
+    "T-035": "I1,I3",
+    "T-036": "I2",
+    "T-037": "I2",
+    "T-038": "I4",
+    "T-039": "I5",
+    "T-040": "I6"
+  },
+  "sideEffects": {
+    "prodTouched": false,
+    "sourceEdited": false,
+    "dataMutated": true,
+    "cleanupComplete": true,
+    "externalSends": false,
+    "dataMutationDetail": "reversible module visibility toggle only; restored; no synthetic records created"
+  },
+  "remainingBlockers": [
+    "GitHub/S3 adapters return 500",
+    "OpenWiki preview blank",
+    "source-checkout server suite has 10 broker-absence failures",
+    "native admin/detail/mobile workflows incomplete"
+  ],
+  "supersession": {
+    "supersedesRunId": "20260826T103159Z-release-recovery-all-features-rerun1",
+    "supersedesPath": "/Users/enterprise/clawd/output/geordi-qa/entity/20260826T103159Z-release-recovery-all-features-rerun1/report.json",
+    "supersedesSha256": "70490b771de45400775ee8de3b84d76e450f1eaaf78baa5fe9a0d1258f0c1f51",
+    "historicalEvidencePreserved": true,
+    "classification": "INVALID_PREREQUISITE",
+    "classificationMeaning": "invalid prerequisite/setup: the observed failures stem from an unsupported invocation environment, not a product contract failure; this is not a product pass",
+    "corrections": [
+      {
+        "rowId": "I2",
+        "field": "contractStatus",
+        "from": "FAIL",
+        "to": "INVALID_PREREQUISITE",
+        "evidenceQuote": "All ten failures are source-checkout FS/local conversion tests because the read-only deploy-source checkout intentionally has no packages/server/native/managed-storage-broker/.build/broker.",
+        "rationale": "The server suite was invoked directly (cd packages/server && npx vitest run) inside the read-only deploy-source checkout without generated broker outputs. The supported root `npm run test:server` entry point builds the managed-storage broker before testing (GQR-003); the exact-build release-deploy suite proved the broker build/publication contracts 129/129. The failures are an invalid prerequisite/setup artifact, not a product contract failure, and this reclassification is not a product pass."
+      }
+    ]
+  }
+}
