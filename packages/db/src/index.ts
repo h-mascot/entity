@@ -2852,9 +2852,62 @@ export interface CreateActivityInput {
   metadata?: string;
 }
 
+export interface ActivityFilterInput {
+  orgId?: string;
+  teamId?: string;
+  actor?: string;
+  source?: string;
+  type?: string;
+  taskId?: number;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ActivityListResult {
+  activities: ActivityRecord[];
+  total: number;
+}
+
+export interface ActivityReportRow {
+  count: number;
+}
+
+export interface ActivityReportByActorRow extends ActivityReportRow {
+  actor: string;
+}
+
+export interface ActivityReportByActionRow extends ActivityReportRow {
+  action: string;
+}
+
+export interface ActivityReportByDayRow extends ActivityReportRow {
+  day: string;
+}
+
+export interface ActivityReportBySourceRow extends ActivityReportRow {
+  source: string;
+}
+
+export interface ActivityReportByTypeRow extends ActivityReportRow {
+  type: string;
+}
+
+export interface ActivityReport {
+  totals: { count: number };
+  byAction: ActivityReportByActionRow[];
+  byActor: ActivityReportByActorRow[];
+  byDay: ActivityReportByDayRow[];
+  bySource: ActivityReportBySourceRow[];
+  byType: ActivityReportByTypeRow[];
+}
+
 export interface ActivityRepository {
   listActivities: (limit?: number) => ActivityRecord[];
   listActivitiesByTaskId: (taskId: number, limit?: number) => ActivityRecord[];
+  listActivitiesFiltered: (filters?: ActivityFilterInput) => ActivityListResult;
+  getActivityReport: (filters?: ActivityFilterInput) => ActivityReport;
   createActivity: (input: CreateActivityInput) => ActivityRecord;
 }
 
@@ -10380,6 +10433,103 @@ export function createActivityRepository(): ActivityRepository {
 
   const getStmt = db.prepare('SELECT * FROM activities WHERE id = ?');
 
+  const filteredStatements = new Map<string, import('better-sqlite3').Statement>();
+
+  function prepareFiltered(sql: string): import('better-sqlite3').Statement {
+    let stmt = filteredStatements.get(sql);
+    if (!stmt) {
+      stmt = db.prepare(sql);
+      filteredStatements.set(sql, stmt);
+    }
+    return stmt;
+  }
+
+  function buildActivityFilterConditions(filters: ActivityFilterInput): {
+    whereSql: string;
+    params: Array<string | number>;
+  } {
+    const conditions: string[] = [];
+    const params: Array<string | number> = [];
+    const trimmed = (value?: string): string | undefined => {
+      const candidate = typeof value === 'string' ? value.trim() : '';
+      return candidate.length ? candidate : undefined;
+    };
+    const orgId = trimmed(filters.orgId);
+    const teamId = trimmed(filters.teamId);
+    const actor = trimmed(filters.actor);
+    const source = trimmed(filters.source);
+    const type = trimmed(filters.type);
+    const from = trimmed(filters.from);
+    const to = trimmed(filters.to);
+
+    if (orgId) {
+      conditions.push('tasks.org_id = ?');
+      params.push(orgId);
+    }
+    if (teamId) {
+      conditions.push('tasks.team_id = ?');
+      params.push(teamId);
+    }
+    if (actor) {
+      conditions.push(
+        "(activities.agent_name = ? OR CASE WHEN activities.activity_event_payload_json IS NOT NULL " +
+        "AND json_valid(activities.activity_event_payload_json) " +
+        "THEN json_extract(activities.activity_event_payload_json, '$.actor_principal_id') END = ?)"
+      );
+      params.push(actor, actor);
+    }
+    if (source) {
+      conditions.push('activities.source = ?');
+      params.push(source);
+    }
+    if (type) {
+      conditions.push('activities.type = ?');
+      params.push(type);
+    }
+    if (typeof filters.taskId === 'number' && Number.isInteger(filters.taskId)) {
+      conditions.push('activities.task_id = ?');
+      params.push(filters.taskId);
+    }
+    if (from) {
+      conditions.push('date(activities.created_at) >= date(?)');
+      params.push(from);
+    }
+    if (to) {
+      conditions.push('date(activities.created_at) <= date(?)');
+      params.push(to);
+    }
+
+    return {
+      whereSql: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '',
+      params,
+    };
+  }
+
+  const ACTIVITY_ACTOR_SQL =
+    "COALESCE(CASE WHEN activities.activity_event_payload_json IS NOT NULL " +
+    "AND json_valid(activities.activity_event_payload_json) " +
+    "THEN json_extract(activities.activity_event_payload_json, '$.actor_principal_id') END, " +
+    "activities.agent_name)";
+
+  function runActivityGroupBy<T extends string>(
+    filters: ActivityFilterInput,
+    projectionSql: string,
+    labelColumn: T
+  ): Array<Record<T, string> & { count: number }> {
+    const { whereSql, params } = buildActivityFilterConditions(filters);
+    const rows = prepareFiltered(`
+      SELECT ${projectionSql} AS label, COUNT(*) AS count
+      FROM activities
+      LEFT JOIN tasks ON activities.task_id = tasks.id
+      ${whereSql}
+      GROUP BY label
+      ORDER BY count DESC, label ASC
+    `).all(...params) as Array<{ label: string | null; count: number }>;
+    return rows
+      .filter((row) => row.label !== null && row.label !== undefined)
+      .map((row) => ({ [labelColumn]: String(row.label), count: Number(row.count) } as Record<T, string> & { count: number }));
+  }
+
   return {
     listActivities: (limit = 100) => {
       const safeLimit = clampActivityLimit(limit);
@@ -10395,6 +10545,60 @@ export function createActivityRepository(): ActivityRepository {
       const safeLimit = clampActivityLimit(limit);
       const rows = listByTaskStmt.all(taskId, safeLimit) as Array<Record<string, unknown>>;
       return rows.map(mapActivityRow);
+    },
+
+    getActivityReport: (filters: ActivityFilterInput = {}): ActivityReport => {
+      const { whereSql, params } = buildActivityFilterConditions(filters);
+      const totalRow = prepareFiltered(`
+        SELECT COUNT(*) AS count
+        FROM activities
+        LEFT JOIN tasks ON activities.task_id = tasks.id
+        ${whereSql}
+      `).get(...params) as { count: number };
+
+      const byActor = runActivityGroupBy(filters, ACTIVITY_ACTOR_SQL, 'actor');
+      const byAction = runActivityGroupBy(filters, 'activities.action', 'action');
+      const byDay = runActivityGroupBy(
+        filters,
+        'date(activities.created_at)',
+        'day'
+      );
+      const bySource = runActivityGroupBy(filters, 'activities.source', 'source');
+      const byType = runActivityGroupBy(filters, 'activities.type', 'type');
+
+      return {
+        totals: { count: Number(totalRow?.count ?? 0) },
+        byActor,
+        byAction,
+        byDay,
+        bySource,
+        byType,
+      };
+    },
+
+    listActivitiesFiltered: (filters: ActivityFilterInput = {}) => {
+      const { whereSql, params } = buildActivityFilterConditions(filters);
+      const safeLimit = clampActivityLimit(filters.limit ?? 100);
+      const rawOffset = filters.offset ?? 0;
+      const safeOffset = Number.isInteger(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+
+      const rows = prepareFiltered(`
+        SELECT activities.*
+        FROM activities
+        LEFT JOIN tasks ON activities.task_id = tasks.id
+        ${whereSql}
+        ORDER BY datetime(activities.created_at) DESC, activities.id DESC
+        LIMIT ? OFFSET ?
+      `).all(...params, safeLimit, safeOffset) as Array<Record<string, unknown>>;
+
+      const totalRow = prepareFiltered(`
+        SELECT COUNT(*) AS count
+        FROM activities
+        LEFT JOIN tasks ON activities.task_id = tasks.id
+        ${whereSql}
+      `).get(...params) as { count: number };
+
+      return { activities: rows.map(mapActivityRow), total: Number(totalRow?.count ?? 0) };
     },
 
     createActivity: (input: CreateActivityInput) => {
