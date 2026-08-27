@@ -98,19 +98,24 @@ class FakeGitHubClient implements GitHubClient {
     return { entries, nextCursor: done ? null : String(nextIndex) };
   }
 
-  async getBlob(options: { owner: string; repo: string; ref: string; path: string }): Promise<{ content: string; size: number; sha?: string }> {
+  async getBlob(options: { owner: string; repo: string; ref: string; path: string }): Promise<Response> {
     this.getBlobCalls.push({ ...options });
     if (this.blobFailure) {
-      throw githubErrorFromStatus(this.blobFailure.status, this.blobFailure.headers ?? {});
+      return new Response(null, {
+        status: this.blobFailure.status,
+        headers: this.blobFailure.headers ?? {},
+      });
     }
     if (this.leakToken) {
       throw new Error(`GET .../contents/${options.path} failed (Authorization: Bearer ${this.leakToken})`);
     }
     const content = this.blobs[options.path];
     if (content === undefined) {
-      throw githubErrorFromStatus(404, {});
+      return new Response(null, { status: 404 });
     }
-    return { content, size: Buffer.byteLength(content, 'utf8') };
+    return new Response(content, {
+      headers: { 'content-length': String(Buffer.byteLength(content, 'utf8')) },
+    });
   }
 }
 
@@ -343,6 +348,76 @@ describe('github connector adapter', () => {
     clock += 60_001; // ttl expiry forces a refetch
     await cachedAdapter.list('');
     expect(cachedClient.listTreeCalls).toHaveLength(4);
+  });
+});
+
+describe('github bounded transport boundary', () => {
+  it('rejects an oversized blob stream without materializing content beyond the configured cap', async () => {
+    const CHUNK = 1024;
+    const CAP = 4 * CHUNK;
+    const TOTAL_BYTES = 64 * CHUNK;
+    let produced = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (produced >= TOTAL_BYTES) {
+          controller.close();
+          return;
+        }
+        produced += CHUNK;
+        controller.enqueue(new Uint8Array(CHUNK).fill(0x61));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }, { highWaterMark: 0 });
+    const tree: GitHubTreeEntry[] = [
+      // Tree metadata lies small; the actual body dwarfs the cap.
+      { path: 'big.md', type: 'blob', size: CHUNK },
+    ];
+    const client: GitHubClient = {
+      listTree: async () => ({ entries: tree, nextCursor: null }),
+      getBlob: async () => new Response(stream, { headers: { 'content-type': 'text/markdown' } }),
+    };
+    const adapter = new GitHubFileSourceAdapter(githubSource(), { client });
+
+    await expect(adapter.read('big.md', { maxBytes: CAP })).rejects.toMatchObject({
+      name: 'SourceReadLimitError',
+      code: 'SOURCE_READ_LIMIT_EXCEEDED',
+    });
+    expect(cancelled).toBe(true);
+    // At most the cap plus the single in-flight chunk is ever pulled from the
+    // transport: the 64 KiB body is never materialized.
+    expect(produced).toBeLessThanOrEqual(CAP + CHUNK);
+    expect(produced).toBeLessThan(TOTAL_BYTES);
+  });
+
+  it('rejects an oversized declared content-length before pulling any body bytes', async () => {
+    let produced = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        produced += 1024;
+        controller.enqueue(new Uint8Array(1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }, { highWaterMark: 0 });
+    const tree: GitHubTreeEntry[] = [{ path: 'huge.md', type: 'blob', size: 1024 }];
+    const client: GitHubClient = {
+      listTree: async () => ({ entries: tree, nextCursor: null }),
+      getBlob: async () =>
+        new Response(stream, { headers: { 'content-length': String(64 * 1024) } }),
+    };
+    const adapter = new GitHubFileSourceAdapter(githubSource(), { client });
+
+    await expect(adapter.read('huge.md', { maxBytes: 4096 })).rejects.toMatchObject({
+      name: 'SourceReadLimitError',
+      code: 'SOURCE_READ_LIMIT_EXCEEDED',
+    });
+    expect(produced).toBe(0);
+    expect(cancelled).toBe(true);
   });
 });
 

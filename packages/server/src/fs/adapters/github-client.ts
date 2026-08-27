@@ -9,7 +9,8 @@
  * No fetch-based implementation ships in this build: wiring a live client is
  * blocked on source authority (see docs/plans/ACTIVE_PLAN.md, GQR-005).
  * `githubErrorFromStatus` is the single status -> typed-error mapping every
- * future client implementation must use.
+ * future client implementation must use, and getBlob must stay a streaming
+ * (unmaterialized) response so reads remain bounded at the transport.
  */
 
 export interface GitHubTreeEntry {
@@ -27,12 +28,6 @@ export interface GitHubTreePage {
   nextCursor: string | null;
 }
 
-export interface GitHubBlobResult {
-  content: string;
-  size: number;
-  sha?: string;
-}
-
 export interface GitHubClient {
   /** Lists repository tree entries, one page at a time, following cursors. */
   listTree(options: {
@@ -41,13 +36,20 @@ export interface GitHubClient {
     ref: string;
     cursor?: string;
   }): Promise<GitHubTreePage>;
-  /** Fetches a single blob's content at a path. */
+  /**
+   * Fetches a single blob as a raw HTTP response whose body is NOT
+   * materialized here: the client must never decode the body into a string.
+   * Callers consume it through the shared bounded reader
+   * (readResponseTextBounded) so the maxBytes cap is enforced at/before
+   * content materialization and oversized bodies are cancelled at the
+   * transport boundary.
+   */
   getBlob(options: {
     owner: string;
     repo: string;
     ref: string;
     path: string;
-  }): Promise<GitHubBlobResult>;
+  }): Promise<Response>;
 }
 
 export abstract class GitHubClientError extends Error {

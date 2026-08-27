@@ -1,10 +1,11 @@
 import path from 'path';
 import type { FileSourceRecord } from '../../../../db/src/file-sources';
 import { normalizeSourceRelativePath } from '../security';
-import { DEFAULT_SOURCE_READ_LIMIT_BYTES, SourceReadLimitError } from './bounded-read';
+import { DEFAULT_SOURCE_READ_LIMIT_BYTES, SourceReadLimitError, readResponseTextBounded } from './bounded-read';
 import {
   GitHubNotFoundError,
   GitHubPaginationLimitError,
+  githubErrorFromStatus,
   redactBearerText,
   type GitHubClient,
   type GitHubTreeEntry,
@@ -276,17 +277,25 @@ export class GitHubFileSourceAdapter implements FileSourceAdapter {
       throw new SourceReadLimitError(maxBytes);
     }
 
-    const blob = await this.guarded(() =>
+    // Transport boundary: the client hands back an unmaterialized response,
+    // and the shared bounded reader enforces maxBytes at/before content
+    // materialization (content-length precheck + streaming cancel).
+    const response = await this.guarded(() =>
       this.client.getBlob({ owner: config.owner, repo: config.repo, ref: config.ref, path: normalized }),
     );
-    if (Buffer.byteLength(blob.content, 'utf8') > maxBytes) {
-      throw new SourceReadLimitError(maxBytes);
+    if (!response.ok) {
+      // Cancel the error body without reading it: typed mapping needs only
+      // the status and headers, so no body bytes are materialized.
+      await response.body?.cancel().catch(() => undefined);
+      throw githubErrorFromStatus(response.status, Object.fromEntries(response.headers));
     }
 
+    const { content, size } = await readResponseTextBounded(response, options);
+
     return {
-      content: blob.content,
+      content,
       contentType: blobContentType(normalized),
-      size: Buffer.byteLength(blob.content, 'utf8'),
+      size,
     };
   }
 
