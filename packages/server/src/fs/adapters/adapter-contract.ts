@@ -99,20 +99,37 @@ interface CheckContext {
   options: AdapterContractOptions;
 }
 
-type ContractCheck = { id: ContractCheckId; run: (ctx: CheckContext) => Promise<string | null> };
+type ContractCheck = { id: ContractCheckId; run: (ctx: CheckContext) => Promise<string[]> };
 
-async function checkCapabilities({ adapter, options }: CheckContext): Promise<string | null> {
-  const actual = adapter.capabilities();
+/** Every check returns zero or more violation descriptions. */
+async function checkCapabilities({ adapter, options }: CheckContext): Promise<string[]> {
   const expected = options.capabilities;
+  const actual = adapter.capabilities();
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
+    return ['capabilities malformed: capabilities() must return the exact declared capability object'];
+  }
+  const violations: string[] = [];
+  // Exact shape, both directions: every declared key must be present with the
+  // declared value, and no extra capability key may be advertised.
   for (const key of Object.keys(expected) as Array<keyof SourceCapability>) {
+    if (!Object.prototype.hasOwnProperty.call(actual, key)) {
+      violations.push(`capabilities mismatch: missing capability key ${key} (contract requires ${String(expected[key])})`);
+      continue;
+    }
     if (actual[key] !== expected[key]) {
-      return `capabilities mismatch: ${key} advertised ${String(actual[key])}, contract requires ${String(expected[key])}`;
+      violations.push(`capabilities mismatch: ${key} advertised ${String(actual[key])}, contract requires ${String(expected[key])}`);
     }
   }
-  return null;
+  const declaredKeys = new Set(Object.keys(expected));
+  for (const key of Object.keys(actual)) {
+    if (!declaredKeys.has(key)) {
+      violations.push(`capabilities mismatch: extra capability key ${String(key)} advertised beyond the declared contract`);
+    }
+  }
+  return violations;
 }
 
-async function checkRootList({ adapter, options }: CheckContext): Promise<string | null> {
+async function checkRootList({ adapter, options }: CheckContext): Promise<string[]> {
   const nodes = sortNodes(await adapter.list(''));
   const actual = describeNodes(nodes);
   const expected = describeNodes(
@@ -124,21 +141,21 @@ async function checkRootList({ adapter, options }: CheckContext): Promise<string
     })),
   );
   if (actual !== expected) {
-    return `root listing mismatch: expected [${expected}], got [${actual}]`;
+    return [`root listing mismatch: expected [${expected}], got [${actual}]`];
   }
-  return null;
+  return [];
 }
 
-async function checkSubtreeScoping({ adapter, options }: CheckContext): Promise<string | null> {
+async function checkSubtreeScoping({ adapter, options }: CheckContext): Promise<string[]> {
   const { subdirectory } = options.fixture;
   if (!subdirectory) {
-    return null;
+    return [];
   }
   const nodes = await adapter.list(subdirectory.path);
   const scopePrefix = `${subdirectory.path}/`;
   const outOfScope = nodes.filter((node) => !node.path.startsWith(scopePrefix));
   if (outOfScope.length > 0) {
-    return `subtree listing leaked out-of-scope nodes: ${describeNodes(outOfScope)}`;
+    return [`subtree listing leaked out-of-scope nodes: ${describeNodes(outOfScope)}`];
   }
   const actual = describeNodes(sortNodes(nodes));
   const expected = describeNodes(
@@ -150,68 +167,71 @@ async function checkSubtreeScoping({ adapter, options }: CheckContext): Promise<
     })),
   );
   if (actual !== expected) {
-    return `subtree listing mismatch for ${subdirectory.path}: expected [${expected}], got [${actual}]`;
+    return [`subtree listing mismatch for ${subdirectory.path}: expected [${expected}], got [${actual}]`];
   }
-  return null;
+  return [];
 }
 
-async function checkTraversalRejected({ adapter }: CheckContext): Promise<string | null> {
+async function checkTraversalRejected({ adapter }: CheckContext): Promise<string[]> {
   for (const probe of TRAVERSAL_PROBES) {
     const listMessage = await expectRejection(() => adapter.list(probe));
     if (listMessage === null) {
-      return `traversal not rejected: list(${probe}) resolved`;
+      return [`traversal not rejected: list(${probe}) resolved`];
     }
     const readMessage = await expectRejection(() => adapter.read(probe));
     if (readMessage === null) {
-      return `traversal not rejected: read(${probe}) resolved`;
+      return [`traversal not rejected: read(${probe}) resolved`];
     }
   }
-  return null;
+  return [];
 }
 
-async function checkReadKnownFiles({ adapter, options }: CheckContext): Promise<string | null> {
+async function checkReadKnownFiles({ adapter, options }: CheckContext): Promise<string[]> {
   for (const [filePath, expectedContent] of Object.entries(options.fixture.files)) {
     const result = await adapter.read(filePath);
     if (result.content !== expectedContent) {
-      return `known file read mismatch for ${filePath}: expected ${JSON.stringify(expectedContent)}, got ${JSON.stringify(result.content)}`;
+      return [`known file read mismatch for ${filePath}: expected ${JSON.stringify(expectedContent)}, got ${JSON.stringify(result.content)}`];
     }
     if (!result.contentType || result.contentType.trim() === '') {
-      return `known file read for ${filePath} returned no content type`;
+      return [`known file read for ${filePath} returned no content type`];
     }
     if (typeof result.size === 'number' && result.size !== Buffer.byteLength(result.content, 'utf8')) {
-      return `known file read size mismatch for ${filePath}: reported ${result.size}, content is ${Buffer.byteLength(result.content, 'utf8')} bytes`;
+      return [`known file read size mismatch for ${filePath}: reported ${result.size}, content is ${Buffer.byteLength(result.content, 'utf8')} bytes`];
     }
   }
-  return null;
+  return [];
 }
 
-async function checkReadUnknownFile({ adapter }: CheckContext): Promise<string | null> {
+async function checkReadUnknownFile({ adapter }: CheckContext): Promise<string[]> {
   const message = await expectRejection(() => adapter.read('definitely/not/present/missing-file.txt'));
   if (message === null) {
-    return 'unknown file read resolved instead of rejecting';
+    return ['unknown file read resolved instead of rejecting'];
   }
-  return null;
+  return [];
 }
 
-async function checkReadOnly({ adapter, options }: CheckContext): Promise<string | null> {
+async function checkReadOnly({ adapter, options }: CheckContext): Promise<string[]> {
   if (!options.readOnly) {
-    return null;
+    return [];
   }
+  // write() and mkdir() are checked independently so one violation can never
+  // mask the other (e.g. a read-only adapter whose mkdir succeeds).
+  const violations: string[] = [];
   const writeMessage = await expectRejection(() => adapter.write('contract-probe.txt', 'x'));
   if (writeMessage === null) {
-    return 'read-only adapter accepted write()';
+    violations.push('read-only adapter accepted write()');
   }
   const mkdirMessage = await expectRejection(() => adapter.mkdir('contract-probe-dir'));
   if (mkdirMessage === null) {
-    return 'read-only adapter accepted mkdir()';
+    violations.push('read-only adapter accepted mkdir()');
   }
-  return null;
+  return violations;
 }
 
-async function checkSecretRedaction({ adapter, options }: CheckContext): Promise<string | null> {
+async function checkSecretRedaction({ adapter, options }: CheckContext): Promise<string[]> {
   const secret = options.redactedSecret;
   if (!secret) {
-    return null;
+    return [];
   }
   const scenarios = options.redactionScenarios ?? [
     { name: 'list-root', run: () => adapter.list('') },
@@ -221,10 +241,10 @@ async function checkSecretRedaction({ adapter, options }: CheckContext): Promise
   for (const scenario of scenarios) {
     const message = await expectRejection(() => scenario.run(adapter));
     if (message !== null && message.includes(secret)) {
-      return `secret leaked in error message for scenario ${scenario.name}`;
+      return [`secret leaked in error message for scenario ${scenario.name}`];
     }
   }
-  return null;
+  return [];
 }
 
 const CONTRACT_CHECKS: readonly ContractCheck[] = [
@@ -247,10 +267,8 @@ export async function collectAdapterContractViolations(
   const violations: string[] = [];
   for (const check of CONTRACT_CHECKS) {
     try {
-      const violation = await check.run(ctx);
-      if (violation !== null) {
-        violations.push(violation);
-      }
+      const found = await check.run(ctx);
+      violations.push(...found);
     } catch (error) {
       // A clause that throws is itself a contract violation, never a
       // harness crash: record it so callers see every deviation.
@@ -284,15 +302,15 @@ export function runFileSourceAdapterContractTests(
     for (const check of CONTRACT_CHECKS) {
       registrar.it(`satisfies ${check.id}`, async () => {
         const adapter = await getAdapter();
-        let violation: string | null;
+        let found: string[];
         try {
-          violation = await check.run({ adapter, options });
+          found = await check.run({ adapter, options });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          violation = `check ${check.id} threw: ${message}`;
+          found = [`check ${check.id} threw: ${message}`];
         }
-        if (violation !== null) {
-          throw new Error(violation);
+        if (found.length > 0) {
+          throw new Error(found.join('; '));
         }
       });
     }

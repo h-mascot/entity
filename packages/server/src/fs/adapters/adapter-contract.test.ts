@@ -168,6 +168,57 @@ describe('shared adapter contract harness', () => {
     ]);
   });
 
+  it('flags capabilities that advertise extra keys beyond the declared contract', async () => {
+    const extra = new MemoryAdapter(fixture().files, {
+      read: true,
+      write: false,
+      rename: false,
+      delete: false,
+      list: true,
+      search: false,
+      // Deliberate violation: an undeclared extra capability key.
+      notifications: true,
+    } as SourceCapability);
+    const violations = await collectAdapterContractViolations(baseOptions({ createAdapter: () => extra }));
+    expect(violations).toEqual([
+      expect.stringContaining('extra capability key'),
+    ]);
+  });
+
+  it('flags capabilities that omit required keys', async () => {
+    const incomplete = {
+      read: true,
+      write: false,
+      rename: false,
+      delete: false,
+      list: true,
+      // search is deliberately missing
+    } as unknown as SourceCapability;
+    const violations = await collectAdapterContractViolations(baseOptions({
+      createAdapter: () => new MemoryAdapter(fixture().files, incomplete),
+    }));
+    expect(violations).toEqual([
+      expect.stringContaining('missing capability key'),
+    ]);
+  });
+
+  it('flags capability values of the wrong type', async () => {
+    const malformed = {
+      read: 'yes',
+      write: false,
+      rename: false,
+      delete: false,
+      list: true,
+      search: false,
+    } as unknown as SourceCapability;
+    const violations = await collectAdapterContractViolations(baseOptions({
+      createAdapter: () => new MemoryAdapter(fixture().files, malformed),
+    }));
+    expect(violations).toEqual([
+      expect.stringContaining('read advertised'),
+    ]);
+  });
+
   it('flags a root listing that returns the wrong tree', async () => {
     const files = { 'readme.md': 'x\n' };
     const violations = await collectAdapterContractViolations(baseOptions({ createAdapter: () => new MemoryAdapter(files) }));
@@ -227,6 +278,33 @@ describe('shared adapter contract harness', () => {
     })(fixture().files);
     const violations = await collectAdapterContractViolations(baseOptions({ createAdapter: () => writable }));
     expect(violations.some((v) => v.includes('read-only'))).toBe(true);
+  });
+
+  it('flags read-only adapters whose mkdir succeeds even while write still rejects', async () => {
+    const mkdirViolating = new (class extends MemoryAdapter {
+      // write() stays inherited and still rejects; only mkdir violates.
+      async mkdir(): Promise<void> {
+        // succeeds: creating a directory on a read-only source is a violation
+      }
+    })(fixture().files);
+    const violations = await collectAdapterContractViolations(baseOptions({ createAdapter: () => mkdirViolating }));
+    expect(violations).toEqual(['read-only adapter accepted mkdir()']);
+  });
+
+  it('reports the write and mkdir read-only violations independently', async () => {
+    const bothViolating = new (class extends MemoryAdapter {
+      async write(): Promise<{ updatedAt?: string }> {
+        return {};
+      }
+      async mkdir(): Promise<void> {
+        // succeeds alongside the write violation
+      }
+    })(fixture().files);
+    const violations = await collectAdapterContractViolations(baseOptions({ createAdapter: () => bothViolating }));
+    expect(violations).toEqual([
+      expect.stringContaining('read-only adapter accepted write()'),
+      expect.stringContaining('read-only adapter accepted mkdir()'),
+    ]);
   });
 
   it('flags error messages that leak the declared secret', async () => {
