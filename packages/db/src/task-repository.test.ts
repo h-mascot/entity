@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type Database from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 let activeDbPath: string | null = null;
@@ -31,6 +31,33 @@ async function loadDbModule(): Promise<typeof import('./index')> {
   return import('./index');
 }
 
+function createMissionControlFixture(dbPath: string): void {
+  cleanupDbPaths.push(dbPath);
+  const source = new Database(dbPath);
+  source.exec(`
+    CREATE TABLE tasks (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      "column" TEXT,
+      assignee TEXT,
+      blocked INTEGER DEFAULT 0,
+      blocker_reason TEXT,
+      archived INTEGER DEFAULT 0,
+      created_at TEXT,
+      updated_at TEXT
+    );
+    INSERT INTO tasks (id, name, description, "column", assignee, created_at, updated_at)
+    VALUES (41, 'Legacy Mission Control task', 'legacy fixture', 'backlog', 'User', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+  `);
+  source.close();
+}
+
+async function closeEntityDatabase(): Promise<void> {
+  const { getEntityDatabase } = await import('./entity-db');
+  getEntityDatabase().close();
+}
+
 function countRows(db: Database.Database, sql: string, taskId: number): number {
   const row = db.prepare(sql).get(taskId) as { count: number };
   return row.count;
@@ -57,6 +84,56 @@ afterEach(async () => {
   }
   activeDbPath = null;
   cleanupDbPaths = [];
+});
+
+describe('Mission Control task import opt-in', () => {
+  it('does not import legacy tasks when ENTITY_SEED_MISSION_CONTROL_TASKS is absent', async () => {
+    const sourcePath = tempDbPath('mission-control-source');
+    createMissionControlFixture(sourcePath);
+    const db = await loadDbModule();
+    vi.stubEnv('MISSION_CONTROL_DB_PATH', sourcePath);
+    vi.stubEnv('ENTITY_SEED_MISSION_CONTROL_TASKS', undefined);
+
+    expect(db.createTaskRepository().listTasks()).toEqual([]);
+  });
+
+  it('imports legacy tasks only when explicitly enabled', async () => {
+    const sourcePath = tempDbPath('mission-control-source');
+    createMissionControlFixture(sourcePath);
+    const db = await loadDbModule();
+    vi.stubEnv('MISSION_CONTROL_DB_PATH', sourcePath);
+    vi.stubEnv('ENTITY_SEED_MISSION_CONTROL_TASKS', 'yes');
+
+    expect(db.createTaskRepository().listTasks()).toEqual([
+      expect.objectContaining({ id: 41, name: 'Legacy Mission Control task' }),
+    ]);
+  });
+
+  it('does not recreate a deleted imported task after repository restart without opt-in', async () => {
+    const sourcePath = tempDbPath('mission-control-source');
+    const targetPath = tempDbPath('entity-db-restart');
+    cleanupDbPaths.push(targetPath);
+    createMissionControlFixture(sourcePath);
+    activeDbPath = targetPath;
+    vi.stubEnv('ENTITY_TASK_DB_PATH', targetPath);
+    vi.stubEnv('MISSION_CONTROL_DB_PATH', sourcePath);
+    vi.stubEnv('ENTITY_SEED_MISSION_CONTROL_TASKS', 'true');
+
+    let db = await import('./index');
+    let tasks = db.createTaskRepository();
+    expect(tasks.getTask(41)?.name).toBe('Legacy Mission Control task');
+    expect(tasks.deleteTask(41)).toBe(true);
+    await closeEntityDatabase();
+
+    vi.resetModules();
+    vi.stubEnv('ENTITY_TASK_DB_PATH', targetPath);
+    vi.stubEnv('MISSION_CONTROL_DB_PATH', sourcePath);
+    vi.stubEnv('ENTITY_SEED_MISSION_CONTROL_TASKS', undefined);
+    db = await import('./index');
+    tasks = db.createTaskRepository();
+
+    expect(tasks.getTask(41)).toBeUndefined();
+  });
 });
 
 describe('task repository persistence', () => {
