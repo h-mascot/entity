@@ -88,6 +88,16 @@ The Admin surface also owns several org-scoped chat management routes that now f
 
 `packages/server/src/routes/curacel-operations.ts` is another admin-only management surface. It fronts the Curacel operations repository, but every mutation and execution-sample write now first proves the organization exists in the authoritative workspace repository and that any supplied team belongs to that org. The route family covers review policies, connector configuration, connector drafts, team dashboards, and execution samples, while rejecting raw secrets in request bodies and keeping review gates enforced at the server boundary.
 
+## Business onboarding
+
+Entity also exposes a business onboarding surface that is governed from Admin settings. `packages/server/src/routes/business-onboarding.ts` provides the `/onboarding/business/catalog`, `/start`, `/provision`, and `/confirm` routes, and `packages/app/src/components/BusinessOnboardingFlow.tsx` renders the matching wizard in the app shell.
+
+The flow is intentionally stateful: operators create or reuse an org, select domains from the catalog, write a mission statement, provision a blueprint, and then confirm it. Provisioning creates teams, projects, and seed tasks for the selected business domains, and it can also map existing registry agents onto provisioned teams when a named match is found. The server writes the resulting blueprint back onto the org record so later regeneration and confirmation can round-trip the same structure.
+
+Admin controls the feature gate and dry-run policy through the `businessOnboarding` settings block in `packages/server/src/config/admin-settings.ts` and the runtime reader in `packages/server/src/config/admin-runtime.ts`. When `enabled` is false, the route family rejects start/provision calls with 403. When `requireDryRun` is enabled, `/provision` requires a preview receipt before the confirmable provision path is accepted. The UI reflects that policy by loading the runtime setting on mount, taking a dry-run preview first when required, and keeping the action bar pinned to the viewport bottom so the multi-step wizard stays usable during long forms.
+
+The wizard is linked to the rest of the workspace through the same org and agent registry seams used elsewhere in Admin, which makes this page the right place to look when checking whether business onboarding exists, whether it is enabled, and which backend mutations it can perform.
+
 ## Agent registry and Task Master settings
 
 The Admin area is not just for infrastructure. It also controls human-facing workspace behavior such as agent registry settings and Task Master-related preferences. That is important because the task board, agent dashboard, and automation surfaces are all coupled through shared configuration.
