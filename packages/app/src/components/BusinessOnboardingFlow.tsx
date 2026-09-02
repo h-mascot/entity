@@ -463,7 +463,7 @@ export default function BusinessOnboardingFlow({
       </header>
 
       <main className="relative z-10 grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="onboarding-card flex min-h-[32rem] flex-col p-6 md:p-8">
+        <section className="onboarding-card flex min-h-0 flex-col p-6 md:p-8">
           <ErrorBanner message={error} />
           {catalogDegradedNotice ? (
             <div
@@ -653,7 +653,7 @@ export default function BusinessOnboardingFlow({
             </div>
           ) : null}
 
-          <div className="mt-auto pt-8">
+          <div className="sticky bottom-0 z-20 -mx-6 pt-8 md:-mx-8">
             <div className="onboarding-actions">
               <button
                 type="button"
