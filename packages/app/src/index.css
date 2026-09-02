@@ -1054,8 +1054,7 @@ textarea {
 
 	  .onboarding-card {
 	    position: relative;
-	    overflow: hidden;
-	    border: 1px solid color-mix(in srgb, var(--border-secondary) 78%, rgb(255 255 255 / 0.34));
+		    border: 1px solid color-mix(in srgb, var(--border-secondary) 78%, rgb(255 255 255 / 0.34));
 	    border-radius: 20px;
 	    background:
 	      linear-gradient(135deg, rgb(255 255 255 / 0.76), rgb(255 255 255 / 0.38)),
@@ -1087,7 +1086,7 @@ textarea {
 	    margin-top: 4px;
 	    border-top: 1px solid color-mix(in srgb, var(--border-secondary) 62%, transparent);
 	    border-radius: 18px;
-	    background: color-mix(in srgb, var(--bg-secondary) 52%, transparent);
+	    background: color-mix(in srgb, var(--bg-secondary) 88%, rgb(255 255 255 / 0.06));
 	    padding: 16px 20px;
 	    backdrop-filter: blur(18px);
 	  }
