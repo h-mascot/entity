@@ -310,7 +310,7 @@ describe('chat ClickClack compatibility bridge', () => {
     const { registerChatRoutes, publicChatDeliveryFailure, SAFE_CHAT_DELIVERY_FAILURE } = await import('./chat');
     const rawGoError = [
       'go run ./apps/api/cmd/clickclack admin bot create --data',
-      '/Users/enterprise/Code/entity-clickclack-dev/var/clickclack-sidecar',
+      '/home/dev/entity-clickclack-dev/var/clickclack-sidecar',
       '--workspace wsp_123 --handle entity-geordi-abc123 failed:',
       'go: go.mod file not found in current directory or any parent directory; see go help modules',
     ].join(' ');

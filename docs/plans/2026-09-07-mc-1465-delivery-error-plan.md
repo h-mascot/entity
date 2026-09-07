@@ -8,7 +8,8 @@ Worktree: /Users/enterprise/Code/entity-mc-1465 (detached at origin/main fc8ade4
 Chat -> send -> ClickClack sidecar delivery failure returned the raw bridge
 error into the chat UI: internal `go run ./apps/api/cmd/clickclack admin bot
 create ...` command, absolute paths, workspace ID, bot handle, and the Go
-toolchain error (`go.mod file not found ...`).
+toolchain error (`go.mod file not found ...`). (Exact path from the dogfood
+report kept out of this public repo; see the private intake thread.)
 
 ## Root cause chain
 1. `packages/server/src/clickclack/bridge.ts` `execFileText` (line ~180)
