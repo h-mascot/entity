@@ -80,6 +80,29 @@ function denyChatHistory(res: express.Response, missingError: string) {
   return res.status(404).json({ error: missingError });
 }
 
+export const SAFE_CHAT_DELIVERY_FAILURE =
+  'The agent is temporarily unavailable. Please try again later or contact your workspace admin to check the agent configuration.';
+
+function recordChatDeliveryFailure(error: unknown, context: Record<string, unknown>): void {
+  const detail = error instanceof Error ? error.message : String(error);
+  console.error('[chat] agent delivery failed', {
+    event: 'chat_agent_delivery_failed',
+    ...context,
+    error: detail,
+  });
+}
+
+/**
+ * MC-1465: degraded delivery responses must never carry raw internal detail
+ * (commands, absolute paths, workspace/user/bot IDs, tokens, provider or
+ * toolchain errors) into the chat JSON that clients render. Operators get the
+ * full detail through the structured console.error telemetry above.
+ */
+export function publicChatDeliveryFailure(error: unknown, context: Record<string, unknown> = {}): string {
+  recordChatDeliveryFailure(error, context);
+  return SAFE_CHAT_DELIVERY_FAILURE;
+}
+
 /**
  * THE-931 — authoritative tenant scope for chat resources.
  *
@@ -1758,7 +1781,11 @@ export function registerChatRoutes({
             suppressed: sidecarSuppressed,
           });
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'ClickClack delivery failed';
+          const message = publicChatDeliveryFailure(error, {
+            channelId,
+            targetCount: sidecarTargets.length,
+            delivery: 'clickclack-sidecar',
+          });
           return res.status(202).json({
             degraded: true,
             error: message,

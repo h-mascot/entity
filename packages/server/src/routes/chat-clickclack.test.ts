@@ -220,7 +220,12 @@ describe('chat ClickClack compatibility bridge', () => {
 
       expect(response.status).toBe(202);
       expect(payload.degraded).toBe(true);
-      expect(payload.error).toContain('sidecar down');
+      // MC-1465: the response carries plain-language failure text, never the
+      // raw bridge error ('sidecar down' stays in server telemetry).
+      expect(payload.error).toBe(
+        'The agent is temporarily unavailable. Please try again later or contact your workspace admin to check the agent configuration.'
+      );
+      expect(payload.error).not.toContain('sidecar down');
       expect(payload.message).toMatchObject({
         channelId: 'command-deck',
         content: 'persist despite sidecar outage',
@@ -295,5 +300,102 @@ describe('chat ClickClack compatibility bridge', () => {
       expect.objectContaining({ id: humanId, sender: 'entity-local-user', channelId: 'command-deck', content: 'prove sidecar send' }),
       expect.objectContaining({ sender: 'geordi', channelId: 'command-deck', content: 'geordi reply through ClickClack' }),
     ]));
+  }, 15000);
+
+  // MC-1465 regression: a raw Go/ClickClack toolchain error (internal command,
+  // absolute paths, workspace ID, bot handle, go.mod toolchain text) must never
+  // reach the chat JSON clients render; the user gets plain language, and the
+  // raw detail is preserved in server telemetry.
+  it('hides raw ClickClack/Go errors from the degraded delivery response', async () => {
+    const { registerChatRoutes, publicChatDeliveryFailure, SAFE_CHAT_DELIVERY_FAILURE } = await import('./chat');
+    const rawGoError = [
+      'go run ./apps/api/cmd/clickclack admin bot create --data',
+      '/Users/enterprise/Code/entity-clickclack-dev/var/clickclack-sidecar',
+      '--workspace wsp_123 --handle entity-geordi-abc123 failed:',
+      'go: go.mod file not found in current directory or any parent directory; see go help modules',
+    ].join(' ');
+
+    const app = express();
+    app.use(express.json());
+    const telemetry: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      telemetry.push(args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '));
+    };
+    registerChatRoutes({
+      app,
+      clickClackReadiness: () => readiness('degraded'),
+      clickClackBridge: {
+        sendCompatibilityMessage: async () => {
+          throw new Error(rawGoError);
+        },
+      },
+    });
+
+    let sanitizeServer: http.Server | null = null;
+    const sanitizeBaseUrl = await new Promise<string>((resolve) => {
+      sanitizeServer = app.listen(0, '127.0.0.1', () => {
+        const address = sanitizeServer?.address();
+        if (!address || typeof address === 'string') {
+          throw new Error('failed to bind sanitize test server');
+        }
+        resolve(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    try {
+      await fetch(`${sanitizeBaseUrl}/api/chat/setup`, { method: 'POST' });
+
+      const response = await fetch(`${sanitizeBaseUrl}/api/chat/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelId: 'command-deck',
+          targetAgent: 'geordi',
+          agents: ['geordi'],
+          content: 'sanitize raw go error',
+          messageId: 'entity-human-sanitize-1',
+        }),
+      });
+      const payload = await response.json() as {
+        degraded?: boolean;
+        error?: string;
+        clickclack?: { error?: string; baseUrl?: string };
+        message: { id: string; channelId: string; content: string; status: string };
+        messages: Array<unknown>;
+      };
+
+      expect(response.status).toBe(202);
+      expect(payload.degraded).toBe(true);
+      // Plain-language failure text with a safe next step.
+      expect(payload.error).toBe(SAFE_CHAT_DELIVERY_FAILURE);
+      // The nested sidecar diagnostic must be sanitized too.
+      expect(payload.clickclack?.error).toBe(SAFE_CHAT_DELIVERY_FAILURE);
+      // None of the raw internal detail may survive anywhere in the response.
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toContain('go run');
+      expect(serialized).not.toContain('go.mod');
+      expect(serialized).not.toContain('/Users/');
+      expect(serialized).not.toContain('wsp_');
+      expect(serialized).not.toContain('entity-geordi-');
+      // The user message is still persisted.
+      expect(payload.message).toMatchObject({
+        channelId: 'command-deck',
+        content: 'sanitize raw go error',
+        status: 'sent',
+      });
+      expect(payload.messages).toEqual([]);
+      // Operator telemetry preserves the raw detail for diagnosis.
+      expect(telemetry.some((line) => line.includes('chat_agent_delivery_failed'))).toBe(true);
+      expect(telemetry.some((line) => line.includes('go.mod file not found'))).toBe(true);
+
+      // The shared helper returns the same safe text for direct callers.
+      expect(publicChatDeliveryFailure(new Error(rawGoError))).toBe(SAFE_CHAT_DELIVERY_FAILURE);
+    } finally {
+      console.error = originalError;
+      if (sanitizeServer) {
+        await new Promise<void>((resolve, reject) => sanitizeServer?.close((error) => (error ? reject(error) : resolve())));
+      }
+    }
   }, 15000);
 });
