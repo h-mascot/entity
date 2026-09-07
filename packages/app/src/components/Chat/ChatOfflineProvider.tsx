@@ -278,7 +278,7 @@ async function requestServerAgentReply(params: {
   agents: string[];
   model?: string;
   messageId?: string;
-}): Promise<{ messages: ChatMessage[]; degraded: boolean; degradedReason?: string }> {
+}): Promise<{ messages: ChatMessage[]; degraded: boolean }> {
   const response = await fetchWithTimeout(
     '/api/chat/send',
     {
@@ -308,14 +308,14 @@ async function requestServerAgentReply(params: {
   const messages = normalizeServerMessages(payload);
   // THE-930: a 202 degraded response carries degraded:true (and possibly an
   // empty messages list). Surface it explicitly rather than as a generic error.
+  // MC-1465: payload.error is deliberately NOT read into the UI. It is server
+  // telemetry detail; the chat notice is a fixed plain-language string.
   const degraded = payload.degraded === true;
-  const degradedReason =
-    typeof payload.error === 'string' && payload.error.trim() ? payload.error.trim() : undefined;
   if (messages.length === 0 && !degraded) {
     throw new Error('Server returned no chat messages.');
   }
 
-  return { messages, degraded, degradedReason };
+  return { messages, degraded };
 }
 
 export function ChatOfflineProvider({ children }: { children: ReactNode }) {
@@ -484,7 +484,7 @@ export function ChatOfflineProvider({ children }: { children: ReactNode }) {
 
         try {
           if (preferCloud) {
-            const { messages: serverMessages, degraded, degradedReason } = await requestServerAgentReply({
+            const { messages: serverMessages, degraded } = await requestServerAgentReply({
               channelId: input.channel.id,
               threadId: input.threadId,
               parentMessageId: input.parentMessageId,
@@ -520,9 +520,12 @@ export function ChatOfflineProvider({ children }: { children: ReactNode }) {
               });
             }
 
-            // THE-930: surface the /api/chat/send degraded state visibly in the
-            // chat UI so the user sees delivery failed without a misleading
-            // silent success.
+            // THE-930 / MC-1465: surface the /api/chat/send degraded state
+            // visibly, but never render server-provided error detail. Raw
+            // internal diagnostics (commands, paths, workspace/bot IDs,
+            // toolchain errors) must not reach chat messages even if a stale
+            // or misconfigured server still returns them; operators get the
+            // detail from server telemetry instead.
             if (degraded) {
               const noticeSender = findAgent(agents[0] ?? 'ada');
               const degradedNotice: ChatMessage = {
@@ -531,9 +534,7 @@ export function ChatOfflineProvider({ children }: { children: ReactNode }) {
                 threadId: input.threadId,
                 sender: noticeSender.id,
                 senderEmoji: '⚠️',
-                content: degradedReason
-                  ? `Delivery degraded — agent replies unavailable (${degradedReason}).`
-                  : 'Delivery degraded — agent replies unavailable right now.',
+                content: 'The agent is temporarily unavailable. Please try again later or contact your workspace admin to check the agent configuration.',
                 timestamp: new Date().toISOString(),
                 createdAt: new Date().toISOString(),
                 replyTo: input.parentMessageId,
