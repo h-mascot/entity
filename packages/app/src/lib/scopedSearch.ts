@@ -8,6 +8,7 @@
  */
 
 import { buildApiCandidates, withApiToken } from './http.ts';
+import { orgScopeHeaders } from './legacyFileScope.ts';
 
 export const SCOPED_SEARCH_VERSION = 'entity.scoped-search.v1';
 export const DEFAULT_SCOPED_SEARCH_ORG_ID = 'default-org';
@@ -436,6 +437,7 @@ export async function fetchScopedSearch(
   const orgId = (params.orgId ?? DEFAULT_SCOPED_SEARCH_ORG_ID).trim() || DEFAULT_SCOPED_SEARCH_ORG_ID;
   const search = new URLSearchParams();
   search.set('q', q);
+  search.set('orgId', orgId);
   search.set('objectTypes', params.objectTypes.join(','));
   if (params.limit) search.set('limit', String(params.limit));
   if (params.teamId) search.set('teamId', params.teamId);
@@ -455,7 +457,7 @@ export async function fetchScopedSearch(
           method: 'GET',
           headers: {
             Accept: 'application/json',
-            'x-entity-org-id': orgId,
+            ...orgScopeHeaders(orgId),
           },
           signal: params.signal,
         }),

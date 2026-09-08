@@ -19,6 +19,7 @@ import {
   resolveInitialActiveBoard,
   parseBoardSummary,
   parseBoardsListResponse,
+  normalizeBoardFilterConfig,
   type BoardSummary,
 } from './boardsState.js';
 
@@ -192,6 +193,20 @@ test('parseBoardSummary validates and coerces the API payload defensively', () =
   assert.equal(parseBoardSummary({ id: 1, name: 'X' })?.key, null);
 });
 
+test('normalizeBoardFilterConfig keeps valid exclusions while dropping malformed entries', () => {
+  assert.deepEqual(
+    normalizeBoardFilterConfig({
+      scope: 'all',
+      excludeWorkDomains: [' Engineering ', 'engineering', 'bad domain', 4, 'platform'],
+    }),
+    { scope: 'all', excludeWorkDomains: ['engineering', 'platform'] },
+  );
+  assert.deepEqual(
+    normalizeBoardFilterConfig({ scope: 'projects', projectIds: [], excludeWorkDomains: ['engineering'] }),
+    { scope: 'all', excludeWorkDomains: ['engineering'] },
+  );
+});
+
 test('parseBoardsListResponse reads { boards: [...] } and drops invalid rows', () => {
   const list = parseBoardsListResponse({
     boards: [
@@ -299,6 +314,39 @@ test('buildBoardCustomizationPatch normalizes a customize-form into a PATCH payl
     buildBoardCustomizationPatch({ scope: 'projects', projectIdsCsv: '' }).filter_config,
     { scope: 'all' },
   );
+});
+
+test('customizeGeneral preserves unrelated exclusions while honoring an explicit positive scope', () => {
+  const engineeringExcluded = buildBoardCustomizationPatch({
+    view: 'analytics',
+    scope: 'all',
+    existingFilter: { scope: 'all', excludeWorkDomains: ['engineering'] },
+  });
+  assert.deepEqual(engineeringExcluded, {
+    view: 'analytics',
+    filter_config: { scope: 'all', excludeWorkDomains: ['engineering'] },
+  });
+
+  const customExcluded = buildBoardCustomizationPatch({
+    view: 'board',
+    scope: 'all',
+    existingFilter: { scope: 'all', excludeWorkDomains: ['platform'] },
+  });
+  assert.deepEqual(customExcluded.filter_config, {
+    scope: 'all',
+    excludeWorkDomains: ['platform'],
+  });
+
+  const explicitlyIncluded = buildBoardCustomizationPatch({
+    view: 'engineering',
+    scope: 'workDomain',
+    workDomain: 'engineering',
+    existingFilter: { scope: 'all', excludeWorkDomains: ['engineering', 'platform'] },
+  });
+  assert.deepEqual(explicitlyIncluded, {
+    view: 'engineering',
+    filter_config: { scope: 'workDomain', workDomain: 'engineering', excludeWorkDomains: ['platform'] },
+  });
 });
 
 test('boardViewSupportsFilter is honest about which views consume the persisted task filter (D2)', () => {

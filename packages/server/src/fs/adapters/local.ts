@@ -207,6 +207,27 @@ export class LocalFileSourceAdapter implements FileSourceAdapter {
     return {};
   }
 
+  async writeRaw(relativePath: string, content: Uint8Array): Promise<{ updatedAt?: string }> {
+    this.assertWritable();
+    const normalized = normalizePath(relativePath);
+    if (!normalized) throw new Error('Path is required.');
+    await this.broker.write(normalized, content);
+    return {};
+  }
+
+  async writeRawExclusive(relativePath: string, content: Uint8Array): Promise<{ updatedAt?: string }> {
+    this.assertWritable();
+    const normalized = normalizePath(relativePath);
+    if (!normalized) throw new Error('Path is required.');
+    try {
+      await this.broker.exclusiveCreate(normalized, content);
+    } catch (error) {
+      if (error instanceof ManagedStorageBrokerError && error.code === 'exists') throw new Error('Converted document already exists.');
+      throw error;
+    }
+    return {};
+  }
+
   async mkdir(relativePath: string): Promise<void> {
     this.assertWritable();
     const normalized = normalizePath(relativePath);

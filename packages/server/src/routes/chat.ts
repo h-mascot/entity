@@ -16,8 +16,8 @@ import {
 } from '../../../db/src';
 import { ChatModelRegistry, type ChatModelOption } from './chat-model-registry';
 import { requireRequestOrg, sendPermissionDenied, type RequestOrgBinding } from '../request-permissions';
-import { isTrustedServiceContext, requireOrgAuthority } from '../principals/request-context';
-import { type PrincipalGrant } from '../permissions';
+import { isTrustedServiceContext, requireDeploymentControlAuthority } from '../principals/request-context';
+import { type PermissionRole, type PrincipalGrant, roleMeets } from '../permissions';
 import { createAgentNoiseGuard, type AgentNoiseGuard, type NoiseReservation } from './agent-noise-guard';
 import { getEntityDatabase } from '../../../db/src/entity-db';
 import { ensureAppSettingsTable, getSettingJson, setSettingJson } from '../config/settings-store';
@@ -123,6 +123,61 @@ function applicableChatGrants(binding: RequestOrgBinding): PrincipalGrant[] {
   );
 }
 
+/** Mutation authority is narrower than read visibility: viewer grants may
+ * expose a team for reads, but never make that team writable. */
+function applicableChatMutationGrants(binding: RequestOrgBinding): PrincipalGrant[] {
+  return applicableChatGrants(binding).filter((grant) => (
+    grant.project_id == null && roleMeets(grant.role, 'contributor')
+  ));
+}
+
+function chatMutationCoversTeam(binding: RequestOrgBinding, teamId: string | null): boolean {
+  return applicableChatMutationGrants(binding).some((grant) => !grant.team_id || grant.team_id === teamId);
+}
+
+/**
+ * D-R6-MUTATION-GATES (KRCL fix): chat-wide mutation authority check.
+ *
+ * requireOrgAuthority resolves the effective role at org scope, where a
+ * team-scoped grant covers nothing. Chat's scoped repository is the
+ * authoritative tenant boundary and already honors team-scoped grants, so
+ * admit any applicable team or org contributor grant meeting the required
+ * role while preserving the trusted-service bypass and fail-closed behavior.
+ */
+function requireChatMutationAuthority(
+  req: express.Request,
+  res: express.Response,
+  binding: RequestOrgBinding,
+  requiredRole: PermissionRole,
+): boolean {
+  if (isTrustedServiceContext(req)) return true;
+  const grants = applicableChatMutationGrants(binding);
+  if (grants.length === 0) {
+    sendPermissionDenied(res, `${requiredRole} role required for org ${binding.orgId}`);
+    return false;
+  }
+  const effectiveRole = grants.reduce<PermissionRole>((role, grant) => (
+    roleMeets(grant.role, requiredRole) ? grant.role : role
+  ), 'none');
+  if (!roleMeets(effectiveRole, requiredRole)) {
+    sendPermissionDenied(res, `${requiredRole} role required for org ${binding.orgId}`);
+    return false;
+  }
+  return true;
+}
+
+function requireChatTargetMutationAuthority(
+  req: express.Request,
+  res: express.Response,
+  binding: RequestOrgBinding,
+  teamId: string | null,
+): boolean {
+  if (isTrustedServiceContext(req)) return true;
+  if (chatMutationCoversTeam(binding, teamId)) return true;
+  sendPermissionDenied(res, `contributor role required for chat team ${teamId ?? 'org-wide'}`);
+  return false;
+}
+
 /**
  * THE-931 (R2): resolve the DB read scope from the authenticated binding/grants.
  * Returns null when the principal has no applicable grant (fail closed). An
@@ -154,7 +209,7 @@ export interface ChatCreationScope {
  * inactive / ambiguous (multiple teams) grants fail closed (null).
  */
 export function resolveChatCreationScope(binding: RequestOrgBinding): ChatCreationScope | null {
-  const grants = applicableChatGrants(binding);
+  const grants = applicableChatMutationGrants(binding);
   if (grants.length === 0) return null;
   if (grants.some((g) => !g.team_id)) return { orgId: binding.orgId, teamId: null };
   const teamIds = [...new Set(grants.map((g) => g.team_id).filter((t): t is string => Boolean(t)))];
@@ -425,15 +480,6 @@ function chatNoiseSettingsView(guard: AgentNoiseGuard) {
   };
 }
 
-/**
- * THE-930: global noise settings are system-wide configuration. Only an admin
- * principal may mutate them: a principal holding an admin grant, or the local
- * admin principal in single-process/dev (no token auth). Non-admins are denied.
- */
-function principalCanAdminNoise(principal: RequestOrgBinding['principal']): boolean {
-  if (principal.principal_id === LOCAL_ADMIN_PRINCIPAL_ID) return true;
-  return principal.grants.some((grant) => grant.role === 'admin');
-}
 const CHAT_MODELS_CACHE_TTL_MS = 60_000;
 const AGENT_REPLY_TIMEOUT_MS = 60_000;
 const HERMES_REPLY_AGENT_IDS = new Set(['book', 'hermes']);
@@ -1184,7 +1230,7 @@ export function registerChatRoutes({
     }
     const binding = requireRequestOrg(req, res);
     if (!binding) return; // scope resolution already wrote 400/403; do not double-respond
-    if (!requireOrgAuthority(req, res, binding.orgId, 'contributor')) return;
+    if (!requireChatMutationAuthority(req, res, binding, 'contributor')) return;
     next();
   });
 
@@ -1232,9 +1278,7 @@ export function registerChatRoutes({
       // principal (explicit admin grant, or the local admin in single-process/dev).
       const adminBinding = requireRequestOrg(req, res);
       if (!adminBinding) return undefined;
-      if (!principalCanAdminNoise(adminBinding.principal)) {
-        return res.status(403).json({ error: 'admin role required', code: 'admin_required' });
-      }
+      if (!requireDeploymentControlAuthority(req, res)) return undefined;
       const current = readChatNoiseSettings();
       const next = {
         cooldownMs: typeof req.body?.cooldownMs === 'number'
@@ -1389,7 +1433,9 @@ export function registerChatRoutes({
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
     const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
-    if (!scoped.getChannel(req.params.channelId)) return denyChatHistory(res, 'channel not found');
+    const channel = scoped.getChannel(req.params.channelId);
+    if (!channel) return denyChatHistory(res, 'channel not found');
+    if (!requireChatTargetMutationAuthority(req, res, binding, channel.team_id)) return undefined;
     try {
       const objectRef = parseObjectRefBody(req.body);
       const decision = chatObjectRefAccess(binding, objectRef);
@@ -1459,7 +1505,9 @@ export function registerChatRoutes({
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
     const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
-    if (!scoped.getThread(req.params.threadId)) return denyChatHistory(res, 'thread not found');
+    const thread = scoped.getThread(req.params.threadId);
+    if (!thread) return denyChatHistory(res, 'thread not found');
+    if (!requireChatTargetMutationAuthority(req, res, binding, thread.team_id)) return undefined;
     try {
       const objectRef = parseObjectRefBody(req.body);
       const decision = chatObjectRefAccess(binding, objectRef);
@@ -1554,7 +1602,9 @@ export function registerChatRoutes({
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
     const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
-    if (!scoped.getChannel(req.params.channelId)) return denyChatHistory(res, 'channel not found');
+    const channel = scoped.getChannel(req.params.channelId);
+    if (!channel) return denyChatHistory(res, 'channel not found');
+    if (!requireChatTargetMutationAuthority(req, res, binding, channel.team_id)) return undefined;
     try {
       const channel = scoped.updateChannel(req.params.channelId, {
         name: typeof req.body?.name === 'string' ? req.body.name : undefined,
@@ -1581,7 +1631,9 @@ export function registerChatRoutes({
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
     const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
-    if (!scoped.getChannel(req.params.channelId)) return denyChatHistory(res, 'channel not found');
+    const channel = scoped.getChannel(req.params.channelId);
+    if (!channel) return denyChatHistory(res, 'channel not found');
+    if (!requireChatTargetMutationAuthority(req, res, binding, channel.team_id)) return undefined;
     const deleted = scoped.deleteChannel(req.params.channelId);
     if (!deleted) {
       return res.status(404).json({ error: 'channel not found' });
@@ -1594,7 +1646,9 @@ export function registerChatRoutes({
     const binding = requireRequestOrg(req, res);
     if (!binding) return undefined;
     const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
-    if (!scoped.getChannel(req.params.channelId)) return denyChatHistory(res, 'channel not found');
+    const channel = scoped.getChannel(req.params.channelId);
+    if (!channel) return denyChatHistory(res, 'channel not found');
+    if (!requireChatTargetMutationAuthority(req, res, binding, channel.team_id)) return undefined;
     scoped.markChannelRead(req.params.channelId);
     return res.json({ success: true });
   });
@@ -1610,6 +1664,10 @@ export function registerChatRoutes({
       if (!channelId || !parentMessageId) {
         return res.status(400).json({ error: 'channelId and parentMessageId are required' });
       }
+
+      const channel = scoped.getChannel(channelId);
+      if (!channel) return denyChatHistory(res, 'channel not found');
+      if (!requireChatTargetMutationAuthority(req, res, binding, channel.team_id)) return undefined;
 
       const existing = scoped.getThreadByParentMessage(parentMessageId);
       if (existing) {
@@ -1639,7 +1697,19 @@ export function registerChatRoutes({
     const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
     if (!scoped.historyAllowed()) return denyChatHistory(res, 'chat setup unavailable');
     try {
-      const snapshot = await ensureDefaults(binding.orgId, { legacy: isTrustedServiceContext(req) });
+      const creationScope = scoped.creationScope();
+      if (!creationScope) {
+        return sendPermissionDenied(res, 'chat setup requires an unambiguous contributor assignment');
+      }
+      // Team-only callers must not bootstrap org-wide defaults as a side
+      // effect. They receive the already-owned snapshot; the trusted/org-wide
+      // path may continue to initialize defaults for compatibility.
+      const snapshot = creationScope.teamId === null
+        ? await ensureDefaults(binding.orgId, { legacy: isTrustedServiceContext(req) })
+        : {
+          categories: scoped.listCategories().map(toCategory),
+          channels: scoped.listChannels().map(toChannel),
+        };
       // THE-931 (R2): ensureDefaults bootstraps legacy unowned channels/categories;
       // the setup surface returns only channels AND categories the principal owns
       // (legacy rows fail closed for every non-local-admin principal). Ownership
@@ -1673,6 +1743,18 @@ export function registerChatRoutes({
           : ['ada'];
 
       const modelId = typeof req.body?.model === 'string' ? req.body.model.trim() : undefined;
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return undefined;
+      const authoritativeSender = binding.principal.principal_id;
+      const authoritativeTimestamp = new Date().toISOString();
+      const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
+      // Resolve and authorize the target channel before model/runtime work or
+      // sidecar callbacks. A contributor grant on team A must not authorize a
+      // write to a viewer-only team B channel in the same org.
+      const ownedChannel = scoped.getChannel(channelId);
+      if (!ownedChannel) return denyChatHistory(res, 'channel not found');
+      if (!requireChatTargetMutationAuthority(req, res, binding, ownedChannel.team_id)) return undefined;
+
       const modelByAgent = new Map<string, { modelId?: string; isLocal: boolean }>();
       for (const agent of targets) {
         const resolved = await modelRegistry.resolveModelForAgent(agent, modelId);
@@ -1686,16 +1768,9 @@ export function registerChatRoutes({
       // sender is the authenticated/server-resolved principal; the timestamp is
       // the server clock; locality is derived from the resolved target model.
       // Caller-supplied sender/senderEmoji/timestamp/isLocal are NEVER trusted.
-      const binding = requireRequestOrg(req, res);
-      if (!binding) return undefined;
-      const authoritativeSender = binding.principal.principal_id;
-      const authoritativeTimestamp = new Date().toISOString();
-      const scoped = createScopedChatRepository(repo, binding, chatHistoryAccess);
       // THE-931: the channel is resolved and owned at the repository boundary;
       // every message/thread write below inherits the owned channel scope and
       // ignores any caller-supplied teamId.
-      const ownedChannel = scoped.getChannel(channelId);
-      if (!ownedChannel) return denyChatHistory(res, 'channel not found');
       const userIsLocal = targets.length > 0 ? Boolean(modelByAgent.get(targets[0])?.isLocal) : false;
 
       if (sidecarBridge) {

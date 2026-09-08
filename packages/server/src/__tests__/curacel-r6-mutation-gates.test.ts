@@ -34,8 +34,9 @@ import {
 interface Fixture {
   baseUrl: string;
   apiToken: string;
-  tokens: { viewerAcme: string; managerAcme: string; globalAdmin: string };
+  tokens: { viewerAcme: string; managerAcme: string; managerAcmeTeam: string; viewerAcmeTeam: string; mixedAcme: string; globalAdmin: string };
   org: { acme: string };
+  sidecarCalls: string[];
   server: http.Server;
 }
 
@@ -87,7 +88,19 @@ async function bootApp(): Promise<Fixture> {
   const tokenRepo = createAccessTokenRepository();
 
   const ORG_ACME = 'org-acme';
+  const TEAM_ACME = 'team-acme';
+  const TEAM_ACME_VIEWER = 'team-acme-viewer';
   workspaceRepo.createOrg({ id: ORG_ACME, name: 'Acme', mission: 'Acme mission' });
+  workspaceRepo.createTeam({ orgId: ORG_ACME }, { id: TEAM_ACME, name: 'Acme Team' });
+  workspaceRepo.createTeam({ orgId: ORG_ACME }, { id: TEAM_ACME_VIEWER, name: 'Acme Viewer Team' });
+
+  const chatRepo = dbModule.createChatRepository();
+  chatRepo.createCategory({ id: 'cat-acme-team', name: 'Acme Team', org_id: ORG_ACME, team_id: TEAM_ACME });
+  chatRepo.createChannel({ id: 'channel-acme-team', name: 'acme-team', category_id: 'cat-acme-team', org_id: ORG_ACME, team_id: TEAM_ACME });
+  chatRepo.createCategory({ id: 'cat-acme-viewer', name: 'Acme Viewer Team', org_id: ORG_ACME, team_id: TEAM_ACME_VIEWER });
+  chatRepo.createChannel({ id: 'channel-acme-viewer', name: 'acme-viewer', category_id: 'cat-acme-viewer', org_id: ORG_ACME, team_id: TEAM_ACME_VIEWER });
+  chatRepo.createCategory({ id: 'cat-other-org', name: 'Other Org', org_id: 'org-other', team_id: 'team-other' });
+  chatRepo.createChannel({ id: 'channel-other-org', name: 'other-org', category_id: 'cat-other-org', org_id: 'org-other', team_id: 'team-other' });
 
   const mk = (id: string, display: string, type: 'human' | 'agent' | 'service_account' = 'human') =>
     principalRepo.createPrincipal({ id, principal_type: type, display_name: display });
@@ -95,6 +108,13 @@ async function bootApp(): Promise<Fixture> {
   principalRepo.createGrant({ principal_id: 'viewer-acme', role: 'viewer', org_id: ORG_ACME });
   mk('manager-acme', 'Acme Manager');
   principalRepo.createGrant({ principal_id: 'manager-acme', role: 'manager', org_id: ORG_ACME });
+  mk('manager-acme-team', 'Acme Team Manager');
+  principalRepo.createGrant({ principal_id: 'manager-acme-team', role: 'manager', org_id: ORG_ACME, team_id: TEAM_ACME });
+  mk('viewer-acme-team', 'Acme Team Viewer');
+  principalRepo.createGrant({ principal_id: 'viewer-acme-team', role: 'viewer', org_id: ORG_ACME, team_id: TEAM_ACME });
+  mk('mixed-acme', 'Acme Team Contributor + Viewer');
+  principalRepo.createGrant({ principal_id: 'mixed-acme', role: 'contributor', org_id: ORG_ACME, team_id: TEAM_ACME });
+  principalRepo.createGrant({ principal_id: 'mixed-acme', role: 'viewer', org_id: ORG_ACME, team_id: TEAM_ACME_VIEWER });
   mk('global-admin', 'Global Admin');
   principalRepo.createGrant({ principal_id: 'global-admin', role: 'admin' });
   mk('svc-admin', 'Service Admin', 'service_account');
@@ -105,6 +125,9 @@ async function bootApp(): Promise<Fixture> {
   const tokens = {
     viewerAcme: token('viewer-acme'),
     managerAcme: token('manager-acme'),
+    managerAcmeTeam: token('manager-acme-team'),
+    viewerAcmeTeam: token('viewer-acme-team'),
+    mixedAcme: token('mixed-acme'),
     globalAdmin: token('global-admin'),
   };
 
@@ -114,13 +137,46 @@ async function bootApp(): Promise<Fixture> {
   app.use(createCustomerPrincipalMiddleware(tokenRepo));
   app.use(createDataPlaneCredentialGuard());
   app.use('/api/swarm', createSwarmRouter());
-  registerChatRoutes({ app, getTaskOrg: async () => null });
+  const sidecarCalls: string[] = [];
+  registerChatRoutes({
+    app,
+    getTaskOrg: async () => null,
+    clickClackBridge: {
+      async sendCompatibilityMessage(input) {
+        sidecarCalls.push(input.channelId);
+        return {
+          message: {
+            id: `sidecar-root-${sidecarCalls.length}`,
+            channelId: input.channelId,
+            sender: 'user',
+            content: input.content,
+            createdAt: new Date().toISOString(),
+          },
+          messages: input.targets.map((agent, index) => ({
+            id: `sidecar-reply-${sidecarCalls.length}-${index}`,
+            channelId: input.channelId,
+            sender: agent,
+            content: `reply from ${agent}`,
+            createdAt: new Date().toISOString(),
+          })),
+          clickclack: {
+            mode: 'dev-sidecar' as const,
+            baseUrl: 'http://127.0.0.1:3091',
+            workspaceId: 'ws-test',
+            channelId: input.channelId,
+            humanUserId: 'human-test',
+            agentUserIds: {},
+          },
+        };
+      },
+    },
+  });
 
   server = http.createServer(app);
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as { port: number }).port;
 
-  return { baseUrl: `http://127.0.0.1:${port}`, apiToken, tokens, org: { acme: ORG_ACME }, server };
+  return { baseUrl: `http://127.0.0.1:${port}`, apiToken, tokens, org: { acme: ORG_ACME }, sidecarCalls, server };
 }
 
 afterEach(async () => {
@@ -184,6 +240,50 @@ describe('D-R6-MUTATION-GATES /api/chat — contributor role gates writes', () =
       body: JSON.stringify({ channelId: 'general', content: 'hi', targetAgent: 'ada' }),
     });
     expect(send.status).toBe(403);
+  });
+
+  it('team-scoped manager is allowed (chat writes are repository-scoped, not org-wide)', async () => {
+    const setup = await fetch(`${f.baseUrl}/api/chat/setup`, {
+      method: 'POST',
+      headers: authHeaders(f.apiToken, f.tokens.managerAcmeTeam),
+    });
+    expect(setup.status).toBe(200);
+
+    const send = await fetch(`${f.baseUrl}/api/chat/send`, {
+      method: 'POST',
+      headers: authHeaders(f.apiToken, f.tokens.managerAcmeTeam, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ channelId: 'general', content: 'hi from team manager', targetAgent: 'ada' }),
+    });
+    // A later scoped-repository denial still proves the mutation gate passed.
+    expect([201, 202, 400, 404]).toContain(send.status);
+  });
+
+  it('team-scoped viewer is denied chat mutations (403, contributor required)', async () => {
+    const setup = await fetch(`${f.baseUrl}/api/chat/setup`, {
+      method: 'POST',
+      headers: authHeaders(f.apiToken, f.tokens.viewerAcmeTeam),
+    });
+    expect(setup.status).toBe(403);
+  });
+
+  it('mixed team grants authorize target team only and deny before sidecar callbacks', async () => {
+    const send = async (channelId: string) => fetch(`${f.baseUrl}/api/chat/send`, {
+      method: 'POST',
+      headers: authHeaders(f.apiToken, f.tokens.mixedAcme, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ channelId, content: `write ${channelId}`, targetAgent: 'ada' }),
+    });
+
+    const owned = await send('channel-acme-team');
+    expect(owned.status).toBe(201);
+    expect(f.sidecarCalls).toEqual(['channel-acme-team']);
+
+    const viewerOnly = await send('channel-acme-viewer');
+    expect(viewerOnly.status).toBe(403);
+    expect(f.sidecarCalls).toEqual(['channel-acme-team']);
+
+    const foreignOrg = await send('channel-other-org');
+    expect(foreignOrg.status).toBe(404);
+    expect(f.sidecarCalls).toEqual(['channel-acme-team']);
   });
 
   it('manager (>= contributor) succeeds at setup and create mutations', async () => {

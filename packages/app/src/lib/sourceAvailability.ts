@@ -23,3 +23,23 @@ export function sourceTypeIsAvailableInBuild(type: FileSource['type']): boolean 
 export function sourceIsAvailableInBuild(source: Pick<FileSource, 'type' | 'implemented'>): boolean {
   return sourceTypeIsAvailableInBuild(source.type) && source.implemented !== false;
 }
+
+/** Uploads are currently supported only by writable local broker adapters. */
+export function sourceCanUpload(source: Pick<FileSource, 'type' | 'implemented' | 'enabled' | 'capabilities'>): boolean {
+  if (!source.enabled || source.type !== 'local' || !sourceIsAvailableInBuild(source)) return false;
+  try {
+    const capabilities = JSON.parse(source.capabilities) as unknown;
+    if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return false;
+    const metadata = capabilities as { write?: unknown; readOnly?: unknown };
+    // Local source metadata historically exposed only readOnly, and the
+    // auto-created workspace source persists the default `{}` payload. Treat
+    // an empty capability object as the adapter default; explicit read-only or
+    // write:false metadata still vetoes uploads, and other malformed/unknown
+    // metadata remains fail-closed.
+    if (metadata.readOnly === true || metadata.write === false) return false;
+    if (metadata.readOnly === false || metadata.write === true) return true;
+    return Object.keys(capabilities).length === 0;
+  } catch {
+    return false;
+  }
+}

@@ -40,13 +40,29 @@ export function parseTaskCreateScope(
   body: Record<string, unknown>,
 ): TaskCreateScope | { error: string } {
   const scope: TaskCreateScope = {};
-  for (const key of ["org_id", "team_id"] as const) {
-    const value = body[key];
-    if (typeof value === "undefined") continue;
-    if (typeof value !== "string" || !value.trim()) {
-      return { error: `${key} must be a non-empty string` };
+  for (const [snakeKey, camelKey] of [
+    ["org_id", "orgId"],
+    ["team_id", "teamId"],
+  ] as const) {
+    const snakeValue = body[snakeKey];
+    const camelValue = body[camelKey];
+    for (const value of [snakeValue, camelValue]) {
+      if (typeof value === "undefined") continue;
+      if (typeof value !== "string" || !value.trim()) {
+        return { error: `${snakeKey} must be a non-empty string` };
+      }
     }
-    scope[key] = value.trim();
+    const normalizedSnake = typeof snakeValue === "string" ? snakeValue.trim() : undefined;
+    const normalizedCamel = typeof camelValue === "string" ? camelValue.trim() : undefined;
+    if (
+      normalizedSnake !== undefined
+      && normalizedCamel !== undefined
+      && normalizedSnake !== normalizedCamel
+    ) {
+      return { error: `${snakeKey} and ${camelKey} must match when both are provided` };
+    }
+    const normalized = normalizedSnake ?? normalizedCamel;
+    if (normalized !== undefined) scope[snakeKey] = normalized;
   }
 
   if (typeof body.project_id !== "undefined") {
@@ -80,7 +96,7 @@ export function scopeTasksForCreateDedupe(
 type TaskCreateScopeRepository = Pick<
   WorkspaceScopeRepository,
   "getOrg" | "getTeam" | "getProject"
->;
+> & Partial<Pick<WorkspaceScopeRepository, "listTeams">>;
 
 export type TaskCreateScopeValidation =
   | { ok: true }
@@ -99,11 +115,41 @@ export function validateTaskCreateScope(
     };
   }
   if (!scope.team_id) {
-    return {
-      ok: false,
-      statusCode: 400,
-      error: "team_id is required when org_id is provided",
-    };
+    const teams = workspaceRepo.listTeams?.({ orgId: scope.org_id });
+    if (teams === undefined) {
+      return {
+        ok: false,
+        statusCode: 400,
+        error: "team_id is required when org_id is provided",
+      };
+    }
+    const activeTeams = teams.filter((team) =>
+      team.org_id === scope.org_id
+      && typeof team.status === "string"
+      && team.status.trim().toLowerCase() === "active"
+    );
+    if (activeTeams.length === 1) {
+      scope.team_id = activeTeams[0].id;
+    } else if (activeTeams.length === 0) {
+      if (!workspaceRepo.getOrg(scope.org_id)) {
+        return {
+          ok: false,
+          statusCode: 404,
+          error: `org ${scope.org_id} not found`,
+        };
+      }
+      return {
+        ok: false,
+        statusCode: 400,
+        error: `org ${scope.org_id} has no active teams; create a team before creating org-scoped tasks`,
+      };
+    } else {
+      return {
+        ok: false,
+        statusCode: 400,
+        error: `team_id is required when org_id is provided (org ${scope.org_id} has ${activeTeams.length} teams)`,
+      };
+    }
   }
   if (!workspaceRepo.getOrg(scope.org_id)) {
     return {
@@ -112,10 +158,15 @@ export function validateTaskCreateScope(
       error: `org ${scope.org_id} not found`,
     };
   }
-  if (scope.team_id && !workspaceRepo.getTeam(
-    { orgId: scope.org_id },
-    scope.team_id,
-  )) {
+  const team = workspaceRepo.getTeam({ orgId: scope.org_id }, scope.team_id);
+  if (
+    !team
+    || (typeof team.org_id === "string" && team.org_id !== scope.org_id)
+    || (
+      typeof team.status === "string"
+      && team.status.trim().toLowerCase() !== "active"
+    )
+  ) {
     return {
       ok: false,
       statusCode: 404,
@@ -2621,4 +2672,3 @@ export function registerStrategicRoutes(app: Express, prefix: "" | "/api", deps:
     }
   }));
 }
-

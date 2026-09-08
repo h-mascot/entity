@@ -23,6 +23,8 @@ export interface BoardFilterConfig {
   scope: BoardFilterScope;
   projectIds?: number[];
   workDomain?: string | null;
+  /** Domains excluded after the positive scope is evaluated. */
+  excludeWorkDomains?: string[];
 }
 
 /**
@@ -33,6 +35,7 @@ export type BoardFilterConfigInput = Partial<{
   scope: string;
   projectIds: unknown;
   workDomain: unknown;
+  excludeWorkDomains: unknown;
 }>;
 
 const WORK_DOMAIN_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -81,6 +84,27 @@ function coerceWorkDomain(raw: unknown): string | null {
   return WORK_DOMAIN_PATTERN.test(candidate) && candidate.length <= 64 ? candidate : null;
 }
 
+function coerceExcludedWorkDomains(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of raw) {
+    const domain = coerceWorkDomain(entry);
+    if (domain && !seen.has(domain)) {
+      seen.add(domain);
+      result.push(domain);
+    }
+  }
+  return result;
+}
+
+function withExcludedWorkDomains(
+  config: BoardFilterConfig,
+  excluded: string[],
+): BoardFilterConfig {
+  return excluded.length > 0 ? { ...config, excludeWorkDomains: excluded } : config;
+}
+
 /** Normalize arbitrary stored/API filter input into a valid config. */
 export function normalizeBoardFilterConfig(raw: unknown): BoardFilterConfig {
   if (!raw || typeof raw !== 'object') {
@@ -93,23 +117,28 @@ export function normalizeBoardFilterConfig(raw: unknown): BoardFilterConfig {
   ).includes(scopeRaw as BoardFilterScope)
     ? (scopeRaw as BoardFilterScope)
     : 'all';
+  const excluded = coerceExcludedWorkDomains(obj.excludeWorkDomains);
 
   switch (scope) {
     case 'projects': {
       const projectIds = coerceProjectIds(obj.projectIds);
-      return projectIds && projectIds.length > 0
-        ? { scope, projectIds }
-        : { scope: 'all' };
+      return withExcludedWorkDomains(
+        projectIds && projectIds.length > 0 ? { scope, projectIds } : { scope: 'all' },
+        excluded,
+      );
     }
     case 'workDomain': {
       const workDomain = coerceWorkDomain(obj.workDomain);
-      return workDomain ? { scope, workDomain } : { scope, workDomain: null };
+      return withExcludedWorkDomains(
+        workDomain ? { scope, workDomain } : { scope, workDomain: null },
+        excluded,
+      );
     }
     case 'none':
-      return { scope: 'none' };
+      return withExcludedWorkDomains({ scope: 'none' }, excluded);
     case 'all':
     default:
-      return { scope: 'all' };
+      return withExcludedWorkDomains({ scope: 'all' }, excluded);
   }
 }
 
@@ -378,8 +407,14 @@ export function createBoardRepository(scope: BoardScope = DEFAULT_BOARD_SCOPE): 
     for (const def of DEFAULT_BOARD_DEFINITIONS) {
       const existing = findByKeyStmt.get(orgId, teamId, def.key) as BoardRow | undefined;
       if (existing) {
+        // Existing filters are user/data state. Historical rows do not carry
+        // reliable provenance, so never rewrite an existing General filter.
         continue;
       }
+      const filterConfig =
+        def.key === 'general'
+          ? { scope: 'all' as const, excludeWorkDomains: ['engineering'] }
+          : { scope: 'all' as const };
       insertStmt.run(
         orgId,
         teamId,
@@ -388,7 +423,7 @@ export function createBoardRepository(scope: BoardScope = DEFAULT_BOARD_SCOPE): 
         def.view,
         1,
         def.sort_order,
-        serializeFilterConfig({ scope: 'all' }),
+        serializeFilterConfig(filterConfig),
       );
     }
   };

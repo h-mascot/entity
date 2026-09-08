@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import type http from 'http';
 import { createAgentNoiseGuard } from './agent-noise-guard';
+import { buildCustomerPrincipalContext } from '../principals/request-context';
 
 const tmpDbPath = path.join(os.tmpdir(), `entity-chat-noise-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
@@ -23,6 +24,16 @@ describe('chat agent noise controls (THE-930)', () => {
     const { registerChatRoutes } = await import('./chat');
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      if (req.header('x-entity-principal-id') === 'worker-bee') {
+        req.entityCustomerPrincipal = buildCustomerPrincipalContext({
+          principalId: 'worker-bee',
+          principalType: 'human',
+          permission: { principal_id: 'worker-bee', grants: [{ role: 'contributor', org_id: 'default-org' }] },
+        });
+      }
+      next();
+    });
     registerChatRoutes({
       app,
       // spock is muted; ada is free. cooldown off so only mute suppresses here.
@@ -141,6 +152,56 @@ describe('chat agent noise controls (THE-930)', () => {
     });
     expect(res.status).toBe(403);
     const payload = (await res.json()) as { code?: string; error?: string };
-    expect(payload.code).toBe('admin_required');
+    expect(payload.code).toBe('permission_denied');
+  });
+
+  it('denies team-scoped admins while allowing global admins to mutate deployment-wide noise settings', async () => {
+    const { registerChatRoutes } = await import('./chat');
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      const role = req.header('x-test-role') ?? 'admin';
+      const grant = role === 'global-admin'
+        ? { role: 'admin' as const }
+        : role === 'org-admin'
+          ? { role: 'admin' as const, org_id: 'org-a' }
+          : { role: 'admin' as const, org_id: 'org-a', team_id: 'team-a' };
+      req.entityCustomerPrincipal = buildCustomerPrincipalContext({
+        principalId: 'noise-test-principal',
+        principalType: 'human',
+        permission: { principal_id: 'noise-test-principal', grants: [grant] },
+      });
+      next();
+    });
+    registerChatRoutes({ app, agentNoiseGuard: createAgentNoiseGuard({ cooldownMs: 0 }) });
+    const isolatedServer = await new Promise<http.Server>((resolve) => {
+      const server = app.listen(0, '127.0.0.1', () => resolve(server));
+    });
+    const address = isolatedServer.address();
+    if (!address || typeof address === 'string') throw new Error('failed to bind isolated noise server');
+    try {
+      const teamAdmin = await fetch(`http://127.0.0.1:${address.port}/api/chat/noise-settings`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a' },
+        body: JSON.stringify({ cooldownMs: 10 }),
+      });
+      expect(teamAdmin.status).toBe(403);
+
+      const orgAdmin = await fetch(`http://127.0.0.1:${address.port}/api/chat/noise-settings`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-entity-org-id': 'org-a', 'x-test-role': 'org-admin' },
+        body: JSON.stringify({ cooldownMs: 20 }),
+      });
+      expect(orgAdmin.status).toBe(403);
+
+      const globalAdmin = await fetch(`http://127.0.0.1:${address.port}/api/chat/noise-settings`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-test-role': 'global-admin' },
+        body: JSON.stringify({ cooldownMs: 10 }),
+      });
+      expect(globalAdmin.status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve, reject) => isolatedServer.close((error) => error ? reject(error) : resolve()));
+    }
   });
 });

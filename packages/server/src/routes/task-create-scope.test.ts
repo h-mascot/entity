@@ -40,6 +40,28 @@ describe('task create scope', () => {
     });
   });
 
+  it('accepts camelCase aliases and rejects conflicting spellings', () => {
+    expect(parseTaskCreateScope({
+      orgId: 'curacel',
+      teamId: 'pilot',
+    })).toEqual({
+      org_id: 'curacel',
+      team_id: 'pilot',
+    });
+    expect(parseTaskCreateScope({
+      org_id: 'org-a',
+      orgId: 'org-b',
+    })).toEqual({
+      error: 'org_id and orgId must match when both are provided',
+    });
+    expect(parseTaskCreateScope({
+      team_id: 'org-a-product',
+      teamId: 'org-a-claims',
+    })).toEqual({
+      error: 'team_id and teamId must match when both are provided',
+    });
+  });
+
   it('limits duplicate candidates to the requested org and team', () => {
     const tasks = [
       task(1, 'org-a', 'org-a-product'),
@@ -114,6 +136,73 @@ describe('task create scope', () => {
     });
   });
 
+  it('defaults a single active team and ignores inactive or foreign teams', () => {
+    const org = { id: 'org-a' } as OrgRecord;
+    const workspaceRepo = {
+      getOrg: (orgId: string) => orgId === org.id ? org : undefined,
+      getTeam: (context: { orgId: string }, teamId: string) =>
+        context.orgId === org.id && teamId === 'org-a-product'
+          ? ({ id: teamId, org_id: org.id, status: 'active' } as TeamRecord)
+          : undefined,
+      getProject: () => undefined,
+      listTeams: ({ orgId }: { orgId: string }) => orgId === org.id
+        ? [
+          { id: 'org-a-product', org_id: org.id, status: 'active' } as TeamRecord,
+          { id: 'org-a-archived', org_id: org.id, status: 'archived' } as TeamRecord,
+          { id: 'foreign-active', org_id: 'other-org', status: 'active' } as TeamRecord,
+        ]
+        : [],
+    } as Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam' | 'getProject' | 'listTeams'>;
+
+    const scope: { org_id?: string; team_id?: string } = { org_id: org.id };
+    expect(validateTaskCreateScope(scope, workspaceRepo)).toEqual({ ok: true });
+    expect(scope.team_id).toBe('org-a-product');
+
+    const noUsableTeamRepo = {
+      ...workspaceRepo,
+      listTeams: () => [
+        { id: 'org-a-archived', org_id: org.id, status: 'archived' } as TeamRecord,
+        { id: 'foreign-active', org_id: 'other-org', status: 'active' } as TeamRecord,
+      ],
+    } as Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam' | 'getProject' | 'listTeams'>;
+    expect(validateTaskCreateScope({ org_id: org.id }, noUsableTeamRepo)).toEqual({
+      ok: false,
+      statusCode: 400,
+      error: 'org org-a has no active teams; create a team before creating org-scoped tasks',
+    });
+
+    const multiTeamRepo = {
+      ...workspaceRepo,
+      listTeams: () => [
+        { id: 'org-a-product', org_id: org.id, status: 'active' } as TeamRecord,
+        { id: 'org-a-claims', org_id: org.id, status: 'active' } as TeamRecord,
+        { id: 'foreign-active', org_id: 'other-org', status: 'active' } as TeamRecord,
+      ],
+    } as Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam' | 'getProject' | 'listTeams'>;
+    expect(validateTaskCreateScope({ org_id: org.id }, multiTeamRepo)).toEqual({
+      ok: false,
+      statusCode: 400,
+      error: 'team_id is required when org_id is provided (org org-a has 2 teams)',
+    });
+
+    const explicitInactiveOrForeignRepo = {
+      ...workspaceRepo,
+      getTeam: (_context: { orgId: string }, teamId: string) =>
+        teamId === 'org-a-archived'
+          ? ({ id: teamId, org_id: org.id, status: 'archived' } as TeamRecord)
+          : teamId === 'foreign-active'
+            ? ({ id: teamId, org_id: 'other-org', status: 'active' } as TeamRecord)
+            : undefined,
+    } as Pick<WorkspaceScopeRepository, 'getOrg' | 'getTeam' | 'getProject' | 'listTeams'>;
+    for (const teamId of ['org-a-archived', 'foreign-active']) {
+      expect(validateTaskCreateScope({ org_id: org.id, team_id: teamId }, explicitInactiveOrForeignRepo)).toEqual({
+        ok: false,
+        statusCode: 404,
+        error: `team ${teamId} not found in org ${org.id}`,
+      });
+    }
+  });
+
   it('forwards validated scope through the HTTP create route used by the cloud adapter', async () => {
     const created: Array<Record<string, unknown>> = [];
     const app = express();
@@ -145,6 +234,15 @@ describe('task create scope', () => {
           };
         },
       },
+      handoffRepository: {
+        listForTask: () => [],
+        create: () => {
+          throw new Error('handoffs not exercised by this test');
+        },
+        rollback: () => {
+          throw new Error('handoffs not exercised by this test');
+        },
+      },
       validateTaskAccountability: () => ({ ok: true }),
       workspaceRepo: {
         getOrg: (orgId: string) => orgId === 'org-a' ? ({ id: orgId } as OrgRecord) : undefined,
@@ -169,8 +267,8 @@ describe('task create scope', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           name: 'Scoped cloud seed',
-          org_id: 'org-a',
-          team_id: 'org-a-product',
+          orgId: 'org-a',
+          teamId: 'org-a-product',
           project_id: 42,
         }),
       });

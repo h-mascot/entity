@@ -66,19 +66,24 @@ function registerReportGet(
 
 export function registerAdminReportRoutes(
   app: Express,
-  prefix: '' | '/api',
+  prefix: '' | '/api' | '/api/admin',
   deps: RegisterAdminReportRoutesDeps,
 ): void {
   const { reportRepository, authorizeAccess } = deps;
+  // Every report is a control-plane view. Keep the legacy paths and aliases for
+  // compatibility, but apply the same admin authorization to each mount so a
+  // customer data-plane credential cannot read an unscoped deployment report.
   registerReportGet(
     app,
     `${prefix}/usage-report`,
     (filters) => reportRepository.getUsageReport(filters),
+    authorizeAccess,
   );
   registerReportGet(
     app,
     `${prefix}/audit-report`,
     (filters) => reportRepository.getAuditReport(filters),
+    authorizeAccess,
   );
   registerReportGet(
     app,
@@ -93,11 +98,13 @@ export function registerAdminReportRoutes(
     app,
     `${prefix}/reports/usage`,
     (filters) => reportRepository.getUsageReport(filters),
+    authorizeAccess,
   );
   registerReportGet(
     app,
     `${prefix}/reports/audit`,
     (filters) => reportRepository.getAuditReport(filters),
+    authorizeAccess,
   );
   registerReportGet(
     app,

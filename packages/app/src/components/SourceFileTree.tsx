@@ -32,6 +32,11 @@ const SORT_KEY = 'entity.fs.tree.sort.v1';
 const SORT_DIR_KEY = 'entity.fs.tree.sortDir.v1';
 const PINNED_FOLDERS_KEY = 'entity.fs.tree.pinnedFolders.v1';
 
+export function buildSourceTreeStorageKey(baseKey: string, orgId?: string | null): string {
+  const normalizedOrgId = orgId?.trim();
+  return normalizedOrgId ? `${baseKey}::org=${encodeURIComponent(normalizedOrgId)}` : baseKey;
+}
+
 type SortBy = 'name' | 'modified';
 type SortDir = 'asc' | 'desc';
 
@@ -111,13 +116,13 @@ function persistString(key: string, value: string) {
   }
 }
 
-function readPinnedFolders(): PinnedFolderMap {
+function readPinnedFolders(storageKey = PINNED_FOLDERS_KEY): PinnedFolderMap {
   if (typeof window === 'undefined') {
     return {};
   }
 
   try {
-    const raw = window.localStorage.getItem(PINNED_FOLDERS_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) {
       return {};
     }
@@ -152,13 +157,13 @@ function readPinnedFolders(): PinnedFolderMap {
   }
 }
 
-function persistPinnedFolders(pinned: PinnedFolderMap) {
+function persistPinnedFolders(pinned: PinnedFolderMap, storageKey = PINNED_FOLDERS_KEY) {
   if (typeof window === 'undefined') {
     return;
   }
 
   try {
-    window.localStorage.setItem(PINNED_FOLDERS_KEY, JSON.stringify(pinned));
+    window.localStorage.setItem(storageKey, JSON.stringify(pinned));
   } catch {
     // Ignore persistence failures.
   }
@@ -166,9 +171,10 @@ function persistPinnedFolders(pinned: PinnedFolderMap) {
 
 interface SourceFileTreeProps {
   apiBase?: string;
+  orgId?: string;
   selectedSourceId: string | null;
   selectedPath: string | null;
-  onSelect: (sourceId: string, path: string) => void;
+  onSelect: (sourceId: string, path: string, orgId?: string) => void;
 }
 
 interface SourceTreeSourceHeaderProps {
@@ -236,6 +242,14 @@ interface TreeState {
   nodes: SourceNode[];
 }
 
+export function canCreateInActiveFolder(
+  treeByKey: Record<string, { capabilities?: { write: boolean } }>,
+  sourceId: string,
+  folderPath: string,
+): boolean {
+  return Boolean(treeByKey[`${sourceId}::${folderPath}`]?.capabilities?.write);
+}
+
 function dirname(filePath: string): string {
   const normalized = filePath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
   const idx = normalized.lastIndexOf('/');
@@ -269,12 +283,15 @@ export function sourcesEligibleForSearch(sources: FileSource[]): FileSource[] {
 
 export default function SourceFileTree({
   apiBase = '',
+  orgId,
   selectedSourceId,
   selectedPath,
   onSelect,
 }: SourceFileTreeProps) {
   const { sources, loading, error, fetchTree, fetchFile, searchFiles, createFile, createFolder } = useFileSources({ apiBase, enabled: true });
   const enabledSources = useMemo(() => sources.filter((source) => source.enabled), [sources]);
+  const scopedOrgId = orgId?.trim() || undefined;
+  const pinnedFoldersStorageKey = buildSourceTreeStorageKey(PINNED_FOLDERS_KEY, scopedOrgId);
   const sourceExpansionBootstrap = useRef(readStringArray(EXPANDED_SOURCES_KEY));
   const folderExpansionBootstrap = useRef(readStringArray(EXPANDED_FOLDERS_KEY));
   const hasSourceExpansionPreference = sourceExpansionBootstrap.current.hasValue;
@@ -294,7 +311,7 @@ export default function SourceFileTree({
 
   const [searchQueryBySource, setSearchQueryBySource] = useState<Record<string, string>>({});
   const [searchBySource, setSearchBySource] = useState<Record<string, { loading: boolean; error: string | null; nodes: SourceNode[] }>>({});
-  const [pinnedFolders, setPinnedFolders] = useState<PinnedFolderMap>(() => readPinnedFolders());
+  const [pinnedFolders, setPinnedFolders] = useState<PinnedFolderMap>(() => readPinnedFolders(pinnedFoldersStorageKey));
   const [cacheProgressByFolder, setCacheProgressByFolder] = useState<Record<string, FolderCacheProgress>>({});
   const [browserOnline, setBrowserOnline] = useState<boolean>(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine
@@ -365,9 +382,9 @@ export default function SourceFileTree({
   }, [sortDir]);
 
   useEffect(() => {
-    persistPinnedFolders(pinnedFolders);
+    persistPinnedFolders(pinnedFolders, pinnedFoldersStorageKey);
     pinnedFoldersRef.current = pinnedFolders;
-  }, [pinnedFolders]);
+  }, [pinnedFolders, pinnedFoldersStorageKey]);
 
   useEffect(() => {
     const handleConnectivityChange = () => {
@@ -398,7 +415,7 @@ export default function SourceFileTree({
       }));
 
       try {
-        const payload = await fetchTree(sourceId, treePath);
+        const payload = await fetchTree(sourceId, treePath, { orgId: scopedOrgId });
         setTreeByKey((prev) => ({
           ...prev,
           [key]: {
@@ -421,7 +438,7 @@ export default function SourceFileTree({
         }));
       }
     },
-    [fetchTree]
+    [fetchTree, scopedOrgId]
   );
 
   useEffect(() => {
@@ -476,8 +493,22 @@ export default function SourceFileTree({
     if (!selectedSourceId || !selectedPath) {
       return;
     }
-    setActiveFolderBySource((prev) => ({ ...prev, [selectedSourceId]: dirname(selectedPath) }));
-  }, [selectedSourceId, selectedPath]);
+    const activeFolder = dirname(selectedPath);
+    setActiveFolderBySource((prev) => ({ ...prev, [selectedSourceId]: activeFolder }));
+  }, [selectedPath, selectedSourceId]);
+
+  useEffect(() => {
+    for (const [sourceId, activeFolder] of Object.entries(activeFolderBySource)) {
+      const source = enabledSources.find((item) => item.id === sourceId);
+      if (!source || !sourceIsAvailableInBuild(source)) {
+        continue;
+      }
+      const activeFolderKey = treeKey(sourceId, activeFolder);
+      if (!treeByKey[activeFolderKey]) {
+        void loadTree(sourceId, activeFolder);
+      }
+    }
+  }, [activeFolderBySource, enabledSources, loadTree, treeByKey]);
 
   const getSortedNodes = useCallback(
     (nodes: SourceNode[]) => {
@@ -547,7 +578,7 @@ export default function SourceFileTree({
           }
           visited.add(nextFolder);
 
-          const tree = await fetchTree(sourceId, nextFolder);
+          const tree = await fetchTree(sourceId, nextFolder, { orgId: scopedOrgId });
           for (const node of tree.nodes) {
             if (node.isDirectory) {
               queue.push(node.path);
@@ -569,7 +600,7 @@ export default function SourceFileTree({
         }));
 
         for (let index = 0; index < files.length; index += 1) {
-          await fetchFile(sourceId, files[index]);
+          await fetchFile(sourceId, files[index], { orgId: scopedOrgId });
           setCacheProgressByFolder((prev) => ({
             ...prev,
             [key]: {
@@ -628,7 +659,7 @@ export default function SourceFileTree({
         activeCacheRunsRef.current.delete(key);
       }
     },
-    [fetchFile, fetchTree]
+    [fetchFile, fetchTree, scopedOrgId]
   );
 
   const togglePinnedFolder = useCallback(
@@ -725,7 +756,7 @@ export default function SourceFileTree({
       }
 
       try {
-        const payload = await searchFiles(trimmed, { sourceId, limit: 80 });
+        const payload = await searchFiles(trimmed, { orgId: scopedOrgId, sourceId, limit: 80 });
         const nodes: SourceNode[] = payload.results.map((result) => ({
           sourceId: result.sourceId,
           path: result.path,
@@ -740,7 +771,7 @@ export default function SourceFileTree({
         setSearchBySource((prev) => ({ ...prev, [sourceId]: { loading: false, error: message, nodes: [] } }));
       }
     },
-    [searchFiles]
+    [searchFiles, scopedOrgId]
   );
 
   useEffect(() => {
@@ -778,7 +809,7 @@ export default function SourceFileTree({
 
       try {
         if (mode === 'folder') {
-          await createFolder(sourceId, targetPath);
+          await createFolder(sourceId, targetPath, { orgId: scopedOrgId });
 
           const parentKey = treeKey(sourceId, activeFolder);
           if (!treeByKey[parentKey]) {
@@ -792,9 +823,9 @@ export default function SourceFileTree({
           setExpandedFolders((prev) => new Set(prev).add(folderKey));
           await loadTree(sourceId, targetPath);
         } else {
-          await createFile(sourceId, targetPath, '');
+          await createFile(sourceId, targetPath, '', { orgId: scopedOrgId });
           await refreshFolder(sourceId, activeFolder);
-          onSelect(sourceId, targetPath);
+          onSelect(sourceId, targetPath, scopedOrgId);
         }
 
         setCreateDraft(null);
@@ -803,7 +834,7 @@ export default function SourceFileTree({
         setCreateDraft((prev) => (prev ? { ...prev, error: message, submitting: false } : prev));
       }
     },
-    [activeFolderBySource, createDraft, createFile, createFolder, loadTree, onSelect, refreshFolder, treeByKey]
+    [activeFolderBySource, createDraft, createFile, createFolder, loadTree, onSelect, refreshFolder, scopedOrgId, treeByKey]
   );
 
   const renderNodes = (sourceId: string, folderPath: string, depth: number) => {
@@ -844,7 +875,7 @@ export default function SourceFileTree({
               type="button"
               onClick={() => {
                 if (node.restricted) return;
-                node.isDirectory ? toggleFolder(sourceId, node.path) : onSelect(sourceId, node.path);
+                node.isDirectory ? toggleFolder(sourceId, node.path) : onSelect(sourceId, node.path, scopedOrgId);
               }}
               disabled={node.restricted}
               data-testid={node.restricted ? 'source-tree-restricted-result' : undefined}
@@ -934,9 +965,8 @@ export default function SourceFileTree({
         {enabledSources.map((source) => {
           const expanded = expandedSources.has(source.id);
           const unavailable = !sourceIsAvailableInBuild(source);
-          const rootKey = treeKey(source.id, '');
-          const rootTree = treeByKey[rootKey];
-          const canWrite = Boolean(rootTree?.capabilities?.write);
+          const activeFolder = activeFolderBySource[source.id] ?? '';
+          const canWrite = canCreateInActiveFolder(treeByKey, source.id, activeFolder);
           const pinnedCount = Object.values(pinnedFolders).filter((entry) => entry.sourceId === source.id).length;
           const query = searchQueryBySource[source.id] ?? '';
           const searchState = searchBySource[source.id] ?? { loading: false, error: null, nodes: [] };
@@ -1059,7 +1089,7 @@ export default function SourceFileTree({
                             <button
                               key={`${node.sourceId}:${node.path}`}
                               type="button"
-                              onClick={() => onSelect(node.sourceId, node.path)}
+                              onClick={() => onSelect(node.sourceId, node.path, scopedOrgId)}
                               className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]"
                               title={node.path}
                             >

@@ -18,6 +18,20 @@ export type BoardFilterScope = 'all' | 'projects' | 'workDomain' | 'none';
 
 const WORK_DOMAIN_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+function normalizeExcludedWorkDomains(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  return raw.reduce<string[]>((result, entry) => {
+    if (typeof entry !== 'string') return result;
+    const domain = entry.trim().toLowerCase();
+    if (domain && WORK_DOMAIN_PATTERN.test(domain) && domain.length <= 64 && !seen.has(domain)) {
+      seen.add(domain);
+      result.push(domain);
+    }
+    return result;
+  }, []);
+}
+
 /** Normalize raw filter config from the API into a strict shape (mirrors server). */
 export function normalizeBoardFilterConfig(raw: unknown): BoardFilterConfig {
   if (!raw || typeof raw !== 'object') {
@@ -30,6 +44,9 @@ export function normalizeBoardFilterConfig(raw: unknown): BoardFilterConfig {
   ).includes(scopeRaw as BoardFilterScope)
     ? (scopeRaw as BoardFilterScope)
     : 'all';
+  const excluded = normalizeExcludedWorkDomains(obj.excludeWorkDomains);
+  const withExcluded = (config: BoardFilterConfig): BoardFilterConfig =>
+    excluded.length > 0 ? { ...config, excludeWorkDomains: excluded } : config;
 
   switch (scope) {
     case 'projects': {
@@ -39,7 +56,7 @@ export function normalizeBoardFilterConfig(raw: unknown): BoardFilterConfig {
             .filter((value): value is number => Number.isInteger(value) && value > 0)
             .filter((value, index, arr) => arr.indexOf(value) === index)
         : [];
-      return projectIds.length > 0 ? { scope, projectIds } : { scope: 'all' };
+      return withExcluded(projectIds.length > 0 ? { scope, projectIds } : { scope: 'all' });
     }
     case 'workDomain': {
       const candidate =
@@ -48,13 +65,13 @@ export function normalizeBoardFilterConfig(raw: unknown): BoardFilterConfig {
         candidate && WORK_DOMAIN_PATTERN.test(candidate) && candidate.length <= 64
           ? candidate
           : null;
-      return { scope, workDomain };
+      return withExcluded({ scope, workDomain });
     }
     case 'none':
-      return { scope: 'none' };
+      return withExcluded({ scope: 'none' });
     case 'all':
     default:
-      return { scope: 'all' };
+      return withExcluded({ scope: 'all' });
   }
 }
 
@@ -62,6 +79,7 @@ export interface BoardFilterConfig {
   scope: BoardFilterScope;
   projectIds?: number[];
   workDomain?: string | null;
+  excludeWorkDomains?: string[];
 }
 
 export interface BoardSummary {
@@ -262,6 +280,7 @@ export function buildBoardCustomizationPatch(form: {
   scope?: BoardFilterScope;
   workDomain?: string;
   projectIdsCsv?: string;
+  existingFilter?: BoardFilterConfig;
 }): { view?: BoardView; filter_config: BoardFilterConfig } {
   const rawProjectIds = (form.projectIdsCsv ?? '')
     .split(',')
@@ -269,10 +288,24 @@ export function buildBoardCustomizationPatch(form: {
     .filter((entry) => entry.length > 0)
     .map((entry) => Number(entry))
     .filter((id) => Number.isInteger(id) && id > 0);
-  const filter_config = normalizeBoardFilterConfig({
+  const existingFilter = normalizeBoardFilterConfig(form.existingFilter ?? {});
+  const requestedFilter = normalizeBoardFilterConfig({
     scope: form.scope ?? 'all',
     workDomain: form.workDomain,
     projectIds: rawProjectIds,
+  });
+  // A positive work-domain selection is an intentional override only for the
+  // matching prior exclusion; unrelated exclusions remain part of the patch.
+  const explicitIncludedDomain =
+    requestedFilter.scope === 'workDomain' && requestedFilter.workDomain
+      ? requestedFilter.workDomain
+      : null;
+  const excludeWorkDomains = existingFilter.excludeWorkDomains?.filter(
+    (domain) => domain !== explicitIncludedDomain,
+  );
+  const filter_config = normalizeBoardFilterConfig({
+    ...requestedFilter,
+    excludeWorkDomains,
   });
   // Honest contract (D2): only views that consume the persisted task-inclusion
   // filter support filter customization. Strategic renders roadmaps and ignores

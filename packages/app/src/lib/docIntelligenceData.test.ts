@@ -2,11 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildRelatedDocSearchPath,
   docFilename,
   docFilenameStem,
   filterRelatedDocResults,
   findTasksReferencingDoc,
 } from './docIntelligenceData.ts';
+
+test('buildRelatedDocSearchPath scopes related search to the selected organization', () => {
+  const scoped = new URL(`http://example.test${buildRelatedDocSearchPath('docs/quarterly report.md', ' org-beta ')}`);
+  assert.equal(scoped.pathname, '/fs/search');
+  assert.equal(scoped.searchParams.get('q'), 'quarterly report');
+  assert.equal(scoped.searchParams.get('limit'), '20');
+  assert.equal(scoped.searchParams.get('orgId'), 'org-beta');
+
+  const unscoped = new URL(`http://example.test${buildRelatedDocSearchPath('docs/report.md')}`);
+  assert.equal(unscoped.searchParams.has('orgId'), false);
+});
 
 test('docFilename and stem extraction', () => {
   assert.equal(docFilename('output/entity-doc-viewer-demo.md'), 'entity-doc-viewer-demo.md');

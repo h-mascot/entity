@@ -4,8 +4,12 @@ import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
 import { buildDocsRootCandidates } from '../docs-paths';
-import { createFileSourceRepository } from '../../../db/src/file-sources';
+import { createFileSourceRepository, type FileSourceRecord, type FileSourceRepository } from '../../../db/src/file-sources';
+import { createFsFileOwnershipRepository, type FsFileOwnershipRepository } from '../../../db/src/file-ownership';
 import { createFileSourceAdapter } from '../fs/adapters/registry';
+import { assertOwnedFileAccess, isReservedUploadPath } from '../fs/ownership';
+import { isContainedPath, normalizeSourceRelativePath, resolvePathThroughNearestExistingAncestor } from '../fs/security';
+import { requireRequestOrg, type RequestOrgBinding } from '../request-permissions';
 import { resolveFrontendDist } from '../static-cache';
 
 const HOME_DIR = process.env.HOME?.trim() || os.homedir();
@@ -62,6 +66,62 @@ const ALLOWED_ROOTS: Record<string, string[]> = {
   workspace: buildDocsRootCandidates('workspace', WORKSPACE_ROOT, WORKSPACE_FALLBACKS),
 
 };
+
+interface DocsRouteDeps {
+  sourceRepo?: Pick<FileSourceRepository, 'getSource' | 'listSources'>;
+  ownershipRepo?: Pick<FsFileOwnershipRepository, 'getOwnership'>;
+}
+
+function sourceFileOwnershipVisible(
+  binding: RequestOrgBinding,
+  ownershipRepo: Pick<FsFileOwnershipRepository, 'getOwnership'>,
+  sourceId: string,
+  sourcePath: string,
+  sources: readonly FileSourceRecord[] = [],
+): boolean {
+  try {
+    assertOwnedFileAccess(binding, ownershipRepo, sourceId, sourcePath, 'read', sources);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function localDocsAbsolutePath(source: FileSourceRecord, targetPath: string): string | null {
+  if (source.type !== 'local' || !source.base_path) return null;
+  try {
+    const sourceRoot = resolvePathThroughNearestExistingAncestor(source.base_path);
+    const resolvedTarget = resolvePathThroughNearestExistingAncestor(targetPath);
+    if (!isContainedPath(sourceRoot, resolvedTarget)) return null;
+    const relative = path.relative(sourceRoot, resolvedTarget);
+    return relative ? normalizeSourceRelativePath(relative) : '';
+  } catch {
+    // A missing or symlinked local path is not a reason to bypass ownership.
+    return null;
+  }
+}
+
+function docsAbsoluteOwnershipVisible(
+  binding: RequestOrgBinding,
+  ownershipRepo: Pick<FsFileOwnershipRepository, 'getOwnership'>,
+  sources: FileSourceRecord[],
+  targetPath: string,
+  reservedPath: string,
+): boolean {
+  let coveredByLocalSource = false;
+  let visible = true;
+  for (const source of sources) {
+    const localPath = localDocsAbsolutePath(source, targetPath);
+    if (localPath === null) continue;
+    coveredByLocalSource = true;
+    if (!localPath || !sourceFileOwnershipVisible(binding, ownershipRepo, source.id, localPath, sources)) {
+      visible = false;
+      continue;
+    }
+  }
+  if (isReservedUploadPath(reservedPath) && !coveredByLocalSource) return false;
+  return visible;
+}
 
 // Simple HTML template for docs viewer
 const DOCS_HTML = `<!DOCTYPE html>
@@ -147,13 +207,6 @@ interface DocsDocument {
   content: string;
   sourceId?: string;
   resolvedPath?: string;
-}
-
-let fileSourceRepository: ReturnType<typeof createFileSourceRepository> | null = null;
-
-function getFileSourceRepository(): ReturnType<typeof createFileSourceRepository> {
-  fileSourceRepository ??= createFileSourceRepository();
-  return fileSourceRepository;
 }
 
 function docsTextToSpeechInput(markdown: string): string {
@@ -283,7 +336,13 @@ function sourceRelativePathForDocsRoot(root: string, filePath: string): string |
   return null;
 }
 
-async function readDocsDocument(root: string, filePath: string): Promise<DocsDocument | null> {
+async function readDocsDocument(
+  binding: RequestOrgBinding,
+  root: string,
+  filePath: string,
+  sourceRepo: Pick<FileSourceRepository, 'getSource' | 'listSources'>,
+  ownershipRepo: Pick<FsFileOwnershipRepository, 'getOwnership'>,
+): Promise<DocsDocument | null> {
   if (root === 'source') {
     const sourceDoc = splitSourceDocsPath(filePath);
     if (!sourceDoc) {
@@ -292,12 +351,33 @@ async function readDocsDocument(root: string, filePath: string): Promise<DocsDoc
 
     let source;
     try {
-      source = getFileSourceRepository().getSource(sourceDoc.sourceId);
+      source = sourceRepo.getSource(sourceDoc.sourceId);
     } catch {
       return null;
     }
 
     if (!source || !source.enabled) {
+      return null;
+    }
+
+    if (source.type === 'local' && source.base_path) {
+      let coveringSources: FileSourceRecord[];
+      try {
+        coveringSources = sourceRepo.listSources(true);
+      } catch {
+        // A local source cannot be authorized against physical aliases without
+        // the complete source graph; fail closed rather than checking only the
+        // selected source.
+        return null;
+      }
+      if (!docsAbsoluteOwnershipVisible(
+        binding,
+        ownershipRepo,
+        coveringSources,
+        path.resolve(source.base_path, sourceDoc.sourcePath),
+        sourceDoc.sourcePath,
+      )) return null;
+    } else if (!sourceFileOwnershipVisible(binding, ownershipRepo, source.id, sourceDoc.sourcePath, [source])) {
       return null;
     }
 
@@ -320,8 +400,22 @@ async function readDocsDocument(root: string, filePath: string): Promise<DocsDoc
     }
   }
 
+  const sourceRelativePath = sourceRelativePathForDocsRoot(root, filePath);
   const resolvedPath = await resolveDocsPath(root, filePath);
   if (resolvedPath) {
+    if (sourceRelativePath) {
+      let sources: FileSourceRecord[];
+      try {
+        sources = sourceRepo.listSources(true);
+      } catch {
+        // A local resolved document cannot be authorized without the complete
+        // source graph; do not fall back to an unscoped filesystem read.
+        return null;
+      }
+      if (!docsAbsoluteOwnershipVisible(binding, ownershipRepo, sources, resolvedPath, sourceRelativePath)) {
+        return null;
+      }
+    }
     const content = await fs.promises.readFile(resolvedPath, 'utf-8');
     return {
       root,
@@ -331,21 +425,26 @@ async function readDocsDocument(root: string, filePath: string): Promise<DocsDoc
     };
   }
 
-  const sourceRelativePath = sourceRelativePathForDocsRoot(root, filePath);
   if (!sourceRelativePath) {
     return null;
   }
 
-  let sources;
+  let allSources: FileSourceRecord[];
   try {
-    sources = getFileSourceRepository().listSources(false);
+    allSources = sourceRepo.listSources(true);
   } catch {
     return null;
   }
 
-  for (const source of sources) {
+  for (const source of allSources.filter((candidate) => candidate.enabled)) {
     try {
       const adapter = createFileSourceAdapter(source);
+      // Authorize the source that can actually satisfy this fallback read.
+      // The ownership helper still evaluates every physical alias, while an
+      // unrelated local root must not veto a valid candidate by relative path.
+      if (!sourceFileOwnershipVisible(binding, ownershipRepo, source.id, sourceRelativePath, allSources)) {
+        continue;
+      }
       const file = await adapter.read(sourceRelativePath);
       if (file.isBinary) {
         continue;
@@ -367,8 +466,12 @@ async function readDocsDocument(root: string, filePath: string): Promise<DocsDoc
   return null;
 }
 
-export function registerDocsRoute(app: any) {
+export function registerDocsRoute(app: any, deps: DocsRouteDeps = {}) {
+  const sourceRepo = deps.sourceRepo ?? createFileSourceRepository();
+  const ownershipRepo = deps.ownershipRepo ?? createFsFileOwnershipRepository();
   app.get('/api/docs/:root/*/tts', async (req: Request, res: Response) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return;
     const root = req.params.root;
     const filePath = req.params[0] as string;
     const validation = validateDocsRequestShape(root, filePath);
@@ -377,7 +480,7 @@ export function registerDocsRoute(app: any) {
     }
 
     try {
-      const document = await readDocsDocument(root, filePath);
+      const document = await readDocsDocument(binding, root, filePath, sourceRepo, ownershipRepo);
       if (!document) {
         return res.status(404).json({ error: 'File not found' });
       }
@@ -471,6 +574,8 @@ export function registerDocsRoute(app: any) {
   });
 
   app.get('/api/docs/:root/*', async (req: Request, res: Response) => {
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return;
     const root = req.params.root;
     const filePath = req.params[0] as string;
     const validation = validateDocsRequestShape(root, filePath);
@@ -479,7 +584,7 @@ export function registerDocsRoute(app: any) {
     }
 
     try {
-      const document = await readDocsDocument(root, filePath);
+      const document = await readDocsDocument(binding, root, filePath, sourceRepo, ownershipRepo);
       if (!document) {
         return res.status(404).json({ error: 'File not found' });
       }

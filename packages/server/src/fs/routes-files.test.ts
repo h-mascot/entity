@@ -5,6 +5,10 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FileSourceRecord, FileSourceRepository } from '../../../db/src/file-sources';
+import type { FsFileOwnershipRecord } from '../../../db/src/file-ownership';
+import type { FileSourceAdapter } from './adapters/types';
+import type { PrincipalGrant } from '../permissions';
+import { registerFileRoutes } from './routes-files';
 
 const originalDbPath = process.env.ENTITY_TASK_DB_PATH;
 const originalWorkspace = process.env.WORKSPACE;
@@ -260,6 +264,341 @@ describe('file routes', () => {
       });
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('denies direct tree/read/write access to another team ownership scope', async () => {
+    const workspaceRoot = await makeTempRoot();
+    process.env.WORKSPACE = workspaceRoot;
+    await fs.promises.writeFile(path.join(workspaceRoot, 'team-a.md'), 'team a\n', 'utf-8');
+    await fs.promises.writeFile(path.join(workspaceRoot, 'team-b.md'), 'team b\n', 'utf-8');
+    const record = source({ base_path: workspaceRoot });
+    const updateSource = vi.fn(() => record);
+    const repo: FileSourceRepository = {
+      listSources: vi.fn(() => [record]), getSource: vi.fn(() => record), createSource: vi.fn(() => record),
+      updateSource, setEnabled: vi.fn(() => record), deleteSource: vi.fn(() => false),
+    };
+    const ownership: FsFileOwnershipRecord[] = [
+      { source_id: 'workspace', path: 'team-a.md', org_id: 'org-a', team_id: 'team-a', owner_principal_id: 'owner-a', display_name: 'team-a.md', origin: 'upload', uploaded_at: '2026-09-07T00:00:00.000Z', updated_at: '2026-09-07T00:00:00.000Z' },
+      { source_id: 'workspace', path: 'team-b.md', org_id: 'org-a', team_id: 'team-b', owner_principal_id: 'owner-b', display_name: 'team-b.md', origin: 'upload', uploaded_at: '2026-09-07T00:00:00.000Z', updated_at: '2026-09-07T00:00:00.000Z' },
+    ];
+    const ownershipRepo = {
+      getOwnership: vi.fn((sourceId: string, filePath: string) => ownership.find((row) => row.source_id === sourceId && row.path === filePath)),
+      listOwnershipForOrg: vi.fn((orgId: string) => ownership.filter((row) => row.org_id === orgId)),
+    };
+    const { registerFileRoutes } = await import('./routes-files');
+    const app = express();
+    let grants: PrincipalGrant[] = [{ role: 'viewer', org_id: 'org-a', team_id: 'team-a' }];
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.headers['x-entity-org-id'] = 'org-a';
+      (req as unknown as { entityCustomerPrincipal: unknown }).entityCustomerPrincipal = {
+        principalId: 'viewer-a', principalType: 'human',
+        permission: { principal_id: 'viewer-a', grants },
+        orgIds: ['org-a'], isGlobalAdmin: false,
+      };
+      next();
+    });
+    const router = Router();
+    registerFileRoutes(router, { sourceRepo: repo, ownershipRepo });
+    app.use('/api/fs', router);
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+    try {
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const tree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=`);
+      expect(tree.status).toBe(200);
+      const treeBody = await tree.json() as { nodes: Array<{ name: string }>; capabilities: { write: boolean } };
+      expect(treeBody.nodes.map((node) => node.name)).toEqual(['team-a.md']);
+      expect(treeBody.capabilities.write).toBe(false);
+
+      const allowedRead = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=team-a.md`);
+      expect(allowedRead.status).toBe(200);
+      await expect(allowedRead.json()).resolves.toMatchObject({ readOnly: true });
+      updateSource.mockClear();
+
+      grants = [{ role: 'contributor', org_id: 'org-a', team_id: 'team-a' }];
+      const contributorRead = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=team-a.md`);
+      expect(contributorRead.status).toBe(200);
+      await expect(contributorRead.json()).resolves.toMatchObject({ readOnly: false });
+
+      grants = [
+        { role: 'viewer', org_id: 'org-a', team_id: 'team-a' },
+        { role: 'contributor', org_id: 'org-a', team_id: 'team-b' },
+      ];
+      const mixedTeamARead = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=team-a.md`);
+      expect(mixedTeamARead.status).toBe(200);
+      await expect(mixedTeamARead.json()).resolves.toMatchObject({ readOnly: true });
+      const mixedTeamBRead = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=team-b.md`);
+      expect(mixedTeamBRead.status).toBe(200);
+      await expect(mixedTeamBRead.json()).resolves.toMatchObject({ readOnly: false });
+
+      grants = [{ role: 'viewer', org_id: 'org-a', team_id: 'team-a' }];
+      updateSource.mockClear();
+      const deniedRead = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=team-b.md`);
+      expect(deniedRead.status).toBe(403);
+      const orphanReservedRead = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=uploads/org-a/team-a/orphan.txt`);
+      expect(orphanReservedRead.status).toBe(403);
+      const deniedTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=uploads/org-a/team-a`);
+      expect(deniedTree.status).toBe(403);
+      const deniedWrite = await fetch(`${baseUrl}/api/fs/file`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sourceId: 'workspace', path: 'team-b.md', mode: 'overwrite', content: 'must stay team b\n' }),
+      });
+      expect(deniedWrite.status).toBe(403);
+      await expect(fs.promises.readFile(path.join(workspaceRoot, 'team-b.md'), 'utf-8')).resolves.toBe('team b\n');
+      expect(updateSource).not.toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('does not use ownership from another source to authorize reserved directories', async () => {
+    const workspaceRoot = await makeTempRoot();
+    const otherRoot = await makeTempRoot();
+    process.env.WORKSPACE = workspaceRoot;
+    await fs.promises.mkdir(path.join(workspaceRoot, 'uploads/org-a/team-a'), { recursive: true });
+    await fs.promises.writeFile(path.join(workspaceRoot, 'uploads/org-a/team-a', 'visible.txt'), 'source workspace\n', 'utf-8');
+    await fs.promises.mkdir(path.join(otherRoot, 'uploads/org-a/team-a'), { recursive: true });
+    const workspace = source({ id: 'workspace', base_path: workspaceRoot });
+    const other = source({ id: 'other', base_path: otherRoot });
+    const repo: FileSourceRepository = {
+      listSources: vi.fn(() => [workspace, other]), getSource: vi.fn((id: string) => id === 'workspace' ? workspace : other),
+      createSource: vi.fn(() => workspace), updateSource: vi.fn(() => workspace), setEnabled: vi.fn(() => workspace), deleteSource: vi.fn(() => false),
+    };
+    const ownership: FsFileOwnershipRecord[] = [{
+      source_id: 'other', path: 'uploads/org-a/team-a/from-other.txt', org_id: 'org-a', team_id: 'team-a',
+      owner_principal_id: 'owner-a', display_name: 'from-other.txt', origin: 'upload',
+      uploaded_at: '2026-09-07T00:00:00.000Z', updated_at: '2026-09-07T00:00:00.000Z',
+    }];
+    const ownershipRepo = {
+      getOwnership: vi.fn((sourceId: string, filePath: string) => ownership.find((row) => row.source_id === sourceId && row.path === filePath)),
+      listOwnershipForOrg: vi.fn((orgId: string) => ownership.filter((row) => row.org_id === orgId)),
+    };
+    const { registerFileRoutes } = await import('./routes-files');
+    const app = express();
+    app.use((req, _res, next) => {
+      req.headers['x-entity-org-id'] = 'org-a';
+      (req as unknown as { entityCustomerPrincipal: unknown }).entityCustomerPrincipal = {
+        principalId: 'viewer-a', principalType: 'human',
+        permission: { principal_id: 'viewer-a', grants: [{ role: 'viewer', org_id: 'org-a', team_id: 'team-a' }] },
+        orgIds: ['org-a'], isGlobalAdmin: false,
+      };
+      next();
+    });
+    const router = Router();
+    registerFileRoutes(router, { sourceRepo: repo, ownershipRepo });
+    app.use('/api/fs', router);
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/fs/tree?sourceId=workspace&path=uploads/org-a/team-a`);
+      expect(response.status).toBe(403);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('derives tree write capability from the caller ownership scope', async () => {
+    const workspaceRoot = await makeTempRoot();
+    await fs.promises.mkdir(path.join(workspaceRoot, 'uploads/org-a/team-a'), { recursive: true });
+    const record = source({ base_path: workspaceRoot });
+    const ownedPath = 'uploads/org-a/team-a/owned.md';
+    const owner: FsFileOwnershipRecord = {
+      source_id: record.id,
+      path: ownedPath,
+      org_id: 'org-a',
+      team_id: 'team-a',
+      owner_principal_id: 'owner-a',
+      display_name: 'owned.md',
+      origin: 'upload',
+      uploaded_at: '2026-09-07T00:00:00.000Z',
+      updated_at: '2026-09-07T00:00:00.000Z',
+    };
+    const repo: FileSourceRepository = {
+      listSources: vi.fn(() => [record]),
+      getSource: vi.fn(() => record),
+      createSource: vi.fn(() => record),
+      updateSource: vi.fn(() => record),
+      setEnabled: vi.fn(() => record),
+      deleteSource: vi.fn(() => false),
+    };
+    const ownershipRepo = {
+      getOwnership: vi.fn((sourceId: string, filePath: string) => sourceId === owner.source_id && filePath === owner.path ? owner : undefined),
+      listOwnershipForOrg: vi.fn(() => [owner]),
+    };
+    const adapter: FileSourceAdapter = {
+      key: 'owned-directory-capability',
+      validate: vi.fn(async () => undefined),
+      capabilities: vi.fn(() => ({ read: true, write: true, rename: false, delete: false, list: true, search: false })),
+      list: vi.fn(async () => [{ sourceId: record.id, path: ownedPath, name: 'owned.md', isDirectory: false, kind: 'file' as const }]),
+      read: vi.fn(async () => ({ content: 'owned', contentType: 'text/markdown' })),
+      write: vi.fn(async () => ({})),
+      mkdir: vi.fn(async () => undefined),
+    };
+    const { registerFileRoutes } = await import('./routes-files');
+    const app = express();
+    let grants: PrincipalGrant[] = [{ role: 'viewer', org_id: 'org-a', team_id: 'team-a' }];
+    app.use((req, _res, next) => {
+      req.headers['x-entity-org-id'] = 'org-a';
+      (req as unknown as { entityCustomerPrincipal: unknown }).entityCustomerPrincipal = {
+        principalId: 'viewer-a', principalType: 'human',
+        permission: { principal_id: 'viewer-a', grants }, orgIds: ['org-a'], isGlobalAdmin: false,
+      };
+      next();
+    });
+    const router = Router();
+    registerFileRoutes(router, { sourceRepo: repo, ownershipRepo, createAdapter: vi.fn(() => adapter) });
+    app.use('/api/fs', router);
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+
+    try {
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const restrictedRootTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=`);
+      const restrictedRootBody = await restrictedRootTree.json() as { capabilities?: { write?: boolean }; error?: string };
+      expect(restrictedRootTree.status, JSON.stringify(restrictedRootBody)).toBe(200);
+      expect(restrictedRootBody.capabilities?.write).toBe(false);
+
+      grants = [{ role: 'contributor', org_id: 'org-a', team_id: null }];
+      const orgWideRootTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=`);
+      expect(orgWideRootTree.status).toBe(200);
+      expect((await orgWideRootTree.json()).capabilities.write).toBe(true);
+
+      grants = [{ role: 'viewer', org_id: 'org-a', team_id: 'team-a' }];
+      const viewerTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=uploads/org-a/team-a`);
+      expect(viewerTree.status).toBe(200);
+      expect((await viewerTree.json()).capabilities.write).toBe(false);
+
+      grants = [{ role: 'contributor', org_id: 'org-a', team_id: 'team-a' }];
+      const contributorTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=uploads/org-a/team-a`);
+      expect(contributorTree.status).toBe(200);
+      expect((await contributorTree.json()).capabilities.write).toBe(true);
+
+      grants = [
+        { role: 'viewer', org_id: 'org-a', team_id: 'team-a' },
+        { role: 'contributor', org_id: 'org-a', team_id: 'team-b' },
+      ];
+      const mixedTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=uploads/org-a/team-a`);
+      expect(mixedTree.status).toBe(200);
+      expect((await mixedTree.json()).capabilities.write).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('reads and lists an overlapping owned source path only for its owner team', async () => {
+    const root = await makeTempRoot();
+    const nested = path.join(root, 'nested');
+    await fs.promises.mkdir(path.join(nested, 'uploads/org-a/team-a'), { recursive: true });
+    await fs.promises.writeFile(path.join(nested, 'uploads/org-a/team-a/file.txt'), 'private\n', 'utf-8');
+    const workspace = source({ id: 'workspace', base_path: root });
+    const nestedSource = source({ id: 'nested', base_path: nested });
+    const sources = [workspace, nestedSource];
+    const repo: FileSourceRepository = {
+      listSources: vi.fn(() => sources), getSource: vi.fn((id: string) => sources.find((entry) => entry.id === id)),
+      createSource: vi.fn(() => workspace), updateSource: vi.fn(() => workspace), setEnabled: vi.fn(() => workspace), deleteSource: vi.fn(() => false),
+    };
+    const row: FsFileOwnershipRecord = {
+      source_id: 'nested', path: 'uploads/org-a/team-a/file.txt', org_id: 'org-a', team_id: 'team-a',
+      owner_principal_id: 'owner-a', display_name: 'file.txt', origin: 'upload', uploaded_at: '2026-09-07T00:00:00.000Z', updated_at: '2026-09-07T00:00:00.000Z',
+    };
+    const ownershipRepo = {
+      getOwnership: vi.fn((sourceId: string, filePath: string) => sourceId === row.source_id && filePath === row.path ? row : undefined),
+      listOwnershipForOrg: vi.fn(() => [row]),
+    };
+    const makeAdapter = (selected: FileSourceRecord): FileSourceAdapter => ({
+      key: selected.id, validate: vi.fn(async () => undefined),
+      capabilities: () => ({ read: true, write: false, rename: false, delete: false, list: true, search: true }),
+      list: vi.fn(async (filePath) => filePath === 'nested/uploads/org-a/team-a'
+        ? [{ sourceId: selected.id, path: 'nested/uploads/org-a/team-a/file.txt', name: 'file.txt', isDirectory: false, kind: 'file' as const }]
+        : []),
+      read: vi.fn(async () => ({ content: 'private\n', contentType: 'text/plain', size: 8, isBinary: false })),
+      write: vi.fn(async () => ({})),
+      mkdir: vi.fn(async () => undefined),
+    });
+    const app = express();
+    let grants = [{ role: 'viewer' as const, org_id: 'org-a', team_id: 'team-a' }];
+    app.use((req, _res, next) => {
+      req.headers['x-entity-org-id'] = 'org-a';
+      (req as unknown as { entityCustomerPrincipal: unknown }).entityCustomerPrincipal = {
+        principalId: 'viewer-a', principalType: 'human', permission: { principal_id: 'viewer-a', grants }, orgIds: ['org-a'], isGlobalAdmin: false,
+      };
+      next();
+    });
+    const router = Router();
+    registerFileRoutes(router, { sourceRepo: repo, ownershipRepo, createAdapter: makeAdapter });
+    app.use('/api/fs', router);
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+    try {
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const allowedFile = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=nested/uploads/org-a/team-a/file.txt`);
+      expect(allowedFile.status).toBe(200);
+      const allowedTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=nested/uploads/org-a/team-a`);
+      expect(allowedTree.status).toBe(200);
+      expect((await allowedTree.json()).nodes).toHaveLength(1);
+
+      grants = [{ role: 'viewer', org_id: 'org-a', team_id: 'team-b' }];
+      const deniedFile = await fetch(`${baseUrl}/api/fs/file?sourceId=workspace&path=nested/uploads/org-a/team-a/file.txt`);
+      expect(deniedFile.status).toBe(403);
+      const deniedTree = await fetch(`${baseUrl}/api/fs/tree?sourceId=workspace&path=nested/uploads/org-a/team-a`);
+      expect(deniedTree.status).toBe(403);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('records genuine adapter read failures in source health', async () => {
+    const record = source();
+    const updateSource = vi.fn(() => record);
+    const repo: FileSourceRepository = {
+      listSources: vi.fn(() => [record]),
+      getSource: vi.fn(() => record),
+      createSource: vi.fn(() => record),
+      updateSource,
+      setEnabled: vi.fn(() => record),
+      deleteSource: vi.fn(() => false),
+    };
+    const adapter: FileSourceAdapter = {
+      key: 'io-error',
+      validate: vi.fn(async () => undefined),
+      capabilities: vi.fn(() => ({ read: true, write: false, rename: false, delete: false, list: true, search: false })),
+      list: vi.fn(async () => []),
+      read: vi.fn(async () => {
+        throw new Error('backend unavailable');
+      }),
+      write: vi.fn(async () => ({})),
+      mkdir: vi.fn(async () => undefined),
+    };
+    const { registerFileRoutes } = await import('./routes-files');
+    const app = express();
+    const router = Router();
+    registerFileRoutes(router, {
+      sourceRepo: repo,
+      createAdapter: vi.fn(() => adapter),
+    });
+    app.use('/api/fs', router);
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/fs/file?sourceId=workspace&path=backend.md`);
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({ error: 'backend unavailable' });
+      expect(updateSource).toHaveBeenCalledWith('workspace', expect.objectContaining({ health: 'error' }));
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   });
 });

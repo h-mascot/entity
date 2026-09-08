@@ -6,6 +6,7 @@ import { registerSourceRoutes } from './routes-sources';
 import { registerFileRoutes } from './routes-files';
 import { registerDocumentConvertRoutes } from './routes-convert';
 import { registerSearchRoutes } from './routes-search';
+import { registerUploadRoutes } from './routes-upload';
 import { FileIndexRunner } from './index-runner';
 import { emitFsAudit } from './security';
 import { getFsMetricsSnapshot } from './metrics';
@@ -98,6 +99,7 @@ export function registerFileSystemRoutes(app: Express, options: FileSystemRouteO
   registerFileRoutes(router, { sourceRepo });
   registerDocumentConvertRoutes(router, { sourceRepo });
   registerSearchRoutes(router);
+  registerUploadRoutes(router, { sourceRepo, indexRepo });
 
   app.use('/api/fs', router);
 

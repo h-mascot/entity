@@ -55,6 +55,7 @@ export interface FileIndexSearchFilters {
   from?: string;
   to?: string;
   limit?: number;
+  offset?: number;
 }
 
 export interface FileSyncRunRecord {
@@ -354,11 +355,12 @@ export function createFileIndexRepository(): FileIndexRepository {
         ? ', CASE WHEN LOWER(title) LIKE ? THEN 1 ELSE 0 END AS search_title_score'
         : ', 0 AS search_title_score';
       const limit = Math.max(1, Math.min(filters.limit ?? 50, 10_101));
+      const offset = Math.max(0, Math.floor(filters.offset ?? 0));
       const boundValues = titleLike
-        ? [titleLike, ...values, limit]
-        : [...values, limit];
+        ? [titleLike, ...values, limit, offset]
+        : [...values, limit, offset];
 
-      const sql = `SELECT *${scoreSelect} FROM file_index ${where} ORDER BY search_title_score DESC, datetime(COALESCE(updated_at, indexed_at)) DESC, datetime(indexed_at) DESC, id ASC LIMIT ?`;
+      const sql = `SELECT *${scoreSelect} FROM file_index ${where} ORDER BY search_title_score DESC, datetime(COALESCE(updated_at, indexed_at)) DESC, datetime(indexed_at) DESC, id ASC LIMIT ? OFFSET ?`;
       const rows = db.prepare(sql).all(...boundValues) as Array<Record<string, unknown>>;
       return rows.map(mapIndexRow);
     },

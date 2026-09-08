@@ -130,7 +130,7 @@ import { registerDocumentRoutes } from "./routes/documents";
 import { closeDocumentsDatabase } from "./documents/db";
 import { ensureDevDocumentsToken, shouldProvisionDevDocumentsToken } from "./editor/dev-token";
 import { createAgentRegistryRouter } from "./routes/agent-registry";
-import { createWorkspaceRouter } from "./routes/workspace";
+import { createAdminWorkspaceRouter, createWorkspaceRouter } from "./routes/workspace";
 import { createTaskReviewGateRouter } from "./routes/task-review-gates";
 import { createTaskHandoffRouter } from "./routes/task-handoffs";
 import {
@@ -234,13 +234,19 @@ const phase2Flags = resolvePhase2Flags();
 applySecurityHardening(app);
 app.use(cors());
 app.use(compression());
+
+// API authentication is intentionally unmounted and runs before any body
+// parser. Unauthenticated callers must not be able to spend parser memory on
+// the enlarged upload envelope (or turn malformed JSON into a parser error).
+app.use(createApiAuthMiddleware());
 app.use("/api/clickclack", express.raw({ type: "*/*", limit: "50mb" }));
+// A 1 MiB upload can expand to 6 MiB of JSON-escaped text (or ~1.34 MiB
+// base64). The route still enforces the decoded 1 MiB broker bound; keep this
+// larger envelope upload-only so other JSON endpoints retain the default limit.
+app.use("/api/fs/upload", express.json({ limit: "8mb" }));
 app.use(express.json());
 app.use("/api", setApiNoStoreHeaders);
 const notificationRepository = createNotificationRepository();
-
-// API authentication — requires ENTITY_API_TOKEN env var; skips when unset (dev mode)
-app.use(createApiAuthMiddleware());
 // Layer an individually revocable per-request customer principal on top of
 // the deployment bearer (Terra B1). Runs after api-auth; resolves an optional
 // x-entity-access-token to an active principal + scoped grants. Absent token
@@ -377,6 +383,7 @@ const dueReminderScheduler = createDueReminderScheduler({
 });
 dueReminderScheduler.start();
 app.use("/api", createWorkspaceRouter({ workspaceRepo }));
+app.use("/api/admin/workspace", createAdminWorkspaceRouter({ workspaceRepo }));
 app.use("/api", createBusinessOnboardingRouter({
   workspaceRepo,
   agentRegistryRepo,
@@ -671,14 +678,32 @@ app.use(createActivitySpineEventRouter(activitySpineEventService));
 app.use("/api", createActivitySpineEventRouter(activitySpineEventService));
 app.use(createTaskMasterClaimRouter(taskMasterClaimService));
 app.use("/api", createTaskMasterClaimRouter(taskMasterClaimService));
-registerActivityRoutes(app, "", { activityRepository });
-registerActivityRoutes(app, "/api", { activityRepository });
 const adminReportAccessGuard = createRequireAdminPrincipal();
+registerActivityRoutes(app, "", {
+  activityRepository,
+  authorizeReportAccess: adminReportAccessGuard,
+});
+registerActivityRoutes(app, "/api", {
+  activityRepository,
+  authorizeReportAccess: adminReportAccessGuard,
+});
+registerActivityRoutes(app, "/api/admin", {
+  activityRepository,
+  authorizeAccess: adminReportAccessGuard,
+  authorizeReportAccess: adminReportAccessGuard,
+});
 registerAdminReportRoutes(app, "", {
   reportRepository: adminReportRepository,
   authorizeAccess: adminReportAccessGuard,
 });
 registerAdminReportRoutes(app, "/api", {
+  reportRepository: adminReportRepository,
+  authorizeAccess: adminReportAccessGuard,
+});
+// MC #1369: every report alias, including legacy root and /api paths, is
+// admin-authorized. /api/admin/* is classified control by the data-plane
+// credential guard, so authorized reports stay reachable with API auth on.
+registerAdminReportRoutes(app, "/api/admin", {
   reportRepository: adminReportRepository,
   authorizeAccess: adminReportAccessGuard,
 });

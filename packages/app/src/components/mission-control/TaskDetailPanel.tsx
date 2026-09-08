@@ -54,10 +54,15 @@ import {
   buildOpenWorkplaneHref,
   navigateToWorkplane,
 } from '../../lib/openWorkplaneFromTaskDetail';
+import {
+  DEFAULT_TASK_PRIORITY,
+  TASK_PRIORITY_DEFINITIONS,
+  buildTaskPriorityWikiHref,
+  taskPriorityDefinition,
+} from './utils/taskPriorityPolicy';
 
 const TaskChatContextPanel = lazy(() => import('./TaskChatContextPanel'));
 
-const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 type DetailTab = 'activity' | 'logs' | 'comments' | 'subtasks' | 'handoffs';
 
 const COLUMN_LABELS: Record<TaskColumn, string> = {
@@ -150,6 +155,7 @@ interface TaskCommentNode extends TaskCommentRecord {
 
 interface TaskDetailData {
   id: number;
+  orgId: string | null;
   name: string;
   description: string;
   column: TaskColumn;
@@ -798,6 +804,7 @@ function normalizeTaskDetail(raw: unknown): TaskDetailData | null {
 
   return {
     id,
+    orgId: readFirstString(record.org_id, record.orgId),
     name,
     description: typeof record.description === 'string' ? record.description : '',
     column: normalizeColumn(record.column),
@@ -1768,6 +1775,7 @@ export default function TaskDetailPanel({
   const [attachmentName, setAttachmentName] = useState('');
   const [attachmentPath, setAttachmentPath] = useState('');
   const [noteInput, setNoteInput] = useState('');
+  const priorityWikiHref = buildTaskPriorityWikiHref(task?.orgId);
   const [commentInput, setCommentInput] = useState('');
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [replyTargetId, setReplyTargetId] = useState<number | null>(null);
@@ -3268,27 +3276,54 @@ export default function TaskDetailPanel({
 	              />
 	            </label>
 
-	            <label className="min-w-0">
-	              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">
+	            <div className="min-w-0">
+	              <label
+	                htmlFor="mc-task-priority"
+	                className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]"
+	              >
 	                Priority
-	              </span>
+	              </label>
 	              <select
-                value={form?.priority ?? 'P2'}
-                onChange={(event) => {
+	                id="mc-task-priority"
+	                value={form?.priority ?? DEFAULT_TASK_PRIORITY}
+	                onChange={(event) => {
                   const value = normalizePriority(event.target.value);
                   updateFormField('priority', value);
                   void patchTask({ priority: value }, { successMessage: 'Priority saved.' });
                 }}
+	                aria-describedby="mc-task-priority-help"
 	                className="mc-shell-input h-8 w-full px-2 py-1 text-xs max-md:h-auto max-md:min-h-[44px] max-md:w-full max-md:rounded-xl max-md:bg-[var(--bg-tertiary)] max-md:px-4 max-md:py-3 max-md:text-[15px] max-md:appearance-none"
 	                disabled={!form || busyAction !== null}
 	              >
-                {PRIORITY_OPTIONS.map((priority) => (
-                  <option key={priority} value={priority}>
-                    {priority}
+	                {TASK_PRIORITY_DEFINITIONS.map((definition) => (
+	                  <option key={definition.value} value={definition.value}>
+	                    {definition.label}
                   </option>
                 ))}
-	              </select>
-	            </label>
+              </select>
+	              <p
+	                id="mc-task-priority-help"
+	                data-testid="mc-task-priority-help"
+	                className="mt-1 text-[11px] leading-4 text-[var(--text-muted)]"
+	              >
+	                {taskPriorityDefinition(form?.priority ?? DEFAULT_TASK_PRIORITY).shortExplanation}{' '}
+                {priorityWikiHref ? (
+                  <a
+                    href={priorityWikiHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="mc-task-priority-wiki-link"
+                    className="underline decoration-dotted underline-offset-2 hover:text-[var(--text-primary)]"
+                  >
+                    Priority definitions in the wiki
+                  </a>
+                ) : (
+                  <span data-testid="mc-task-priority-wiki-requires-org">
+                    Priority definitions require an organization context.
+                  </span>
+                )}
+	              </p>
+	            </div>
 
 	            <label className="min-w-0">
 	              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--text-muted)]">

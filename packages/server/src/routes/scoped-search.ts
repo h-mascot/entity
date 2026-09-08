@@ -24,8 +24,10 @@ import {
   type FileSourceRecord,
   type FileSourceRepository,
 } from '../../../db/src/file-sources';
+import { createFsFileOwnershipRepository, type FsFileOwnershipRepository } from '../../../db/src/file-ownership';
 import { phase2FlagEnabled, resolvePhase2Flags, type Phase2FlagSnapshot } from '../phase2-flags';
 import { requireRequestOrg, type RequestOrgBinding } from '../request-permissions';
+import { assertOwnedFileAccess } from '../fs/ownership';
 import { buildGoogleExternalDocumentMetadata } from '../google-docs-metadata';
 import {
   externalResult,
@@ -79,6 +81,7 @@ export interface ScopedSearchRouteDeps {
   documentRepo?: Pick<DocumentObjectRepository, 'listNativeDocuments' | 'listExternalDocumentRefs'>;
   indexRepo?: Pick<FileIndexRepository, 'search' | 'getLatestSyncRun'>;
   sourceRepo?: Pick<FileSourceRepository, 'listSources' | 'getSource'>;
+  ownershipRepo?: Pick<FsFileOwnershipRepository, 'getOwnership'>;
   taskRepoForOrg?: (orgId: string) => Pick<TaskRepository, 'listTasks'>;
   artifactRepo?: Pick<EvidenceArtifactRepository, 'listArtifacts'>;
   now?: () => Date;
@@ -385,10 +388,12 @@ export function createScopedSearchRouter(deps: ScopedSearchRouteDeps = {}): Rout
   let documentRepo = deps.documentRepo;
   let indexRepo = deps.indexRepo;
   let sourceRepo = deps.sourceRepo;
+  let ownershipRepo = deps.ownershipRepo;
   let artifactRepo = deps.artifactRepo;
   const documents = () => documentRepo ??= createDocumentObjectRepository();
   const index = () => indexRepo ??= createFileIndexRepository();
   const sources = () => sourceRepo ??= createFileSourceRepository();
+  const ownership = () => ownershipRepo ??= createFsFileOwnershipRepository();
   const artifacts = () => artifactRepo ??= createEvidenceArtifactRepository();
   const tasksForOrg = deps.taskRepoForOrg
     ?? ((orgId: string) => createOrgScopedTaskRepository({ orgId }));
@@ -520,10 +525,11 @@ export function createScopedSearchRouter(deps: ScopedSearchRouteDeps = {}): Rout
 
     if (filters.searchFiles) {
       try {
-        const requestedSource = filters.sourceId ? sources().getSource(filters.sourceId) : undefined;
+        const allFileSources = sources().listSources(true);
+        const requestedSource = filters.sourceId ? allFileSources.find((source) => source.id === filters.sourceId) : undefined;
         const fileSources = filters.sourceId
           ? [requestedSource].filter((entry): entry is FileSourceRecord => Boolean(entry?.enabled))
-          : sources().listSources(false);
+          : allFileSources.filter((source) => source.enabled);
         const requestedSourceUnavailable = Boolean(filters.sourceId && fileSources.length === 0);
         if (requestedSourceUnavailable) degradedReasons.add('file_source_unavailable');
         const sourcesById = new Map(fileSources.map((source) => [source.id, source]));
@@ -557,7 +563,13 @@ export function createScopedSearchRouter(deps: ScopedSearchRouteDeps = {}): Rout
                     degradedReasons.add('file_index_orphan_source');
                     return null;
                   }
-                  return fileResult(binding, query, record, source, latestRunFor(source.id), requestNow);
+                  let owner;
+                  try {
+                    owner = assertOwnedFileAccess(binding, ownership(), record.source_id, record.path, 'read', allFileSources);
+                  } catch {
+                    return null;
+                  }
+                  return fileResult(binding, query, record, source, latestRunFor(source.id), requestNow, owner);
                 })
                 .filter((entry): entry is RankedSearchResult => Boolean(entry)),
             );

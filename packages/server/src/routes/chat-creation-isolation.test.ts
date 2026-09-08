@@ -55,6 +55,8 @@ beforeAll(() => {
   principals.createPrincipal({ id: 'b1-contrib', principal_type: 'agent', display_name: 'B1' });
   principals.createGrant({ principal_id: 'b1-contrib', role: 'contributor', org_id: 'org-b', team_id: 'team-b1' });
   principals.createPrincipal({ id: 'no-grant', principal_type: 'agent', display_name: 'NoGrant' });
+  principals.createPrincipal({ id: 'project-only', principal_type: 'agent', display_name: 'ProjectOnly' });
+  principals.createGrant({ principal_id: 'project-only', role: 'contributor', org_id: 'org-a', project_id: 42 });
 });
 
 afterAll(() => {
@@ -240,6 +242,14 @@ describe('THE-931 (R2) — channel/category creation isolation', () => {
       const res = await fetch(`${base}/api/chat/categories`, {
         method: 'POST', headers: jsonHeaders('no-grant', 'org-a'),
         body: JSON.stringify({ name: 'zero-grant-cat' }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('denies a project-only contributor at the chat mutation boundary', async () => {
+      const res = await fetch(`${base}/api/chat/categories`, {
+        method: 'POST', headers: jsonHeaders('project-only', 'org-a'),
+        body: JSON.stringify({ name: 'project-only-cat' }),
       });
       expect(res.status).toBe(403);
     });

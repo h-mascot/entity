@@ -161,6 +161,28 @@ test('fetchScopedSearch accepts 503 envelope and org header', async () => {
   assert.match(calls[0]?.url ?? '', /\/api\/search\/scoped\?/);
 });
 
+test('fetchScopedSearch preserves Unicode organization scope in a valid browser request', async () => {
+  for (const orgId of ['组织核验', 'équipe', 'Org\nScope']) {
+    const requests: Request[] = [];
+    await fetchScopedSearch({
+      q: 'renewal',
+      objectTypes: ['file'],
+      orgId,
+      apiBase: 'http://example.test',
+      fetchImpl: async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return new Response(JSON.stringify(envelope({
+          scope: { orgId, teamId: null, projectId: null },
+        })), { headers: { 'content-type': 'application/json' } });
+      },
+    });
+    assert.equal(requests.length, 1);
+    assert.equal(new URL(requests[0].url).searchParams.get('orgId'), orgId);
+    assert.equal(requests[0].headers.has('x-entity-org-id'), false);
+  }
+});
+
 test('fetchScopedSearch surfaces non-envelope errors', async () => {
   await assert.rejects(
     () =>

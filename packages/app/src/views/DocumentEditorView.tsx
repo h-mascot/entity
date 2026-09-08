@@ -88,6 +88,7 @@ export default function DocumentEditorView(props: any) {
     rightPaneFile,
     rightPaneSource,
     rightPaneSourceId,
+    rightPaneOrgId,
     rightPaneReadOnly,
     rightPaneCacheMeta,
     rightPaneCachedAgeLabel,
@@ -268,7 +269,9 @@ export default function DocumentEditorView(props: any) {
                   setSuggestions(response.suggestions);
                   pushToast('Suggestion accepted.', 'success');
                   if (currentSourceId && currentFile) {
-                    const updated = await fetchSourceFile(currentSourceId, currentFile);
+                    const updated = await fetchSourceFile(currentSourceId, currentFile, {
+                      orgId: props.orgId,
+                    });
                     setFileContent(updated.content || '');
                   }
                 } catch (error) {
@@ -431,6 +434,7 @@ export default function DocumentEditorView(props: any) {
                       onDocsLinkNavigate={(href: string) => handleMarkdownDocsNavigation(href, {
                         sourceId: rightPaneSourceId,
                         path: rightPaneFile,
+                        orgId: rightPaneOrgId ?? undefined,
                       })}
                       tts="none"
                     />
@@ -495,6 +499,7 @@ export default function DocumentEditorView(props: any) {
           currentDocId={currentDocId}
           currentFile={currentFile}
           currentSourceId={currentSourceId}
+          orgId={props.orgId}
           currentFileReadOnly={currentFileReadOnly}
           editMode={editMode}
           setEditMode={setEditMode}

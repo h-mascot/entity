@@ -1,11 +1,13 @@
 export interface DocHubRouteTarget {
   sourceId: string;
   path: string;
+  orgId?: string;
 }
 
 export interface DocHubRouteSelection {
   sourceId: string | null;
   path: string;
+  orgId?: string;
 }
 
 export interface RelativeDocHubNavigation {
@@ -203,12 +205,15 @@ export function resolveDocHubRouteSelection(
   }
 
   const params = new URLSearchParams(search);
-  const isSourceLessLocalRoute = pathname === '/' && params.has('file') && !params.has('source');
+  const isSourceLessLocalRoute = !fsMultiSourceEnabled && pathname === '/' && params.has('file') && !params.has('source');
+  const orgId = normalizedOrganizationId(params.get('org'));
   return {
     ...target,
-    sourceId: isSourceLessLocalRoute && !fsMultiSourceEnabled
-      ? null
-      : target.sourceId,
+    sourceId: isSourceLessLocalRoute ? null : target.sourceId,
+    // Legacy /api/files returns absolute workspace paths; source-relative
+    // normalization would change their meaning when this local URL reloads.
+    path: isSourceLessLocalRoute ? (params.get('file') ?? target.path).trim() : target.path,
+    ...(orgId ? { orgId } : {}),
   };
 }
 
@@ -227,13 +232,14 @@ export function resolveDocHubFragmentScrollIntent(
     return null;
   }
 
-  const current = resolveDocHubRouteTarget(currentPathname, currentSearch);
-  const next = resolveDocHubRouteTarget(destination.pathname, destination.search);
+  const current = parseDocHubRouteState(currentPathname, currentSearch);
+  const next = parseDocHubRouteState(destination.pathname, destination.search);
   const sameDocument = Boolean(
     current
     && next
     && current.sourceId === next.sourceId
-    && current.path === next.path,
+    && current.path === next.path
+    && (current.orgId ?? null) === (next.orgId ?? null),
   );
   return {
     hash: destination.hash,
@@ -277,6 +283,7 @@ export function resolveRelativeDocHubNavigation(
     const portableState: DocHubRouteState = {
       sourceId: current.sourceId ?? 'workspace',
       path: current.path,
+      ...(current.orgId ? { orgId: current.orgId } : {}),
       ...(currentState?.tool ? { tool: currentState.tool } : {}),
       ...(currentState?.convert ? { convert: currentState.convert } : {}),
     };
@@ -318,14 +325,18 @@ export function resolveRelativeDocHubNavigation(
       return null;
     }
 
+    const resolvedState = parseDocHubRouteState(resolved.pathname, resolved.search);
     const target: DocHubRouteSelection =
       current?.sourceId === null && isRelativeReference
-        ? { sourceId: null, path: resolvedTarget.path }
-        : resolvedTarget;
-    const resolvedState = parseDocHubRouteState(resolved.pathname, resolved.search);
+        ? { sourceId: null, path: resolvedTarget.path, ...(current.orgId ? { orgId: current.orgId } : {}) }
+        : {
+            ...resolvedTarget,
+            ...(resolvedState?.orgId ? { orgId: resolvedState.orgId } : current?.orgId ? { orgId: current.orgId } : {}),
+          };
     const portableState: DocHubRouteState = {
       sourceId: target.sourceId ?? 'workspace',
       path: target.path,
+      ...(target.orgId ? { orgId: target.orgId } : {}),
       ...(resolvedState?.tool ? { tool: resolvedState.tool } : {}),
       ...(resolvedState?.convert ? { convert: resolvedState.convert } : {}),
     };
@@ -364,10 +375,15 @@ export function resolvePaneRelativeDocHubNavigation(
   }
 
   const paneRoute = paneTarget.sourceId === null && !fsMultiSourceEnabled
-    ? buildLocalDocHubRoute(paneTarget.path)
-    : buildDocHubRoutePath({
+    ? buildLocalDocHubRoute(paneTarget.path, paneTarget.orgId ? {
+        sourceId: 'workspace',
+        path: paneTarget.path,
+        orgId: paneTarget.orgId,
+      } : undefined)
+    : serializeDocHubRouteState({
         sourceId: paneTarget.sourceId ?? 'workspace',
         path: paneTarget.path,
+        ...(paneTarget.orgId ? { orgId: paneTarget.orgId } : {}),
       });
   const paneUrl = new URL(paneRoute, deploymentOrigin);
   return resolveRelativeDocHubNavigation(
@@ -399,6 +415,7 @@ export function buildTransientDocHubHistoryRoute(
   const preserved: DocHubRouteState = {
     sourceId: destination.sourceId,
     path: destination.path,
+    ...(destination.orgId ? { orgId: destination.orgId } : current.orgId ? { orgId: current.orgId } : {}),
     ...(current.tool ? { tool: current.tool } : {}),
     ...(current.convert ? { convert: current.convert } : {}),
   };
@@ -416,6 +433,11 @@ function safeRouteIdentifier(value: string | null | undefined): string | undefin
   return normalized && SAFE_ROUTE_IDENTIFIER.test(normalized) ? normalized : undefined;
 }
 
+function normalizedOrganizationId(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized || undefined;
+}
+
 export function parseDocHubRouteState(pathname: string, search = ''): DocHubRouteState | null {
   const target = resolveDocHubRouteTarget(pathname, search);
   if (!target) {
@@ -424,6 +446,7 @@ export function parseDocHubRouteState(pathname: string, search = ''): DocHubRout
 
   const params = new URLSearchParams(search);
   const tool = recognizedValue(params.get('tool'), DOC_HUB_TOOLS);
+  const orgId = normalizedOrganizationId(params.get('org'));
   const sourceKind = recognizedValue(params.get('convertSource'), CONVERT_SOURCE_KINDS);
   const outputType = recognizedValue(params.get('convertOutput'), CONVERT_OUTPUT_TYPES);
   const artifactRef = safeRouteIdentifier(params.get('convertArtifact'));
@@ -441,6 +464,7 @@ export function parseDocHubRouteState(pathname: string, search = ''): DocHubRout
 
   return {
     ...target,
+    ...(orgId ? { orgId } : {}),
     ...(tool ? { tool } : {}),
     ...(convert ? { convert } : {}),
   };
@@ -618,6 +642,10 @@ export function serializeDocHubRouteState(state: DocHubRouteState): string {
   if (DOC_HUB_TOOLS.has(state.tool as DocHubTool)) {
     params.set('tool', state.tool as DocHubTool);
   }
+  const orgId = normalizedOrganizationId(state.orgId);
+  if (orgId) {
+    params.set('org', orgId);
+  }
 
   const sourceKind = recognizedValue(state.convert?.sourceKind ?? null, CONVERT_SOURCE_KINDS);
   const outputType = recognizedValue(state.convert?.outputType ?? null, CONVERT_OUTPUT_TYPES);
@@ -690,12 +718,15 @@ export function buildCanonicalLocalDocHubUrl(
   pathname: string,
   search: string,
   deploymentUrl: string | URL,
+  selectedOrgId?: string | null,
 ): string {
   const currentState = parseDocHubRouteState(pathname, search);
+  const orgId = selectedOrgId === undefined ? currentState?.orgId : selectedOrgId?.trim();
   const safeStateUrl = new URL(buildCanonicalDocHubUrl(
     {
       sourceId: 'workspace',
       path,
+      ...(orgId ? { orgId } : {}),
       ...(currentState?.tool ? { tool: currentState.tool } : {}),
       ...(currentState?.convert ? { convert: currentState.convert } : {}),
     },

@@ -26,11 +26,12 @@ import MCEngineeringEntry, {
 } from './components/mission-control/MCEngineeringEntry';
 import type { MobileTab } from './components/MobileBottomNav';
 import { formatTaskProjectSummary, hasTaskProjectName } from './components/mission-control/utils/taskHelpers';
+import { resolveTaskPriorityOrgId } from './components/mission-control/utils/taskPriorityPolicy';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useActivityStream } from './hooks/useActivityStream';
 import { useFileSources } from './hooks/useFileSources';
 import { useFollowMode } from './hooks/useFollowMode';
-import { useWatchModeAutoFollow } from './hooks/useWatchModeAutoFollow';
+import { resolveWatchModeOrgId, useWatchModeAutoFollow } from './hooks/useWatchModeAutoFollow';
 import { useTaskBoard, type TaskBoardTask } from './hooks/useTaskBoard';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useEntityNotifications } from './hooks/useEntityNotifications';
@@ -48,6 +49,8 @@ import { buildApiCandidates, HttpRequestError, requestJsonWithFallback, withApiT
 import { loadAdminRuntimeSettings } from './lib/adminRuntimeSettings';
 import { shouldRenderMarkdownPreview } from './lib/markdownFile';
 import { buildFileLoadKey } from './lib/fileLoadIdentity';
+import { normalizeOptionalOrgId, resolveLegacyFileOrgSelection } from './lib/legacyFileScope';
+import { resolveQuickSwitcherOrgId } from './lib/quickSwitcherScope';
 import {
   getDocumentShellCollapseState,
   startDocHubFragmentTargetRetry,
@@ -68,12 +71,16 @@ import {
   resolvePaneRelativeDocHubNavigation,
   resolveRelativeDocHubNavigation,
   resolveWorkspaceTabRoute,
+  serializeDocHubRouteState,
   shouldRestoreLastDocHubFile,
   type RelativeDocHubNavigation,
   type DocHubRouteTarget,
   type DocHubTool,
 } from './lib/docHubRoute';
-import { resolveTaskOutputDocTarget } from './lib/taskOutputDocTarget';
+import {
+  resolveTaskOutputDocTarget,
+  scopeTaskOutputDocNavigation,
+} from './lib/taskOutputDocTarget';
 import { classifyAppRoute, extractTaskRouteId } from './lib/routeClassification';
 import { shouldBypassGatesForWorkplaneDeepLink } from './lib/workplaneRefreshRestore';
 import { isWorkplaneRoutePath } from './lib/workplaneShellModel';
@@ -476,6 +483,7 @@ function SidebarActivityGroup({ group, onFileSelect, onTaskSelect }: {
       description?: string;
       timestamp: string;
       filePath?: string;
+      orgId?: string;
       taskId?: number;
       taskColumn?: string;
       action?: string;
@@ -483,7 +491,7 @@ function SidebarActivityGroup({ group, onFileSelect, onTaskSelect }: {
       agentEmoji?: string;
     }>;
   };
-  onFileSelect: (path: string) => void;
+  onFileSelect: (path: string, orgId?: string) => void;
   onTaskSelect: (id: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -508,7 +516,7 @@ function SidebarActivityGroup({ group, onFileSelect, onTaskSelect }: {
           className="w-full text-left px-2 py-1 hover:bg-[var(--bg-tertiary)] rounded transition-colors"
           onClick={() => {
             if (a.taskId !== undefined) onTaskSelect(a.taskId);
-            else if (a.filePath) onFileSelect(a.filePath);
+            else if (a.filePath) onFileSelect(a.filePath, a.orgId);
             else setExpandedId(isExpanded ? null : entryId);
           }}
         >
@@ -1012,7 +1020,12 @@ function deriveBinaryFlag(contentType: string | null | undefined, explicitFlag: 
   return !isTextualContentType(normalized);
 }
 
-function buildRawFilePreviewUrl(filePath: string | null, sourceId: string | null, apiBase = ''): string | null {
+function buildRawFilePreviewUrl(
+  filePath: string | null,
+  sourceId: string | null,
+  apiBase = '',
+  orgId?: string | null,
+): string | null {
   if (!filePath) {
     return null;
   }
@@ -1020,6 +1033,9 @@ function buildRawFilePreviewUrl(filePath: string | null, sourceId: string | null
   const params = new URLSearchParams({ path: filePath });
   if (sourceId) {
     params.set('source', sourceId);
+  }
+  if (orgId?.trim()) {
+    params.set('orgId', orgId.trim());
   }
 
   const candidates = buildApiCandidates(`/file/raw?${params.toString()}`, apiBase);
@@ -1390,16 +1406,20 @@ function normalizePath(path: string): string {
   return path.startsWith('/') ? path : `/${path}`;
 }
 
-function buildLocalApiFallbackUrls(path: string): string[] {
+function buildLocalApiFallbackUrls(path: string, orgId?: string | null): string[] {
   const normalizedPath = normalizePath(path);
+  const normalizedOrgId = orgId?.trim();
+  const scopedPath = normalizedOrgId
+    ? `${normalizedPath}${normalizedPath.includes('?') ? '&' : '?'}orgId=${encodeURIComponent(normalizedOrgId)}`
+    : normalizedPath;
   const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
 
   return Array.from(
     new Set([
-      ...buildApiCandidates(normalizedPath, runtime.apiBase),
-      `http://localhost:3001/api${normalizedPath}`,
-      `http://127.0.0.1:3001/api${normalizedPath}`,
-      `http://${host}:3001/api${normalizedPath}`,
+      ...buildApiCandidates(scopedPath, runtime.apiBase),
+      `http://localhost:3001/api${scopedPath}`,
+      `http://127.0.0.1:3001/api${scopedPath}`,
+      `http://${host}:3001/api${scopedPath}`,
     ])
   );
 }
@@ -1566,9 +1586,30 @@ export default function App() {
     return window.localStorage.getItem('entity.last.source') ||
       (savedFile && runtime.fsMultiSourceEnabled ? 'workspace' : null);
   });
+  const [currentFileOrgId, setCurrentFileOrgId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    if (initialDocHubTarget?.orgId) {
+      return initialDocHubTarget.orgId;
+    }
+    if (initialDocHubTarget) {
+      return null;
+    }
+    const savedFile = shouldRestoreLastDocHubFile(window.location.pathname, window.location.search)
+      ? window.localStorage.getItem('entity.last.file')
+      : null;
+    return savedFile ? window.localStorage.getItem('entity.last.org') : null;
+  });
+  const [legacyFileOrgOptions, setLegacyFileOrgOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [legacyFileOrgLoading, setLegacyFileOrgLoading] = useState(!runtime.fsMultiSourceEnabled);
+  const [legacyFileOrgError, setLegacyFileOrgError] = useState<string | null>(null);
+  const [fileBrowserOrgId, setFileBrowserOrgId] = useState<string | null>(() => currentFileOrgId);
+  const [legacyFileOrgLoadRevision, setLegacyFileOrgLoadRevision] = useState(0);
   const [splitMode, setSplitMode] = useState<false | 'horizontal'>(false);
   const [rightPaneFile, setRightPaneFile] = useState<string | null>(null);
   const [rightPaneSourceId, setRightPaneSourceId] = useState<string | null>(null);
+  const [rightPaneOrgId, setRightPaneOrgId] = useState<string | null>(null);
   const [rightPaneReadOnly, setRightPaneReadOnly] = useState(false);
   const [rightPaneUpdatedAt, setRightPaneUpdatedAt] = useState<string | null>(null);
   const [rightPanePreviewMeta, setRightPanePreviewMeta] = useState<FilePreviewMeta>(() => defaultFilePreviewMeta());
@@ -1594,10 +1635,13 @@ export default function App() {
       ? initialDocHubTarget.sourceId
       : window.localStorage.getItem('entity.last.source') ||
         (runtime.fsMultiSourceEnabled ? 'workspace' : null);
+    const orgId = initialDocHubTarget
+      ? initialDocHubTarget.orgId
+      : window.localStorage.getItem('entity.last.org');
     if (!file) {
       return [];
     }
-    return [buildOpenFileTab(source, file)];
+    return [buildOpenFileTab(source, file, orgId)];
   });
   const [docIntelligenceFocus, setDocIntelligenceFocus] = useState<
     'intelligence' | 'comments' | 'ask' | 'notes' | 'versions' | null
@@ -1614,8 +1658,10 @@ export default function App() {
   const [fileContent, setFileContent] = useState('');
   const [currentFileLoadState, setCurrentFileLoadState] = useState<CurrentFileLoadState>({ status: 'idle' });
   const [currentFileLoadRevision, setCurrentFileLoadRevision] = useState(0);
-  const currentFileKey = currentFile ? buildFileLoadKey(currentSourceId, currentFile) : null;
-  const rightPaneFileKey = rightPaneFile ? buildFileLoadKey(rightPaneSourceId, rightPaneFile) : null;
+  const currentFileKey = currentFile ? buildFileLoadKey(currentSourceId, currentFile, currentFileOrgId) : null;
+  const rightPaneFileKey = rightPaneFile
+    ? buildFileLoadKey(rightPaneSourceId, rightPaneFile, rightPaneOrgId)
+    : null;
   const activeCurrentFileLoadState: CurrentFileLoadState = !currentFileKey
     ? { status: 'idle' }
     : currentFileLoadState.status !== 'idle' && currentFileLoadState.fileKey === currentFileKey
@@ -1679,12 +1725,19 @@ export default function App() {
         runtime.fsMultiSourceEnabled,
       );
       const routeMatchesSelectedDocument =
-        routeSelection?.sourceId === sourceId && routeSelection.path === currentFile;
+        routeSelection?.sourceId === sourceId &&
+        routeSelection.path === currentFile &&
+        (routeSelection.orgId ?? null) === (currentFileOrgId ?? null);
       window.localStorage.setItem('entity.last.file', currentFile);
       if (sourceId) {
         window.localStorage.setItem('entity.last.source', sourceId);
       } else {
         window.localStorage.removeItem('entity.last.source');
+      }
+      if (currentFileOrgId) {
+        window.localStorage.setItem('entity.last.org', currentFileOrgId);
+      } else {
+        window.localStorage.removeItem('entity.last.org');
       }
 
       if (sourceId) {
@@ -1692,7 +1745,7 @@ export default function App() {
           buildSynchronizedDocHubRoute(
             routeMatchesSelectedDocument ? url.pathname : buildDocHubRoutePath({ sourceId, path: currentFile }),
             routeMatchesSelectedDocument ? url.search : '',
-            { sourceId, path: currentFile },
+            { sourceId, path: currentFile, ...(currentFileOrgId ? { orgId: currentFileOrgId } : {}) },
           ),
           url.origin,
         );
@@ -1704,6 +1757,7 @@ export default function App() {
           routeMatchesSelectedDocument ? url.pathname : '/',
           routeMatchesSelectedDocument ? url.search : '?tab=files',
           url.origin,
+          currentFileOrgId,
         ));
         url.pathname = synchronizedRoute.pathname;
         url.search = synchronizedRoute.search;
@@ -1714,6 +1768,7 @@ export default function App() {
       if (pathnameTarget || shouldRestoreLastDocHubFile(url.pathname, url.search)) {
         window.localStorage.removeItem('entity.last.file');
         window.localStorage.removeItem('entity.last.source');
+        window.localStorage.removeItem('entity.last.org');
       }
       if (pathnameTarget) {
         url.pathname = '/';
@@ -1735,7 +1790,7 @@ export default function App() {
         : {};
       window.history.replaceState(currentFile ? { ...previousState, mode: 'docs' } : null, '', url.toString());
     }
-  }, [currentFile, currentSourceId]);
+  }, [currentFile, currentFileOrgId, currentSourceId]);
 
   const [mobileTab, setMobileTab] = useState<MobileTab>('files');
   const [tabletSidebarOpen, setTabletSidebarOpen] = useState(false);
@@ -2271,12 +2326,16 @@ export default function App() {
   const openDocHubTarget = useCallback((target: {
     sourceId: string | null;
     path: string;
+    orgId?: string;
   }): boolean => {
     if (!activateVisibleWorkspaceTab('files')) {
       return false;
     }
     setTabletSidebarOpen(false);
     setCurrentSourceId(target.sourceId);
+    setCurrentFileOrgId(target.orgId ?? null);
+    // Opening a task/history/link target changes the document scope, not the
+    // independent organization selected in the file browser.
     setCurrentFile(target.path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -2286,7 +2345,7 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
-    setOpenFileTabs((previous) => upsertOpenFileTab(previous, buildOpenFileTab(target.sourceId, target.path)));
+    setOpenFileTabs((previous) => upsertOpenFileTab(previous, buildOpenFileTab(target.sourceId, target.path, target.orgId)));
     return true;
   }, [activateVisibleWorkspaceTab]);
 
@@ -2307,7 +2366,11 @@ export default function App() {
         fileSources,
         runtime.fsMultiSourceEnabled,
       );
-      const target = explicitTarget ?? (configuredTarget.kind === 'source' ? configuredTarget : null);
+      const resolvedTarget = explicitTarget ?? (configuredTarget.kind === 'source' ? configuredTarget : null);
+      const resolvedOrgId = resolvedTarget && 'orgId' in resolvedTarget ? resolvedTarget.orgId : undefined;
+      const target = resolvedTarget && !resolvedOrgId && currentFileOrgId
+        ? { ...resolvedTarget, orgId: currentFileOrgId }
+        : resolvedTarget;
       if (!target) {
         return false;
       }
@@ -2319,8 +2382,9 @@ export default function App() {
       const docsState = { mode: 'docs', returnTaskId: nextReturnTaskId };
 
       const nextUrl = new URL(window.location.href);
-      nextUrl.pathname = buildDocHubRoutePath(target);
-      nextUrl.search = '';
+      const serializedTarget = new URL(serializeDocHubRouteState(target), nextUrl.origin);
+      nextUrl.pathname = serializedTarget.pathname;
+      nextUrl.search = serializedTarget.search;
       if (window.location.pathname !== nextUrl.pathname || window.location.search) {
         if (replace) {
           window.history.replaceState(docsState, '', nextUrl.toString());
@@ -2341,7 +2405,7 @@ export default function App() {
       openDocHubTarget(target);
       return true;
     },
-    [fileSources, openDocHubTarget]
+    [currentFileOrgId, fileSources, openDocHubTarget]
   );
 
   const navigateToResolvedDocHub = useCallback(
@@ -2389,7 +2453,7 @@ export default function App() {
   const handleMarkdownDocsNavigation = useCallback(
     (
       href: string,
-      paneTarget?: { sourceId: string | null; path: string },
+      paneTarget?: { sourceId: string | null; path: string; orgId?: string },
     ): boolean => {
       if (typeof window === 'undefined') {
         return false;
@@ -2436,9 +2500,16 @@ export default function App() {
       if (!resolved) {
         return false;
       }
-      return navigateToResolvedDocHub(resolved, false, highlightTaskId);
+      const taskOrgId = highlightTaskId == null
+        ? null
+        : tasks.find((task) => task.id === highlightTaskId)?.org_id;
+      return navigateToResolvedDocHub(
+        scopeTaskOutputDocNavigation(resolved, taskOrgId),
+        false,
+        highlightTaskId,
+      );
     },
-    [highlightTaskId, navigateToResolvedDocHub]
+    [highlightTaskId, navigateToResolvedDocHub, tasks]
   );
 
   const pendingDeepLinkRestorationRef = useRef<{
@@ -2504,12 +2575,13 @@ export default function App() {
           pendingDeepLinkRestorationRef.current = null;
           setDocIntelligenceFocus(null);
           setCurrentSourceId(null);
+          setCurrentFileOrgId(null);
           setCurrentFile(null);
           setHighlightTaskId(null);
           return;
         }
         pendingDeepLinkRestorationRef.current = {
-          fileKey: buildFileLoadKey(target.sourceId, target.path),
+          fileKey: buildFileLoadKey(target.sourceId, target.path, target.orgId),
           contentClass: target.sourceId === null ? 'workspace' : 'source',
           hasTool: synchronized.activeTool !== null,
         };
@@ -2519,12 +2591,14 @@ export default function App() {
         if (!activateVisibleWorkspaceTab('tasks')) {
           setDocIntelligenceFocus(null);
           setCurrentSourceId(null);
+          setCurrentFileOrgId(null);
           setCurrentFile(null);
           setHighlightTaskId(null);
           return;
         }
         setDocIntelligenceFocus(null);
         setCurrentSourceId(null);
+        setCurrentFileOrgId(null);
         setCurrentFile(null);
         // THE-860: restore board tab from return navigation history state when present.
         setMcBoardTab(historyBoard ? normalizeStoredMCBoardTab(historyBoard) : 'kanban');
@@ -2538,12 +2612,14 @@ export default function App() {
         if (!activateVisibleWorkspaceTab('tasks')) {
           setDocIntelligenceFocus(null);
           setCurrentSourceId(null);
+          setCurrentFileOrgId(null);
           setCurrentFile(null);
           setHighlightTaskId(null);
           return;
         }
         setDocIntelligenceFocus(null);
         setCurrentSourceId(null);
+        setCurrentFileOrgId(null);
         setCurrentFile(null);
         if (historyBoard) {
           setMcBoardTab(normalizeStoredMCBoardTab(historyBoard));
@@ -2561,6 +2637,7 @@ export default function App() {
         }
         setDocIntelligenceFocus(null);
         setCurrentSourceId(null);
+        setCurrentFileOrgId(null);
         setCurrentFile(null);
         const workspaceTab = resolveWorkspaceTabRoute(window.location.pathname, window.location.search);
         if (workspaceTab) {
@@ -2735,6 +2812,47 @@ export default function App() {
   useEffect(() => {
     persistLoginRequired(loginRequired);
   }, [loginRequired]);
+
+  useEffect(() => {
+    if (runtime.fsMultiSourceEnabled) {
+      setLegacyFileOrgLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLegacyFileOrgLoading(true);
+    setLegacyFileOrgError(null);
+    void requestJsonWithFallback<{ orgs?: Array<{ id?: unknown; name?: unknown }> }>({
+      urls: buildApiCandidates('/orgs', runtime.apiBase),
+      fallbackError: 'Failed to load organizations for the file browser.',
+    }).then((payload) => {
+      if (cancelled) return;
+      const nextOrgs = (Array.isArray(payload.orgs) ? payload.orgs : [])
+        .map((org) => {
+          const id = typeof org.id === 'string' ? org.id.trim() : '';
+          const name = typeof org.name === 'string' ? org.name.trim() : '';
+          return id ? { id, name: name || id } : null;
+        })
+        .filter((org): org is { id: string; name: string } => Boolean(org));
+      setLegacyFileOrgOptions(nextOrgs);
+      setFileBrowserOrgId((current) =>
+        resolveLegacyFileOrgSelection(current, nextOrgs.map((org) => org.id)) ?? null,
+      );
+      if (nextOrgs.length === 0) {
+        setLegacyFileOrgError('No organizations are available for file access.');
+      }
+    }).catch((error) => {
+      if (cancelled) return;
+      setLegacyFileOrgOptions([]);
+      setLegacyFileOrgError(error instanceof Error ? error.message : 'Failed to load organizations for the file browser.');
+    }).finally(() => {
+      if (!cancelled) setLegacyFileOrgLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [legacyFileOrgLoadRevision, runtime.apiBase]);
 
   useEffect(() => {
     void loadAdminRuntimeSettings(runtime.apiBase).then((settings) => {
@@ -2924,6 +3042,7 @@ export default function App() {
         return;
       }
       if (currentFileRef.current === path) {
+        setCurrentFileOrgId(null);
         setCurrentFile(null);
         setFileContent('');
         setCurrentFilePreviewMeta(defaultFilePreviewMeta());
@@ -3202,7 +3321,7 @@ export default function App() {
       setCurrentFileLoadState({ status: 'idle' });
       return;
     }
-    const fileKey = buildFileLoadKey(currentSourceId, currentFile);
+    const fileKey = buildFileLoadKey(currentSourceId, currentFile, currentFileOrgId);
     let cancelled = false;
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -3212,7 +3331,7 @@ export default function App() {
     setFileContent('');
 
     if (runtime.fsMultiSourceEnabled && currentSourceId) {
-      fetchSourceFile(currentSourceId, currentFile)
+      fetchSourceFile(currentSourceId, currentFile, { orgId: currentFileOrgId ?? undefined })
         .then((data) => {
           if (cancelled) {
             return;
@@ -3263,8 +3382,8 @@ export default function App() {
     }
 
     const encodedPath = encodeURIComponent(currentFile);
-    requestJsonWithFallback<{ content?: string; contentType?: string; size?: number; isBinary?: boolean }>({
-      urls: buildLocalApiFallbackUrls(`/file?path=${encodedPath}`),
+    requestJsonWithFallback<{ content?: string; contentType?: string; size?: number; isBinary?: boolean; readOnly?: boolean }>({
+      urls: buildLocalApiFallbackUrls(`/file?path=${encodedPath}`, currentFileOrgId),
       fallbackError: 'Failed to fetch file.',
     })
       .then(d => {
@@ -3273,7 +3392,7 @@ export default function App() {
         }
         const binaryFlag = deriveBinaryFlag(d.contentType, d.isBinary);
         setFileContent(d.content || '');
-        setCurrentFileReadOnly(binaryFlag);
+        setCurrentFileReadOnly(Boolean(d.readOnly) || binaryFlag);
         setCurrentFileUpdatedAt(null);
         setCurrentFilePreviewMeta({
           contentType: d.contentType || 'text/plain',
@@ -3306,6 +3425,7 @@ export default function App() {
   }, [
     completeDeepLinkRestoration,
     currentFile,
+    currentFileOrgId,
     currentFileLoadRevision,
     currentSourceId,
     fetchSourceFile,
@@ -3348,7 +3468,7 @@ export default function App() {
       return;
     }
 
-    const fileKey = buildFileLoadKey(rightPaneSourceId, rightPaneFile);
+    const fileKey = buildFileLoadKey(rightPaneSourceId, rightPaneFile, rightPaneOrgId);
 
     if (rightSaveTimeoutRef.current) {
       clearTimeout(rightSaveTimeoutRef.current);
@@ -3359,7 +3479,7 @@ export default function App() {
     setRightPaneLoadState({ status: 'loading', fileKey });
     setRightPaneContent('');
     if (runtime.fsMultiSourceEnabled && rightPaneSourceId) {
-      fetchSourceFile(rightPaneSourceId, rightPaneFile)
+      fetchSourceFile(rightPaneSourceId, rightPaneFile, { orgId: rightPaneOrgId ?? undefined })
         .then((data) => {
           if (cancelled) {
             return;
@@ -3408,8 +3528,8 @@ export default function App() {
     }
 
     const encodedPath = encodeURIComponent(rightPaneFile);
-    requestJsonWithFallback<{ content?: string; contentType?: string; size?: number; isBinary?: boolean }>({
-      urls: buildLocalApiFallbackUrls(`/file?path=${encodedPath}`),
+    requestJsonWithFallback<{ content?: string; contentType?: string; size?: number; isBinary?: boolean; readOnly?: boolean }>({
+      urls: buildLocalApiFallbackUrls(`/file?path=${encodedPath}`, rightPaneOrgId),
       fallbackError: 'Failed to fetch file.',
     })
       .then((d) => {
@@ -3419,7 +3539,7 @@ export default function App() {
         const binaryFlag = deriveBinaryFlag(d.contentType, d.isBinary);
         const nextContent = d.content || '';
         setRightPaneContent(nextContent);
-        setRightPaneReadOnly(binaryFlag);
+        setRightPaneReadOnly(Boolean(d.readOnly) || binaryFlag);
         setRightPaneUpdatedAt(null);
         setRightPanePreviewMeta({
           contentType: d.contentType || 'text/plain',
@@ -3446,7 +3566,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [fetchSourceFile, rightPaneFile, rightPaneLoadRevision, rightPaneSourceId]);
+  }, [fetchSourceFile, rightPaneFile, rightPaneLoadRevision, rightPaneOrgId, rightPaneSourceId]);
 
   const handleRetryRightPaneFile = useCallback(() => {
     setRightPaneLoadRevision((revision) => revision + 1);
@@ -3468,7 +3588,7 @@ export default function App() {
       if (content !== lastContentRef.current && currentFile) {
         const encodedPath = encodeURIComponent(currentFile);
         await requestWithFallback(
-          buildLocalApiFallbackUrls(`/file?path=${encodedPath}`),
+          buildLocalApiFallbackUrls(`/file?path=${encodedPath}`, currentFileOrgId),
           {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -3480,7 +3600,7 @@ export default function App() {
         setLastSaved(Date.now());
       }
     }, 2000);
-  }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentSourceId]);
+  }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentFileOrgId, currentSourceId]);
 
   const scheduleRightPaneAutoSave = useCallback((content: string) => {
     if (
@@ -3497,7 +3617,7 @@ export default function App() {
       if (content !== rightLastContentRef.current && rightPaneFile) {
         const encodedPath = encodeURIComponent(rightPaneFile);
         await requestWithFallback(
-          buildLocalApiFallbackUrls(`/file?path=${encodedPath}`),
+          buildLocalApiFallbackUrls(`/file?path=${encodedPath}`, rightPaneOrgId),
           {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -3508,7 +3628,7 @@ export default function App() {
         rightLastContentRef.current = content;
       }
     }, 2000);
-  }, [activeRightPaneLoadState, rightPaneFile, rightPaneFileKey, rightPaneSourceId]);
+  }, [activeRightPaneLoadState, rightPaneFile, rightPaneFileKey, rightPaneOrgId, rightPaneSourceId]);
 
   // Handle content changes
   const handleContentChange = useCallback((newContent: string) => {
@@ -3585,7 +3705,7 @@ export default function App() {
     // Save source files via the source write API
     if (currentSourceId) {
       try {
-        await writeSourceFile(currentSourceId, currentFile, fileContent);
+        await writeSourceFile(currentSourceId, currentFile, fileContent, { orgId: currentFileOrgId ?? undefined });
         lastContentRef.current = fileContent;
         setLastSaved(Date.now());
       } catch (e) {
@@ -3622,7 +3742,7 @@ export default function App() {
     // Save file
     const encodedPath = encodeURIComponent(currentFile);
     await requestWithFallback(
-      buildLocalApiFallbackUrls(`/file?path=${encodedPath}`),
+      buildLocalApiFallbackUrls(`/file?path=${encodedPath}`, currentFileOrgId),
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -3632,15 +3752,17 @@ export default function App() {
     );
     lastContentRef.current = fileContent;
     setLastSaved(Date.now());
-  }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentSourceId, fileContent, writeSourceFile]);
+  }, [activeCurrentFileLoadState, currentFile, currentFileKey, currentFileOrgId, currentSourceId, fileContent, writeSourceFile]);
 
-  const handleFileSelect = (path: string) => {
+  const handleFileSelect = (path: string, orgId?: string) => {
     if (!activateVisibleWorkspaceTab('files')) {
       return;
     }
     const sourceId = runtime.fsMultiSourceEnabled ? 'workspace' : null;
+    const selectedOrgId = normalizeOptionalOrgId(orgId) ?? normalizeOptionalOrgId(fileBrowserOrgId) ?? null;
     setTabletSidebarOpen(false);
     setCurrentSourceId(sourceId);
+    setCurrentFileOrgId(selectedOrgId);
     setCurrentFile(path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -3650,15 +3772,17 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
-    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(sourceId, path)));
+    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(sourceId, path, selectedOrgId)));
   };
 
-  const handleSourceFileSelect = (sourceId: string, path: string) => {
+  const handleSourceFileSelect = (sourceId: string, path: string, orgId?: string) => {
     if (!activateVisibleWorkspaceTab('files')) {
       return;
     }
+    const selectedOrgId = normalizeOptionalOrgId(orgId) ?? normalizeOptionalOrgId(fileBrowserOrgId) ?? null;
     setTabletSidebarOpen(false);
     setCurrentSourceId(sourceId);
+    setCurrentFileOrgId(selectedOrgId);
     setCurrentFile(path);
     setCurrentFilePreviewMeta(defaultFilePreviewMeta());
     setCurrentFileCacheMeta(defaultFileCacheMeta());
@@ -3666,15 +3790,20 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
-    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(sourceId, path)));
+    setOpenFileTabs((prev) => upsertOpenFileTab(prev, buildOpenFileTab(sourceId, path, selectedOrgId)));
   };
 
-  const handleRightPaneFileSelect = useCallback((path: string) => {
+  const handleRightPaneFileSelect = useCallback((path: string, orgId?: string) => {
     if (!activateVisibleWorkspaceTab('files')) {
+      return;
+    }
+    const normalizedOrgId = orgId?.trim() || null;
+    if (rightPaneFileKey === buildFileLoadKey(null, path, normalizedOrgId)) {
       return;
     }
     setTabletSidebarOpen(false);
     setRightPaneSourceId(null);
+    setRightPaneOrgId(normalizedOrgId);
     setRightPaneFile(path);
     setRightPaneReadOnly(false);
     setRightPaneUpdatedAt(null);
@@ -3682,14 +3811,19 @@ export default function App() {
     setRightPaneCacheMeta(defaultFileCacheMeta());
     setRightPaneContent('');
     rightLastContentRef.current = '';
-  }, [activateVisibleWorkspaceTab]);
+  }, [activateVisibleWorkspaceTab, rightPaneFileKey]);
 
-  const handleRightPaneSourceFileSelect = useCallback((sourceId: string, path: string) => {
+  const handleRightPaneSourceFileSelect = useCallback((sourceId: string, path: string, orgId?: string) => {
     if (!activateVisibleWorkspaceTab('files')) {
+      return;
+    }
+    const normalizedOrgId = orgId?.trim() || null;
+    if (rightPaneFileKey === buildFileLoadKey(sourceId, path, normalizedOrgId)) {
       return;
     }
     setTabletSidebarOpen(false);
     setRightPaneSourceId(sourceId);
+    setRightPaneOrgId(normalizedOrgId);
     setRightPaneFile(path);
     setRightPaneReadOnly(false);
     setRightPaneUpdatedAt(null);
@@ -3697,13 +3831,14 @@ export default function App() {
     setRightPaneCacheMeta(defaultFileCacheMeta());
     setRightPaneContent('');
     rightLastContentRef.current = '';
-  }, [activateVisibleWorkspaceTab]);
+  }, [activateVisibleWorkspaceTab, rightPaneFileKey]);
 
   const exitSplitMode = useCallback(() => {
     setSplitResizing(false);
     setSplitMode(false);
     setSplitRatio(0.5);
     setRightPaneSourceId(null);
+    setRightPaneOrgId(null);
     setRightPaneFile(null);
     setRightPaneReadOnly(false);
     setRightPaneUpdatedAt(null);
@@ -3723,11 +3858,13 @@ export default function App() {
     }
   }, []);
 
-  const handleWatchModeAutoOpenFile = useCallback((path: string) => {
+  const handleWatchModeAutoOpenFile = useCallback((path: string, event?: { orgId?: string | null }) => {
     if (!activateVisibleWorkspaceTab('files')) {
       return;
     }
+    const selectedOrgId = resolveWatchModeOrgId(event?.orgId, fileBrowserOrgId);
     setCurrentSourceId(runtime.fsMultiSourceEnabled ? 'workspace' : null);
+    setCurrentFileOrgId(selectedOrgId);
     setCurrentFile(path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -3737,7 +3874,7 @@ export default function App() {
     setEditorCollabMode('editing');
     setReloadPrompt(null);
     setHighlightTaskId(null);
-  }, [activateVisibleWorkspaceTab]);
+  }, [activateVisibleWorkspaceTab, fileBrowserOrgId, runtime.fsMultiSourceEnabled]);
 
   const handleBackToDashboard = () => {
     if (typeof window !== 'undefined') {
@@ -3761,6 +3898,7 @@ export default function App() {
     }
     exitSplitMode();
     setCurrentSourceId(null);
+    setCurrentFileOrgId(null);
     setCurrentFile(null);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -3775,8 +3913,8 @@ export default function App() {
     if (!currentFile) {
       return null;
     }
-    return buildOpenFileTabKey(currentSourceId, currentFile);
-  }, [currentFile, currentSourceId]);
+    return buildOpenFileTabKey(currentSourceId, currentFile, currentFileOrgId);
+  }, [currentFile, currentFileOrgId, currentSourceId]);
 
   const handleSelectOpenFileTab = useCallback((tab: OpenFileTab) => {
     if (!activateVisibleWorkspaceTab('files')) {
@@ -3785,6 +3923,7 @@ export default function App() {
     if (tab.sourceId) {
       setTabletSidebarOpen(false);
       setCurrentSourceId(tab.sourceId);
+      setCurrentFileOrgId(tab.orgId ?? null);
       setCurrentFile(tab.path);
       setCurrentFilePreviewMeta(defaultFilePreviewMeta());
       setCurrentFileCacheMeta(defaultFileCacheMeta());
@@ -3797,6 +3936,7 @@ export default function App() {
 
     setTabletSidebarOpen(false);
     setCurrentSourceId(runtime.fsMultiSourceEnabled ? 'workspace' : null);
+    setCurrentFileOrgId(tab.orgId ?? null);
     setCurrentFile(tab.path);
     setCurrentFileReadOnly(false);
     setCurrentFileUpdatedAt(null);
@@ -3811,7 +3951,7 @@ export default function App() {
   const handleCloseOpenFileTab = useCallback((tabKey: string) => {
     setOpenFileTabs((prev) => {
       const next = removeOpenFileTab(prev, tabKey);
-      const activeKey = buildOpenFileTabKey(currentSourceId, currentFile ?? '');
+      const activeKey = buildOpenFileTabKey(currentSourceId, currentFile ?? '', currentFileOrgId);
       if (activeKey !== tabKey) {
         return next;
       }
@@ -3824,7 +3964,7 @@ export default function App() {
       }
       return next;
     });
-  }, [currentFile, currentSourceId, handleSelectOpenFileTab]);
+  }, [currentFile, currentFileOrgId, currentSourceId, handleSelectOpenFileTab]);
 
   const handleAddOpenFileTab = useCallback(() => {
     setQuickSwitcherTargetPane('left');
@@ -3854,6 +3994,7 @@ export default function App() {
     }
 
     setCurrentSourceId(null);
+    setCurrentFileOrgId(null);
     setCurrentFile(null);
     setMcBoardTab(preferredBoardTab);
     setTabletSidebarOpen(false);
@@ -3884,6 +4025,7 @@ export default function App() {
     if (tab !== 'files' && currentFile) {
       exitSplitMode();
       setCurrentSourceId(null);
+      setCurrentFileOrgId(null);
       setCurrentFile(null);
       setCurrentFileReadOnly(false);
       setCurrentFileUpdatedAt(null);
@@ -4146,8 +4288,9 @@ export default function App() {
     });
   }, [tasks, mcAssigneeFilter, mcPriorityFilter, mcProjectFilter]);
   // Apply the active board's persisted filter configuration so a board's contents
-  // derive from its config (BRD-003). General (scope 'all') is a no-op, keeping
-  // all existing tasks visible; Engineering/Strategic render dedicated surfaces.
+  // derive from its config (BRD-003). General defaults to all non-engineering
+  // work while retaining other/unclassified tasks; Engineering/Strategic render
+  // dedicated surfaces.
   const boardTasks = useMemo(() => {
     if (!activeBoard) return filteredBoardTasks;
     return selectTasksForBoard(filteredBoardTasks, activeBoard);
@@ -4156,12 +4299,12 @@ export default function App() {
   const selectedSource = currentSourceId ? fileSources.find((source) => source.id === currentSourceId) : null;
   const rightPaneSource = rightPaneSourceId ? fileSources.find((source) => source.id === rightPaneSourceId) : null;
   const currentRawFileUrl = useMemo(
-    () => buildRawFilePreviewUrl(currentFile, currentSourceId, runtime.apiBase),
-    [currentFile, currentSourceId]
+    () => buildRawFilePreviewUrl(currentFile, currentSourceId, runtime.apiBase, currentFileOrgId),
+    [currentFile, currentFileOrgId, currentSourceId]
   );
   const rightPaneRawFileUrl = useMemo(
-    () => buildRawFilePreviewUrl(rightPaneFile, rightPaneSourceId, runtime.apiBase),
-    [rightPaneFile, rightPaneSourceId]
+    () => buildRawFilePreviewUrl(rightPaneFile, rightPaneSourceId, runtime.apiBase, rightPaneOrgId),
+    [rightPaneFile, rightPaneOrgId, rightPaneSourceId]
   );
   const documentsClient = useMemo(
     () =>
@@ -4193,6 +4336,8 @@ export default function App() {
     followedActorId,
     activities,
     currentFile,
+    currentFileOrgId,
+    fallbackOrgId: fileBrowserOrgId,
     onSwitchFile: handleWatchModeAutoOpenFile,
   });
   const watchModeCursor = useMemo(() => {
@@ -4833,7 +4978,9 @@ export default function App() {
           setReviewFindings(response.findings);
           pushToast('Fix applied.', 'success');
           if (currentSourceId && currentFile) {
-            const updated = await fetchSourceFile(currentSourceId, currentFile);
+            const updated = await fetchSourceFile(currentSourceId, currentFile, {
+              orgId: currentFileOrgId ?? undefined,
+            });
             setFileContent(updated.content || '');
           }
         } catch (error) {
@@ -4841,7 +4988,7 @@ export default function App() {
         }
       })();
     },
-    [currentDocId, currentFile, currentFileReadOnly, currentSourceId, documentsClient, documentsReady, fetchSourceFile, pushToast, reviewRun]
+    [currentDocId, currentFile, currentFileOrgId, currentFileReadOnly, currentSourceId, documentsClient, documentsReady, fetchSourceFile, pushToast, reviewRun]
   );
 
   const handleIgnoreReviewFinding = useCallback(
@@ -5114,29 +5261,83 @@ export default function App() {
 
   const renderFileSidebarTree = () => {
     if (!runtime.fsMultiSourceEnabled) {
+      const selectedLegacyOrgId = fileBrowserOrgId ?? '';
+      if (legacyFileOrgLoading) {
+        return <LazySurfaceFallback label="Loading organizations" />;
+      }
+
       return (
-        <LazyFileTree
-          onSelect={(path) => {
-            if (watchMode) {
-              setFollowDetached(true);
-            }
-            handleFileSelect(path);
-          }}
-          selected={currentFile}
-        />
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="border-b border-[var(--border-primary)] p-3">
+            <label className="flex flex-col gap-1 text-xs text-[var(--text-muted)]" htmlFor="legacy-file-org">
+              Organization
+              <select
+                id="legacy-file-org"
+                className="mc-shell-input px-2 py-1.5 text-sm text-[var(--text-primary)]"
+                value={selectedLegacyOrgId}
+                onChange={(event) => setFileBrowserOrgId(event.target.value || null)}
+                disabled={legacyFileOrgOptions.length === 0}
+              >
+                <option value="">Select an organization</option>
+                {legacyFileOrgOptions.map((org) => (
+                  <option key={org.id} value={org.id}>{org.name}</option>
+                ))}
+              </select>
+            </label>
+            {legacyFileOrgError ? (
+              <div className="mt-2 flex items-center gap-2 text-xs text-[var(--error)]">
+                <p>{legacyFileOrgError}</p>
+                <button
+                  type="button"
+                  className="mc-shell-btn px-2 py-1 text-xs"
+                  onClick={() => setLegacyFileOrgLoadRevision((revision) => revision + 1)}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : !selectedLegacyOrgId ? (
+              <p className="mt-2 text-xs text-[var(--text-muted)]">Choose an organization to browse files.</p>
+            ) : null}
+          </div>
+          {selectedLegacyOrgId ? (
+            <div className="min-h-0 flex-1">
+              <LazyFileTree
+                key={`file-tree:${selectedLegacyOrgId}`}
+                orgId={selectedLegacyOrgId}
+                onSelect={(path) => {
+                  if (watchMode) {
+                    setFollowDetached(true);
+                  }
+                  handleFileSelect(path, selectedLegacyOrgId);
+                }}
+                selected={currentFileOrgId === selectedLegacyOrgId ? currentFile : null}
+              />
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (!fileBrowserOrgId) {
+      return (
+        <div role="status" className="flex h-full items-center justify-center p-4 text-center text-sm text-[var(--text-muted)]">
+          Choose an organization in Doc Hub to browse files.
+        </div>
       );
     }
 
     return (
       <LazySourceFileTree
+        key={`source-tree:${fileBrowserOrgId ?? 'unscoped'}`}
         apiBase={runtime.apiBase}
-        selectedSourceId={currentSourceId}
-        selectedPath={currentFile}
-        onSelect={(sourceId, path) => {
+        orgId={fileBrowserOrgId ?? undefined}
+        selectedSourceId={currentFileOrgId === fileBrowserOrgId ? currentSourceId : null}
+        selectedPath={currentFileOrgId === fileBrowserOrgId ? currentFile : null}
+        onSelect={(sourceId, path, orgId) => {
           if (watchMode) {
             setFollowDetached(true);
           }
-          handleSourceFileSelect(sourceId, path);
+          handleSourceFileSelect(sourceId, path, orgId);
         }}
       />
     );
@@ -5794,6 +5995,9 @@ export default function App() {
             runtime={runtime}
             currentFile={currentFile}
             handleSourceFileSelect={handleSourceFileSelect}
+            browserOrgId={fileBrowserOrgId}
+            onBrowserOrgChange={setFileBrowserOrgId}
+            orgId={currentFileOrgId ?? undefined}
             openFileTabs={openFileTabs}
             activeFileTabKey={activeFileTabKey}
             onSelectOpenFileTab={handleSelectOpenFileTab}
@@ -5864,6 +6068,7 @@ export default function App() {
             rightPaneFile={rightPaneFile}
             rightPaneSource={rightPaneSource}
             rightPaneSourceId={rightPaneSourceId}
+            rightPaneOrgId={rightPaneOrgId}
             rightPaneReadOnly={rightPaneReadOnly}
             rightPaneCacheMeta={rightPaneCacheMeta}
             rightPaneCachedAgeLabel={rightPaneCachedAgeLabel}
@@ -6101,6 +6306,8 @@ export default function App() {
 
   const showLeftSidebar = sidebarTab !== 'chat';
   const paperTaskRail = appTheme === 'paper' && sidebarTab === 'tasks';
+  const quickSwitcherLeftOrgId = currentFileOrgId ??
+    fileBrowserOrgId;
 
   return (
     <div
@@ -6115,7 +6322,9 @@ export default function App() {
               setQuickSwitcherOpen(false);
               setQuickSwitcherTargetPane('left');
             }}
-            onSelect={(path, sourceId) => {
+            onSelect={(path, sourceId, orgId) => {
+              const selectedOrgId =
+                orgId?.trim() || resolveQuickSwitcherOrgId(quickSwitcherTargetPane, rightPaneOrgId, quickSwitcherLeftOrgId);
               if (quickSwitcherTargetPane === 'right') {
                 if (!splitMode) {
                   setSplitMode('horizontal');
@@ -6123,22 +6332,23 @@ export default function App() {
                 }
 
                 if (sourceId) {
-                  handleRightPaneSourceFileSelect(sourceId, path);
+                  handleRightPaneSourceFileSelect(sourceId, path, selectedOrgId);
                   return;
                 }
 
-                handleRightPaneFileSelect(path);
+                handleRightPaneFileSelect(path, selectedOrgId);
                 return;
               }
 
               if (sourceId) {
-                handleSourceFileSelect(sourceId, path);
+                handleSourceFileSelect(sourceId, path, selectedOrgId);
                 return;
               }
 
-              handleFileSelect(path);
+              handleFileSelect(path, selectedOrgId);
             }}
             apiBase={runtime.apiBase}
+            orgId={resolveQuickSwitcherOrgId(quickSwitcherTargetPane, rightPaneOrgId, quickSwitcherLeftOrgId)}
             useUnifiedSearch={runtime.fsMultiSourceEnabled}
           />
         </Suspense>
@@ -6162,7 +6372,9 @@ export default function App() {
 
       {fileHistoryPanelOpen ? (
         <LazyFileHistoryPanel
+          key={`file-history:${currentFileOrgId ?? 'unscoped'}:${currentSourceId ?? 'workspace'}:${currentFile ?? 'none'}`}
           apiBase={runtime.apiBase}
+          orgId={currentFileOrgId ?? undefined}
           filePath={currentSourceId ? null : currentFile}
           latestSavedContent={fileContent}
           currentContent={fileContent}
@@ -6236,6 +6448,7 @@ export default function App() {
             connected={connected}
             currentFile={currentFile}
             setCurrentFile={setCurrentFile}
+            setCurrentFileOrgId={setCurrentFileOrgId}
             setFileContent={setFileContent}
             setCurrentFilePreviewMeta={setCurrentFilePreviewMeta}
             setCurrentFileCacheMeta={setCurrentFileCacheMeta}
@@ -6281,6 +6494,9 @@ export default function App() {
             setSuggestions={setSuggestions}
             pushToast={pushToast}
             currentSourceId={currentSourceId}
+            currentFileOrgId={currentFileOrgId}
+            fileBrowserOrgId={fileBrowserOrgId}
+            setFileBrowserOrgId={setFileBrowserOrgId}
             fetchSourceFile={fetchSourceFile}
             reviewFindings={reviewFindings}
             handleApplyReviewFindingFix={handleApplyReviewFindingFix}
@@ -6347,6 +6563,11 @@ export default function App() {
             }}
             onCreateTask={createTask}
             defaultWorkDomain={createTaskWorkDomain}
+            orgId={resolveTaskPriorityOrgId(
+              tasks.find((task) => task.id === highlightTaskId)?.org_id,
+              typeof window === 'undefined' ? null : window.location.search,
+              tasks.map((task) => task.org_id),
+            )}
             onCreated={(task) => {
               if (createTaskWorkDomain === 'engineering') {
                 window.dispatchEvent(new Event(ENGINEERING_TASKS_REFRESH_EVENT));
@@ -6362,9 +6583,11 @@ export default function App() {
 
       <Suspense fallback={null}>
         <DocumentConvertDialog
+          key={`document-convert:${currentFileOrgId ?? 'unscoped'}:${currentSourceId ?? 'workspace'}:${currentFile ?? 'none'}`}
           open={activeDocHubTool === 'convert'}
           sourceId={currentSourceId}
           sourcePath={currentFile}
+          orgId={currentFileOrgId ?? undefined}
           readOnly={currentFileReadOnly}
           apiBase={runtime.apiBase}
           onClose={() => {
@@ -6373,7 +6596,7 @@ export default function App() {
           }}
           onConverted={({ targetPath }) => {
             if (currentSourceId) {
-              void handleSourceFileSelect(currentSourceId, targetPath);
+              void handleSourceFileSelect(currentSourceId, targetPath, currentFileOrgId ?? undefined);
             }
           }}
           pushToast={pushToast}

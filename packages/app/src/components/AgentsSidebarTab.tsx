@@ -53,7 +53,7 @@ interface AgentsSidebarTabProps {
   onSelectAgent: (agentId: string | null) => void;
   onFollowAgent: (agentId: string | null) => void;
   onSetFollowDetached: (detached: boolean) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, orgId?: string) => void;
   tasks?: TaskBoardTask[];
 }
 

@@ -5,7 +5,7 @@ interface ActivityStreamProps {
   activities: ActivityEntry[];
   isOpen: boolean;
   onToggleOpen: () => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, orgId?: string) => void;
   onOpenTask?: (taskId: number) => void;
   fillHeight?: boolean;
   loading?: boolean;
@@ -82,7 +82,7 @@ function ActivityRow({
   nowMs: number;
   expanded: boolean;
   onToggle: () => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, orgId?: string) => void;
   onOpenTask?: (taskId: number) => void;
 }) {
   const time = formatRelativeTime(entry.timestamp, nowMs);
@@ -93,7 +93,7 @@ function ActivityRow({
       className="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-tertiary)] rounded transition-colors max-md:px-4 max-md:py-3 max-md:rounded-xl"
       onClick={() => {
         if (entry.taskId !== undefined) onOpenTask?.(entry.taskId);
-        else if (entry.filePath) onOpenFile(entry.filePath);
+        else if (entry.filePath) onOpenFile(entry.filePath, entry.orgId);
         else onToggle();
       }}
       title={expanded ? undefined : entry.description}
@@ -122,7 +122,7 @@ function ActivityRow({
           {entry.filePath && (
             <div
               className="text-[var(--accent)] cursor-pointer hover:underline"
-              onClick={(e) => { e.stopPropagation(); onOpenFile(entry.filePath!); }}
+              onClick={(e) => { e.stopPropagation(); onOpenFile(entry.filePath!, entry.orgId); }}
             >
               → {entry.filePath}
             </div>
@@ -142,7 +142,7 @@ function GroupBlock({
 }: {
   group: ActivityGroup;
   nowMs: number;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, orgId?: string) => void;
   onOpenTask?: (taskId: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);

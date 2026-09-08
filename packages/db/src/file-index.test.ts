@@ -59,5 +59,10 @@ describe('file index reconciliation', () => {
 
     expect(repo.reconcileSourcePaths('workspace', ['current.md'])).toBe(1);
     expect(repo.search('', { sourceId: 'workspace' }).map((record) => record.path)).toEqual(['current.md']);
+
+    repo.upsertRecord({ ...baseRecord, id: 'workspace:older.md', path: 'older.md', updated_at: '2026-01-01T00:00:00.000Z' });
+    const ordered = repo.search('', { sourceId: 'workspace', limit: 10 });
+    expect(repo.search('', { sourceId: 'workspace', limit: 1, offset: 1 }).map((record) => record.path))
+      .toEqual([ordered[1]?.path]);
   });
 });

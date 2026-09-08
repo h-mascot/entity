@@ -13,7 +13,7 @@ import os from 'os';
 import path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createChatRepository } from '../../../db/src/chat';
-import { createScopedChatRepository, principalCanReadChatHistory } from './chat';
+import { createScopedChatRepository, principalCanReadChatHistory, resolveChatCreationScope } from './chat';
 import { LOCAL_ADMIN_PRINCIPAL_ID } from '../principals/admin-identity';
 import type { PrincipalGrant, PrincipalPermissionContext } from '../permissions';
 import type { RequestOrgBinding } from '../request-permissions';
@@ -63,10 +63,23 @@ const TEAM_CONTRIB_A2 = principal('contrib-a2', [{ role: 'contributor', org_id: 
 const NO_GRANT = principal('no-grant', []);
 const ORG_B_MEMBER = principal('contrib-b1', [{ role: 'contributor', org_id: 'org-b', team_id: 'team-b1' }]);
 const LOCAL_ADMIN = principal(LOCAL_ADMIN_PRINCIPAL_ID, [{ role: 'admin', org_id: 'org-a' }]);
+const PROJECT_ONLY_CONTRIBUTOR = principal('project-only', [{ role: 'contributor', org_id: 'org-a', project_id: 42 }]);
+const PROJECT_PLUS_TEAM_CONTRIBUTOR = principal('project-plus-team', [
+  { role: 'contributor', org_id: 'org-a', project_id: 42 },
+  { role: 'contributor', org_id: 'org-a', team_id: 'team-a1' },
+]);
 
 const access = principalCanReadChatHistory;
 
 describe('THE-931 — scoped chat repository tenant isolation', () => {
+  it('does not turn a project-only grant into org-wide chat creation authority', () => {
+    expect(resolveChatCreationScope(binding('org-a', PROJECT_ONLY_CONTRIBUTOR))).toBeNull();
+    expect(resolveChatCreationScope(binding('org-a', PROJECT_PLUS_TEAM_CONTRIBUTOR))).toEqual({
+      orgId: 'org-a',
+      teamId: 'team-a1',
+    });
+  });
+
   it('historyAllowed is false for a no-grant principal and true for any org-scoped grant', () => {
     expect(access(binding('org-a', NO_GRANT)).allowed).toBe(false);
     expect(access(binding('org-a', TEAM_CONTRIB_A1)).allowed).toBe(true);

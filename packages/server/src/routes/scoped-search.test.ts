@@ -1,5 +1,8 @@
 import express from 'express';
+import fs from 'fs';
 import http from 'http';
+import os from 'os';
+import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   EvidenceArtifactRecord,
@@ -9,6 +12,7 @@ import type {
 } from '../../../db/src';
 import type { FileIndexRecord, FileSyncRunRecord } from '../../../db/src/file-index';
 import type { FileSourceRecord } from '../../../db/src/file-sources';
+import type { FsFileOwnershipRecord } from '../../../db/src/file-ownership';
 import { resolvePhase2Flags } from '../phase2-flags';
 import { createSearchRouter } from './search';
 import type { ScopedSearchRouteDeps } from './scoped-search';
@@ -232,8 +236,21 @@ async function withSearchServer(
   deps: ScopedSearchRouteDeps,
   run: (baseUrl: string) => Promise<void>,
   permissionStrictness = 'on',
+  customerPermission?: { principal_id: string; grants: Array<{ role: 'viewer' | 'contributor' | 'admin'; org_id?: string; team_id?: string }> },
 ): Promise<void> {
   const app = express();
+  if (customerPermission) {
+    app.use((req, _res, next) => {
+      req.entityCustomerPrincipal = {
+        principalId: customerPermission.principal_id,
+        principalType: 'human',
+        orgIds: ['org-a'],
+        isGlobalAdmin: false,
+        permission: customerPermission,
+      };
+      next();
+    });
+  }
   app.use('/api/search', createSearchRouter({
     flags: resolvePhase2Flags({ ENTITY_PHASE2_SEARCH_PERMISSION_STRICTNESS: permissionStrictness }),
     scoped: deps,
@@ -250,6 +267,66 @@ async function withSearchServer(
 }
 
 describe('Docs scoped search', () => {
+  it('omits an indexed upload whose ownership row is missing', async () => {
+    const deps = healthyDeps({
+      indexRepo: {
+        search: vi.fn(() => [indexedFile({ path: 'uploads/org-a/team-a/orphan.md', title: 'Orphan upload' })]),
+        getLatestSyncRun: vi.fn(() => syncRun()),
+      },
+      ownershipRepo: { getOwnership: vi.fn(() => undefined) },
+    });
+    await withSearchServer(deps, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/search/scoped?q=orphan`, {
+        headers: { 'x-entity-org-id': 'org-a' },
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as { results: Array<{ objectType?: string }> };
+      expect(body.results.filter((entry) => entry.objectType === 'file')).toEqual([]);
+    });
+  });
+
+  it('checks disabled overlapping source ownership for an enabled parent index row', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-scoped-search-sources-'));
+    const childRoot = path.join(root, 'private');
+    fs.mkdirSync(path.join(childRoot, 'uploads/org-a/team-a'), { recursive: true });
+    const parent = fileSource({ base_path: root, id: 'parent' });
+    const disabledChild = fileSource({ base_path: childRoot, id: 'private', enabled: false, display_name: 'Private' });
+    const privatePath = 'uploads/org-a/team-a/secret.md';
+    const ownership: FsFileOwnershipRecord = {
+      source_id: 'private', path: privatePath, org_id: 'org-a', team_id: 'team-a',
+      owner_principal_id: 'team-a-owner', display_name: 'secret.md', origin: 'upload',
+      uploaded_at: now, updated_at: now,
+    };
+    const deps = healthyDeps({
+      indexRepo: {
+        search: vi.fn(() => [indexedFile({ source_id: 'parent', path: `private/${privatePath}`, title: 'Private upload' })]),
+        getLatestSyncRun: vi.fn(() => syncRun({ source_id: 'parent' })),
+      },
+      sourceRepo: {
+        listSources: vi.fn(() => [parent, disabledChild]),
+        getSource: vi.fn((id: string) => [parent, disabledChild].find((source) => source.id === id)),
+      },
+      ownershipRepo: { getOwnership: vi.fn((_sourceId: string, path: string) => path === privatePath ? ownership : undefined) },
+    });
+    try {
+      await withSearchServer(
+        deps,
+        async (baseUrl) => {
+          const response = await fetch(`${baseUrl}/api/search/scoped?q=private&objectTypes=file`, {
+            headers: { 'x-entity-org-id': 'org-a' },
+          });
+          expect(response.status).toBe(200);
+          const body = await response.json() as { results: Array<{ objectType?: string }> };
+          expect(body.results.filter((entry) => entry.objectType === 'file')).toEqual([]);
+        },
+        'on',
+        { principal_id: 'team-b-reader', grants: [{ role: 'viewer', org_id: 'org-a', team_id: 'team-b' }] },
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('returns native, external, and indexed files in the stable org-scoped envelope', async () => {
     const deps = healthyDeps();
     await withSearchServer(deps, async (baseUrl) => {

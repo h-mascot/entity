@@ -10,11 +10,22 @@ import type {
   UpdateTeamInput,
   WorkspaceScopeRepository,
 } from '../../../db/src';
-import { getCustomerPrincipal, isTrustedServiceContext, sendPermissionDenied } from '../principals/request-context';
+import type { PrincipalRepository } from '../../../db/src/principals';
+import { createRequireAdminPrincipal } from '../middleware/admin-auth';
+import {
+  getCustomerPrincipal,
+  isTrustedServiceContext,
+  requireDeploymentControlAuthority,
+  requireOrgAuthority,
+  sendPermissionDenied,
+} from '../principals/request-context';
+import { resolveInheritedRole, roleMeets } from '../permissions';
 import { readDefaultOrgId } from '../config/admin-runtime';
 
 interface WorkspaceRouterDeps {
   workspaceRepo: WorkspaceScopeRepository;
+  /** Override only for isolated tests; production resolves the configured repo. */
+  principalRepo?: PrincipalRepository;
 }
 
 class WorkspaceApiError extends Error {
@@ -184,6 +195,65 @@ function resolveRequestScope(
   return typeof teamId === 'string' ? { orgId, teamId } : { orgId };
 }
 
+/**
+ * Team mutations require manager authority at the target team. The org-wide
+ * create route uses requireOrgAuthority separately so a team-only manager can
+ * never create a team outside the exact team grant.
+ */
+function requireTeamMutationAuthority(
+  req: Request,
+  res: Response,
+  scope: OrgQueryContext,
+  teamId: string,
+): boolean {
+  if (isTrustedServiceContext(req)) return true;
+  const principal = getCustomerPrincipal(req);
+  if (!principal || (!principal.isGlobalAdmin && !principal.orgIds.includes(scope.orgId))) {
+    sendPermissionDenied(res, 'target org is outside the principal membership');
+    return false;
+  }
+  const role = resolveInheritedRole(principal.permission, {
+    org_id: scope.orgId,
+    team_id: teamId,
+  });
+  if (!roleMeets(role, 'manager')) {
+    sendPermissionDenied(res, `manager role required for team ${teamId} in org ${scope.orgId}`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Project writes use the existing workspace permission contract: contributor
+ * is sufficient, but the effective role must cover this exact org/team (and,
+ * for an existing project, the exact project). A grant on another team must
+ * never win merely because it is a higher role.
+ */
+function requireProjectMutationAuthority(
+  req: Request,
+  res: Response,
+  scope: OrgQueryContext,
+  projectId?: number,
+): boolean {
+  if (isTrustedServiceContext(req)) return true;
+  const principal = getCustomerPrincipal(req);
+  if (!principal || (!principal.isGlobalAdmin && !principal.orgIds.includes(scope.orgId))) {
+    sendPermissionDenied(res, 'target org is outside the principal membership');
+    return false;
+  }
+  const role = resolveInheritedRole(
+    principal.permission,
+    projectId === undefined
+      ? { org_id: scope.orgId, team_id: scope.teamId }
+      : { org_id: scope.orgId, team_id: scope.teamId, project_id: projectId },
+  );
+  if (!roleMeets(role, 'contributor')) {
+    sendPermissionDenied(res, `contributor role required for project scope ${scope.orgId}/${scope.teamId}`);
+    return false;
+  }
+  return true;
+}
+
 function sendRouteError(res: Response, error: unknown): Response {
   if (error instanceof WorkspaceApiError) {
     return res.status(error.statusCode).json({ error: error.message });
@@ -268,6 +338,7 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
   });
 
   router.post('/orgs', (req, res) => {
+    if (!requireDeploymentControlAuthority(req, res)) return;
     try {
       const org = workspaceRepo.createOrg(parseCreateOrg(parseBody(req)));
       return res.status(201).json({ org });
@@ -294,6 +365,7 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
       const resolution = resolveRequestScope(req, res);
       if (resolution === null) return undefined;
       const orgId = resolution ? resolution.orgId : requireOrgId(req);
+      if (!requireOrgAuthority(req, res, orgId, 'manager')) return undefined;
       const org = workspaceRepo.updateOrg(orgId, parseUpdateOrg(parseBody(req)));
       if (!org) return res.status(404).json({ error: 'org not found' });
       return res.json({ org });
@@ -318,6 +390,7 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
       const resolution = resolveRequestScope(req, res);
       if (resolution === null) return undefined;
       const scope = resolution ?? scopeFromRequest(req);
+      if (!requireOrgAuthority(req, res, scope.orgId, 'manager')) return undefined;
       const team = workspaceRepo.createTeam(scope, parseCreateTeam(parseBody(req)));
       return res.status(201).json({ team });
     } catch (error) {
@@ -343,7 +416,9 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
       const resolution = resolveRequestScope(req, res, { requireTeam: true });
       if (resolution === null) return undefined;
       const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
-      const team = workspaceRepo.updateTeam(scope, requireTeamId(req), parseUpdateTeam(parseBody(req)));
+      const teamId = requireTeamId(req);
+      if (!requireTeamMutationAuthority(req, res, scope, teamId)) return undefined;
+      const team = workspaceRepo.updateTeam(scope, teamId, parseUpdateTeam(parseBody(req)));
       if (!team) return res.status(404).json({ error: 'team not found in org' });
       return res.json({ team });
     } catch (error) {
@@ -367,6 +442,7 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
       const resolution = resolveRequestScope(req, res, { requireTeam: true });
       if (resolution === null) return undefined;
       const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
+      if (!requireProjectMutationAuthority(req, res, scope)) return undefined;
       const project = workspaceRepo.createProject(
         scope,
         parseCreateProject(parseBody(req)),
@@ -393,6 +469,7 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
       const resolution = resolveRequestScope(req, res, { requireTeam: true });
       if (resolution === null) return undefined;
       const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
+      if (!requireProjectMutationAuthority(req, res, scope)) return undefined;
       const project = workspaceRepo.createProject(
         scope,
         parseCreateProject(parseBody(req)),
@@ -421,13 +498,76 @@ export function createWorkspaceRouter({ workspaceRepo }: WorkspaceRouterDeps): R
       const resolution = resolveRequestScope(req, res, { requireTeam: true });
       if (resolution === null) return undefined;
       const scope = resolution ?? scopeFromRequest(req, { requireTeam: true });
+      const projectId = requireProjectId(req);
+      const currentProject = workspaceRepo.getProject(scope, projectId);
+      if (!currentProject) return res.status(404).json({ error: 'project not found in scope' });
+      if (!requireProjectMutationAuthority(req, res, scope, currentProject.id)) return undefined;
       const project = workspaceRepo.updateProject(
         scope,
-        requireProjectId(req),
+        projectId,
         parseUpdateProject(parseBody(req)),
       );
       if (!project) return res.status(404).json({ error: 'project not found in scope' });
       return res.json({ project });
+    } catch (error) {
+      return sendRouteError(res, error);
+    }
+  });
+
+  return router;
+}
+
+/**
+ * Control-plane adapter for the Access Control workspace panel.
+ *
+ * The regular `/api/orgs` and `/api/teams` routes intentionally remain
+ * customer data-plane routes.  This narrow adapter is mounted by the
+ * production entrypoint at `/api/admin/workspace`, where the existing
+ * server-bound admin middleware authenticates the active global admin before
+ * any workspace handler runs.  The additional deployment check prevents a
+ * tenant customer credential from turning this control surface into an
+ * org-scoped bypass.
+ */
+export function createAdminWorkspaceRouter({
+  workspaceRepo,
+  principalRepo,
+}: WorkspaceRouterDeps): Router {
+  const router = createRouter();
+  router.use(createRequireAdminPrincipal(principalRepo));
+
+  router.get('/orgs', (req, res) => {
+    if (!requireDeploymentControlAuthority(req, res)) return;
+    return res.json({ orgs: workspaceRepo.listOrgs() });
+  });
+
+  router.get('/orgs/:orgId/teams', (req, res) => {
+    if (!requireDeploymentControlAuthority(req, res)) return;
+    try {
+      return res.json({ teams: workspaceRepo.listTeams({ orgId: requireOrgId(req) }) });
+    } catch (error) {
+      return sendRouteError(res, error);
+    }
+  });
+
+  router.post('/orgs/:orgId/teams', (req, res) => {
+    if (!requireDeploymentControlAuthority(req, res)) return;
+    try {
+      const scope = scopeFromRequest(req);
+      const team = workspaceRepo.createTeam(scope, parseCreateTeam(parseBody(req)));
+      return res.status(201).json({ team });
+    } catch (error) {
+      return sendRouteError(res, error);
+    }
+  });
+
+  router.patch('/teams/:teamId', (req, res) => {
+    if (!requireDeploymentControlAuthority(req, res)) return;
+    try {
+      const scope = scopeFromRequest(req, { requireTeam: true });
+      const teamId = requireTeamId(req);
+      const team = workspaceRepo.updateTeam(scope, teamId, parseUpdateTeam(parseBody(req)));
+      if (!team) return res.status(404).json({ error: 'team not found in org' });
+      return res.json({ team });
     } catch (error) {
       return sendRouteError(res, error);
     }

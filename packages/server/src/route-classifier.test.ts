@@ -45,12 +45,11 @@ describe('route-classifier (R1 data-plane invariant)', () => {
       expect(isControlPlanePath('/api/documents')).toBe(false);
     });
 
-    it('unprefixed routes outside the protected surface are public (consistent with transport auth)', () => {
-      // /worktype-registry (unprefixed) is not in api-auth's protected surface,
-      // so it is public to both layers. /api/worktype-registry remains
-      // data-plane (asserted below). This pairing mirrors transport auth.
-      expect(classifyRoute('/worktype-registry')).toBe<'public'>('public');
-      expect(isControlPlanePath('/worktype-registry')).toBe(false);
+    it('protected unprefixed API mirrors remain data-plane', () => {
+      for (const path of ['/worktype-registry', '/notifications']) {
+        expect(classifyRoute(path), path).toBe<'data-plane'>('data-plane');
+        expect(isControlPlanePath(path), path).toBe(false);
+      }
     });
   });
 
@@ -62,6 +61,10 @@ describe('route-classifier (R1 data-plane invariant)', () => {
       ['principal collection', '/api/admin/principals'],
       ['principal grant', '/api/admin/principals/p-1/grants'],
       ['principal disable', '/api/admin/principals/p-1/disable'],
+      ['admin activity report', '/api/admin/activity-report'],
+      ['admin usage report', '/api/admin/usage-report'],
+      ['admin audit report', '/api/admin/audit-report'],
+      ['admin access report', '/api/admin/access-report'],
     ];
     for (const [name, path] of cases) {
       it(`control: ${name} (${path})`, () => {
@@ -126,6 +129,11 @@ describe('route-classifier (R1 data-plane invariant)', () => {
       ['activity spine events', '/api/activity-spine-events'],
       ['task master claims', '/api/task-master-claims'],
       ['activity recent', '/api/activity/recent'],
+      ['legacy activity report', '/activity-report'],
+      ['legacy usage report', '/usage-report'],
+      ['legacy audit report', '/audit-report'],
+      ['legacy access report', '/access-report'],
+      ['legacy report alias', '/reports/usage'],
       ['chat channels', '/api/chat/channels'],
       ['chat messages', '/api/chat/channels/c-1/messages'],
       ['chat setup', '/api/chat/setup'],

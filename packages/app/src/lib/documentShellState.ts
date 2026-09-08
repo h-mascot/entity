@@ -84,8 +84,9 @@ export type MobileManualShareEvent =
 export function buildMobileDocHubDocumentIdentity(
   sourceId: string | null,
   path: string,
+  orgId?: string | null,
 ): string {
-  return JSON.stringify([sourceId, path]);
+  return JSON.stringify(orgId === undefined ? [sourceId, path] : [sourceId, path, orgId]);
 }
 
 export function reduceMobileManualShareState(

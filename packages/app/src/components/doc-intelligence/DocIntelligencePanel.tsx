@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   DocumentCommentThread,
   DocumentReviewFinding,
@@ -8,8 +8,9 @@ import type {
 } from '../../types/collaboration';
 import type { EditorSelectionSnapshot } from '../SuggestionPanel';
 import { buildApiCandidates, HttpRequestError, requestJsonWithFallback } from '../../lib/http';
+import { orgScopeHeaders } from '../../lib/legacyFileScope';
 import {
-  docFilenameStem,
+  buildRelatedDocSearchPath,
   filterRelatedDocResults,
   findTasksReferencingDoc,
   type RelatedDocResult,
@@ -63,6 +64,7 @@ interface DocIntelligencePanelProps {
   currentDocId: string | null;
   currentFile: string | null;
   currentSourceId: string | null;
+  orgId?: string;
   currentFileReadOnly: boolean;
   editMode: boolean;
   setEditMode: (value: boolean | ((prev: boolean) => boolean)) => void;
@@ -91,7 +93,7 @@ interface DocIntelligencePanelProps {
   setSelectedFindingId: (findingId: string) => void;
   setFocusRange: (range: { from: number; to: number }) => void;
   documentsClient: any;
-  fetchSourceFile: (sourceId: string, path: string) => Promise<{ content?: string | null }>;
+  fetchSourceFile: (sourceId: string, path: string, options?: { orgId?: string }) => Promise<{ content?: string | null }>;
   pushToast: (message: string, tone?: 'success' | 'error' | 'info' | 'warning') => void;
   handleApplyReviewFindingFix: (findingId: string) => void;
   handleIgnoreReviewFinding: (findingId: string) => void;
@@ -102,7 +104,7 @@ interface DocIntelligencePanelProps {
   apiBase?: string;
   tasks?: readonly PanelTask[];
   onOpenTask?: (taskId: number) => void;
-  onOpenRelatedDoc?: (sourceId: string, path: string) => void;
+  onOpenRelatedDoc?: (sourceId: string, path: string, orgId?: string) => void;
   /** When true (split view), the panel header shows which file it describes. */
   splitMode?: boolean;
 }
@@ -237,6 +239,7 @@ export default function DocIntelligencePanel({
   currentDocId,
   currentFile,
   currentSourceId,
+  orgId,
   currentFileReadOnly,
   editMode,
   setEditMode,
@@ -289,6 +292,7 @@ export default function DocIntelligencePanel({
   const [noteDraft, setNoteDraft] = useState('');
   const [notesBusy, setNotesBusy] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
+  const relatedRequestIdRef = useRef(0);
 
   useEffect(() => {
     if (!focusedRail) {
@@ -337,7 +341,7 @@ export default function DocIntelligencePanel({
     setNotes([]);
     setNoteDraft('');
     setNotesError(null);
-  }, [currentFile, currentSourceId]);
+  }, [currentFile, currentSourceId, orgId]);
 
   const notesQuery = useCallback(() => {
     const params = new URLSearchParams({ path: currentFile ?? '' });
@@ -433,14 +437,20 @@ export default function DocIntelligencePanel({
       return;
     }
 
-    const stem = docFilenameStem(currentFile);
+    const requestId = ++relatedRequestIdRef.current;
+    const selectedOrg = orgId?.trim();
+    const orgHeaders = orgScopeHeaders(selectedOrg);
     setRelatedLoading(true);
     setRelatedError(null);
     requestJsonWithFallback<{ results?: Array<{ sourceId?: string; path?: string; sourceName?: string }> }>({
-      urls: buildApiCandidates(`/fs/search?q=${encodeURIComponent(stem)}&limit=20`, apiBase),
+      urls: buildApiCandidates(buildRelatedDocSearchPath(currentFile, selectedOrg), apiBase),
+      init: Object.keys(orgHeaders).length > 0 ? { headers: orgHeaders } : undefined,
       fallbackError: 'Related document search failed.',
     })
       .then((data) => {
+        if (requestId !== relatedRequestIdRef.current) {
+          return;
+        }
         const raw = (data?.results ?? [])
           .filter((entry): entry is { sourceId: string; path: string; sourceName?: string } =>
             Boolean(entry && typeof entry.sourceId === 'string' && typeof entry.path === 'string'),
@@ -448,20 +458,27 @@ export default function DocIntelligencePanel({
         setRelatedDocs(filterRelatedDocResults(raw, currentFile));
       })
       .catch((error) => {
+        if (requestId !== relatedRequestIdRef.current) {
+          return;
+        }
         setRelatedError(error instanceof Error ? error.message : 'Related document search failed.');
         setRelatedDocs([]);
       })
       .finally(() => {
-        setRelatedLoading(false);
+        if (requestId === relatedRequestIdRef.current) {
+          setRelatedLoading(false);
+        }
       });
-  }, [apiBase, currentFile]);
+  }, [apiBase, currentFile, currentSourceId, orgId]);
 
   useEffect(() => {
     if (activeTab === 'related' && activeRail === 'intelligence' && currentFile) {
       loadRelatedDocs();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeRail, currentFile]);
+    return () => {
+      relatedRequestIdRef.current += 1;
+    };
+  }, [activeRail, activeTab, currentFile, currentSourceId, loadRelatedDocs, orgId]);
 
   const handleAskSubmit = useCallback(() => {
     const question = askQuestion.trim();
@@ -715,7 +732,9 @@ export default function DocIntelligencePanel({
                   setSuggestions(response.suggestions);
                   pushToast('Suggestion accepted.', 'success');
                   if (currentSourceId && currentFile) {
-                    const updated = await fetchSourceFile(currentSourceId, currentFile);
+                    const updated = await fetchSourceFile(currentSourceId, currentFile, {
+                      orgId: orgId || undefined,
+                    });
                     setFileContent(updated.content || '');
                   }
                 } catch (error) {
@@ -904,7 +923,7 @@ export default function DocIntelligencePanel({
           <button
             key={`${doc.sourceId}::${doc.path}`}
             type="button"
-            onClick={() => onOpenRelatedDoc?.(doc.sourceId, doc.path)}
+            onClick={() => onOpenRelatedDoc?.(doc.sourceId, doc.path, orgId?.trim() || undefined)}
             className="block w-full rounded-lg border border-[var(--border-primary)] bg-[var(--bg-secondary)] px-3 py-2 text-left transition hover:border-[var(--border-secondary)] hover:bg-[var(--bg-tertiary)]"
           >
             <div className="truncate text-xs font-medium text-[var(--text-primary)]">📄 {doc.path}</div>

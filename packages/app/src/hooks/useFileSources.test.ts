@@ -7,6 +7,7 @@ import { useFileSources } from './useFileSources.ts';
 const API_BASE = 'https://entity.test';
 const API_TOKEN = 'secret-abc';
 const FILE_CACHE_KEY = '/fs/file?sourceId=protected&path=secret.md';
+const TREE_CACHE_KEY = '/fs/tree?sourceId=protected&path=';
 
 type CacheEntry = {
   key: string;
@@ -185,6 +186,14 @@ function seedCachedFile(): void {
   });
 }
 
+function seedCachedTree(): void {
+  cacheEntries.set(TREE_CACHE_KEY, {
+    key: TREE_CACHE_KEY,
+    payload: { sourceId: 'protected', path: '', nodes: [{ name: 'private.md', path: 'private.md', isDirectory: false }] },
+    updatedAt: Date.now() - 1_000,
+  });
+}
+
 function headersOf(init: RequestInit | undefined): Headers {
   return new Headers(init?.headers);
 }
@@ -258,6 +267,131 @@ test('useFileSources attaches the bearer token to every file-source request and 
   }
 });
 
+test('useFileSources forwards the selected organization to canonical file reads and writes', async () => {
+  installWindow();
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    if (init?.method === 'GET') {
+      return jsonResponse({ sourceId: 'source-1', path: 'guide.md', content: 'hello' });
+    }
+    return jsonResponse({ sourceId: 'source-1', path: 'guide.md', updatedAt: null });
+  }) as typeof fetch;
+
+  try {
+    const hook = renderHook();
+    await hook.fetchFile('source-1', 'guide.md', { orgId: 'org-beta' });
+    await hook.writeFile('source-1', 'guide.md', 'updated', { orgId: 'org-beta' });
+    await hook.createFolder('source-1', 'new-folder', { orgId: 'org-beta' });
+
+    assert.equal(new URL(calls[0]?.url ?? '', API_BASE).searchParams.get('orgId'), 'org-beta');
+    assert.equal(headersOf(calls[0]?.init).get('x-entity-org-id'), 'org-beta');
+    assert.equal(headersOf(calls[1]?.init).get('x-entity-org-id'), 'org-beta');
+    assert.equal(headersOf(calls[2]?.init).get('x-entity-org-id'), 'org-beta');
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearWindow();
+  }
+});
+
+test('useFileSources keeps Unicode/control organization scope in query or body without invalid headers', async () => {
+  installWindow();
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    if (String(input).includes('/fs/tree')) {
+      return jsonResponse({ sourceId: 'source-1', path: '', nodes: [] });
+    }
+    if (String(input).includes('/fs/file') && init?.method === 'GET') {
+      return jsonResponse({ sourceId: 'source-1', path: 'guide.md', content: 'hello' });
+    }
+    if (String(input).includes('/fs/file')) {
+      return jsonResponse({ sourceId: 'source-1', path: 'guide.md', updatedAt: null });
+    }
+    if (String(input).includes('/fs/folder')) {
+      return jsonResponse({ sourceId: 'source-1', path: 'docs' });
+    }
+    if (String(input).includes('/fs/search')) {
+      return jsonResponse({ results: [] });
+    }
+    throw new Error(`unexpected test URL: ${String(input)}`);
+  }) as typeof fetch;
+
+  try {
+    const orgId = '组织/😀';
+    const hook = renderHook();
+    await hook.fetchTree('source-1', '', { orgId });
+    await hook.fetchFile('source-1', 'guide.md', { orgId });
+    await hook.createFile('source-1', 'guide.md', 'hello', { orgId });
+    await hook.writeFile('source-1', 'guide.md', 'updated', { orgId });
+    await hook.createFolder('source-1', 'docs', { orgId });
+    await hook.searchFiles('guide', { orgId });
+
+    assert.equal(calls.length, 6);
+    for (const call of calls) {
+      assert.equal(new URL(call.url, API_BASE).searchParams.get('orgId'), orgId);
+      assert.equal(headersOf(call.init).has('x-entity-org-id'), false);
+    }
+
+    const controlOrgId = 'org\u0001';
+    await hook.searchFiles('guide', { orgId: controlOrgId });
+    const controlCall = calls[calls.length - 1];
+    assert.equal(new URL(controlCall?.url ?? '', API_BASE).searchParams.get('orgId'), controlOrgId);
+    assert.equal(headersOf(controlCall?.init).has('x-entity-org-id'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearWindow();
+  }
+});
+
+test('useFileSources uploads original bytes as base64 for text-like and binary files', async () => {
+  installWindow();
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return jsonResponse({ sourceId: 'source-1', path: 'uploaded.bin', orgId: 'org-a', teamId: null, displayName: 'uploaded.bin', size: 0, updatedAt: null });
+  }) as typeof fetch;
+
+  const expectedBase64 = (bytes: Uint8Array): string => {
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+    }
+    return btoa(binary);
+  };
+  const samples = [
+    { name: 'utf16.txt', type: 'text/plain', bytes: new Uint8Array([0xff, 0xfe, 0x41, 0x00]) },
+    { name: 'bom.txt', type: 'text/plain', bytes: new Uint8Array([0xef, 0xbb, 0xbf, 0xc3, 0x28]) },
+    { name: 'empty.txt', type: 'text/plain', bytes: new Uint8Array() },
+    { name: 'limit.bin', type: 'application/octet-stream', bytes: new Uint8Array(1024 * 1024).fill(0xa5) },
+  ];
+
+  try {
+    const hook = renderHook();
+    for (const sample of samples) {
+      await hook.uploadFile(
+        'source-1',
+        new File([sample.bytes], sample.name, { type: sample.type }),
+        { orgId: 'org-a', teamId: null },
+      );
+      const body = JSON.parse(String(calls[calls.length - 1]?.init?.body)) as {
+        file?: { text?: string; contentBase64?: string; mimeType?: string };
+        teamId?: string | null;
+      };
+      assert.equal(body.file?.contentBase64, expectedBase64(sample.bytes), `${sample.name} bytes must remain exact`);
+      assert.equal(body.file?.text, undefined, `${sample.name} must not use text decoding`);
+      assert.equal(body.file?.mimeType, sample.type);
+      assert.equal(body.teamId, null, 'explicit organization-wide scope must send teamId:null');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearWindow();
+  }
+});
+
 test('useFileSources never reads or serves cached file content after a non-cache-eligible HTTP status', async () => {
   installWindow();
   const originalFetch = globalThis.fetch;
@@ -302,6 +436,24 @@ test('useFileSources retains offline cache fallback for network and server-trans
       assert.equal(result.cached, true);
       assert.equal(cacheGetCounts.get(FILE_CACHE_KEY), 1, `${failure} should consult the offline cache once`);
     }
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearWindow();
+  }
+});
+
+test('useFileSources never serves cached tree rows after a non-cache-eligible HTTP status', async () => {
+  installWindow();
+  const originalFetch = globalThis.fetch;
+  try {
+    resetCache();
+    seedCachedTree();
+    globalThis.fetch = (async () => jsonResponse({ error: 'denied' }, 403)) as typeof fetch;
+    await assert.rejects(
+      () => renderHook().fetchTree('protected', ''),
+      /Request failed \(403\)/,
+    );
+    assert.equal(cacheGetCounts.get(TREE_CACHE_KEY) ?? 0, 0, '403 must not read the cached protected tree entry');
   } finally {
     globalThis.fetch = originalFetch;
     clearWindow();

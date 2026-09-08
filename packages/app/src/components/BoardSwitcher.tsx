@@ -9,6 +9,7 @@ import {
   type BoardTemplate,
   type BoardView,
   type BoardFilterScope,
+  type BoardFilterConfig,
 } from '../lib/boardsState';
 
 const TEMPLATE_LABELS: Record<BoardTemplate, string> = {
@@ -73,6 +74,9 @@ export function BoardSwitcher({
   const [customizeScope, setCustomizeScope] = useState<BoardFilterScope>('all');
   const [customizeWorkDomain, setCustomizeWorkDomain] = useState('');
   const [customizeProjectIds, setCustomizeProjectIds] = useState('');
+  const [customizeExistingFilter, setCustomizeExistingFilter] = useState<BoardFilterConfig | null>(
+    null,
+  );
   const addInputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -107,6 +111,7 @@ export function BoardSwitcher({
     setCustomizeProjectIds(
       Array.isArray(board.filter_config.projectIds) ? board.filter_config.projectIds.join(',') : '',
     );
+    setCustomizeExistingFilter(board.filter_config);
     setMenuForId(null);
   }
 
@@ -116,9 +121,11 @@ export function BoardSwitcher({
       scope: customizeScope,
       workDomain: customizeWorkDomain,
       projectIdsCsv: customizeProjectIds,
+      existingFilter: customizeExistingFilter ?? undefined,
     });
     onCustomize(id, patch);
     setCustomizingId(null);
+    setCustomizeExistingFilter(null);
   }
 
   function moveBoard(board: BoardSummary, delta: -1 | 1) {
@@ -254,7 +261,14 @@ export function BoardSwitcher({
               ) : null}
               <span className="flex items-center gap-1">
                 <button type="button" onClick={() => submitCustomize(board.id)} className="mc-shell-btn px-2 py-1 text-xs">Save</button>
-                <button type="button" onClick={() => setCustomizingId(null)} className="mc-shell-btn px-2 py-1 text-xs">Cancel</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomizingId(null);
+                    setCustomizeExistingFilter(null);
+                  }}
+                  className="mc-shell-btn px-2 py-1 text-xs"
+                >Cancel</button>
               </span>
             </span>
           );

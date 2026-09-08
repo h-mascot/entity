@@ -1,18 +1,42 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getFileAgentFilterOptions } from '../lib/agentRegistry';
 import { FILE_SORT_OPTIONS, sortSearchResults, type FileResultSort } from '../lib/fileSearchSort';
+import { sourceCanUpload } from '../lib/sourceAvailability';
+import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
+import {
+  normalizeUploadTeamSelection,
+  uploadScopeNeedsSelection,
+  UPLOAD_ORG_WIDE_SCOPE,
+  buildUploadScopeOptions,
+  type UploadTeamOption,
+} from '../lib/uploadScope';
 import { useUserProfile } from '../lib/userProfile';
+import { buildUnifiedFileSearchIdentity, isUnifiedFileSearchCurrent } from '../lib/unifiedFileSearch.ts';
+import { resolveLegacyFileOrgSelection } from '../lib/legacyFileScope';
 import { useFileSources } from '../hooks/useFileSources';
 import type { FileSource, UnifiedSearchResult } from '../types/filesystem';
 
 interface UnifiedFileDashboardProps {
   apiBase?: string;
   enabled?: boolean;
-  onOpen: (sourceId: string, path: string) => void;
+  onOpen: (sourceId: string, path: string, orgId?: string) => void;
+  browserOrgId?: string | null;
+  onBrowserOrgChange?: (orgId: string | null) => void;
 }
 
-export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onOpen }: UnifiedFileDashboardProps) {
-  const { sources, searchFiles } = useFileSources({ apiBase, enabled });
+interface UploadOrgOption {
+  id: string;
+  name: string;
+}
+
+export default function UnifiedFileDashboard({
+  apiBase = '',
+  enabled = true,
+  onOpen,
+  browserOrgId,
+  onBrowserOrgChange,
+}: UnifiedFileDashboardProps) {
+  const { sources, searchFiles, uploadFile } = useFileSources({ apiBase, enabled });
   const [userProfile] = useUserProfile();
   const [query, setQuery] = useState('');
   const [sourceId, setSourceId] = useState('all');
@@ -23,7 +47,21 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const sortedResults = useMemo(() => sortSearchResults(results, sort), [results, sort]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const [searchNonce, setSearchNonce] = useState(0);
+  const [uploadOrgs, setUploadOrgs] = useState<UploadOrgOption[]>([]);
+  const [uploadOrgId, setUploadOrgId] = useState(() => browserOrgId?.trim() || '');
+  const [uploadTeams, setUploadTeams] = useState<UploadTeamOption[]>([]);
+  const [uploadTeamId, setUploadTeamId] = useState('');
+  const [uploadOrgsLoading, setUploadOrgsLoading] = useState(false);
+  const [uploadTeamsLoading, setUploadTeamsLoading] = useState(false);
+  const [uploadScopeError, setUploadScopeError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const searchRequestIdRef = useRef(0);
+  const browserOrgIdRef = useRef(browserOrgId);
+  browserOrgIdRef.current = browserOrgId;
+  const [resultsIdentity, setResultsIdentity] = useState<string | null>(null);
 
   const sourceOptions = useMemo(() => ['all', ...sources.map((source) => source.id)], [sources]);
   const sourceLabelById = useMemo(() => {
@@ -33,35 +71,180 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
     }
     return map;
   }, [sources]);
+  const writableSources = useMemo(() => sources.filter(sourceCanUpload), [sources]);
   const activeSourceTabs = useMemo(() => sourceOptions.slice(0, 6), [sourceOptions]);
+  const searchIdentity = useMemo(() => buildUnifiedFileSearchIdentity({
+    query,
+    orgId: uploadOrgId || undefined,
+    sourceId,
+    type,
+    origin,
+    agent,
+    refreshNonce: searchNonce,
+  }), [agent, origin, query, searchNonce, sourceId, type, uploadOrgId]);
+  const currentSearchIdentityRef = useRef(searchIdentity);
+  currentSearchIdentityRef.current = searchIdentity;
+  const sortedResults = useMemo(
+    () => sortSearchResults(resultsIdentity === searchIdentity ? results : [], sort),
+    [results, resultsIdentity, searchIdentity, sort],
+  );
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled) return;
+    let cancelled = false;
+    setUploadOrgsLoading(true);
+    setUploadScopeError(null);
+    void requestJsonWithFallback<{ orgs?: UploadOrgOption[] }>({
+      urls: buildApiCandidates('/orgs', apiBase),
+      fallbackError: 'Failed to load upload organizations.',
+    }).then((payload) => {
+      if (cancelled) return;
+      const nextOrgs = Array.isArray(payload.orgs) ? payload.orgs : [];
+      setUploadOrgs(nextOrgs);
+      const nextOrgId = resolveLegacyFileOrgSelection(
+        browserOrgIdRef.current ?? uploadOrgId,
+        nextOrgs.map((org) => org.id),
+      ) ?? '';
+      setUploadOrgId(nextOrgId);
+      onBrowserOrgChange?.(nextOrgId || null);
+      if (nextOrgs.length === 0) {
+        setUploadScopeError('No organizations are available for file access.');
+      }
+    }).catch((err) => {
+      if (!cancelled) {
+        setUploadScopeError(toErrorMessage(err, 'Failed to load upload organizations.'));
+        setUploadOrgs([]);
+        setUploadOrgId('');
+      }
+    }).finally(() => {
+      if (!cancelled) setUploadOrgsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, enabled, onBrowserOrgChange]);
+
+  useEffect(() => {
+    if (browserOrgId === undefined) return;
+    const nextOrgId = browserOrgId?.trim() || '';
+    setUploadOrgId((current) => current === nextOrgId ? current : nextOrgId);
+  }, [browserOrgId]);
+
+  useEffect(() => {
+    if (!enabled || !uploadOrgId) {
+      setUploadTeams([]);
+      setUploadTeamId('');
+      return;
+    }
+    let cancelled = false;
+    setUploadTeamsLoading(true);
+    setUploadScopeError(null);
+    void requestJsonWithFallback<{ teams?: UploadTeamOption[] }>({
+      urls: buildApiCandidates(`/orgs/${encodeURIComponent(uploadOrgId)}/teams`, apiBase),
+      fallbackError: 'Failed to load upload teams.',
+    }).then((payload) => {
+      if (cancelled) return;
+      const nextTeams = Array.isArray(payload.teams) ? payload.teams : [];
+      setUploadTeams(nextTeams);
+      setUploadTeamId((current) => normalizeUploadTeamSelection(current, nextTeams));
+    }).catch((err) => {
+      if (!cancelled) {
+        setUploadScopeError(toErrorMessage(err, 'Failed to load upload teams.'));
+        setUploadTeams([]);
+        setUploadTeamId('');
+      }
+    }).finally(() => {
+      if (!cancelled) setUploadTeamsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, enabled, uploadOrgId]);
+
+  const uploadNeedsScopeChoice = uploadScopeNeedsSelection(uploadOrgs.length, uploadOrgId, uploadTeams, uploadTeamId);
+  const uploadScopeBlocked = uploadOrgsLoading || uploadTeamsLoading || Boolean(uploadScopeError) || uploadNeedsScopeChoice;
+  const fileSearchScopeBlocked = uploadOrgsLoading || !uploadOrgId;
+
+  useEffect(() => {
+    const requestId = ++searchRequestIdRef.current;
+    if (!enabled || fileSearchScopeBlocked) {
+      setLoading(false);
+      setError(!enabled || uploadOrgsLoading ? null : uploadScopeError ?? 'Choose an organization before searching.');
+      setResults([]);
+      setResultsIdentity(null);
       return;
     }
 
+    // Clear prior-scope results immediately, so a pending request cannot make
+    // files from the previous organization/filter selectable in the new one.
+    setLoading(true);
+    setError(null);
+    setResults([]);
+    setResultsIdentity(null);
     const timer = window.setTimeout(async () => {
-      setLoading(true);
-      setError(null);
       try {
         const payload = await searchFiles(query, {
+          orgId: uploadOrgId || undefined,
           sourceId: sourceId !== 'all' ? sourceId : undefined,
           type: type !== 'all' ? type : undefined,
           origin: origin !== 'all' ? origin : undefined,
           agent: agent !== 'all' ? agent : undefined,
           limit: 40,
         });
+        if (!isUnifiedFileSearchCurrent(requestId, searchRequestIdRef.current, searchIdentity, currentSearchIdentityRef.current)) return;
         setResults(payload.results);
+        setResultsIdentity(searchIdentity);
       } catch (err) {
+        if (!isUnifiedFileSearchCurrent(requestId, searchRequestIdRef.current, searchIdentity, currentSearchIdentityRef.current)) return;
         setError(err instanceof Error ? err.message : 'Failed to search files.');
         setResults([]);
       } finally {
-        setLoading(false);
+        if (isUnifiedFileSearchCurrent(requestId, searchRequestIdRef.current, searchIdentity, currentSearchIdentityRef.current)) {
+          setLoading(false);
+        }
       }
     }, 180);
 
     return () => window.clearTimeout(timer);
-  }, [agent, enabled, origin, query, searchFiles, sourceId, type]);
+  }, [agent, enabled, fileSearchScopeBlocked, origin, query, searchFiles, searchNonce, sourceId, type, uploadOrgId, uploadOrgsLoading, uploadScopeError]);
+
+  const handleUploadChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (uploadScopeError) {
+      setUploadNotice(uploadScopeError);
+      return;
+    }
+    if (uploadNeedsScopeChoice) {
+      setUploadNotice(uploadOrgs.length > 1 && !uploadOrgId
+        ? 'Choose an organization before uploading.'
+        : 'Choose a team or organization-wide scope before uploading.');
+      return;
+    }
+    const selected = sourceId !== 'all' ? sourceLabelById.get(sourceId) : undefined;
+    if (selected && !sourceCanUpload(selected)) {
+      setUploadNotice('The selected file source is read-only.');
+      return;
+    }
+    const targetSourceId = selected?.id ?? writableSources[0]?.id;
+    if (!targetSourceId) {
+      setUploadNotice('No writable file source available.');
+      return;
+    }
+    setUploading(true);
+    setUploadNotice(null);
+    try {
+      const uploadOptions = buildUploadScopeOptions(uploadOrgId, uploadTeamId);
+      const uploaded = await uploadFile(targetSourceId, file, uploadOptions);
+      setUploadNotice(`Uploaded ${uploaded.displayName} → ${uploaded.path}${uploaded.teamId ? ` (team: ${uploaded.teamId})` : ''}`);
+      setSearchNonce((value) => value + 1);
+    } catch (err) {
+      setUploadNotice(err instanceof Error ? err.message : 'Upload failed.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   if (!enabled) {
     return null;
@@ -164,9 +347,60 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
               );
             })}
           </div>
+          {(uploadOrgs.length > 1 || uploadTeams.length > 0 || uploadScopeError) && (
+            <div className="flex w-full flex-wrap items-center gap-2 text-xs" aria-label="Upload scope">
+              {uploadOrgs.length > 1 && (
+                <label className="flex items-center gap-2 text-[var(--text-muted)]" htmlFor="file-upload-org">
+                  Organization
+                  <select
+                    id="file-upload-org"
+                    value={uploadOrgId}
+                    onChange={(event) => {
+                      const nextOrgId = event.target.value;
+                      setUploadOrgId(nextOrgId);
+                      onBrowserOrgChange?.(nextOrgId || null);
+                      setUploadTeamId('');
+                    }}
+                    className="mc-shell-input min-h-9 px-2 py-1.5 text-xs"
+                    disabled={uploadOrgsLoading}
+                  >
+                    <option value="">Choose organization…</option>
+                    {uploadOrgs.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
+                  </select>
+                </label>
+              )}
+              {uploadOrgId && uploadTeams.length > 0 && (
+                <label className="flex items-center gap-2 text-[var(--text-muted)]" htmlFor="file-upload-team">
+                  Upload scope
+                  <select
+                    id="file-upload-team"
+                    value={uploadTeamId}
+                    onChange={(event) => setUploadTeamId(event.target.value)}
+                    className="mc-shell-input min-h-9 px-2 py-1.5 text-xs"
+                    disabled={uploadTeamsLoading}
+                  >
+                    <option value="">Choose team…</option>
+                    <option value={UPLOAD_ORG_WIDE_SCOPE}>Organization-wide (if permitted)</option>
+                    {uploadTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                  </select>
+                </label>
+              )}
+              <span className="text-[var(--text-muted)]">Uploads are checked against your contributor access.</span>
+            </div>
+          )}
           <div className="flex items-center gap-2 max-md:w-full">
+            <input ref={fileInputRef} type="file" className="hidden" onChange={handleUploadChange} aria-label="Upload file" />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading || uploadScopeBlocked || Boolean(sourceLabelById.get(sourceId) && !sourceCanUpload(sourceLabelById.get(sourceId)!)) || (sourceId === 'all' && writableSources.length === 0)}
+              className="mc-shell-input min-h-9 px-3 py-1.5 text-xs max-md:flex-1 disabled:opacity-50"
+              title="Upload a file to the selected source"
+            >
+              {uploading ? 'Uploading…' : '⬆ Upload'}
+            </button>
             <span className="whitespace-nowrap text-xs text-[var(--text-muted)]">
-              {loading ? 'Searching…' : `${results.length} result${results.length === 1 ? '' : 's'}`}
+              {loading ? 'Searching…' : `${sortedResults.length} result${sortedResults.length === 1 ? '' : 's'}`}
             </span>
             <span className="relative inline-flex max-md:flex-1">
               <select
@@ -189,9 +423,10 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
+        {uploadNotice && <div className="mb-2 rounded-md border border-[var(--border-secondary)] bg-[var(--bg-secondary)] px-3 py-2 text-xs text-[var(--text-primary)]">{uploadNotice}</div>}
         {loading && <div className="text-xs text-[var(--text-muted)]">Searching files...</div>}
         {error && <div className="text-xs text-[var(--error)]">{error}</div>}
-        {!loading && !error && results.length === 0 && (
+        {!loading && !error && sortedResults.length === 0 && (
           <div className="entity-ops-empty text-sm">No files found. Adjust filters or query.</div>
         )}
         <div className="space-y-2">
@@ -203,7 +438,7 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
             // source + path so nothing appears twice.
             const metadata = restricted
               ? `${result.sourceName} • Access restricted • snippets and previews hidden`
-              : `${result.sourceName} • ${result.path}`;
+              : `${result.sourceName} • ${result.path}${result.owner ? ` • Uploaded${result.owner.teamId ? ` · team ${result.owner.teamId}` : ''}${result.owner.ownerPrincipalId ? ` · by ${result.owner.ownerPrincipalId}` : ''}` : ''}`;
 
             return (
               <button
@@ -211,7 +446,7 @@ export default function UnifiedFileDashboard({ apiBase = '', enabled = true, onO
                 type="button"
                 onClick={() => {
                   if (!restricted) {
-                    onOpen(result.sourceId, result.path);
+                    onOpen(result.sourceId, result.path, uploadOrgId || undefined);
                   }
                 }}
                 disabled={restricted}

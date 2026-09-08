@@ -309,6 +309,7 @@ export default function MobileView(props: any) {
     connected,
     currentFile,
     setCurrentFile,
+    setCurrentFileOrgId,
     setFileContent,
     setCurrentFilePreviewMeta,
     setCurrentFileCacheMeta,
@@ -349,6 +350,9 @@ export default function MobileView(props: any) {
     setSuggestions,
     pushToast,
     currentSourceId,
+    currentFileOrgId,
+    fileBrowserOrgId,
+    setFileBrowserOrgId,
     fetchSourceFile,
     reviewFindings,
     handleApplyReviewFindingFix,
@@ -414,7 +418,7 @@ export default function MobileView(props: any) {
   );
   const [mobileConvertPrompt, setMobileConvertPrompt] = useState('');
   const currentDocumentIdentity = currentFile
-    ? buildMobileDocHubDocumentIdentity(currentSourceId, currentFile)
+    ? buildMobileDocHubDocumentIdentity(currentSourceId, currentFile, currentFileOrgId)
     : null;
   const [mobileSurfaceState, dispatchMobileSurface] = useReducer(
     reduceMobileDocHubSurfaceState,
@@ -569,11 +573,13 @@ export default function MobileView(props: any) {
           window.location.pathname,
           window.location.search,
           window.location.origin,
+          currentFileOrgId,
         )
       : buildCanonicalSelectedDocHubToolUrl(
           {
             sourceId: currentSourceId ?? routeState?.sourceId ?? 'workspace',
             path: currentFile,
+            ...(currentFileOrgId ? { orgId: currentFileOrgId } : {}),
           },
           window.location.pathname,
           window.location.search,
@@ -642,6 +648,7 @@ export default function MobileView(props: any) {
   }, [
     currentFile,
     currentDocumentIdentity,
+    currentFileOrgId,
     currentSourceId,
     manualShareState.sheetSessionId,
     props.onMobileDocHubToolActivated,
@@ -897,7 +904,15 @@ export default function MobileView(props: any) {
 
   const renderFileHome = () => {
     if (runtime.fsMultiSourceEnabled) {
-      return <LazyUnifiedFileDashboard apiBase={runtime.apiBase} enabled onOpen={handleSourceFileSelect} />;
+      return (
+        <LazyUnifiedFileDashboard
+          apiBase={runtime.apiBase}
+          enabled
+          onOpen={handleSourceFileSelect}
+          browserOrgId={fileBrowserOrgId}
+          onBrowserOrgChange={setFileBrowserOrgId}
+        />
+      );
     }
 
     return (
@@ -909,6 +924,7 @@ export default function MobileView(props: any) {
 
   const clearCurrentFile = () => {
     setCurrentFile(null);
+    setCurrentFileOrgId(null);
     setFileContent('');
     setCurrentFilePreviewMeta(defaultFilePreviewMeta());
     setCurrentFileCacheMeta(defaultFileCacheMeta());
@@ -1147,7 +1163,9 @@ export default function MobileView(props: any) {
                                 setSuggestions(response.suggestions);
                                 pushToast('Suggestion accepted.', 'success');
                                 if (currentSourceId && currentFile) {
-                                  const updated = await fetchSourceFile(currentSourceId, currentFile);
+                                  const updated = await fetchSourceFile(currentSourceId, currentFile, {
+                                    orgId: currentFileOrgId ?? undefined,
+                                  });
                                   setFileContent(updated.content || '');
                                 }
                               } catch (error) {

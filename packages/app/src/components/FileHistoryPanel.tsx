@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
+import {
+  appendOrgScope,
+  buildOrgScopedRequestIdentity,
+  isOrgScopedRequestCurrent,
+  normalizeOptionalOrgId,
+  withOrgScope,
+} from '../lib/legacyFileScope.ts';
 
 type FileVersionMeta = {
   id: string;
@@ -176,6 +183,7 @@ export default function FileHistoryPanel({
   latestSavedContent,
   currentContent,
   isOpen,
+  orgId,
   onClose,
 }: {
   apiBase: string;
@@ -183,6 +191,7 @@ export default function FileHistoryPanel({
   latestSavedContent: string;
   currentContent: string;
   isOpen: boolean;
+  orgId?: string;
   onClose: () => void;
 }) {
   const ANIMATION_MS = 200;
@@ -190,50 +199,76 @@ export default function FileHistoryPanel({
   const [visible, setVisible] = useState(isOpen);
   const closeTimeoutRef = useRef<number | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const versionsRequestIdRef = useRef(0);
+  const selectedRequestIdRef = useRef(0);
 
   const [versions, setVersions] = useState<FileVersionMeta[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [loadedVersionsIdentity, setLoadedVersionsIdentity] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<FileVersion | null>(null);
+  const [selectedVersionIdentity, setSelectedVersionIdentity] = useState<string | null>(null);
   const [selectedLoading, setSelectedLoading] = useState(false);
   const [selectedError, setSelectedError] = useState<string | null>(null);
 
+  const effectivePath = filePath ?? null;
+  const encodedPath = useMemo(() => (effectivePath ? encodeURIComponent(effectivePath) : ''), [effectivePath]);
+  const normalizedOrgId = normalizeOptionalOrgId(orgId);
+  const versionsIdentity = useMemo(
+    () => buildOrgScopedRequestIdentity(normalizedOrgId, isOpen, effectivePath),
+    [effectivePath, isOpen, normalizedOrgId],
+  );
+  const currentVersionsIdentityRef = useRef(versionsIdentity);
+  currentVersionsIdentityRef.current = versionsIdentity;
+  const selectedIdentity = useMemo(
+    () => buildOrgScopedRequestIdentity(normalizedOrgId, isOpen, effectivePath, selectedId),
+    [effectivePath, isOpen, normalizedOrgId, selectedId],
+  );
+  const currentSelectedIdentityRef = useRef(selectedIdentity);
+  currentSelectedIdentityRef.current = selectedIdentity;
+  const visibleSelectedVersion = selectedVersionIdentity === selectedIdentity ? selectedVersion : null;
+  const visibleVersions = loadedVersionsIdentity === versionsIdentity ? versions : [];
+  const versionsPending = versionsLoading || loadedVersionsIdentity !== versionsIdentity;
   const selectedIndex = useMemo(
-    () => (selectedId ? versions.findIndex((entry) => entry.id === selectedId) : -1),
-    [selectedId, versions]
+    () => (selectedId ? visibleVersions.findIndex((entry) => entry.id === selectedId) : -1),
+    [selectedId, visibleVersions]
   );
 
   const diff = useMemo(() => {
-    if (!selectedVersion) return [];
+    if (!visibleSelectedVersion) return [];
 
-    const newerSnapshot = selectedIndex > 0 ? versions[selectedIndex - 1] : null;
+    const newerSnapshot = selectedIndex > 0 ? visibleVersions[selectedIndex - 1] : null;
     const nextContent = newerSnapshot?.content ?? latestSavedContent;
 
-    return diffLines(splitLines(selectedVersion.content), splitLines(nextContent));
-  }, [latestSavedContent, selectedIndex, selectedVersion, versions]);
+    return diffLines(splitLines(visibleSelectedVersion.content), splitLines(nextContent));
+  }, [latestSavedContent, selectedIndex, visibleSelectedVersion, visibleVersions]);
 
   const diffCounts = useMemo(() => countDiffLines(diff), [diff]);
 
-  const effectivePath = filePath ?? null;
-  const encodedPath = useMemo(() => (effectivePath ? encodeURIComponent(effectivePath) : ''), [effectivePath]);
-
   const fetchVersions = useCallback(async () => {
     if (!effectivePath) return;
+    const requestId = ++versionsRequestIdRef.current;
+    const requestIdentity = versionsIdentity;
     setVersionsLoading(true);
     setVersionsError(null);
 
     try {
-      const urls = buildLocalApiFallbackUrls(apiBase, `/files/${encodedPath}/versions`);
+      const urls = buildLocalApiFallbackUrls(
+        apiBase,
+        appendOrgScope(`/files/${encodedPath}/versions`, normalizedOrgId),
+      );
       const payload = await requestJsonWithFallback<{ versions: FileVersionMeta[] }>({
         urls,
-        init: { method: 'GET' },
+        init: withOrgScope({ method: 'GET' }, normalizedOrgId),
         continueOnStatuses: [],
         fallbackError: 'Unable to load file history.',
       });
 
+      if (!isOrgScopedRequestCurrent(requestId, versionsRequestIdRef.current, requestIdentity, currentVersionsIdentityRef.current)) return;
       const nextVersions = Array.isArray(payload.versions) ? payload.versions : [];
       setVersions(nextVersions);
+      setLoadedVersionsIdentity(requestIdentity);
 
       setSelectedId((current) => {
         if (current && nextVersions.some((item) => item.id === current)) {
@@ -242,14 +277,19 @@ export default function FileHistoryPanel({
         return nextVersions[0]?.id ?? null;
       });
     } catch (err) {
+      if (!isOrgScopedRequestCurrent(requestId, versionsRequestIdRef.current, requestIdentity, currentVersionsIdentityRef.current)) return;
       setVersionsError(toErrorMessage(err, 'Unable to load file history.'));
       setVersions([]);
+      setLoadedVersionsIdentity(null);
       setSelectedId(null);
       setSelectedVersion(null);
+      setSelectedVersionIdentity(null);
     } finally {
-      setVersionsLoading(false);
+      if (isOrgScopedRequestCurrent(requestId, versionsRequestIdRef.current, requestIdentity, currentVersionsIdentityRef.current)) {
+        setVersionsLoading(false);
+      }
     }
-  }, [apiBase, encodedPath, effectivePath]);
+  }, [apiBase, encodedPath, effectivePath, normalizedOrgId, versionsIdentity]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -314,10 +354,13 @@ export default function FileHistoryPanel({
   }, [isOpen, encodedPath, fetchVersions]);
 
   useEffect(() => {
+    const requestId = ++selectedRequestIdRef.current;
+    const requestIdentity = selectedIdentity;
     if (!isOpen) return;
     if (!effectivePath) return;
     if (!selectedId) {
       setSelectedVersion(null);
+      setSelectedVersionIdentity(null);
       return;
     }
 
@@ -327,22 +370,27 @@ export default function FileHistoryPanel({
 
     const run = async () => {
       try {
-        const urls = buildLocalApiFallbackUrls(apiBase, `/files/${encodedPath}/versions/${encodeURIComponent(selectedId)}`);
+        const urls = buildLocalApiFallbackUrls(
+          apiBase,
+          appendOrgScope(`/files/${encodedPath}/versions/${encodeURIComponent(selectedId)}`, normalizedOrgId),
+        );
         const payload = await requestJsonWithFallback<{ version: FileVersion }>({
           urls,
-          init: { method: 'GET' },
+          init: withOrgScope({ method: 'GET' }, normalizedOrgId),
           continueOnStatuses: [],
           fallbackError: 'Unable to load file version.',
         });
 
-        if (cancelled) return;
+        if (cancelled || !isOrgScopedRequestCurrent(requestId, selectedRequestIdRef.current, requestIdentity, currentSelectedIdentityRef.current)) return;
         setSelectedVersion(payload.version ?? null);
+        setSelectedVersionIdentity(requestIdentity);
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || !isOrgScopedRequestCurrent(requestId, selectedRequestIdRef.current, requestIdentity, currentSelectedIdentityRef.current)) return;
         setSelectedError(toErrorMessage(err, 'Unable to load file version.'));
         setSelectedVersion(null);
+        setSelectedVersionIdentity(null);
       } finally {
-        if (!cancelled) {
+        if (!cancelled && isOrgScopedRequestCurrent(requestId, selectedRequestIdRef.current, requestIdentity, currentSelectedIdentityRef.current)) {
           setSelectedLoading(false);
         }
       }
@@ -352,7 +400,7 @@ export default function FileHistoryPanel({
     return () => {
       cancelled = true;
     };
-  }, [apiBase, encodedPath, effectivePath, isOpen, selectedId]);
+  }, [apiBase, encodedPath, effectivePath, isOpen, normalizedOrgId, selectedId, selectedIdentity]);
 
   if (!isOpen && !mounted) return null;
 
@@ -398,7 +446,7 @@ export default function FileHistoryPanel({
           <div className="border-b border-[var(--border-primary)] px-4 py-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Recent changes</div>
-              {selectedVersion ? (
+              {visibleSelectedVersion ? (
                 <div className="text-xs text-[var(--text-muted)]">
                   Diff vs {selectedIndex > 0 ? 'next saved version' : 'latest saved version'}: <span className="text-green-200">+{diffCounts.added}</span>{' '}
                   <span className="text-red-200">-{diffCounts.removed}</span>
@@ -408,15 +456,15 @@ export default function FileHistoryPanel({
 
             {!effectivePath ? (
               <div className="text-sm text-[var(--text-muted)]">Select a file to see its history.</div>
-            ) : versionsLoading ? (
+            ) : versionsPending ? (
               <div className="text-sm text-[var(--text-muted)]">Loading history…</div>
             ) : versionsError ? (
               <div className="text-sm text-[var(--error)]">{versionsError}</div>
-            ) : versions.length === 0 ? (
+            ) : visibleVersions.length === 0 ? (
               <div className="text-sm text-[var(--text-muted)]">No saved versions yet.</div>
             ) : (
               <div className="space-y-2">
-                {versions.map((entry) => {
+                {visibleVersions.map((entry) => {
                   const selected = entry.id === selectedId;
                   return (
                     <button
@@ -450,12 +498,12 @@ export default function FileHistoryPanel({
               <div className="text-sm text-[var(--text-muted)]">Loading version…</div>
             ) : selectedError ? (
               <div className="text-sm text-[var(--error)]">{selectedError}</div>
-            ) : !selectedVersion ? (
+            ) : !visibleSelectedVersion ? (
               <div className="text-sm text-[var(--text-muted)]">Choose a version to see the diff.</div>
             ) : (
               <div className="mc-shell-card border border-[var(--border-secondary)] bg-[var(--bg-primary)]/60">
                 <div className="border-b border-[var(--border-primary)] px-3 py-2 text-xs text-[var(--text-muted)]">
-                  {selectedVersion.summary} • {selectedVersion.author || 'You'} • {new Date(selectedVersion.timestamp).toLocaleString()}
+                  {visibleSelectedVersion.summary} • {visibleSelectedVersion.author || 'You'} • {new Date(visibleSelectedVersion.timestamp).toLocaleString()}
                   {currentContent !== latestSavedContent && selectedIndex === 0 ? (
                     <span className="ml-2 text-amber-200">Unsaved editor changes are excluded from this diff.</span>
                   ) : null}

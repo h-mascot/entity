@@ -5,6 +5,7 @@ import type {
 } from '../../../db/src';
 import type { FileIndexRecord, FileSyncRunRecord } from '../../../db/src/file-index';
 import type { FileSourceRecord } from '../../../db/src/file-sources';
+import type { FsFileOwnershipRecord } from '../../../db/src/file-ownership';
 import { sourcePreviewRestricted } from '../fs/routes-search';
 import { buildGoogleExternalDocumentMetadata } from '../google-docs-metadata';
 import { permissionSafeRecord, type RequestOrgBinding } from '../request-permissions';
@@ -233,6 +234,7 @@ export function fileResult(
   source: FileSourceRecord,
   latestRun: FileSyncRunRecord | undefined,
   now: Date,
+  ownership?: FsFileOwnershipRecord,
 ): RankedSearchResult | null {
   const lagSeconds = secondsSince(now, record.indexed_at);
   const result: ScopedSearchResult = {
@@ -241,7 +243,7 @@ export function fileResult(
     title: record.title,
     snippet: record.preview,
     deepLink: { route: fileRoute(source.id, record.path) },
-    scope: { orgId: record.org_id ?? binding.orgId, teamId: null, projectIds: [] },
+    scope: { orgId: ownership?.org_id ?? record.org_id ?? binding.orgId, teamId: ownership?.team_id ?? null, projectIds: [] },
     state: null,
     reviewState: null,
     sensitivity: record.sensitivity ?? null,
@@ -272,7 +274,8 @@ export function fileResult(
   const safe = permissionSafeResult(binding, {
     object_type: 'search_result',
     object_id: record.id,
-    org_id: record.org_id,
+    org_id: ownership?.org_id ?? record.org_id,
+    team_id: ownership?.team_id ?? null,
     title: record.title,
     snippet: record.preview,
     content: record.preview,

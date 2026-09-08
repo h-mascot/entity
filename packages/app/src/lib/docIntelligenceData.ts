@@ -24,6 +24,16 @@ export function docFilenameStem(path: string): string {
   return dotIndex > 0 ? filename.slice(0, dotIndex) : filename;
 }
 
+/** Build the scoped file-search path used by the related-doc rail. */
+export function buildRelatedDocSearchPath(path: string, orgId?: string): string {
+  const params = new URLSearchParams({ q: docFilenameStem(path), limit: '20' });
+  const selectedOrg = orgId?.trim();
+  if (selectedOrg) {
+    params.set('orgId', selectedOrg);
+  }
+  return `/fs/search?${params.toString()}`;
+}
+
 /**
  * Tasks reference documents as free text in name/description/output (often as
  * /docs/... links). A task is "linked" when it mentions the doc path or its

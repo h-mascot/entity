@@ -1,7 +1,11 @@
-import type { Express } from "express";
+import type { Express, RequestHandler } from "express";
 
 interface RegisterActivityRoutesDeps {
   activityRepository: any;
+  /** Authorization for ordinary activity listings, when the mount requires it. */
+  authorizeAccess?: RequestHandler;
+  /** Report-only authorization; report aliases are control-plane views. */
+  authorizeReportAccess?: RequestHandler;
 }
 
 interface RegisterDbModeRoutesDeps {
@@ -68,12 +72,32 @@ function parseActivityFilterQuery(query: Record<string, unknown>): {
   return { filters, hasFilters: hasFilters || hasPagination, limit, offset };
 }
 
-export function registerActivityRoutes(app: Express, prefix: "" | "/api", deps: RegisterActivityRoutesDeps): void {
-  const { activityRepository } = deps;
+export function registerActivityRoutes(
+  app: Express,
+  prefix: "" | "/api" | "/api/admin",
+  deps: RegisterActivityRoutesDeps,
+): void {
+  const { activityRepository, authorizeAccess, authorizeReportAccess = authorizeAccess } = deps;
   const base = `${prefix}/activities`;
   const reportBase = `${prefix}/activity-report`;
 
-  app.get(base, (req, res) => {
+  const registerGet = (path: string, handler: RequestHandler): void => {
+    if (authorizeAccess) {
+      app.get(path, authorizeAccess, handler);
+    } else {
+      app.get(path, handler);
+    }
+  };
+
+  const registerReportGet = (path: string, handler: RequestHandler): void => {
+    if (authorizeReportAccess) {
+      app.get(path, authorizeReportAccess, handler);
+    } else {
+      app.get(path, handler);
+    }
+  };
+
+  registerGet(base, (req, res) => {
     const { filters, hasFilters, limit, offset } = parseActivityFilterQuery(
       req.query as Record<string, unknown>
     );
@@ -92,7 +116,7 @@ export function registerActivityRoutes(app: Express, prefix: "" | "/api", deps: 
     }
   });
 
-  app.get(reportBase, (req, res) => {
+  registerReportGet(reportBase, (req, res) => {
     const { filters, limit, offset } = parseActivityFilterQuery(
       req.query as Record<string, unknown>
     );
@@ -156,5 +180,3 @@ export function registerRuntimeRoutes(app: Express, prefix: "" | "/api", deps: R
     });
   });
 }
-
-

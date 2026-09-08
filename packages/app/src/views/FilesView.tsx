@@ -34,13 +34,23 @@ export default function FilesView(props: any) {
     onCloseOpenFileTab,
     onAddOpenFileTab,
     onGoHome,
+    browserOrgId,
+    onBrowserOrgChange,
     showDocHubTts,
     filesContextBarProps,
   } = props;
 
   const renderFileHome = () => {
     if (runtime.fsMultiSourceEnabled) {
-      return <LazyUnifiedFileDashboard apiBase={runtime.apiBase} enabled onOpen={handleSourceFileSelect} />;
+      return (
+        <LazyUnifiedFileDashboard
+          apiBase={runtime.apiBase}
+          enabled
+          onOpen={handleSourceFileSelect}
+          browserOrgId={browserOrgId}
+          onBrowserOrgChange={onBrowserOrgChange}
+        />
+      );
     }
 
     return (

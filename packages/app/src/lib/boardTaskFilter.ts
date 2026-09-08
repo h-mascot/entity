@@ -18,6 +18,7 @@ export interface BoardFilterConfigLike {
   scope: 'all' | 'projects' | 'workDomain' | 'none';
   projectIds?: number[];
   workDomain?: string | null;
+  excludeWorkDomains?: string[];
 }
 
 function normalizeDomain(value: string | null | undefined): string {
@@ -29,6 +30,10 @@ export function taskMatchesBoardFilter(
   task: BoardFilterableTask,
   filter: BoardFilterConfigLike,
 ): boolean {
+  const taskDomain = normalizeDomain(task.work_domain ?? null);
+  const excluded = (filter.excludeWorkDomains ?? []).map(normalizeDomain);
+  if (taskDomain && excluded.includes(taskDomain)) return false;
+
   switch (filter.scope) {
     case 'all':
       return true;

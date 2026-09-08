@@ -22,10 +22,11 @@ function createFakeActivityRepository() {
 
 async function withActivityServer(
   activityRepository: ReturnType<typeof createFakeActivityRepository>,
-  run: (baseUrl: string) => Promise<void>
+  run: (baseUrl: string) => Promise<void>,
+  authorizeReportAccess?: express.RequestHandler,
 ): Promise<void> {
   const app = express();
-  registerActivityRoutes(app, '/api', { activityRepository });
+  registerActivityRoutes(app, '/api', { activityRepository, authorizeReportAccess });
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const address = server.address();
@@ -150,5 +151,67 @@ describe('activity routes (MC #1369)', () => {
       expect(response.status).toBe(500);
       await expect(response.json()).resolves.toEqual({ error: 'report failure' });
     });
+  });
+
+  it('protects control-plane activity routes with supplied authorization middleware', async () => {
+    const repo = createFakeActivityRepository();
+    const authorize = vi.fn((_req: express.Request, res: express.Response) => {
+      res.status(403).json({ error: 'admin required' });
+    });
+    const app = express();
+    registerActivityRoutes(app, '/api/admin', {
+      activityRepository: repo,
+      authorizeAccess: authorize,
+    });
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/admin/activity-report`);
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: 'admin required' });
+      expect(authorize).toHaveBeenCalledTimes(1);
+      expect(repo.getActivityReport).not.toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it('protects the legacy activity report alias without changing activity listing access', async () => {
+    const repo = createFakeActivityRepository();
+    const deny = (_req: express.Request, res: express.Response) => {
+      res.status(403).json({ error: 'admin required' });
+    };
+    await withActivityServer(repo, async (baseUrl) => {
+      const reportResponse = await fetch(`${baseUrl}/api/activity-report`);
+      expect(reportResponse.status).toBe(403);
+      const activityResponse = await fetch(`${baseUrl}/api/activities`);
+      expect(activityResponse.status).toBe(200);
+      expect(repo.getActivityReport).not.toHaveBeenCalled();
+      expect(repo.listActivities).toHaveBeenCalledWith(100);
+    }, deny);
+  });
+
+  it('allows an authorized admin through the control-plane activity report', async () => {
+    const repo = createFakeActivityRepository();
+    const authorize = vi.fn((_req: express.Request, _res: express.Response, next: express.NextFunction) => next());
+    const app = express();
+    registerActivityRoutes(app, '/api/admin', {
+      activityRepository: repo,
+      authorizeAccess: authorize,
+    });
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test server failed to bind');
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/admin/activity-report`);
+      expect(response.status).toBe(200);
+      expect(authorize).toHaveBeenCalledTimes(1);
+      expect(repo.getActivityReport).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 });

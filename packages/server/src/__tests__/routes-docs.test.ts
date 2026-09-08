@@ -4,7 +4,12 @@ import fs from 'fs';
 import os from 'os';
 
 function mockReq(params: Record<string, any> = {}): any {
-  return { params };
+  return {
+    params,
+    header: vi.fn().mockReturnValue(undefined),
+    query: {},
+    body: {},
+  };
 }
 
 function mockRes(): any {
@@ -34,7 +39,10 @@ describe('Docs Route Handlers', () => {
     process.env.DOCS_WORK_ROOT = docsRoot;
     vi.resetModules();
     const { registerDocsRoute } = await import('../routes/docs');
-    registerDocsRoute(fakeApp);
+    registerDocsRoute(fakeApp, {
+      sourceRepo: { getSource: vi.fn(() => undefined), listSources: vi.fn(() => []) },
+      ownershipRepo: { getOwnership: vi.fn(() => undefined) },
+    });
   });
 
   afterEach(() => {

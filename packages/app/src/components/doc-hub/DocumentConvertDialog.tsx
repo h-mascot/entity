@@ -1,5 +1,11 @@
-import { useMemo, useState } from 'react';
-import { withApiToken } from '../../lib/http';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { withApiToken } from '../../lib/http.ts';
+import {
+  appendOrgScope,
+  buildOrgScopedRequestIdentity,
+  isOrgScopedRequestCurrent,
+  withOrgScope,
+} from '../../lib/legacyFileScope.ts';
 
 const TARGET_TYPES = [
   { value: 'daily-review', label: 'Daily review' },
@@ -16,6 +22,7 @@ export interface DocumentConvertDialogProps {
   sourceId: string | null;
   sourcePath: string | null;
   readOnly?: boolean;
+  orgId?: string;
   apiBase?: string;
   onClose: () => void;
   onConverted?: (result: { targetPath: string; targetType: string }) => void;
@@ -27,6 +34,7 @@ export default function DocumentConvertDialog({
   sourceId,
   sourcePath,
   readOnly = false,
+  orgId,
   apiBase = '',
   onClose,
   onConverted,
@@ -37,6 +45,14 @@ export default function DocumentConvertDialog({
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const conversionRequestIdRef = useRef(0);
+  const conversionIdentity = buildOrgScopedRequestIdentity(orgId, open, sourceId, sourcePath);
+  const conversionIdentityRef = useRef(conversionIdentity);
+  conversionIdentityRef.current = conversionIdentity;
+
+  useEffect(() => {
+    conversionRequestIdRef.current += 1;
+  }, [conversionIdentity]);
 
   const disabledReason = useMemo(() => {
     if (!open) return 'closed';
@@ -45,60 +61,62 @@ export default function DocumentConvertDialog({
     return null;
   }, [open, readOnly, sourceId, sourcePath]);
 
+  const buildRequest = (body: Record<string, unknown>) => buildDocumentConvertRequest(apiBase, body, orgId);
+
   if (!open) return null;
 
   const runPreview = async () => {
     if (disabledReason || !sourceId || !sourcePath) return;
+    const requestId = ++conversionRequestIdRef.current;
+    const requestIdentity = conversionIdentity;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/api/fs/documents/convert`, withApiToken({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const res = await fetch(...buildRequest({
           sourceId,
           path: sourcePath,
           targetType,
           targetName: targetName.trim() || undefined,
           dryRun: true,
-        }),
-      }));
+        }));
       const body = await res.json() as { preview?: string; error?: string };
+      if (!isCurrentConversionRequest(requestId, conversionRequestIdRef.current, requestIdentity, conversionIdentityRef.current)) return;
       if (!res.ok) throw new Error(body.error ?? `Preview failed (${res.status})`);
       setPreview(body.preview ?? 'Preview unavailable.');
     } catch (err) {
+      if (!isCurrentConversionRequest(requestId, conversionRequestIdRef.current, requestIdentity, conversionIdentityRef.current)) return;
       setError(err instanceof Error ? err.message : 'Preview failed.');
     } finally {
-      setLoading(false);
+      if (isCurrentConversionRequest(requestId, conversionRequestIdRef.current, requestIdentity, conversionIdentityRef.current)) setLoading(false);
     }
   };
 
   const runConvert = async () => {
     if (disabledReason || !sourceId || !sourcePath) return;
+    const requestId = ++conversionRequestIdRef.current;
+    const requestIdentity = conversionIdentity;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/api/fs/documents/convert`, withApiToken({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const res = await fetch(...buildRequest({
           sourceId,
           path: sourcePath,
           targetType,
           targetName: targetName.trim() || undefined,
-        }),
-      }));
+        }));
       const body = await res.json() as { targetPath?: string; targetType?: string; error?: string };
+      if (!isCurrentConversionRequest(requestId, conversionRequestIdRef.current, requestIdentity, conversionIdentityRef.current)) return;
       if (!res.ok) throw new Error(body.error ?? `Convert failed (${res.status})`);
       pushToast?.(`Created ${body.targetPath}`, 'success');
       onConverted?.({ targetPath: body.targetPath ?? '', targetType: body.targetType ?? targetType });
       onClose();
     } catch (err) {
+      if (!isCurrentConversionRequest(requestId, conversionRequestIdRef.current, requestIdentity, conversionIdentityRef.current)) return;
       const message = err instanceof Error ? err.message : 'Convert failed.';
       setError(message);
       pushToast?.(message, 'error');
     } finally {
-      setLoading(false);
+      if (isCurrentConversionRequest(requestId, conversionRequestIdRef.current, requestIdentity, conversionIdentityRef.current)) setLoading(false);
     }
   };
 
@@ -142,5 +160,35 @@ export default function DocumentConvertDialog({
         )}
       </div>
     </div>
+  );
+}
+
+export function buildDocumentConvertRequest(
+  apiBase: string,
+  body: Record<string, unknown>,
+  orgId?: string,
+): [string, RequestInit] {
+  const requestInit = withApiToken({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return [
+    appendOrgScope(`${apiBase}/api/fs/documents/convert`, orgId),
+    withOrgScope(requestInit, orgId) ?? requestInit,
+  ];
+}
+
+export function isCurrentConversionRequest(
+  requestId: number,
+  currentRequestId: number,
+  requestIdentity?: string,
+  currentIdentity?: string,
+): boolean {
+  return isOrgScopedRequestCurrent(
+    requestId,
+    currentRequestId,
+    requestIdentity ?? '',
+    currentIdentity ?? requestIdentity ?? '',
   );
 }

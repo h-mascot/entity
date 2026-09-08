@@ -48,6 +48,16 @@ describe('LocalFileSourceAdapter managed-storage integration', () => {
     expect(broker.stat).not.toHaveBeenCalledWith('/other/root/guide.md');
   });
 
+  it('preserves binary bytes through broker-backed exclusive writes', async () => {
+    const broker = controlledBroker();
+    const adapter = new LocalFileSourceAdapter(sourceFor('/managed/root'), { brokerClient: broker });
+    const bytes = Uint8Array.from([0x00, 0x01, 0xfe, 0xff]);
+
+    await adapter.writeRawExclusive('uploads/org-a/scan.bin', bytes);
+
+    expect(broker.exclusiveCreate).toHaveBeenCalledWith('uploads/org-a/scan.bin', bytes);
+  });
+
   it('validates the broker-bound root and ignores a different validation record root', async () => {
     const broker = controlledBroker();
     const adapter = new LocalFileSourceAdapter(sourceFor('/bound/root'), { brokerClient: broker });

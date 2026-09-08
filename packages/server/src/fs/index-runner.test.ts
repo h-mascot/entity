@@ -1,5 +1,8 @@
 import { constants as bufferConstants } from 'node:buffer';
+import fs from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileSourceRecord } from '../../../db/src/file-sources';
 
@@ -207,6 +210,77 @@ describe('FileIndexRunner deterministic incident skips', () => {
     await runner.runOnce();
 
     expect(reconcileSourcePathsMock).toHaveBeenCalledWith('book', ['notes/current.md']);
+  });
+
+  it('does not resurrect an orphan upload into the file index', async () => {
+    listSourcesMock.mockReturnValue([bookSource]);
+    const uploadPath = 'uploads/org-a/team-a/orphan.md';
+    const fixtures = new Map<string, FixtureNode[]>([['', [node(uploadPath, false)]]]);
+    const metadataByPath = new Map<string, FixtureMetadata>([[uploadPath, metadata(uploadPath, 'file')]]);
+    const bookAdapter = createAdapter(fixtures, metadataByPath, new Set());
+    createFileSourceAdapterMock.mockReturnValue(bookAdapter.adapter);
+
+    const { FileIndexRunner } = await import('./index-runner');
+    const runner = new FileIndexRunner({
+      maxConcurrentSources: 1,
+      ownershipRepo: { getOwnership: vi.fn(() => undefined) },
+    });
+
+    await runner.runOnce();
+
+    expect(upsertRecordMock).not.toHaveBeenCalled();
+    expect(deleteBySourcePathPrefixMock).toHaveBeenCalledWith('book', uploadPath);
+  });
+
+  it('indexes an owned overlapping alias with the owner organization', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'entity-index-overlap-'));
+    const nested = path.join(root, 'nested');
+    await fs.mkdir(path.join(nested, 'uploads/org-a/team-a'), { recursive: true });
+    const aliasPath = 'nested/uploads/org-a/team-a/file.md';
+    await fs.writeFile(path.join(root, aliasPath), '# Private\n', 'utf8');
+    const sourceA = { ...bookSource, base_path: root };
+    const sourceB = { ...spockSource, base_path: nested };
+    listSourcesMock.mockReturnValue([sourceA, sourceB]);
+    getSourceMock.mockImplementation((id: string) => id === sourceA.id ? sourceA : id === sourceB.id ? sourceB : undefined);
+    const adapterA = createAdapter(new Map([['', [node(aliasPath, false)]]]), new Map([[aliasPath, metadata(aliasPath, 'file')]]), new Set());
+    const adapterB = createAdapter(new Map([['', []]]), new Map(), new Set());
+    adapterA.read.mockResolvedValue({ content: '# Private\n', updatedAt: '2026-09-07T00:00:00.000Z' });
+    createFileSourceAdapterMock.mockImplementation((candidate: FileSourceRecord) => candidate.id === sourceA.id ? adapterA.adapter : adapterB.adapter);
+    const owner = {
+      source_id: sourceB.id, path: 'uploads/org-a/team-a/file.md', org_id: 'org-a', team_id: 'team-a', owner_principal_id: 'owner', display_name: 'file.md', origin: 'upload' as const,
+      uploaded_at: '2026-09-07T00:00:00.000Z', updated_at: '2026-09-07T00:00:00.000Z',
+    };
+
+    const { FileIndexRunner } = await import('./index-runner');
+    await new FileIndexRunner({ maxConcurrentSources: 1, excludes: [], ownershipRepo: { getOwnership: vi.fn((sourceId: string, filePath: string) => sourceId === owner.source_id && filePath === owner.path ? owner : undefined) } }).runOnce();
+
+    expect(upsertRecordMock).toHaveBeenCalledWith(expect.objectContaining({ source_id: sourceA.id, path: aliasPath, org_id: 'org-a' }));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it('does not index a pending overlapping alias', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'entity-index-overlap-pending-'));
+    const nested = path.join(root, 'nested');
+    await fs.mkdir(path.join(nested, 'uploads/org-a/team-a'), { recursive: true });
+    const aliasPath = 'nested/uploads/org-a/team-a/pending.md';
+    await fs.writeFile(path.join(root, aliasPath), '# Pending\n', 'utf8');
+    const sourceA = { ...bookSource, base_path: root };
+    const sourceB = { ...spockSource, base_path: nested };
+    listSourcesMock.mockReturnValue([sourceA, sourceB]);
+    getSourceMock.mockImplementation((id: string) => id === sourceA.id ? sourceA : id === sourceB.id ? sourceB : undefined);
+    const adapterA = createAdapter(new Map([['', [node(aliasPath, false)]]]), new Map([[aliasPath, metadata(aliasPath, 'file')]]), new Set());
+    const adapterB = createAdapter(new Map([['', []]]), new Map(), new Set());
+    createFileSourceAdapterMock.mockImplementation((candidate: FileSourceRecord) => candidate.id === sourceA.id ? adapterA.adapter : adapterB.adapter);
+    const pending = {
+      source_id: sourceB.id, path: 'uploads/org-a/team-a/pending.md', org_id: 'org-a', team_id: 'team-a', owner_principal_id: 'owner', display_name: 'pending.md', origin: 'pending' as const,
+      uploaded_at: '2026-09-07T00:00:00.000Z', updated_at: '2026-09-07T00:00:00.000Z',
+    };
+
+    const { FileIndexRunner } = await import('./index-runner');
+    await new FileIndexRunner({ maxConcurrentSources: 1, excludes: [], ownershipRepo: { getOwnership: vi.fn((sourceId: string, filePath: string) => sourceId === pending.source_id && filePath === pending.path ? pending : undefined) } }).runOnce();
+
+    expect(upsertRecordMock).not.toHaveBeenCalledWith(expect.objectContaining({ path: aliasPath }));
+    await fs.rm(root, { recursive: true, force: true });
   });
 
   it('stores readable titles and previews for generated HTML files', async () => {

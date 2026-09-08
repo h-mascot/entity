@@ -45,6 +45,11 @@ test('scope all returns every task (General default keeps all existing tasks vis
   assert.equal(selectTasksForBoard(tasks, board({ scope: 'all' })).length, tasks.length);
 });
 
+test('scope all excludes engineering while retaining other and unclassified tasks', () => {
+  const general = board({ scope: 'all', excludeWorkDomains: [' Engineering '] });
+  assert.deepEqual(selectTasksForBoard(tasks, general).map((t) => t.id), [2, 4, 5]);
+});
+
 test('scope none returns an empty list', () => {
   assert.deepEqual(selectTasksForBoard(tasks, board({ scope: 'none' })), []);
 });
@@ -86,6 +91,15 @@ test('scope workDomain with null target matches nothing', () => {
     selectTasksForBoard(tasks, board({ scope: 'workDomain', workDomain: null })).map((t) => t.id),
     [],
   );
+});
+
+test('an exclusion wins over a matching positive work-domain scope', () => {
+  const filter = {
+    scope: 'workDomain' as const,
+    workDomain: 'engineering',
+    excludeWorkDomains: ['engineering'],
+  };
+  assert.deepEqual(selectTasksForBoard(tasks, board(filter)).map((t) => t.id), []);
 });
 
 test('taskMatchesBoardFilter is reusable and never mutates input', () => {

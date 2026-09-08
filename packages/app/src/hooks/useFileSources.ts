@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage, withApiToken } from '../lib/http.ts';
+import { appendOrgScope, normalizeOptionalOrgId, orgScopeHeaders } from '../lib/legacyFileScope.ts';
 import { cacheApiPayload, readCachedApiPayloadEntry } from '../lib/offline.ts';
 import { shouldUseOfflineFileCache } from '../lib/fileCacheFallback.ts';
 import type {
@@ -8,6 +9,8 @@ import type {
   SourceTreeResponse,
   UnifiedSearchResponse,
 } from '../types/filesystem.ts';
+
+const MAX_UPLOAD_BYTES = 1 * 1024 * 1024;
 
 export interface SourceSyncResult {
   sourceId: string;
@@ -50,6 +53,10 @@ interface UpdateFileSourceInput {
   authRef?: string;
   icon?: string;
   enabled?: boolean;
+}
+
+interface FileScopeOptions {
+  orgId?: string;
 }
 
 function buildUrls(path: string, apiBase = ''): string[] {
@@ -248,19 +255,24 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
   );
 
   const fetchTree = useCallback(
-    async (sourceId: string, treePath = ''): Promise<SourceTreeResponse> => {
+    async (sourceId: string, treePath = '', options?: FileScopeOptions): Promise<SourceTreeResponse> => {
       const encodedSourceId = encodeURIComponent(sourceId);
       const encodedPath = encodeURIComponent(treePath);
-      const path = `/fs/tree?sourceId=${encodedSourceId}&path=${encodedPath}`;
+      const path = appendOrgScope(`/fs/tree?sourceId=${encodedSourceId}&path=${encodedPath}`, options?.orgId);
       const urls = uniqueUrls([
         ...buildApiOnlyUrls(path, apiBase),
       ]);
       let lastError: Error | null = null;
+      let cacheFallbackAllowed = true;
 
       for (const url of urls) {
         try {
-          const response = await fetch(url, withApiToken({ method: 'GET' }));
+          const response = await fetch(url, withApiToken({
+            method: 'GET',
+            headers: orgScopeHeaders(options?.orgId),
+          }));
           if (!response.ok) {
+            cacheFallbackAllowed = cacheFallbackAllowed && shouldUseOfflineFileCache(response.status);
             throw new Error(`Request failed (${response.status})`);
           }
 
@@ -272,9 +284,11 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
         }
       }
 
-      const cachedEntry = await readCachedApiPayloadEntry<SourceTreeResponse>(urls);
-      if (cachedEntry) {
-        return cachedEntry.payload;
+      if (cacheFallbackAllowed) {
+        const cachedEntry = await readCachedApiPayloadEntry<SourceTreeResponse>(urls);
+        if (cachedEntry) {
+          return cachedEntry.payload;
+        }
       }
 
       throw lastError ?? new Error('Failed to load source tree.');
@@ -283,10 +297,10 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
   );
 
   const fetchFile = useCallback(
-    async (sourceId: string, filePath: string): Promise<SourceFileResponse> => {
+    async (sourceId: string, filePath: string, options?: FileScopeOptions): Promise<SourceFileResponse> => {
       const encodedSourceId = encodeURIComponent(sourceId);
       const encodedPath = encodeURIComponent(filePath);
-      const path = `/fs/file?sourceId=${encodedSourceId}&path=${encodedPath}`;
+      const path = appendOrgScope(`/fs/file?sourceId=${encodedSourceId}&path=${encodedPath}`, options?.orgId);
       const urls = uniqueUrls([
         ...buildApiOnlyUrls(path, apiBase),
       ]);
@@ -295,7 +309,10 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
 
       for (const url of urls) {
         try {
-          const response = await fetch(url, withApiToken({ method: 'GET' }));
+          const response = await fetch(url, withApiToken({
+            method: 'GET',
+            headers: orgScopeHeaders(options?.orgId),
+          }));
           if (!response.ok) {
             cacheFallbackAllowed =
               cacheFallbackAllowed && shouldUseOfflineFileCache(response.status);
@@ -341,12 +358,15 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
   );
 
   const createFile = useCallback(
-    async (sourceId: string, filePath: string, content = ''): Promise<{ sourceId: string; path: string; updatedAt: string | null }> => {
+    async (sourceId: string, filePath: string, content = '', options?: FileScopeOptions): Promise<{ sourceId: string; path: string; updatedAt: string | null }> => {
       const response = await requestWithFallback(
-        buildApiOnlyUrls('/fs/file', apiBase),
+        buildApiOnlyUrls(appendOrgScope('/fs/file', options?.orgId), apiBase),
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...orgScopeHeaders(options?.orgId),
+          },
           body: JSON.stringify({ sourceId, path: filePath, content, mode: 'create' }),
         },
         'Failed to create file.'
@@ -357,12 +377,15 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
   );
 
   const writeFile = useCallback(
-    async (sourceId: string, filePath: string, content: string): Promise<{ sourceId: string; path: string; updatedAt: string | null }> => {
+    async (sourceId: string, filePath: string, content: string, options?: FileScopeOptions): Promise<{ sourceId: string; path: string; updatedAt: string | null }> => {
       const response = await requestWithFallback(
-        buildApiOnlyUrls('/fs/file', apiBase),
+        buildApiOnlyUrls(appendOrgScope('/fs/file', options?.orgId), apiBase),
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...orgScopeHeaders(options?.orgId),
+          },
           body: JSON.stringify({ sourceId, path: filePath, content, mode: 'overwrite' }),
         },
         'Failed to write file.'
@@ -373,12 +396,15 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
   );
 
   const createFolder = useCallback(
-    async (sourceId: string, folderPath: string): Promise<{ sourceId: string; path: string }> => {
+    async (sourceId: string, folderPath: string, options?: FileScopeOptions): Promise<{ sourceId: string; path: string }> => {
       const response = await requestWithFallback(
-        buildApiOnlyUrls('/fs/folder', apiBase),
+        buildApiOnlyUrls(appendOrgScope('/fs/folder', options?.orgId), apiBase),
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...orgScopeHeaders(options?.orgId),
+          },
           body: JSON.stringify({ sourceId, path: folderPath }),
         },
         'Failed to create folder.'
@@ -388,8 +414,52 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
     [apiBase]
   );
 
+  const uploadFile = useCallback(
+    async (sourceId: string, file: File, options?: { orgId?: string; teamId?: string | null }): Promise<{
+      sourceId: string;
+      path: string;
+      orgId: string;
+      teamId: string | null;
+      displayName: string;
+      size: number;
+      updatedAt: string | null;
+    }> => {
+      if (file.size > MAX_UPLOAD_BYTES) {
+        throw new Error('Upload exceeds the 1 MB limit.');
+      }
+      const filePayload: Record<string, unknown> = { name: file.name, ...(file.type ? { mimeType: file.type } : {}) };
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+      }
+      filePayload.contentBase64 = btoa(binary);
+      const payload: Record<string, unknown> = { sourceId, file: filePayload };
+      const normalizedOrgId = normalizeOptionalOrgId(options?.orgId);
+      if (normalizedOrgId) payload.orgId = normalizedOrgId;
+      if (options && Object.prototype.hasOwnProperty.call(options, 'teamId')) {
+        payload.teamId = options.teamId ?? null;
+      }
+      const response = await requestWithFallback(
+        buildApiOnlyUrls('/fs/upload', apiBase),
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+        'Failed to upload file.',
+      );
+      return (await response.json()) as {
+        sourceId: string;
+        path: string;
+        orgId: string;
+        teamId: string | null;
+        displayName: string;
+        size: number;
+        updatedAt: string | null;
+      };
+    },
+    [apiBase],
+  );
+
   const searchFiles = useCallback(
-    async (query: string, options?: { sourceId?: string; type?: string; agent?: string; origin?: string; from?: string; to?: string; limit?: number }) => {
+    async (query: string, options?: { orgId?: string; sourceId?: string; type?: string; agent?: string; origin?: string; from?: string; to?: string; limit?: number }) => {
       const params = new URLSearchParams();
       if (query.trim()) {
         params.set('q', query.trim());
@@ -415,9 +485,14 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
       if (typeof options?.limit === 'number') {
         params.set('limit', String(options.limit));
       }
+      const normalizedOrgId = normalizeOptionalOrgId(options?.orgId);
+      if (normalizedOrgId) {
+        params.set('orgId', normalizedOrgId);
+      }
 
       return requestJsonWithFallback<UnifiedSearchResponse>({
         urls: buildApiOnlyUrls(`/fs/search?${params.toString()}`, apiBase),
+        init: normalizedOrgId ? { headers: orgScopeHeaders(normalizedOrgId) } : undefined,
         fallbackError: 'Failed to search source files.',
       });
     },
@@ -440,6 +515,7 @@ export function useFileSources({ apiBase = '', enabled = true }: UseFileSourcesO
     createFile,
     writeFile,
     createFolder,
+    uploadFile,
     searchFiles,
   };
 }

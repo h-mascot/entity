@@ -11,6 +11,7 @@ const DocsSettings = lazy(() => import('../components/settings/DocsSettings'));
 const PluginAdminPanel = lazy(() => import('../components/plugins/PluginAdminPanel'));
 const OfflineAwareChat = lazy(() => import('../components/OfflineAwareChat'));
 const UsersAndRolesSettings = lazy(() => import('../components/settings/UsersAndRolesSettings'));
+const OrgsTeamsSettings = lazy(() => import('../components/settings/OrgsTeamsSettings'));
 const AdminSettingsForm = lazy(() => import('../components/settings/AdminSettingsForm'));
 // Curacel readiness recovery (REC-006, from b8e3c121): operations center and
 // communication controls surfaces, re-grounded on main's trust model.
@@ -179,6 +180,14 @@ function LazyUsersAndRolesSettings(props: { apiBase?: string }) {
   return (
     <Suspense fallback={<LazySurfaceFallback label="Loading users and roles" />}>
       <UsersAndRolesSettings {...props} />
+    </Suspense>
+  );
+}
+
+function LazyOrgsTeamsSettings(props: { apiBase?: string }) {
+  return (
+    <Suspense fallback={<LazySurfaceFallback label="Loading orgs and teams" />}>
+      <OrgsTeamsSettings {...props} />
     </Suspense>
   );
 }
@@ -550,6 +559,7 @@ export default function AdminView({
 
         {adminSection === 'accessControl' && (
           <div className="grid gap-3">
+            <LazyOrgsTeamsSettings apiBase={apiBase} />
             <LazyUsersAndRolesSettings apiBase={apiBase} />
             <LazyAdminSettingsForm
               apiBase={apiBase}

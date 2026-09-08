@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { buildApiCandidates, requestJsonWithFallback } from '../lib/http';
+import { buildApiCandidates, requestJsonWithFallback } from '../lib/http.ts';
+import { orgScopeHeaders } from '../lib/legacyFileScope.ts';
 
 interface FileItem {
   name: string;
@@ -31,9 +32,39 @@ interface UnifiedSearchPayload {
 interface QuickSwitcherProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelect: (path: string, sourceId?: string) => void;
+  onSelect: (path: string, sourceId?: string, orgId?: string) => void;
   apiBase?: string;
   useUnifiedSearch?: boolean;
+  orgId?: string;
+}
+
+interface QuickSwitcherSearchRequestOptions {
+  query: string;
+  apiBase: string;
+  useUnifiedSearch: boolean;
+  orgId?: string;
+}
+
+export function buildQuickSwitcherSearchRequest({
+  query,
+  apiBase,
+  useUnifiedSearch,
+  orgId,
+}: QuickSwitcherSearchRequestOptions): { urls: string[]; init?: RequestInit } {
+  const normalizedOrgId = orgId?.trim();
+  const params = new URLSearchParams({ q: query });
+  if (useUnifiedSearch) params.set('limit', '10');
+  if (normalizedOrgId) params.set('orgId', normalizedOrgId);
+  const path = `${useUnifiedSearch ? '/fs/search' : '/search'}?${params.toString()}`;
+  const headers = orgScopeHeaders(normalizedOrgId);
+  return {
+    urls: buildApiCandidates(path, apiBase),
+    init: Object.keys(headers).length > 0 ? { headers } : undefined,
+  };
+}
+
+export function isQuickSwitcherSearchCurrent(requestId: number, currentRequestId: number): boolean {
+  return requestId === currentRequestId;
 }
 
 export default function QuickSwitcher({
@@ -42,11 +73,13 @@ export default function QuickSwitcher({
   onSelect,
   apiBase = '',
   useUnifiedSearch = false,
+  orgId,
 }: QuickSwitcherProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<FileItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchRequestIdRef = useRef(0);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -57,15 +90,17 @@ export default function QuickSwitcher({
   }, [isOpen]);
 
   useEffect(() => {
+    const requestId = ++searchRequestIdRef.current;
     if (!query) {
       setResults([]);
       return;
     }
     const timer = setTimeout(() => {
       const run = async () => {
+        const request = buildQuickSwitcherSearchRequest({ query, apiBase, useUnifiedSearch, orgId });
         if (useUnifiedSearch) {
           const payload = await requestJsonWithFallback<UnifiedSearchPayload>({
-            urls: buildApiCandidates(`/fs/search?q=${encodeURIComponent(query)}&limit=10`, apiBase),
+            ...request,
             fallbackError: 'Failed to search files.',
           });
           const mapped = (payload.results || []).map((entry) => ({
@@ -75,27 +110,35 @@ export default function QuickSwitcher({
             sourceName: entry.sourceName,
             restricted: isRestrictedSearchEntry(entry),
           }));
-          setResults(mapped.slice(0, 10));
-          setSelectedIndex(0);
+          if (isQuickSwitcherSearchCurrent(requestId, searchRequestIdRef.current)) {
+            setResults(mapped.slice(0, 10));
+            setSelectedIndex(0);
+          }
           return;
         }
 
         const payload = await requestJsonWithFallback<LegacySearchPayload>({
-          urls: buildApiCandidates(`/search?q=${encodeURIComponent(query)}`, apiBase),
+          ...request,
           fallbackError: 'Failed to search files.',
         });
         const mapped = (payload.results || []).map((entry) => ({
           name: entry.name,
           path: entry.path,
         }));
-        setResults(mapped.slice(0, 10));
-        setSelectedIndex(0);
+        if (isQuickSwitcherSearchCurrent(requestId, searchRequestIdRef.current)) {
+          setResults(mapped.slice(0, 10));
+          setSelectedIndex(0);
+        }
       };
 
-      run().catch(() => setResults([]));
+      run().catch(() => {
+        if (isQuickSwitcherSearchCurrent(requestId, searchRequestIdRef.current)) {
+          setResults([]);
+        }
+      });
     }, 150);
     return () => clearTimeout(timer);
-  }, [apiBase, query, useUnifiedSearch]);
+  }, [apiBase, orgId, query, useUnifiedSearch]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -107,7 +150,7 @@ export default function QuickSwitcher({
     } else if (e.key === 'Enter' && results[selectedIndex]) {
       e.preventDefault();
       if (!results[selectedIndex].restricted) {
-        onSelect(results[selectedIndex].path, results[selectedIndex].sourceId);
+        onSelect(results[selectedIndex].path, results[selectedIndex].sourceId, orgId);
         onClose();
       }
     } else if (e.key === 'Escape') {
@@ -139,7 +182,7 @@ export default function QuickSwitcher({
                 key={`${file.sourceId ?? 'local'}:${file.path}`}
                 onClick={() => {
                   if (!file.restricted) {
-                    onSelect(file.path, file.sourceId);
+                    onSelect(file.path, file.sourceId, orgId);
                     onClose();
                   }
                 }}

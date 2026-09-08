@@ -136,7 +136,7 @@ export default function DocHubWorkspaceChrome({
   orgId,
   onScopedSearchNavigate,
 }: DocHubWorkspaceChromeProps) {
-  const documentIdentity = JSON.stringify([currentSourceId, docsPath]);
+  const documentIdentity = JSON.stringify([currentSourceId, docsPath, orgId ?? null]);
   const documentIdentityRef = useRef(documentIdentity);
   documentIdentityRef.current = documentIdentity;
   const [manualCopyState, setManualCopyState] = useState<DesktopManualCopyState>({
@@ -181,7 +181,7 @@ export default function DocHubWorkspaceChrome({
               <span className="truncate px-1 text-sm font-semibold text-[var(--text-primary)]">Files</span>
             ) : (
               openFileTabs.map((tab) => {
-                const tabKey = buildOpenFileTabKey(tab.sourceId, tab.path);
+                const tabKey = buildOpenFileTabKey(tab.sourceId, tab.path, tab.orgId);
                 const active = tabKey === activeTabKey;
                 const label = filenameFromOpenFileTab(tab);
                 return (
@@ -264,11 +264,13 @@ export default function DocHubWorkspaceChrome({
                       window.location.pathname,
                       window.location.search,
                       window.location.origin,
+                      orgId ?? null,
                     )
                   : buildCanonicalDocHubUrl(
                       {
                         sourceId: currentSourceId ?? restoredState?.sourceId ?? 'workspace',
                         path: docsPath,
+                        ...(orgId ? { orgId } : {}),
                         ...(restoredState?.tool ? { tool: restoredState.tool } : {}),
                         ...(restoredState?.convert ? { convert: restoredState.convert } : {}),
                       },

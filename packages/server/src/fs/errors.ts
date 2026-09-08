@@ -15,6 +15,21 @@ export function isMissingPathError(error: unknown): boolean {
   );
 }
 
+/**
+ * An exclusive create failed because another writer won the create race.
+ * This is the only write failure that proves a pending reservation is stale;
+ * broker/IPC failures must retain the reservation for reconciliation.
+ */
+export function isExclusiveCreateConflict(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === 'EEXIST' || code === 'exists') return true;
+  const message = error instanceof Error ? error.message.trim().toLowerCase() : '';
+  return message === 'file already exists.'
+    || message === 'file already exists'
+    || message === 'upload path already exists.'
+    || message === 'converted document already exists.';
+}
+
 export class SourceTextUnsupportedError extends Error {
   constructor(message: string) {
     super(message);

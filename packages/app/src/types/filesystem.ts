@@ -74,6 +74,14 @@ export interface UnifiedSearchResult {
   snippet?: string | null;
   updatedAt: string | null;
   indexedAt: string | null;
+  owner?: {
+    orgId: string;
+    teamId: string | null;
+    ownerPrincipalId: string | null;
+    displayName: string | null;
+    origin: string;
+    uploadedAt: string;
+  } | null;
   permissionState?: 'visible' | 'restricted';
   permission_state?: 'visible' | 'restricted';
   entity_permission_state?: 'visible' | 'restricted';

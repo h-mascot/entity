@@ -15,17 +15,28 @@ import { createFileSourceAdapter, isFileSourceTypeImplemented } from './adapters
 import type { FileSourceAdapter } from './adapters/types';
 import { assertSourceEnabled, emitFsAudit } from './security';
 import { recordFsOperation } from './metrics';
-import { permissionSafeRecord, readRequestOrg, readRequestPrincipal, type RequestOrgBinding } from '../request-permissions';
+import { permissionSafeRecord, requireRequestOrg, type RequestOrgBinding } from '../request-permissions';
+import { createFsFileOwnershipRepository, type FsFileOwnershipRepository } from '../../../db/src/file-ownership';
+import {
+  assertOwnedFileAccess,
+  ownershipEnvelope,
+  resolveOwnershipScope,
+  sourceOwnershipPathVisible,
+} from './ownership';
 
 const MAX_FALLBACK_DEPTH = 5;
 const MAX_FALLBACK_DIRECTORIES_PER_SOURCE = 50;
 const MAX_FALLBACK_FILES_PER_SOURCE = 250;
+const INDEXED_SEARCH_BATCH_SIZE = 50;
+const SEARCH_SCOPE_SCAN_LIMIT = 1_000;
+const SEARCH_SCOPE_SCAN_LIMIT_ERROR = 'Search scope is too broad; narrow the query or choose a source.';
 const CONNECTOR_HEALTH_VALUES = new Set<FileSourceHealth>(['ok', 'degraded', 'error']);
 const INDEXED_FILTER_VALUES = new Set(['indexed', 'fallback', 'all']);
 
 export interface SearchRouteDeps {
   indexRepo?: Pick<FileIndexRepository, 'search' | 'getLatestSyncRun'>;
   sourceRepo?: Pick<FileSourceRepository, 'listSources' | 'getSource'>;
+  ownershipRepo?: Pick<FsFileOwnershipRepository, 'getOwnership' | 'listOwnershipForOrg'>;
   createAdapter?: (source: FileSourceRecord) => FileSourceAdapter;
 }
 
@@ -144,11 +155,6 @@ function connectorState(source: FileSourceRecord, latestRun: FileSyncRunRecord |
   };
 }
 
-function requestSearchBinding(req: Request): RequestOrgBinding {
-  const orgId = readRequestOrg(req) ?? 'default-org';
-  return { orgId, principal: readRequestPrincipal(req, orgId) };
-}
-
 function baseEnvelope(input: {
   source: FileSourceRecord;
   latestRun: FileSyncRunRecord | undefined;
@@ -255,15 +261,23 @@ function indexedResultEnvelope(entry: FileIndexRecord, source: FileSourceRecord,
   };
 }
 
+type PermissionSafeSearchResult<T extends Record<string, unknown>> = Omit<T, 'owner'> & {
+  owner?: unknown;
+  permission?: unknown;
+  restricted?: boolean;
+  placeholder?: boolean;
+};
+
 function permissionSafeSearchResult<T extends Record<string, unknown>>(binding: RequestOrgBinding, object: {
   object_id: string;
   org_id?: string | null;
+  team_id?: string | null;
   title?: string | null;
   snippet?: string | null;
   sensitivity?: string | null;
   acl_json?: string | null;
   entity_visibility_policy_json?: string | null;
-}, record: T): T & { permission?: unknown; restricted?: boolean; placeholder?: boolean } {
+}, record: T): PermissionSafeSearchResult<T> {
   if (
     record.restricted === true ||
     record.placeholder === true ||
@@ -271,8 +285,10 @@ function permissionSafeSearchResult<T extends Record<string, unknown>>(binding: 
     record.permission_state === 'restricted' ||
     record.entity_permission_state === 'restricted'
   ) {
+    const { owner, ...redactedRecord } = record as T & { owner?: unknown };
+    void owner;
     return {
-      ...record,
+      ...redactedRecord,
       title: 'Restricted file',
       preview: null,
       snippet: null,
@@ -301,6 +317,7 @@ function permissionSafeSearchResult<T extends Record<string, unknown>>(binding: 
     object_type: 'search_result',
     object_id: object.object_id,
     org_id: object.org_id ?? binding.orgId,
+    team_id: object.team_id ?? null,
     title: object.title ?? null,
     snippet: object.snippet ?? null,
     content: object.snippet ?? null,
@@ -313,8 +330,10 @@ function permissionSafeSearchResult<T extends Record<string, unknown>>(binding: 
     return { ...envelope.object, permission: envelope.permission };
   }
 
+  const { owner, ...redactedRecord } = record as T & { owner?: unknown };
+  void owner;
   return {
-    ...record,
+    ...redactedRecord,
     title: 'Restricted file',
     preview: null,
     snippet: null,
@@ -364,9 +383,17 @@ function fallbackResultEnvelope(input: {
   };
 }
 
+function sendSearchScopeScanLimit(res: Response) {
+  return res.status(422).json({
+    code: 'search_scope_scan_limit',
+    error: SEARCH_SCOPE_SCAN_LIMIT_ERROR,
+  });
+}
+
 export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {}): void {
   const indexRepo = deps.indexRepo ?? createFileIndexRepository();
   const sourceRepo = deps.sourceRepo ?? createFileSourceRepository();
+  const ownershipRepo = deps.ownershipRepo ?? createFsFileOwnershipRepository();
   const createAdapter = deps.createAdapter ?? createFileSourceAdapter;
 
   router.get('/search', async (req: Request, res: Response) => {
@@ -381,8 +408,8 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
     const limit = toLimit(req.query.limit, 50);
     const connectorHealth = normalizeConnectorHealth(req.query.connectorHealth ?? req.query.health);
     const indexedFilter = normalizeIndexedFilter(req.query.indexState ?? req.query.indexed);
-    const binding = requestSearchBinding(req);
-
+    const binding = requireRequestOrg(req, res);
+    if (!binding) return;
     if (connectorHealth === null) {
       return res.status(400).json({ error: 'connectorHealth must be ok, degraded, or error' });
     }
@@ -391,7 +418,14 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
     }
 
     try {
-      const sourcesById = new Map(sourceRepo.listSources(true).map((source) => [source.id, source]));
+      const configuredSources = sourceRepo.listSources(true);
+      const sourcesById = new Map(configuredSources.map((source) => [source.id, source]));
+      const ownershipScope = resolveOwnershipScope(binding);
+      let ownershipRecordsForOrg: ReturnType<FsFileOwnershipRepository['listOwnershipForOrg']> | undefined;
+      const listOwnershipForOrg = () => {
+        ownershipRecordsForOrg ??= ownershipRepo.listOwnershipForOrg(binding.orgId);
+        return ownershipRecordsForOrg;
+      };
       const latestRunsBySourceId = new Map<string, FileSyncRunRecord | undefined>();
       const latestRunFor = (id: string) => {
         if (!latestRunsBySourceId.has(id)) {
@@ -399,25 +433,107 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
         }
         return latestRunsBySourceId.get(id);
       };
-      let indexedResults = indexRepo.search(query, {
+      const indexedSearchFilters = {
+        orgId: binding.orgId,
+        includeUnscoped: binding.orgId === 'default-org',
         sourceId,
         type,
         agent,
         origin: normalizeOrigin(origin),
         from,
         to,
-        limit,
-      });
-      if (connectorHealth) {
-        indexedResults = indexedResults.filter((entry) => sourcesById.get(entry.source_id)?.health === connectorHealth);
+      };
+      type IndexedSearchResult = PermissionSafeSearchResult<Record<string, unknown>>;
+      const indexedResults: IndexedSearchResult[] = [];
+      let indexedCandidatesFound = false;
+      let indexedOffset = 0;
+      let indexedScannedCandidates = 0;
+      let indexedPage: FileIndexRecord[] = [];
+      const indexedSourceIds = new Set<string>();
+
+      // Ownership filtering happens between bounded index pages and the final
+      // result limit. A forbidden top-ranked page must not consume the caller's
+      // requested slots or hide later authorized matches.
+      if (indexedFilter !== 'fallback') {
+        do {
+          if (req.destroyed || res.writableEnded) return;
+          const pageLimit = Math.min(INDEXED_SEARCH_BATCH_SIZE, SEARCH_SCOPE_SCAN_LIMIT - indexedScannedCandidates);
+          if (pageLimit <= 0) break;
+          const fetchedPage = indexRepo.search(query, {
+            ...indexedSearchFilters,
+            limit: pageLimit,
+            offset: indexedOffset,
+          });
+          const pageExceedsBudget = fetchedPage.length > pageLimit;
+          indexedPage = fetchedPage.slice(0, pageLimit);
+          indexedOffset += indexedPage.length;
+          indexedScannedCandidates += indexedPage.length;
+          const eligiblePage = indexedPage.filter((entry) => {
+            const source = sourcesById.get(entry.source_id);
+            if (!source || (connectorHealth && source.health !== connectorHealth)) return false;
+            // Disabled or unimplemented connectors are excluded from search
+            // entirely: stale rows must not surface actionable results.
+            return source.enabled && isFileSourceTypeImplemented(source.type);
+          });
+          for (const entry of eligiblePage) {
+            const source = sourcesById.get(entry.source_id);
+            if (!source) continue;
+            indexedSourceIds.add(source.id);
+            let ownership;
+            try {
+              ownership = assertOwnedFileAccess(binding, ownershipRepo, entry.source_id, entry.path, 'read', configuredSources);
+            } catch {
+              continue;
+            }
+            // Only an ownership-authorized indexed row suppresses all-mode
+            // fallback. Source eligibility alone is not visibility.
+            indexedCandidatesFound = true;
+            const record = indexedResultEnvelope(entry, source, latestRunFor(entry.source_id));
+            const owned = ownershipEnvelope(ownership);
+            const enriched = owned ? { ...record, owner: owned } : record;
+            indexedResults.push(permissionSafeSearchResult(binding, {
+              object_id: entry.id,
+              org_id: ownership?.org_id ?? entry.org_id ?? binding.orgId,
+              team_id: ownership?.team_id ?? null,
+              title: entry.title,
+              snippet: entry.preview,
+              sensitivity: entry.sensitivity,
+              acl_json: entry.acl_json,
+              entity_visibility_policy_json: entry.entity_visibility_policy_json,
+            }, enriched));
+            if (indexedResults.length >= limit) break;
+          }
+          if (indexedResults.length < limit && pageExceedsBudget) {
+            return res.status(422).json({
+              code: 'search_scope_scan_limit',
+              error: SEARCH_SCOPE_SCAN_LIMIT_ERROR,
+            });
+          }
+          if (indexedResults.length < limit && indexedPage.length === INDEXED_SEARCH_BATCH_SIZE) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+          }
+          if (
+            indexedResults.length < limit &&
+            indexedScannedCandidates === SEARCH_SCOPE_SCAN_LIMIT &&
+            indexedPage.length === INDEXED_SEARCH_BATCH_SIZE
+          ) {
+            // A one-row lookahead determines exact exhaustion without running
+            // ownership/path checks beyond the hard candidate budget.
+            const lookahead = indexRepo.search(query, {
+              ...indexedSearchFilters,
+              limit: 1,
+              offset: indexedOffset,
+            });
+            if (lookahead.length > 0) {
+              return sendSearchScopeScanLimit(res);
+            }
+          }
+        } while (indexedResults.length < limit && indexedPage.length === INDEXED_SEARCH_BATCH_SIZE);
       }
-      // Unimplemented connectors are excluded from search entirely: stale
-      // index rows must not surface results this build cannot serve.
-      indexedResults = indexedResults.filter((entry) => {
-        const source = sourcesById.get(entry.source_id);
-        return Boolean(source && isFileSourceTypeImplemented(source.type));
-      });
-      if (indexedFilter !== 'fallback' && indexedResults.length > 0) {
+
+      if (req.destroyed || res.writableEnded) return;
+
+      if (indexedFilter !== 'fallback' && indexedCandidatesFound) {
         const durationMs = Date.now() - startedAt;
         emitFsAudit('fs.search.indexed', { query, count: indexedResults.length, durationMs });
         recordFsOperation({ operation: 'fs.search', sourceId, durationMs, success: true });
@@ -427,28 +543,13 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
           indexState: {
             mode: 'indexed',
             fallbackUsed: false,
-            degraded: indexedResults.some((entry) => {
-              const source = sourcesById.get(entry.source_id);
-              const latestRun = latestRunFor(entry.source_id);
+            degraded: [...indexedSourceIds].some((sourceId) => {
+              const source = sourcesById.get(sourceId);
+              const latestRun = source ? latestRunFor(source.id) : undefined;
               return source?.health !== 'ok' || latestRun?.status === 'error';
             }),
           },
-          results: indexedResults.map((entry) => {
-            const source = sourcesById.get(entry.source_id);
-            if (!source) {
-              return null;
-            }
-            const record = indexedResultEnvelope(entry, source, latestRunFor(entry.source_id));
-            return permissionSafeSearchResult(binding, {
-              object_id: entry.id,
-              org_id: entry.org_id ?? binding.orgId,
-              title: entry.title,
-              snippet: entry.preview,
-              sensitivity: entry.sensitivity,
-              acl_json: entry.acl_json,
-              entity_visibility_policy_json: entry.entity_visibility_policy_json,
-            }, record);
-          }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
+          results: indexedResults,
         });
       }
       if (indexedFilter === 'indexed') {
@@ -465,8 +566,11 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
         .filter((source) => isFileSourceTypeImplemented(source.type))
         .filter((source) => !connectorHealth || source.health === connectorHealth);
       const results: ReturnType<typeof fallbackResultEnvelope>[] = [];
+      let fallbackCandidatesScanned = 0;
+      let fallbackTruncated = false;
 
       for (const source of candidateSources) {
+        if (fallbackTruncated) break;
         try {
           assertSourceEnabled(source);
           const adapter = createAdapter(source);
@@ -478,11 +582,12 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
           let filesScannedForSource = 0;
 
           while (queue.length > 0) {
-            if (filesScannedForSource >= MAX_FALLBACK_FILES_PER_SOURCE) {
+            if (fallbackTruncated) {
               break;
             }
 
             if (visitedDirectories.size >= MAX_FALLBACK_DIRECTORIES_PER_SOURCE) {
+              if (queue.length > 0) fallbackTruncated = true;
               break;
             }
 
@@ -519,22 +624,33 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
             }
 
             for (const node of nodes) {
+              if (fallbackCandidatesScanned >= SEARCH_SCOPE_SCAN_LIMIT) {
+                fallbackTruncated = true;
+                break;
+              }
+              fallbackCandidatesScanned += 1;
+
               if (node.kind === 'other') {
                 continue;
               }
 
               if (node.isDirectory) {
                 const nextDepth = next.depth + 1;
+                const childPath = normalizeDirectoryPath(node.path);
+                if (!sourceOwnershipPathVisible(ownershipScope, source.id, childPath, listOwnershipForOrg(), configuredSources)) {
+                  continue;
+                }
                 if (nextDepth > MAX_FALLBACK_DEPTH) {
+                  fallbackTruncated = true;
                   continue;
                 }
 
-                const childPath = normalizeDirectoryPath(node.path);
                 if (visitedDirectories.has(childPath) || queuedDirectories.has(childPath)) {
                   continue;
                 }
 
                 if (visitedDirectories.size + queuedDirectories.size >= MAX_FALLBACK_DIRECTORIES_PER_SOURCE) {
+                  fallbackTruncated = true;
                   continue;
                 }
 
@@ -547,12 +663,7 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
                 continue;
               }
 
-              if (filesScannedForSource >= MAX_FALLBACK_FILES_PER_SOURCE) {
-                break;
-              }
-
               visitedFiles.add(node.path);
-              filesScannedForSource += 1;
 
               // Fallback entries are unindexed, so only one-off/other can match explicit filters.
               if (type && type !== 'one-off') {
@@ -603,6 +714,17 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
                 aclJson?: string | null;
                 entityVisibilityPolicyJson?: string | null;
               };
+              let ownership;
+              try {
+                ownership = assertOwnedFileAccess(binding, ownershipRepo, source.id, node.path, 'read', configuredSources);
+              } catch {
+                continue;
+              }
+              filesScannedForSource += 1;
+              if (filesScannedForSource > MAX_FALLBACK_FILES_PER_SOURCE) {
+                fallbackTruncated = true;
+                break;
+              }
               const record = fallbackResultEnvelope({
                 source,
                 latestRun,
@@ -610,21 +732,30 @@ export function registerSearchRoutes(router: Router, deps: SearchRouteDeps = {})
                 title: node.name,
                 updatedAt: node.updatedAt ?? null,
               });
+              const owned = ownershipEnvelope(ownership);
+              const enriched = owned ? { ...record, owner: owned } : record;
               results.push(permissionSafeSearchResult(binding, {
                 object_id: `${source.id}:${node.path}`,
-                org_id: nodeWithPolicy.orgId ?? binding.orgId,
+                org_id: ownership?.org_id ?? nodeWithPolicy.orgId ?? binding.orgId,
+                team_id: ownership?.team_id ?? null,
                 title: node.name,
                 snippet: null,
                 sensitivity: nodeWithPolicy.sensitivity ?? null,
                 acl_json: nodeWithPolicy.aclJson ?? null,
                 entity_visibility_policy_json: nodeWithPolicy.entityVisibilityPolicyJson ?? null,
-              }, record));
+              }, enriched));
             }
+
+            if (fallbackTruncated) break;
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : 'Unknown fallback error';
           emitFsAudit('fs.search.fallback.error', { sourceId: source.id, error: message });
         }
+      }
+
+      if (fallbackTruncated) {
+        return sendSearchScopeScanLimit(res);
       }
 
       results.sort((a, b) => {

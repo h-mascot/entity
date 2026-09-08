@@ -38,6 +38,53 @@ async function loadBoardRepository(scope?: { orgId: string; teamId: string }) {
   return mod.createBoardRepository(scope);
 }
 
+async function loadPreMarkerBoardRepository(options: {
+  filterConfig: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}) {
+  activeDbPath = tempDbPath();
+  cleanupDbPaths.push(activeDbPath);
+  vi.resetModules();
+  vi.stubEnv('ENTITY_TASK_DB_PATH', activeDbPath);
+  vi.stubEnv('MISSION_CONTROL_DB_PATH', path.join(os.tmpdir(), `missing-mc-${randomUUID()}.db`));
+
+  const mod = await import('./boards');
+  const { getEntityDatabase } = await import('./entity-db');
+  const db = getEntityDatabase();
+  db.exec(`
+    CREATE TABLE boards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id TEXT NOT NULL,
+      team_id TEXT NOT NULL,
+      key TEXT,
+      name TEXT NOT NULL,
+      view TEXT NOT NULL DEFAULT 'board',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      filter_config TEXT NOT NULL DEFAULT '{}',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE UNIQUE INDEX idx_boards_default_key ON boards(org_id, team_id, key)
+      WHERE key IS NOT NULL;
+    CREATE INDEX idx_boards_order ON boards(org_id, team_id, sort_order, id);
+  `);
+  db.prepare(
+    `INSERT INTO boards
+       (org_id, team_id, key, name, view, is_default, sort_order, filter_config, created_at, updated_at)
+     VALUES (?, ?, 'general', 'General', 'board', 1, 0, ?, ?, ?)`,
+  ).run(
+    mod.DEFAULT_BOARD_SCOPE.orgId,
+    mod.DEFAULT_BOARD_SCOPE.teamId,
+    JSON.stringify(options.filterConfig),
+    options.createdAt,
+    options.updatedAt,
+  );
+
+  return { boards: mod.createBoardRepository(), db };
+}
+
 afterEach(async () => {
   const dbPathToClose = activeDbPath;
   if (dbPathToClose) {
@@ -146,6 +193,22 @@ describe('board domain helpers', () => {
         normalizeBoardFilterConfig({ scope: 'workDomain', workDomain: 'data science!' }),
       ).toEqual({ scope: 'workDomain', workDomain: null });
     });
+
+    it('normalizes excluded work domains and preserves them across scopes', () => {
+      expect(
+        normalizeBoardFilterConfig({
+          scope: 'all',
+          excludeWorkDomains: ['Engineering', 'engineering', 'bad domain', 4, 'platform'],
+        }),
+      ).toEqual({ scope: 'all', excludeWorkDomains: ['engineering', 'platform'] });
+      expect(
+        normalizeBoardFilterConfig({
+          scope: 'projects',
+          projectIds: [3],
+          excludeWorkDomains: ['engineering'],
+        }),
+      ).toEqual({ scope: 'projects', projectIds: [3], excludeWorkDomains: ['engineering'] });
+    });
   });
 
   describe('template default filters', () => {
@@ -214,8 +277,65 @@ describe('board repository persistence', () => {
     expect(list.map((b) => b.key)).toEqual(['general', 'analytics']);
     expect(list.map((b) => b.name)).toEqual(['General', 'Analytics']);
     expect(list.map((b) => b.view)).toEqual(['board', 'analytics']);
+    expect(list[0].filter_config).toEqual({
+      scope: 'all',
+      excludeWorkDomains: ['engineering'],
+    });
     expect(list.every((b) => b.is_default)).toBe(true);
     expect(list.map((b) => b.sort_order)).toEqual([0, 1]);
+  });
+
+  it('preserves a pre-marker General scope-all row, including same-timestamp state', async () => {
+    const { boards, db } = await loadPreMarkerBoardRepository({
+      filterConfig: { scope: 'all' },
+      createdAt: '2026-08-01 12:00:00',
+      updatedAt: '2026-08-01 12:00:00',
+    });
+
+    boards.seedDefaults();
+    const columns = db.pragma('table_info(boards)') as Array<{ name: string }>;
+    expect(columns.some((column) => column.name === 'filter_config_explicit')).toBe(false);
+    expect(boards.getBoard(1)?.filter_config).toEqual({ scope: 'all' });
+    expect(boards.listBoards().map((board) => board.key)).toEqual(['general', 'analytics']);
+  });
+
+  it('preserves a pre-marker explicit scope-all save with a later timestamp', async () => {
+    const { boards } = await loadPreMarkerBoardRepository({
+      filterConfig: { scope: 'all' },
+      createdAt: '2026-08-01 12:00:00',
+      updatedAt: '2026-08-01 12:05:00',
+    });
+
+    boards.seedDefaults();
+    expect(boards.getBoard(1)?.filter_config).toEqual({ scope: 'all' });
+  });
+
+  it('preserves a pre-marker customized General filter without inferring provenance', async () => {
+    const { boards } = await loadPreMarkerBoardRepository({
+      filterConfig: { scope: 'projects', projectIds: [7] },
+      createdAt: '2026-08-01 12:00:00',
+      updatedAt: '2026-08-01 12:05:00',
+    });
+
+    boards.seedDefaults();
+    expect(boards.getBoard(1)?.filter_config).toEqual({ scope: 'projects', projectIds: [7] });
+  });
+
+  it('preserves an explicit General project filter across repeated default seeding', async () => {
+    const boards = await loadBoardRepository();
+    boards.seedDefaults();
+    const general = boards.listBoards().find((board) => board.key === 'general')!;
+
+    const customized = boards.updateBoard(general.id, {
+      filter_config: { scope: 'projects', projectIds: [7, 7, 0] },
+    });
+    expect(customized?.filter_config).toEqual({ scope: 'projects', projectIds: [7] });
+    boards.seedDefaults();
+    boards.seedDefaults();
+    expect(boards.getBoard(general.id)?.filter_config).toEqual({
+      scope: 'projects',
+      projectIds: [7],
+    });
   });
 
   it('creates user boards with validated names, derived view, and next sort order', async () => {

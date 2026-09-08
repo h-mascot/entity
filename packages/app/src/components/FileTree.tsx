@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { runtime } from '../config/runtime';
 import { buildApiCandidates, requestJsonWithFallback } from '../lib/http';
+import {
+  appendOrgScope,
+  buildOrgScopedRequestIdentity,
+  isOrgScopedRequestCurrent,
+  normalizeOptionalOrgId,
+  withOrgScope,
+} from '../lib/legacyFileScope.ts';
 import { useSharedWebSocket } from '../hooks/useSharedWebSocket';
 
 const POLL_INTERVAL = 5000;
@@ -14,6 +21,7 @@ interface FileItem {
 interface FileTreeProps {
   onSelect: (path: string) => void;
   selected: string | null;
+  orgId?: string;
 }
 
 function getFileIcon(name: string, isDir: boolean): string {
@@ -37,22 +45,23 @@ function getExtensionIcon(ext: string): string {
   return icons[ext.toLowerCase()] || '📎';
 }
 
-async function fetchDir(dirPath: string): Promise<FileItem[]> {
+async function fetchDir(dirPath: string, orgId?: string): Promise<FileItem[]> {
   const encodedPath = encodeURIComponent(dirPath);
-  const queryPath = `/files?path=${encodedPath}`;
+  const queryPath = appendOrgScope(`/files?path=${encodedPath}`, orgId);
   const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
 
   const urls = Array.from(
     new Set([
       ...buildApiCandidates(queryPath, runtime.apiBase),
-      `http://localhost:3001/api/files?path=${encodedPath}`,
-      `http://127.0.0.1:3001/api/files?path=${encodedPath}`,
-      `http://${hostname}:3001/api/files?path=${encodedPath}`,
+      `http://localhost:3001/api${queryPath}`,
+      `http://127.0.0.1:3001/api${queryPath}`,
+      `http://${hostname}:3001/api${queryPath}`,
     ])
   );
 
   const data = await requestJsonWithFallback<FileItem[]>({
     urls,
+    init: withOrgScope(undefined, orgId),
     fallbackError: 'Failed to fetch files.',
   });
 
@@ -67,7 +76,7 @@ async function fetchDir(dirPath: string): Promise<FileItem[]> {
   });
 }
 
-function FolderNode({ item, depth, onSelect, selected, expandedPaths, currentPath, onToggle, onRefresh, wsConnected, refreshSignal }: {
+function FolderNode({ item, depth, onSelect, selected, expandedPaths, currentPath, onToggle, onRefresh, wsConnected, refreshSignal, orgId }: {
   item: FileItem;
   depth: number;
   onSelect: (p: string) => void;
@@ -78,6 +87,7 @@ function FolderNode({ item, depth, onSelect, selected, expandedPaths, currentPat
   onRefresh: () => void;
   wsConnected: boolean;
   refreshSignal: number;
+  orgId?: string;
 }) {
   const [children, setChildren] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -85,28 +95,38 @@ function FolderNode({ item, depth, onSelect, selected, expandedPaths, currentPat
   const expanded = expandedPaths.has(item.path);
   const isSelected = selected === item.path;
   const childrenCountRef = useRef(0);
+  const childrenRequestIdRef = useRef(0);
+  const childrenIdentity = buildOrgScopedRequestIdentity(orgId, item.path);
+  const currentChildrenIdentityRef = useRef(childrenIdentity);
+  currentChildrenIdentityRef.current = childrenIdentity;
 
   useEffect(() => {
     childrenCountRef.current = children.length;
   }, [children.length]);
 
   const loadChildren = useCallback((showLoading = false) => {
+    const requestId = ++childrenRequestIdRef.current;
+    const requestIdentity = childrenIdentity;
     if (showLoading) {
       setLoading(true);
     }
-    fetchDir(item.path)
-      .then(data => { setChildren(data); setError(null); })
+    fetchDir(item.path, orgId)
+      .then(data => {
+        if (!isOrgScopedRequestCurrent(requestId, childrenRequestIdRef.current, requestIdentity, currentChildrenIdentityRef.current)) return;
+        setChildren(data);
+        setError(null);
+      })
       .catch(err => {
-        if (showLoading) {
+        if (showLoading && isOrgScopedRequestCurrent(requestId, childrenRequestIdRef.current, requestIdentity, currentChildrenIdentityRef.current)) {
           setError(err.message);
         }
       })
       .finally(() => {
-        if (showLoading) {
+        if (showLoading && isOrgScopedRequestCurrent(requestId, childrenRequestIdRef.current, requestIdentity, currentChildrenIdentityRef.current)) {
           setLoading(false);
         }
       });
-  }, [item.path]);
+  }, [childrenIdentity, item.path, orgId]);
 
   useEffect(() => {
     if (!expanded) {
@@ -165,13 +185,15 @@ function FolderNode({ item, depth, onSelect, selected, expandedPaths, currentPat
           onRefresh={onRefresh}
           wsConnected={wsConnected}
           refreshSignal={refreshSignal}
+          orgId={orgId}
         />
       ))}
     </div>
   );
 }
 
-export default function FileTree({ onSelect, selected }: FileTreeProps) {
+export default function FileTree({ onSelect, selected, orgId }: FileTreeProps) {
+  const normalizedOrgId = normalizeOptionalOrgId(orgId);
   const [root, setRoot] = useState<FileItem[]>([]);
   const [filter, setFilter] = useState('');
   const [loading, setLoading] = useState(true);
@@ -180,12 +202,28 @@ export default function FileTree({ onSelect, selected }: FileTreeProps) {
   const [sortBy, setSortBy] = useState<'name' | 'type'>('name');
   const [showContextMenu, setShowContextMenu] = useState<{x: number; y: number; path: string; isDir: boolean} | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
+  const rootRequestIdRef = useRef(0);
+  const rootIdentity = buildOrgScopedRequestIdentity(normalizedOrgId, 'root');
+  const currentRootIdentityRef = useRef(rootIdentity);
+  currentRootIdentityRef.current = rootIdentity;
 
   const loadRoot = useCallback(() => {
-    fetchDir('')
-      .then(data => { setRoot(data); setLoading(false); setError(null); })
-      .catch(err => { setError(err.message); setLoading(false); });
-  }, []);
+    const requestId = ++rootRequestIdRef.current;
+    const requestIdentity = rootIdentity;
+    setLoading(true);
+    fetchDir('', normalizedOrgId)
+      .then(data => {
+        if (!isOrgScopedRequestCurrent(requestId, rootRequestIdRef.current, requestIdentity, currentRootIdentityRef.current)) return;
+        setRoot(data);
+        setLoading(false);
+        setError(null);
+      })
+      .catch(err => {
+        if (!isOrgScopedRequestCurrent(requestId, rootRequestIdRef.current, requestIdentity, currentRootIdentityRef.current)) return;
+        setError(err.message);
+        setLoading(false);
+      });
+  }, [normalizedOrgId, rootIdentity]);
 
   const triggerRefresh = useCallback(() => {
     loadRoot();
@@ -204,6 +242,14 @@ export default function FileTree({ onSelect, selected }: FileTreeProps) {
       triggerRefresh();
     }
   });
+
+  useEffect(() => {
+    setRoot([]);
+    setExpandedPaths(new Set());
+    setError(null);
+    setLoading(true);
+    setRefreshSignal((value) => value + 1);
+  }, [normalizedOrgId]);
 
   useEffect(() => {
     loadRoot();
@@ -314,6 +360,7 @@ export default function FileTree({ onSelect, selected }: FileTreeProps) {
             onRefresh={loadRoot}
             wsConnected={wsConnected}
             refreshSignal={refreshSignal}
+            orgId={normalizedOrgId}
           />
         ))}
       </div>

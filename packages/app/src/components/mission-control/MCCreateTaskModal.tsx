@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { toErrorMessage } from '../../lib/http';
+import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../../lib/http';
 import type { CreateTaskPayload, TaskBoardTask, TaskColumn, TaskPriority } from '../../hooks/useTaskBoard';
 import { useUserProfile } from '../../lib/userProfile';
 import { fetchProjectOptions, type ProjectOption } from './projectOptions';
@@ -17,8 +17,14 @@ import {
   type WorktypeOverlayValues,
   type WorktypeRegistryEntry,
 } from './utils/worktypeRegistry';
+import {
+  DEFAULT_TASK_PRIORITY,
+  TASK_PRIORITY_DEFINITIONS,
+  buildTaskPriorityWikiHref,
+  resolveTaskPriorityOrgId,
+  taskPriorityDefinition,
+} from './utils/taskPriorityPolicy';
 
-const PRIORITY_OPTIONS: TaskPriority[] = ['P0', 'P1', 'P2', 'P3'];
 const CREATE_TASK_COLUMNS = ['backlog', 'todo', 'doing'] as const;
 
 type CreateTaskColumn = Extract<TaskColumn, (typeof CREATE_TASK_COLUMNS)[number]>;
@@ -42,6 +48,11 @@ interface CreateTaskFormState {
   overlayValues: WorktypeOverlayValues;
 }
 
+interface PriorityOrganizationOption {
+  id: string;
+  name: string;
+}
+
 interface MCCreateTaskModalProps {
   open: boolean;
   apiBase?: string;
@@ -49,6 +60,7 @@ interface MCCreateTaskModalProps {
   onCreateTask: (payload: CreateTaskPayload) => Promise<TaskBoardTask>;
   onCreated?: (task: TaskBoardTask) => void;
   defaultWorkDomain?: TaskCreateWorkDomain | null;
+  orgId?: string | null;
 }
 
 const DEFAULT_FORM: CreateTaskFormState = {
@@ -56,7 +68,7 @@ const DEFAULT_FORM: CreateTaskFormState = {
   description: '',
   assignee: 'Unassigned',
   dueDate: '',
-  priority: 'P2',
+  priority: DEFAULT_TASK_PRIORITY,
   column: 'backlog',
   recurring: false,
   projectIds: [],
@@ -71,6 +83,7 @@ export default function MCCreateTaskModal({
   onCreateTask,
   onCreated,
   defaultWorkDomain = null,
+  orgId,
 }: MCCreateTaskModalProps) {
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [visible, setVisible] = useState(false);
@@ -85,6 +98,26 @@ export default function MCCreateTaskModal({
   const [worktypeRegistry, setWorktypeRegistry] = useState<WorktypeRegistryEntry[]>([]);
   const [userProfile] = useUserProfile();
   const [activeAgentNames, setActiveAgentNames] = useState<string[]>([]);
+  const [availablePriorityOrgs, setAvailablePriorityOrgs] = useState<PriorityOrganizationOption[]>([]);
+  const [selectedPriorityOrgId, setSelectedPriorityOrgId] = useState<string | null>(null);
+  const [priorityOrgLoading, setPriorityOrgLoading] = useState(false);
+  const [priorityOrgError, setPriorityOrgError] = useState<string | null>(null);
+  const [priorityOrgFetchRevision, setPriorityOrgFetchRevision] = useState(0);
+  const priorityLocationSearch = typeof window === 'undefined' ? null : window.location.search;
+  const priorityOrgId = useMemo(
+    () => {
+      const explicitOrgId = resolveTaskPriorityOrgId(orgId, priorityLocationSearch);
+      return explicitOrgId ?? resolveTaskPriorityOrgId(
+        selectedPriorityOrgId,
+        null,
+        availablePriorityOrgs.map((organization) => organization.id),
+      );
+    },
+    [availablePriorityOrgs, orgId, priorityLocationSearch, selectedPriorityOrgId],
+  );
+  const priorityWikiHref = useMemo(() => {
+    return buildTaskPriorityWikiHref(priorityOrgId);
+  }, [priorityOrgId]);
   const assigneeOptions = useMemo(
     () => composeAssigneeOptions(activeAgentNames, userProfile.displayName),
     [activeAgentNames, userProfile.displayName]
@@ -95,6 +128,10 @@ export default function MCCreateTaskModal({
       setVisible(false);
       setForm(DEFAULT_FORM);
       setProjects([]);
+      setAvailablePriorityOrgs([]);
+      setSelectedPriorityOrgId(null);
+      setPriorityOrgLoading(false);
+      setPriorityOrgError(null);
       setProjectSearch('');
       setProjectError(null);
       setDomainDefaultError(null);
@@ -106,6 +143,48 @@ export default function MCCreateTaskModal({
     const animationId = window.requestAnimationFrame(() => setVisible(true));
     return () => window.cancelAnimationFrame(animationId);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const hasExplicitScope = Boolean(resolveTaskPriorityOrgId(orgId, priorityLocationSearch));
+    if (hasExplicitScope) {
+      setAvailablePriorityOrgs([]);
+      setSelectedPriorityOrgId(null);
+      setPriorityOrgLoading(false);
+      setPriorityOrgError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setPriorityOrgLoading(true);
+    setPriorityOrgError(null);
+    void requestJsonWithFallback<{ orgs?: Array<{ id?: unknown; name?: unknown }> }>({
+      urls: buildApiCandidates('/orgs', apiBase),
+      fallbackError: 'Failed to resolve the organization for priority definitions.',
+    }).then((payload) => {
+      if (cancelled) return;
+      const organizations = (Array.isArray(payload.orgs) ? payload.orgs : [])
+        .map((organization) => {
+          const id = typeof organization.id === 'string' ? organization.id.trim() : '';
+          const name = typeof organization.name === 'string' ? organization.name.trim() : '';
+          return id ? { id, name: name || id } : null;
+        })
+        .filter((organization): organization is PriorityOrganizationOption => Boolean(organization));
+      setAvailablePriorityOrgs(organizations);
+      setPriorityOrgLoading(false);
+    }).catch(() => {
+      if (!cancelled) {
+        setAvailablePriorityOrgs([]);
+        setPriorityOrgLoading(false);
+        setPriorityOrgError('Unable to load organizations for priority definitions.');
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, open, orgId, priorityLocationSearch, priorityOrgFetchRevision]);
 
   useEffect(() => {
     if (!open) {
@@ -476,20 +555,90 @@ export default function MCCreateTaskModal({
                   </div>
 
                   <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                    <label
+                      htmlFor="mc-create-task-priority"
+                      className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]"
+                    >
                       Priority
                     </label>
                     <select
+                      id="mc-create-task-priority"
                       value={form.priority}
                       onChange={(event) => updateField('priority', event.target.value as TaskPriority)}
+                      aria-describedby="mc-create-task-priority-help"
                       className="mc-shell-input w-full px-3 py-2 text-sm"
                     >
-                      {PRIORITY_OPTIONS.map((priority) => (
-                        <option key={priority} value={priority}>
-                          {priority}
+                      {TASK_PRIORITY_DEFINITIONS.map((definition) => (
+                        <option key={definition.value} value={definition.value}>
+                          {definition.label}
                         </option>
                       ))}
                     </select>
+                    <p
+                      id="mc-create-task-priority-help"
+                      data-testid="mc-create-task-priority-help"
+                      className="mt-1.5 text-xs leading-5 text-[var(--text-muted)]"
+                    >
+                      {taskPriorityDefinition(form.priority).shortExplanation}{' '}
+                      Example: {taskPriorityDefinition(form.priority).example}{' '}
+                      {availablePriorityOrgs.length > 1 ? (
+                        <span className="mt-2 block">
+                          <label
+                            htmlFor="mc-create-task-priority-org"
+                            className="mr-2 font-medium text-[var(--text-primary)]"
+                          >
+                            Organization for definitions
+                          </label>
+                          <select
+                            id="mc-create-task-priority-org"
+                            value={selectedPriorityOrgId ?? ''}
+                            onChange={(event) => setSelectedPriorityOrgId(event.target.value || null)}
+                            className="mc-shell-input ml-1 px-2 py-1 text-xs"
+                          >
+                            <option value="">Select organization</option>
+                            {availablePriorityOrgs.map((organization) => (
+                              <option key={organization.id} value={organization.id}>
+                                {organization.name}
+                              </option>
+                            ))}
+                          </select>{' '}
+                        </span>
+                      ) : null}
+                      {priorityWikiHref ? (
+                        <a
+                          href={priorityWikiHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          data-testid="mc-create-task-priority-wiki-link"
+                          className="underline decoration-dotted underline-offset-2 hover:text-[var(--text-primary)]"
+                        >
+                          Priority definitions in the wiki
+                        </a>
+                      ) : priorityOrgLoading ? (
+                        <span data-testid="mc-create-task-priority-wiki-loading">
+                          Loading organization context…
+                        </span>
+                      ) : priorityOrgError ? (
+                        <span data-testid="mc-create-task-priority-wiki-error">
+                          {priorityOrgError}{' '}
+                          <button
+                            type="button"
+                            onClick={() => setPriorityOrgFetchRevision((revision) => revision + 1)}
+                            className="underline decoration-dotted underline-offset-2 hover:text-[var(--text-primary)]"
+                          >
+                            Retry
+                          </button>
+                        </span>
+                      ) : availablePriorityOrgs.length === 0 ? (
+                        <span data-testid="mc-create-task-priority-wiki-no-org">
+                          No organization is available for priority definitions.
+                        </span>
+                      ) : (
+                        <span data-testid="mc-create-task-priority-wiki-requires-org">
+                          Select an organization to open the priority definitions.
+                        </span>
+                      )}
+                    </p>
                   </div>
 
                   <div>

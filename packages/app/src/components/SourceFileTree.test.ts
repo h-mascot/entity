@@ -181,3 +181,36 @@ test('search only targets sources with an implemented connector in this build', 
     `expected only the enabled available source to stay searchable, got: ${eligible.map((s) => s.id).join(', ')}`
   );
 });
+
+test('scopes persisted tree storage by organization while preserving unscoped preferences', async () => {
+  const mod = (await import('./SourceFileTree.tsx')) as unknown as {
+    buildSourceTreeStorageKey?: (baseKey: string, orgId?: string | null) => string;
+  };
+  assert.ok(mod.buildSourceTreeStorageKey, 'SourceFileTree must expose its scoped storage-key helper');
+  assert.equal(mod.buildSourceTreeStorageKey('entity.fs.tree.pinnedFolders.v1'), 'entity.fs.tree.pinnedFolders.v1');
+  assert.equal(
+    mod.buildSourceTreeStorageKey('entity.fs.tree.pinnedFolders.v1', 'org/beta'),
+    'entity.fs.tree.pinnedFolders.v1::org=org%2Fbeta',
+  );
+  assert.equal(
+    mod.buildSourceTreeStorageKey('entity.fs.tree.pinnedFolders.v1', '  org-beta  '),
+    'entity.fs.tree.pinnedFolders.v1::org=org-beta',
+  );
+});
+
+test('uses the active folder capability instead of the root capability for create controls', async () => {
+  const mod = (await import('./SourceFileTree.tsx')) as unknown as {
+    canCreateInActiveFolder?: (
+      treeByKey: Record<string, { capabilities?: { write: boolean } }>,
+      sourceId: string,
+      folderPath: string,
+    ) => boolean;
+  };
+  assert.ok(mod.canCreateInActiveFolder, 'SourceFileTree must expose active-folder create capability helper');
+  const treeByKey = {
+    'source-1::': { capabilities: { write: false } },
+    'source-1::uploads/org-a/team-a': { capabilities: { write: true } },
+  };
+  assert.equal(mod.canCreateInActiveFolder(treeByKey, 'source-1', ''), false);
+  assert.equal(mod.canCreateInActiveFolder(treeByKey, 'source-1', 'uploads/org-a/team-a'), true);
+});

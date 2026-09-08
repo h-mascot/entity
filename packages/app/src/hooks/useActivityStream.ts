@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
+import { resolveActivityOrgId } from '../lib/activityFileScope';
 import { useSharedWebSocket } from './useSharedWebSocket';
 
 const DEFAULT_API_BASE = '';
@@ -49,6 +50,7 @@ export interface ActivityEntry {
   description: string;
   timestamp: string;
   filePath?: string;
+  orgId?: string;
   cursor?: unknown;
   taskId?: number;
   taskColumn?: string;
@@ -173,7 +175,7 @@ function toTaskId(value: unknown): number | undefined {
   return undefined;
 }
 
-function parseActivity(raw: unknown): ActivityEntry | null {
+export function parseActivity(raw: unknown): ActivityEntry | null {
   if (!raw || typeof raw !== 'object') {
     return null;
   }
@@ -182,6 +184,13 @@ function parseActivity(raw: unknown): ActivityEntry | null {
   const source = normalizeSource(record.source);
   const type = normalizeType(record.type);
   const taskId = toTaskId(record.task_id ?? record.taskId);
+  const metadataValue =
+    typeof record.metadata === 'string'
+      ? record.metadata
+      : typeof record.meta === 'string'
+        ? record.meta
+        : undefined;
+  const orgId = resolveActivityOrgId(record, metadataValue);
 
   const fallbackAgentName = 'Entity';
   const fallbackAgentEmoji = '⚡';
@@ -221,6 +230,7 @@ function parseActivity(raw: unknown): ActivityEntry | null {
         : typeof record.file_path === 'string'
           ? record.file_path
           : undefined,
+    ...(orgId ? { orgId } : {}),
     cursor:
       record.cursor ??
       record.cursor_json ??
@@ -236,12 +246,7 @@ function parseActivity(raw: unknown): ActivityEntry | null {
         : typeof record.task_column === 'string'
           ? record.task_column
           : undefined,
-    metadata:
-      typeof record.metadata === 'string'
-        ? record.metadata
-        : typeof record.meta === 'string'
-          ? record.meta
-          : undefined,
+    metadata: metadataValue,
   };
 }
 

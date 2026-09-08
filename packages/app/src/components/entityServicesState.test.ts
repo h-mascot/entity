@@ -1,28 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import assert from 'node:assert/strict';
+import test from 'node:test';
 import { getServiceRegistryStatus } from './entityServicesState.js';
 
-describe('getServiceRegistryStatus', () => {
-  it('labels a partial cold registry as discovery in progress', () => {
-    expect(getServiceRegistryStatus('refreshing', true)).toEqual({
+test('getServiceRegistryStatus labels a partial cold registry as discovery in progress', () => {
+    assert.deepEqual(getServiceRegistryStatus('refreshing', true), {
       label: 'Discovery in progress',
       message: 'Showing the fast internal-service snapshot while full host discovery finishes.',
       tone: 'progress',
     });
-  });
+});
 
-  it('surfaces background discovery failures', () => {
-    expect(getServiceRegistryStatus('error', true, 'listener scan failed')).toEqual({
+test('getServiceRegistryStatus surfaces background discovery failures', () => {
+    assert.deepEqual(getServiceRegistryStatus('error', true, 'listener scan failed'), {
       label: 'Discovery failed',
       message: 'listener scan failed',
       tone: 'error',
     });
-  });
+});
 
-  it('identifies a completed registry', () => {
-    expect(getServiceRegistryStatus('ready', false)).toEqual({
+test('getServiceRegistryStatus identifies a completed registry', () => {
+    assert.deepEqual(getServiceRegistryStatus('ready', false), {
       label: 'Discovery complete',
       message: null,
       tone: 'ready',
     });
-  });
 });

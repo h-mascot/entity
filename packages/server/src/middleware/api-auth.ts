@@ -108,10 +108,19 @@ const PROTECTED_UNPREFIXED_ROOTS: readonly string[] = [
   "/db-mode",
   "/doc-intelligence",
   "/documents",
+  "/notifications",
   "/projects",
   "/roadmaps",
   "/roadmap-items",
   "/runtime",
+  "/worktype-registry",
+  // MC #1369 admin report surfaces (mirrored unprefixed) must require the
+  // bearer whenever ENTITY_API_TOKEN is set, same as /activities.
+  "/activity-report",
+  "/usage-report",
+  "/audit-report",
+  "/access-report",
+  "/reports",
 ];
 
 /**

@@ -6,6 +6,7 @@ export interface WatchModeFollowEvent {
   agentName: string;
   agentEmoji: string;
   sourceId: string | null;
+  orgId: string | null;
   filePath: string;
   cursor: unknown | null;
   timestamp: string;
@@ -17,7 +18,30 @@ export interface UseWatchModeAutoFollowOptions {
   activities: ActivityEntry[];
   currentFile: string | null;
   currentSourceId?: string | null;
+  currentFileOrgId?: string | null;
+  fallbackOrgId?: string | null;
   onSwitchFile?: (filePath: string, event: WatchModeFollowEvent) => void;
+}
+
+export function resolveWatchModeOrgId(
+  eventOrgId: string | null | undefined,
+  fallbackOrgId: string | null | undefined,
+): string | null {
+  return eventOrgId?.trim() || fallbackOrgId?.trim() || null;
+}
+
+export function isWatchModeFileTargetCurrent(
+  filePath: string,
+  currentFile: string | null,
+  sourceId: string | null,
+  currentSourceId: string | null | undefined,
+  eventOrgId: string | null | undefined,
+  fallbackOrgId: string | null | undefined,
+  currentFileOrgId: string | null | undefined,
+): boolean {
+  return filePath === currentFile &&
+    (sourceId ?? null) === (currentSourceId ?? null) &&
+    resolveWatchModeOrgId(eventOrgId, fallbackOrgId) === (currentFileOrgId ?? null);
 }
 
 function normalizeActorId(value: string): string {
@@ -75,6 +99,7 @@ function resolveLatestFileEdit(
       agentName: entry.agentName,
       agentEmoji: entry.agentEmoji,
       sourceId: extractSourceId(entry.metadata),
+      orgId: entry.orgId ?? null,
       filePath: entry.filePath,
       cursor: entry.cursor ?? null,
       timestamp: entry.timestamp,
@@ -90,6 +115,8 @@ export function useWatchModeAutoFollow({
   activities,
   currentFile,
   currentSourceId,
+  currentFileOrgId,
+  fallbackOrgId,
   onSwitchFile,
 }: UseWatchModeAutoFollowOptions) {
   const [followEvent, setFollowEvent] = useState<WatchModeFollowEvent | null>(null);
@@ -123,13 +150,20 @@ export function useWatchModeAutoFollow({
     }
     lastProcessedEntryIdRef.current = latest.entryId;
 
-    const isSameTarget = latest.filePath === currentFile && (latest.sourceId ?? null) === (currentSourceId ?? null);
+    const isSameTarget = isWatchModeFileTargetCurrent(
+      latest.filePath,
+      currentFile,
+      latest.sourceId,
+      currentSourceId,
+      latest.orgId,
+      fallbackOrgId,
+      currentFileOrgId,
+    );
 
     if (latest.filePath && !isSameTarget) {
       onSwitchFile(latest.filePath, latest);
     }
-  }, [currentFile, currentSourceId, enabled, latest, onSwitchFile]);
+  }, [currentFile, currentFileOrgId, currentSourceId, enabled, fallbackOrgId, latest, onSwitchFile]);
 
   return { followEvent };
 }
-

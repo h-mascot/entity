@@ -568,6 +568,41 @@ test('mobile manual-share identity includes source authority and rejects same-pa
   assert.equal(JSON.stringify(lateSourceAResult).includes(sourceACanonicalUrl), false);
 });
 
+test('mobile manual-share identity includes organization authority for same source and path', () => {
+  const buildMobileDocHubDocumentIdentity = (
+    documentShellState as typeof documentShellState & {
+      buildMobileDocHubDocumentIdentity: (
+        sourceId: string | null,
+        path: string,
+        orgId?: string | null,
+      ) => string;
+    }
+  ).buildMobileDocHubDocumentIdentity;
+  const reduceMobileManualShareState = documentShellState.reduceMobileManualShareState;
+  const sharedPath = 'output/daily-brief.md';
+  const orgAIdentity = buildMobileDocHubDocumentIdentity('source-a', sharedPath, 'org-a');
+  const orgBIdentity = buildMobileDocHubDocumentIdentity('source-a', sharedPath, 'org-b');
+
+  assert.notEqual(orgAIdentity, orgBIdentity);
+  const orgBState = reduceMobileManualShareState(
+    {
+      documentIdentity: orgAIdentity,
+      value: null,
+      sheetSessionId: 'org-a-session',
+    },
+    { type: 'document-changed', documentIdentity: orgBIdentity },
+  );
+  const lateOrgAResult = reduceMobileManualShareState(orgBState, {
+    type: 'manual-required',
+    documentIdentity: orgAIdentity,
+    value: 'https://entity.example/docs/source/source-a/output/daily-brief.md?org=org-a&tool=share',
+    sheetSessionId: 'org-a-session',
+  });
+
+  assert.equal(lateOrgAResult.value, null);
+  assert.equal(lateOrgAResult.documentIdentity, orgBIdentity);
+});
+
 test('desktop manual-copy fallback ignores a late result from the previous document', () => {
   type DesktopManualCopyState = {
     documentIdentity: string;

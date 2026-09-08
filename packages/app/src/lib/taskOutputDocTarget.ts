@@ -1,5 +1,7 @@
 /** Decides where a task-output docs link should open. */
 
+import type { RelativeDocHubNavigation } from './docHubRoute';
+
 export interface DocTargetSource {
   id: string;
   enabled?: boolean;
@@ -8,6 +10,34 @@ export interface DocTargetSource {
 export type TaskOutputDocTarget =
   | { kind: 'source'; sourceId: string; path: string }
   | { kind: 'docs-route' };
+
+/** Scope the resolved target and canonical route together at the navigation boundary. */
+export function scopeTaskOutputDocNavigation(
+  navigation: RelativeDocHubNavigation,
+  taskOrgId: string | null | undefined,
+): RelativeDocHubNavigation {
+  const routeUrl = new URL(navigation.route, 'https://entity.invalid');
+  const targetOrgId = navigation.target.orgId?.trim();
+  const routeOrgId = routeUrl.searchParams.get('org')?.trim();
+  const scopedOrgId = targetOrgId || routeOrgId || taskOrgId?.trim();
+  if (!scopedOrgId) {
+    return navigation;
+  }
+
+  const target = targetOrgId
+    ? navigation.target
+    : { ...navigation.target, orgId: scopedOrgId };
+  if (routeOrgId === scopedOrgId) {
+    return target === navigation.target ? navigation : { ...navigation, target };
+  }
+
+  routeUrl.searchParams.set('org', scopedOrgId);
+  return {
+    ...navigation,
+    target,
+    route: `${routeUrl.pathname}${routeUrl.search}${routeUrl.hash}`,
+  };
+}
 
 /**
  * Docs paths look like "<root>/<rest>". When the root names a configured file

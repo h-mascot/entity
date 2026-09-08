@@ -10,9 +10,15 @@ import { assertSourceEnabled, emitFsAudit, normalizeSourceRelativePath } from '.
 import { recordFsOperation } from './metrics';
 import { ConnectorNotImplementedError, isMissingPathError, SourceTextUnsupportedError } from './errors';
 import { SourceReadLimitError } from './adapters/bounded-read';
+import type { FileSourceAdapter } from './adapters/types';
+import { createFsFileOwnershipRepository, type FsFileOwnershipRepository } from '../../../db/src/file-ownership';
+import { requireRequestOrg, type RequestOrgBinding } from '../request-permissions';
+import { assertOwnedDirectoryWriteAccess, assertOwnedFileAccess, OwnershipAccessDeniedError, resolveOwnershipScope, sourceOwnershipPathVisible } from './ownership';
 
 export interface FileRouteDeps {
   sourceRepo?: FileSourceRepository;
+  ownershipRepo?: Pick<FsFileOwnershipRepository, 'getOwnership' | 'listOwnershipForOrg'>;
+  createAdapter?: (source: FileSourceRecord) => FileSourceAdapter;
 }
 
 function parseSourceId(value: unknown): string {
@@ -63,6 +69,10 @@ function mapSourceError(err: unknown, res: Response): Response {
     return res.status(403).json({ error: message });
   }
 
+  if (message.includes('outside file ownership scope') || message.includes('ownership is required') || message.includes('Contributor role required')) {
+    return res.status(403).json({ error: message });
+  }
+
   if (message.includes('already exists')) {
     return res.status(409).json({ error: message });
   }
@@ -77,8 +87,47 @@ function mapSourceError(err: unknown, res: Response): Response {
   ) {
     return res.status(400).json({ error: message });
   }
-
   return res.status(500).json({ error: message });
+}
+
+function shouldUpdateSourceHealth(err: unknown): boolean {
+  if (err instanceof OwnershipAccessDeniedError || err instanceof ConnectorNotImplementedError) {
+    return false;
+  }
+  const message = err instanceof Error ? err.message : '';
+  return message !== 'Source is disabled.' && message !== 'Source is read-only.';
+}
+
+function callerCanWriteFile(
+  binding: RequestOrgBinding,
+  ownershipRepo: Pick<FsFileOwnershipRepository, 'getOwnership'>,
+  sourceId: string,
+  filePath: string,
+  sources: readonly FileSourceRecord[],
+): boolean {
+  try {
+    assertOwnedFileAccess(binding, ownershipRepo, sourceId, filePath, 'write', sources);
+    return true;
+  } catch (err) {
+    if (err instanceof OwnershipAccessDeniedError) return false;
+    throw err;
+  }
+}
+
+function callerCanWriteDirectory(
+  binding: RequestOrgBinding,
+  ownershipRepo: Pick<FsFileOwnershipRepository, 'getOwnership'>,
+  sourceId: string,
+  directoryPath: string,
+  sources: readonly FileSourceRecord[],
+): boolean {
+  try {
+    assertOwnedDirectoryWriteAccess(binding, ownershipRepo, sourceId, directoryPath, sources);
+    return true;
+  } catch (err) {
+    if (err instanceof OwnershipAccessDeniedError) return false;
+    throw err;
+  }
 }
 
 function parseContent(value: unknown): string {
@@ -101,21 +150,51 @@ function parseWriteMode(value: unknown): 'create' | 'overwrite' {
 
 export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): void {
   const sourceRepo = deps.sourceRepo ?? createFileSourceRepository();
+  const ownershipRepo = deps.ownershipRepo ?? createFsFileOwnershipRepository();
+  const createAdapter = deps.createAdapter ?? createFileSourceAdapter;
+
+  const assertDirectoryOwnershipVisible = (req: Request, binding: RequestOrgBinding, filePath: string): void => {
+    const scope = resolveOwnershipScope(binding);
+    const sourceId = typeof req.query.sourceId === 'string' ? req.query.sourceId : '';
+    const sources = sourceRepo.listSources(true);
+    const records = ownershipRepo.listOwnershipForOrg(scope.orgId);
+    if (!sourceOwnershipPathVisible(scope, sourceId, filePath, records, sources)) {
+      throw new OwnershipAccessDeniedError();
+    }
+  };
 
   router.get('/tree', async (req: Request, res: Response) => {
     let sourceId = '';
     let normalizedPath = '';
 
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return;
       sourceId = parseSourceId(req.query.sourceId);
       normalizedPath = normalizeSourceRelativePath(typeof req.query.path === 'string' ? req.query.path : '');
+      assertDirectoryOwnershipVisible(req, binding, normalizedPath);
       const source = sourceRepo.getSource(sourceId);
       assertSourceEnabled(source);
       assertConnectorImplemented(source);
 
-      const adapter = createFileSourceAdapter(source);
+      const ownershipScope = resolveOwnershipScope(binding);
+      const sources = sourceRepo.listSources(true);
+      const canWriteDirectory = callerCanWriteDirectory(binding, ownershipRepo, source.id, normalizedPath, sources);
+      const adapter = createAdapter(source);
+      const capabilities = adapter.capabilities();
       const startedAt = Date.now();
-      const nodes = (await adapter.list(normalizedPath)).filter((node) => node.kind !== 'other');
+      const ownershipRecords = ownershipRepo.listOwnershipForOrg(ownershipScope.orgId);
+      const nodes = (await adapter.list(normalizedPath))
+        .filter((node) => node.kind !== 'other')
+        .filter((node) => {
+          if (node.isDirectory) return sourceOwnershipPathVisible(ownershipScope, source.id, node.path, ownershipRecords, sources);
+          try {
+            assertOwnedFileAccess(binding, ownershipRepo, source.id, node.path, 'read', sources);
+            return true;
+          } catch {
+            return false;
+          }
+        });
       const durationMs = Date.now() - startedAt;
 
       emitFsAudit('fs.tree', {
@@ -133,14 +212,14 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
       return res.json({
         sourceId,
         path: normalizedPath,
-        capabilities: adapter.capabilities(),
+        capabilities: { ...capabilities, write: capabilities.write && canWriteDirectory },
         nodes,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       emitFsAudit('fs.tree.error', { sourceId, path: normalizedPath, error: message });
       recordFsOperation({ operation: 'fs.tree', sourceId, success: false, error: message });
-      if (sourceId) {
+      if (sourceId && shouldUpdateSourceHealth(err)) {
         sourceRepo.updateSource(sourceId, {
           health: 'degraded',
           last_synced_at: new Date().toISOString(),
@@ -155,6 +234,8 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
     let normalizedPath = '';
 
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return;
       sourceId = parseSourceId(req.query.sourceId);
       normalizedPath = normalizeSourceRelativePath(typeof req.query.path === 'string' ? req.query.path : '');
       if (!normalizedPath) {
@@ -164,8 +245,11 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
       const source = sourceRepo.getSource(sourceId);
       assertSourceEnabled(source);
       assertConnectorImplemented(source);
+      const sources = sourceRepo.listSources(true);
+      assertOwnedFileAccess(binding, ownershipRepo, sourceId, normalizedPath, 'read', sources);
+      const canWriteFile = callerCanWriteFile(binding, ownershipRepo, sourceId, normalizedPath, sources);
 
-      const adapter = createFileSourceAdapter(source);
+      const adapter = createAdapter(source);
       const startedAt = Date.now();
       let file: { content: string; contentType: string; updatedAt?: string; size?: number; isBinary?: boolean };
 
@@ -211,13 +295,13 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
         size: fileSize,
         isBinary,
         updatedAt: file.updatedAt ?? null,
-        readOnly: !adapter.capabilities().write,
+        readOnly: !adapter.capabilities().write || !canWriteFile,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       emitFsAudit('fs.file.error', { sourceId, path: normalizedPath, error: message });
       recordFsOperation({ operation: 'fs.file', sourceId, success: false, error: message });
-      if (sourceId) {
+      if (sourceId && shouldUpdateSourceHealth(err)) {
         sourceRepo.updateSource(sourceId, {
           health: 'error',
           last_synced_at: new Date().toISOString(),
@@ -232,6 +316,8 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
     let normalizedPath = '';
 
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return;
       sourceId = parseSourceId(req.body?.sourceId);
       normalizedPath = normalizeSourceRelativePath(typeof req.body?.path === 'string' ? req.body.path : '');
       if (!normalizedPath) {
@@ -244,8 +330,9 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
       const source = sourceRepo.getSource(sourceId);
       assertSourceEnabled(source);
       assertConnectorImplemented(source);
+      assertOwnedFileAccess(binding, ownershipRepo, sourceId, normalizedPath, 'write', sourceRepo.listSources(true));
 
-      const adapter = createFileSourceAdapter(source);
+      const adapter = createAdapter(source);
       const capabilities = adapter.capabilities();
       if (!capabilities.write) {
         throw new Error('Source is read-only.');
@@ -289,7 +376,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
       const message = err instanceof Error ? err.message : 'Unknown error';
       emitFsAudit('fs.file.write.error', { sourceId, path: normalizedPath, error: message });
       recordFsOperation({ operation: 'fs.file.write', sourceId, success: false, error: message });
-      if (sourceId) {
+      if (sourceId && shouldUpdateSourceHealth(err)) {
         sourceRepo.updateSource(sourceId, {
           health: 'error',
           last_synced_at: new Date().toISOString(),
@@ -304,6 +391,8 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
     let normalizedPath = '';
 
     try {
+      const binding = requireRequestOrg(req, res);
+      if (!binding) return;
       sourceId = parseSourceId(req.body?.sourceId);
       normalizedPath = normalizeSourceRelativePath(typeof req.body?.path === 'string' ? req.body.path : '');
       if (!normalizedPath) {
@@ -313,8 +402,9 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
       const source = sourceRepo.getSource(sourceId);
       assertSourceEnabled(source);
       assertConnectorImplemented(source);
+      assertOwnedDirectoryWriteAccess(binding, ownershipRepo, sourceId, normalizedPath, sourceRepo.listSources(true));
 
-      const adapter = createFileSourceAdapter(source);
+      const adapter = createAdapter(source);
       const capabilities = adapter.capabilities();
       if (!capabilities.write) {
         throw new Error('Source is read-only.');
@@ -343,7 +433,7 @@ export function registerFileRoutes(router: Router, deps: FileRouteDeps = {}): vo
       const message = err instanceof Error ? err.message : 'Unknown error';
       emitFsAudit('fs.folder.mkdir.error', { sourceId, path: normalizedPath, error: message });
       recordFsOperation({ operation: 'fs.folder.mkdir', sourceId, success: false, error: message });
-      if (sourceId) {
+      if (sourceId && shouldUpdateSourceHealth(err)) {
         sourceRepo.updateSource(sourceId, {
           health: 'error',
           last_synced_at: new Date().toISOString(),

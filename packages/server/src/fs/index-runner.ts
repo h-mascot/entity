@@ -1,5 +1,7 @@
 import { createFileIndexRepository } from '../../../db/src/file-index';
 import { createFileSourceRepository, type FileSourceRecord } from '../../../db/src/file-sources';
+import { createFsFileOwnershipRepository } from '../../../db/src/file-ownership';
+import type { FsFileOwnershipRepository } from '../../../db/src/file-ownership';
 import { classifyFile, extractIndexableFileContent } from './classify';
 import { createFileSourceAdapter } from './adapters/registry';
 import { emitFsAudit } from './security';
@@ -7,6 +9,7 @@ import { recordFsOperation } from './metrics';
 import { isMissingPathError } from './errors';
 import { SourceReadLimitError } from './adapters/bounded-read';
 import type { FileSourceAdapter, SourceNode, SourcePathMetadata } from './adapters/types';
+import { inspectFileOwnership } from './ownership';
 
 const MAX_SOURCE_DEPTH = 8;
 const MAX_DIRECTORIES_PER_SOURCE = 5000;
@@ -163,11 +166,13 @@ interface IndexRunnerOptions {
   maxFilesPerSource?: number;
   maxFileBytes?: number;
   excludes?: string[];
+  ownershipRepo?: Pick<FsFileOwnershipRepository, 'getOwnership'>;
 }
 
 export class FileIndexRunner {
   private readonly sourceRepo = createFileSourceRepository();
   private readonly indexRepo = createFileIndexRepository();
+  private readonly ownershipRepo: Pick<FsFileOwnershipRepository, 'getOwnership'>;
   private readonly maxConcurrentSources: number;
   private readonly maxFilesPerSource: number;
   private readonly maxFileBytes: number;
@@ -175,6 +180,7 @@ export class FileIndexRunner {
   private readonly deterministicSkips = new Map<string, string>();
 
   constructor(options: IndexRunnerOptions = {}) {
+    this.ownershipRepo = options.ownershipRepo ?? createFsFileOwnershipRepository();
     this.maxConcurrentSources = Math.max(1, options.maxConcurrentSources ?? 2);
     this.maxFilesPerSource = Math.max(10, options.maxFilesPerSource ?? 10000);
     const configuredMaxFileBytes = options.maxFileBytes ?? readMaxFileBytes();
@@ -280,6 +286,7 @@ export class FileIndexRunner {
     let filesIndexed = 0;
 
     try {
+      const configuredSources = this.sourceRepo.listSources(true);
       const adapter = createFileSourceAdapter(source);
       await adapter.validate(source);
 
@@ -396,6 +403,20 @@ export class FileIndexRunner {
           visitedFiles.add(filePath);
           filesScanned += 1;
 
+          const ownershipInspection = inspectFileOwnership(this.ownershipRepo, source.id, filePath, configuredSources);
+          const ownership = ownershipInspection.primary;
+          if (ownershipInspection.hasReservedContext && (ownershipInspection.ownerships.length === 0 || ownershipInspection.ownerships.some((row) => row.origin === 'pending'))) {
+            // Never resurrect an orphan or crash-window upload into the search
+            // index. Once ownership is finalized, the next run can index it.
+            this.indexRepo.deleteBySourcePathPrefix(source.id, filePath);
+            emitFsAudit('index.path.skipped', {
+              sourceId: source.id,
+              path: filePath,
+              reason: ownershipInspection.ownerships.some((row) => row.origin === 'pending') ? 'pending-upload' : 'unowned-upload',
+            });
+            continue;
+          }
+
           try {
             const file = await adapter.read(filePath, { maxBytes: this.maxFileBytes });
             const classification = classifyFile(filePath, file.content);
@@ -416,7 +437,7 @@ export class FileIndexRunner {
               indexed_at: new Date().toISOString(),
               preview: indexable.text.slice(0, 280),
               content_hash: classification.contentHash,
-              org_id: metadata.orgId ?? null,
+              org_id: ownership?.org_id ?? metadata.orgId ?? null,
               sensitivity: metadata.sensitivity ?? null,
               acl_json: metadata.aclJson ?? null,
               entity_visibility_policy_json: metadata.entityVisibilityPolicyJson ?? null,
