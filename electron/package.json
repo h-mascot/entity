@@ -37,7 +37,7 @@
     "electronVersion": "34.5.8"
   },
   "devDependencies": {
-    "electron": "^34.5.8",
+    "electron": "^44.2.0",
     "electron-builder": "^25.1.8"
   },
   "description": "Entity Mission Control Desktop",
