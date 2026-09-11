@@ -280,6 +280,40 @@ function stubLsof(releaseDir) {
   };
 }
 
+test("collector: resolves a relative `current` symlink against the link's directory, not process.cwd()", async () => {
+  const root = mkdtempSync(join(tmpdir(), "entity-live-verify-relative-"));
+  const dbFile = join(root, "entity-tasks.db");
+  writeFileSync(dbFile, "sqlite\n");
+  const { releaseDir } = buildReleaseTree(root, { sha: shaA, indexBytes: "index-bytes-A", dbTarget: dbFile });
+  // Rewrite `current` as a *relative* link (releases/<sha>) — the layout real
+  // deploy lanes use. Resolving the raw link text against process.cwd() yields
+  // a null/wrong currentRealpath and forces needless redeploys/rollbacks.
+  rmSync(join(root, "current"));
+  symlinkSync(join("releases", shaA), join(root, "current"));
+  const cwdSandbox = mkdtempSync(join(tmpdir(), "entity-live-verify-cwd-"));
+  const prevCwd = process.cwd();
+  process.chdir(cwdSandbox);
+  try {
+    const config = {
+      releaseBaseDir: join(root, "releases"),
+      currentLink: join(root, "current"),
+      prodDb: dbFile,
+      prodPort: "3999",
+    };
+    const live = await collectLiveState(config, stubLsof(releaseDir));
+    assert.ok(live.currentRealpath, "relative current link must resolve");
+    assert.equal(basename(live.currentRealpath), shaA);
+    assert.equal(live.manifest?.gitSha, shaA);
+    const drift = decideDrift(live, shaA);
+    assert.ok(!drift.reasons.includes("CURRENT_LINK_MISSING"), JSON.stringify(drift.reasons));
+    assert.ok(!drift.reasons.includes("CURRENT_BASENAME_MISMATCH"), JSON.stringify(drift.reasons));
+  } finally {
+    process.chdir(prevCwd);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(cwdSandbox, { recursive: true, force: true });
+  }
+});
+
 test("collector + decision: consistent live release passes end to end", async () => {
   const root = mkdtempSync(join(tmpdir(), "entity-live-verify-"));
   const dbFile = join(root, "entity-tasks.db");

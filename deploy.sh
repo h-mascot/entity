@@ -164,6 +164,11 @@ import json, os, sys
 configured = sys.argv[1]
 abspath = os.path.normpath(configured)
 realpath = os.path.realpath(configured)
+# The destination leaf itself being a symlink (the `current` profile) is the
+# deploy-symlink footprint; ancestor-only aliases (e.g. macOS /var ->
+# /private/var) are safe parents and must not block exact-SHA releases.
+# normpath first so a trailing slash cannot mask the leaf link.
+islink = os.path.islink(abspath)
 exists = os.path.isdir(realpath)
 release_present = False
 release_sha = None
@@ -190,6 +195,7 @@ print(json.dumps({
     "configured": configured,
     "abspath": abspath,
     "realpath": realpath,
+    "islink": islink,
     "basename": os.path.basename(realpath),
     "exists": exists,
     "releasePresent": release_present,

@@ -38,6 +38,11 @@ import {
   type WritePolicy,
   type WriteRequestScope,
 } from '../document-providers/write-policy';
+import {
+  runDocumentCreateOperation,
+  documentCreateReconciliationMessage,
+  type DocumentOperationStore,
+} from '../document-providers/create-operation';
 import type { DocumentDestination } from '../document-providers/destinations';
 import {
   preflightMutation,
@@ -684,6 +689,12 @@ export interface DocumentAgentDeps {
   registry: DocumentRegistry;
   /** Provider selection; returns the adapter for a provider kind, or undefined (fail closed). */
   adapters: (provider: string) => DocumentProviderAdapter | undefined;
+  /**
+   * R-026 operation store: the T-003 `document_operations` claim/complete API `document.create`
+   * persists the idempotency key through BEFORE the provider dispatch (F-001/F-002
+   * reconciliation reads from it). Required — a create path without it is not R-026-conformant.
+   */
+  operations: DocumentOperationStore;
   /** R-003 write policies. */
   policies: readonly WritePolicy[];
   /** R-003 destination records. */
@@ -931,67 +942,24 @@ export function createDocumentAgentTools(deps: DocumentAgentDeps): DocumentAgent
         return unsupportedResult(tool, { name: 'create', state: report.create.state },
           `${input.provider} does not support create for ${input.artifactType} under the current connection/capability state; failing closed.`);
       }
-      const created = await adapter.create({
-        artifact_type: input.artifactType,
-        title: input.title,
-        idempotencyKey: input.idempotencyKey,
-        now: nowIso(),
-      });
-
-      // R-026 idempotent replay: reconcile to the existing canonical record when present.
-      if (created.created === false) {
-        const existing = created.descriptor.external_id
-          ? deps.registry.findByProviderIdentity(
-              created.descriptor.provider_connection_id ?? null,
-              created.descriptor.external_id,
-              workspaceId,
-            )
-          : undefined;
-        if (existing) {
-          const warnings = input.associations !== undefined && input.associations !== null
-            ? ['replayed idempotency key; associations were not re-persisted (no-op replay).']
-            : ['replayed idempotency key; reconciled to the existing document.'];
-          return {
-            tool,
-            status: 'ok',
-            documentId: existing.id,
-            entityUrl: `/documents/${existing.id}`,
-            provider: existing.provider,
-            revision: existing.current_revision,
-            capability: { name: 'create', state: report.create.state },
-            operationId: input.idempotencyKey,
-            receiptId: null,
-            warnings,
-            degraded: existing.current_revision == null,
-          };
-        }
-        return conflictResult(tool, { name: 'create', state: report.create.state },
-          'the provider already created a document for this idempotency key, but no canonical record is present; reconciliation is required (returning the existing artifact).');
-      }
-
-      const writeInput: RegistryWriteInput = {
+      // R-026 (Bugbot 3847563957): the provider-neutral create lifecycle — claim BEFORE the
+      // provider dispatch, replay validated against the LIVE canonical record, registry
+      // persistence, uncertain-marking after post-dispatch failures — lives in
+      // document-providers/create-operation.ts (the same orchestrator the T-008 HTTP route
+      // uses). This tool only translates the typed outcome into the agent envelope; every
+      // policy/destination/confirmation/capability gate above has already run.
+      const createIdentity = {
         provider: input.provider,
-        artifact_type: input.artifactType,
+        artifactType: input.artifactType,
         title: input.title,
-        destination_id: input.destinationId ?? null,
-        external_id: created.descriptor.external_id,
-        provider_connection_id: created.descriptor.provider_connection_id,
-        provider_url: created.descriptor.provider_url,
-        owner_summary: null,
-        tenant_external_id: null,
-        permissions_summary_json: null,
-        sensitivity_label: null,
-        auth_state: created.descriptor.auth_state,
-        readiness_state: created.descriptor.readiness_state,
-        current_revision: created.descriptor.current_revision,
-        provider_modified_at: created.descriptor.provider_modified_at,
-        preview_state: created.descriptor.preview_state,
-        conflict_state: created.descriptor.conflict_state,
+        destinationId: input.destinationId ?? null,
       };
-
-      let canonical;
+      let outcome: Awaited<ReturnType<typeof runDocumentCreateOperation>>;
       try {
-        canonical = deps.registry.create(writeInput, workspaceId);
+        outcome = await runDocumentCreateOperation(
+          { operations: deps.operations, registry: deps.registry, adapter },
+          { workspaceId, idempotencyKey: input.idempotencyKey, identity: createIdentity, now: nowIso() },
+        );
       } catch (err) {
         if (err instanceof DocumentRegistryIdentityConflictError) {
           return conflictResult(tool, { name: 'create', state: report.create.state },
@@ -999,26 +967,68 @@ export function createDocumentAgentTools(deps: DocumentAgentDeps): DocumentAgent
         }
         throw err;
       }
-
-      const warnings: string[] = [];
-      if (input.associations !== undefined && input.associations !== null) {
-        // R-030 association context is accepted but not persisted by the current create lane; it is
-        // surfaced as a typed warning/degraded outcome rather than silently dropped.
-        warnings.push('association context was accepted but is not yet persisted by the active create lane (degraded); it was not silently dropped.');
+      switch (outcome.kind) {
+        case 'idempotency_conflict':
+          return conflictResult(tool, { name: 'create', state: report.create.state },
+            'this idempotencyKey was already used for a different creation request (fail closed).');
+        case 'reconciliation_required':
+          return conflictResult(tool, { name: 'create', state: report.create.state },
+            documentCreateReconciliationMessage(outcome.reason));
+        case 'replayed':
+          // Served from the validated live canonical record, never from stored JSON.
+          return {
+            tool,
+            status: 'ok',
+            documentId: outcome.record.id,
+            entityUrl: `/documents/${outcome.record.id}`,
+            provider: outcome.record.provider,
+            revision: outcome.record.current_revision,
+            capability: { name: 'create', state: report.create.state },
+            operationId: input.idempotencyKey,
+            receiptId: null,
+            warnings: ['replayed idempotency key; reconciled from the persisted operation record.'],
+            degraded: outcome.record.current_revision == null,
+          };
+        case 'reconciled': {
+          const warnings = input.associations !== undefined && input.associations !== null
+            ? ['replayed idempotency key; associations were not re-persisted (no-op replay).']
+            : ['replayed idempotency key; reconciled to the existing document.'];
+          return {
+            tool,
+            status: 'ok',
+            documentId: outcome.record.id,
+            entityUrl: `/documents/${outcome.record.id}`,
+            provider: outcome.record.provider,
+            revision: outcome.record.current_revision,
+            capability: { name: 'create', state: report.create.state },
+            operationId: input.idempotencyKey,
+            receiptId: null,
+            warnings,
+            degraded: outcome.record.current_revision == null,
+          };
+        }
+        case 'created': {
+          const warnings: string[] = [];
+          if (input.associations !== undefined && input.associations !== null) {
+            // R-030 association context is accepted but not persisted by the current create lane; it is
+            // surfaced as a typed warning/degraded outcome rather than silently dropped.
+            warnings.push('association context was accepted but is not yet persisted by the active create lane (degraded); it was not silently dropped.');
+          }
+          return {
+            tool,
+            status: 'ok',
+            documentId: outcome.record.id,
+            entityUrl: `/documents/${outcome.record.id}`,
+            provider: outcome.record.provider,
+            revision: outcome.record.current_revision,
+            capability: { name: 'create', state: report.create.state },
+            operationId: input.idempotencyKey,
+            receiptId: null,
+            warnings,
+            degraded: warnings.length > 0 || outcome.record.current_revision == null,
+          };
+        }
       }
-      return {
-        tool,
-        status: 'ok',
-        documentId: canonical.id,
-        entityUrl: `/documents/${canonical.id}`,
-        provider: canonical.provider,
-        revision: canonical.current_revision,
-        capability: { name: 'create', state: report.create.state },
-        operationId: input.idempotencyKey,
-        receiptId: null,
-        warnings,
-        degraded: warnings.length > 0 || canonical.current_revision == null,
-      };
     },
 
     async read(input): Promise<DocumentAgentToolResult> {

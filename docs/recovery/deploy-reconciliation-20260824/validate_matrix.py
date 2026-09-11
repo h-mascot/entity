@@ -3,10 +3,16 @@
 
 Run from anywhere inside the recovery worktree:
     python3 docs/recovery/deploy-reconciliation-20260824/validate_matrix.py
+An optional argument points at an alternative matrix file (used by the
+colocated validate_matrix_test.py fixture tests):
+    python3 validate_matrix.py /path/to/matrix.json
 
-Checks per line: tip exists, merge-base matches `git merge-base`,
-ahead/behind counts vs baseline, changed-file lists (name+status),
-and commit lists (sha|subject, oldest-first) all match the matrix.
+Checks per line: tip exists, merge-base equals `git merge-base tip baseline`
+(the true fork point versus the baseline — not merely an ancestor of the tip,
+which would validate a wrong older merge-base because the changed-file and
+commit lists are re-derived from the same stored value), ahead/behind counts
+vs baseline, changed-file lists (name+status), and commit lists (sha|subject,
+oldest-first) all match the matrix.
 Exit 0 = all valid; exit 1 = any mismatch (printed).
 """
 import json
@@ -25,7 +31,8 @@ def git(*args: str) -> str:
 
 
 def main() -> int:
-    matrix = json.loads(MATRIX_PATH.read_text())
+    matrix_path = Path(sys.argv[1]) if len(sys.argv) > 1 else MATRIX_PATH
+    matrix = json.loads(matrix_path.read_text())
     baseline = matrix["baseline"]["sha"]
     failures = []
 
@@ -43,10 +50,17 @@ def main() -> int:
                 failures.append(f"{name}: {label} {sha} missing")
         if failures:
             continue
-        # 2. merge-base matches
-        live_mb = git("merge-base", tip, mb).strip()
+        # 2. merge-base is the true fork point versus the baseline. Comparing
+        #    `git merge-base tip mb` only proved mb is an ancestor of the tip;
+        #    a wrong older ancestor passed while every range-derived list was
+        #    validated against the wrong fork point.
+        try:
+            live_mb = git("merge-base", tip, baseline).strip()
+        except subprocess.CalledProcessError:
+            failures.append(f"{name}: no merge-base with baseline {baseline} (unrelated history?)")
+            continue
         if live_mb != mb:
-            failures.append(f"{name}: live merge-base {live_mb} != {mb}")
+            failures.append(f"{name}: merge-base vs baseline is {live_mb}, matrix says {mb}")
         # 3. ahead/behind vs baseline
         ahead = int(git("rev-list", "--count", f"{baseline}..{tip}").strip())
         behind = int(git("rev-list", "--count", f"{tip}..{baseline}").strip())

@@ -55,6 +55,12 @@ function createMemoryNotificationRepository(): NotificationRepository {
       return notification;
     },
     getNotification: (id) => notifications.get(id),
+    hasNotificationForRecipient: (input) => [...notifications.values()].some(
+      (notification) =>
+        notification.canonical_event_id === input.canonical_event_id &&
+        notification.recipient_principal_id === input.recipient_principal_id &&
+        (!input.org_id || notification.org_id === input.org_id)
+    ),
     listNotificationsForRecipient: (input) => [...notifications.values()]
       .filter((notification) => notification.recipient_principal_id === input.recipient_principal_id)
       .filter((notification) => !input.org_id || notification.org_id === input.org_id)

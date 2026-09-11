@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { withApiToken } from '../../lib/http';
+import { withApiToken } from '../../lib/http.ts';
 
 interface ActivityAuditSettingsProps {
   apiBase?: string;
@@ -86,6 +86,9 @@ interface AccessReport {
 }
 
 const PAGE_SIZE = 50;
+// Must stay <= the server's MAX_REPORT_LIMIT (200) so every audit page is
+// fully populated; 100 matches the server's default report limit.
+const AUDIT_PAGE_SIZE = 100;
 
 function apiPath(apiBase: string | undefined, path: string): string {
   return `${apiBase ?? ''}${path}`;
@@ -108,6 +111,62 @@ function buildActivityQuery(
   return params.toString();
 }
 
+/** Human-readable `first–last of total` label for a paged list row window. */
+export function listRangeLabel(offset: number, count: number, total: number): string {
+  if (total <= 0 || count <= 0) return '';
+  const first = offset + 1;
+  const last = Math.min(offset + count, total);
+  return `${first}–${last} of ${total}`;
+}
+
+interface AuditTrailPagerProps {
+  offset: number;
+  pageSize: number;
+  count: number;
+  total: number;
+  loading: boolean;
+  onPrevPage: () => void;
+  onNextPage: () => void;
+}
+
+/** Prev/Next pager for the audit trail; the report cap hides older pages without it. */
+export function AuditTrailPager({
+  offset,
+  pageSize,
+  count,
+  total,
+  loading,
+  onPrevPage,
+  onNextPage,
+}: AuditTrailPagerProps) {
+  const label = listRangeLabel(offset, count, total);
+  const hasPrev = offset > 0;
+  const hasNext = offset + pageSize < total;
+  return (
+    <div className="mt-2 flex items-center justify-between" data-testid="audit-trail-pager">
+      <div className="text-xs text-[var(--text-muted)]">{label ? `Events ${label}` : ''}</div>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={onPrevPage}
+          disabled={!hasPrev || loading}
+          className="mc-shell-btn px-3 py-1 text-xs disabled:opacity-50"
+        >
+          Prev
+        </button>
+        <button
+          type="button"
+          onClick={onNextPage}
+          disabled={!hasNext || loading}
+          className="mc-shell-btn px-3 py-1 text-xs disabled:opacity-50"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSettingsProps) {
   const [orgs, setOrgs] = useState<OrgOption[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
@@ -123,6 +182,7 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
   const [report, setReport] = useState<ActivityReport | null>(null);
   const [usageReport, setUsageReport] = useState<UsageReport | null>(null);
   const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
+  const [auditOffset, setAuditOffset] = useState(0);
   const [accessReport, setAccessReport] = useState<AccessReport | null>(null);
   const [reportTab, setReportTab] = useState<'activity' | 'usage' | 'audit' | 'access'>('activity');
   const [accessError, setAccessError] = useState<string | null>(null);
@@ -196,10 +256,17 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
   );
 
   const loadAuditReport = useCallback(
-    async (query: string) => {
-      const response = await fetch(apiPath(apiBase, `/api/admin/audit-report?${query}`), withApiToken());
+    async (query: string, pageOffset: number) => {
+      // The server caps audit events at its default limit; page explicitly so
+      // the trail table can walk past the first page instead of silently
+      // truncating while the summary cards show the full totals.
+      const response = await fetch(
+        apiPath(apiBase, `/api/admin/audit-report?${query}&limit=${AUDIT_PAGE_SIZE}&offset=${pageOffset}`),
+        withApiToken()
+      );
       if (!response.ok) throw new Error(`audit report ${response.status}`);
       setAuditReport(await response.json() as AuditReport);
+      setAuditOffset(pageOffset);
     },
     [apiBase]
   );
@@ -247,7 +314,7 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
           loadReport(query),
           loadActivities(query, 0),
           loadUsageReport(query),
-          loadAuditReport(query),
+          loadAuditReport(query, 0),
         ]);
         if (!cancelled) setAppliedQuery(query);
       } catch (err) {
@@ -278,7 +345,7 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
         loadReport(query),
         loadActivities(query, 0),
         loadUsageReport(query),
-        loadAuditReport(query),
+        loadAuditReport(query, 0),
       ]);
       setAppliedQuery(query);
     } catch (err) {
@@ -306,6 +373,22 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
       }
     },
     [appliedQuery, loadActivities]
+  );
+
+  const changeAuditPage = useCallback(
+    async (nextOffset: number) => {
+      if (nextOffset < 0) return;
+      setLoading(true);
+      setError(null);
+      try {
+        await loadAuditReport(appliedQuery, nextOffset);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to load audit report');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [appliedQuery, loadAuditReport]
   );
 
   const summary = useMemo(() => {
@@ -582,6 +665,15 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
                 {!auditReport?.events.length ? <tr><td colSpan={5} className="py-2 text-[var(--text-muted)]">No audit events match the current filters.</td></tr> : null}
               </tbody>
             </table></div>
+            <AuditTrailPager
+              offset={auditOffset}
+              pageSize={AUDIT_PAGE_SIZE}
+              count={auditReport?.events.length ?? 0}
+              total={auditReport?.total ?? 0}
+              loading={loading}
+              onPrevPage={() => void changeAuditPage(auditOffset - AUDIT_PAGE_SIZE)}
+              onNextPage={() => void changeAuditPage(auditOffset + AUDIT_PAGE_SIZE)}
+            />
           </div>
         </div>
       ) : null}
@@ -617,7 +709,7 @@ export default function ActivityAuditSettings({ apiBase = '' }: ActivityAuditSet
         <div className="mc-shell-card border border-[var(--border-secondary)] p-4">
           <div className="mb-2 flex items-center justify-between">
             <div className="text-xs font-medium text-[var(--text-primary)]">
-              Activity {total > 0 ? `${offset + 1}–${Math.min(offset + activities.length, total)} of ${total}` : ''}
+              Activity {listRangeLabel(offset, activities.length, total)}
             </div>
             <div className="flex gap-2">
               <button

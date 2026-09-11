@@ -1,7 +1,7 @@
 {
-  "updatedAt": "2026-09-08T13:00:10.390Z",
+  "updatedAt": "2026-09-11T17:39:16.445Z",
   "command": "update",
-  "model": "gpt-5.4-mini",
+  "model": "glm-5.3",
   "status": "complete",
   "language": "en"
 }

@@ -10,10 +10,11 @@
  * Dedupe is by canonical_event_id: `due-reminder:{taskId}:{kind}:{dueDate}` —
  * one notification per task per reminder kind per due date, so scheduler
  * retries and restarts are idempotent while a moved due date re-notifies.
+ * The check uses the repository's exact-match event lookup so it stays correct
+ * even when a recipient's inbox exceeds the clamped newest-first listing.
  */
 
 import type {
-  NotificationRecord,
   NotificationRepository,
   TaskRecord,
 } from '../../db/src';
@@ -52,6 +53,24 @@ export function reminderEventId(
 
 const TASK_OPEN_COLUMNS = new Set(['backlog', 'todo', 'doing', 'review']);
 
+/** Sentinel values the task layer writes when a principal field is unset
+ * (schema defaults, mapTaskRow/createTask/updateTask coercion, cloud mapping).
+ * Mirrors the db precedent in isLegacyPrincipalMarker/isAssignablePrincipal. */
+const PLACEHOLDER_PRINCIPAL_IDS = new Set([
+  'unassigned',
+  'none',
+  'unknown',
+  'legacy-owner',
+  'legacy-unknown',
+  'legacy-system',
+  'system',
+]);
+
+export function isPlaceholderPrincipalId(value: string | null | undefined): boolean {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return !normalized || PLACEHOLDER_PRINCIPAL_IDS.has(normalized);
+}
+
 export function isTaskOpenForReminders(task: Pick<TaskRecord, 'column' | 'archived'>): boolean {
   return !task.archived && TASK_OPEN_COLUMNS.has(task.column);
 }
@@ -60,8 +79,9 @@ function recipientCandidates(task: TaskRecord): { principalId: string; role: str
   const recipients: { principalId: string; role: string }[] = [];
   const seen = new Set<string>();
   const push = (value: string | null | undefined, role: string) => {
-    const principalId = typeof value === 'string' ? value.trim() : '';
-    if (!principalId || seen.has(principalId)) return;
+    if (isPlaceholderPrincipalId(value)) return;
+    const principalId = (value as string).trim();
+    if (seen.has(principalId)) return;
     seen.add(principalId);
     recipients.push({ principalId, role });
   };
@@ -129,14 +149,11 @@ function hasAlreadyNotified(
   recipientPrincipalId: string,
   canonicalEventId: string
 ): boolean {
-  return notificationRepository
-    .listNotificationsForRecipient({
-      org_id: orgId,
-      recipient_principal_id: recipientPrincipalId,
-      inbox_state: 'all',
-      limit: 1000,
-    })
-    .some((notification: NotificationRecord) => notification.canonical_event_id === canonicalEventId);
+  return notificationRepository.hasNotificationForRecipient({
+    org_id: orgId,
+    recipient_principal_id: recipientPrincipalId,
+    canonical_event_id: canonicalEventId,
+  });
 }
 
 export async function scanDueDateReminders(deps: DueReminderScanDeps): Promise<DueReminderScanResult> {

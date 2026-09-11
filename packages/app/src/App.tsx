@@ -34,7 +34,7 @@ import { useFollowMode } from './hooks/useFollowMode';
 import { resolveWatchModeOrgId, useWatchModeAutoFollow } from './hooks/useWatchModeAutoFollow';
 import { useTaskBoard, type TaskBoardTask } from './hooks/useTaskBoard';
 import { useIsMobile } from './hooks/useIsMobile';
-import { useEntityNotifications } from './hooks/useEntityNotifications';
+import { useEntityNotifications, inboxRecipientPrincipalIds } from './hooks/useEntityNotifications';
 import { useNotificationCenter } from './hooks/useNotificationCenter';
 import { useSyncStatus } from './hooks/useSyncStatus';
 import { runtime } from './config/runtime';
@@ -1961,7 +1961,10 @@ export default function App() {
   const [userProfile, saveUserProfile] = useUserProfile();
   const entityNotifications = useEntityNotifications({
     apiBase: runtime.apiBase,
-    recipientPrincipalId: userProfile.handle,
+    // Query every exact profile identity (displayName for UI-created task
+    // principals, handle for API-created ones) and union the per-identity
+    // inboxes by notification id.
+    recipientPrincipalIds: inboxRecipientPrincipalIds(userProfile),
     enabled: notificationsPanelOpen,
   });
   const totalNotificationsUnreadCount = notificationsUnreadCount + entityNotifications.unreadCount;

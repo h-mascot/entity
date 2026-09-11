@@ -189,6 +189,17 @@ const USAGE_ACTOR_SQL =
   "COALESCE(NULLIF(tasks.executor_principal_id, ''), NULLIF(tasks.owner_principal_id, ''), " +
   "NULLIF(tasks.created_by_principal_id, ''), 'unassigned')";
 
+// The Admin UI sends one `actor` filter (placeholder "e.g. Ada") to every
+// report tab. Activity matches agent display names / payload principal ids and
+// access resolves principal ids/handles/display names/emails, so usage must
+// resolve the same display-name searches to principal ids instead of comparing
+// the raw text against task principal-id columns only (which yielded activity
+// hits and an empty usage report for the same Apply).
+const USAGE_ACTOR_PRINCIPAL_MATCH_SQL =
+  "SELECT p.id FROM entity_principals p " +
+  "WHERE p.id = ? OR p.handle = ? OR lower(p.display_name) LIKE lower(?) " +
+  "OR lower(COALESCE(p.email, '')) LIKE lower(?)";
+
 function buildActivityConditions(filters: AdminReportFilterInput): {
   sql: string;
   params: Array<string | number>;
@@ -264,8 +275,10 @@ function buildUsageConditions(filters: AdminReportFilterInput): {
     params.push(teamId);
   }
   if (actor) {
-    conditions.push(`${USAGE_ACTOR_SQL} = ?`);
-    params.push(actor);
+    conditions.push(
+      `(${USAGE_ACTOR_SQL} = ? OR ${USAGE_ACTOR_SQL} IN (${USAGE_ACTOR_PRINCIPAL_MATCH_SQL}))`
+    );
+    params.push(actor, actor, actor, `%${actor}%`, `%${actor}%`);
   }
   if (model) {
     conditions.push("COALESCE(NULLIF(agent_log.model, ''), 'unknown') = ?");

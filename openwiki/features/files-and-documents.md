@@ -56,6 +56,7 @@ sequenceDiagram
 - `packages/app/src/views/FilesView.tsx` chooses the unified dashboard or basic file state, then hosts `DocumentEditorView` inside `DocHubWorkspaceChrome`.
 - `components/UnifiedFileDashboard.tsx` owns multi-source results, filters, sorting, restriction behavior, and result opening.
 - `hooks/useFileSources.ts` calls source, tree, file, folder, and search endpoints and applies cached-read fallback.
+- `packages/app/src/components/onboardingSourceReuse.ts` backs the onboarding "Test source" click in `OnboardingFlow.tsx`: because `POST /api/sources` never returns 409 and display names are not unique, `findReusableOnboardingSource` lists `GET /api/sources?includeDisabled=true` first and reuses a source only when it is enabled and matches displayName plus connector type plus normalized location (trailing slashes ignored), so a failed test click cannot fork duplicate sources or silently test a stale or deliberately disabled one.
 - `lib/documents-client.ts` defines the collaboration API model: sessions, authorship, presence, comments/replies, suggestions, review runs/findings, edits, and cursor updates.
 - `views/DocsRouteView.tsx` is a standalone reading/TTS route, not the full editing workspace.
 
@@ -67,6 +68,7 @@ sequenceDiagram
 - `packages/db/src/document-collab.ts` persists sessions, authorship, presence, comment threads/replies, suggestions, and review data.
 - `packages/server/src/routes/agent-api.ts` exposes scoped `/api/documents/*` operations; these self-authenticate with document token/scopes when the native editor is enabled.
 - `packages/server/src/routes/document-integrations.ts` wires the provider-neutral document API to provider-specific adapters and enforces write-policy and destination checks before create/update actions proceed.
+- `packages/server/src/document-providers/create-operation.ts` owns the provider-neutral create lifecycle (`runDocumentCreateOperation`): it persists the idempotency claim in the T-003 `document_operations` store *before* the provider dispatch, replays a completed key only against the live canonical registry record, reconciles an adapter-reported replay onto the live record, and marks the claim `uncertain` (recording the provider external id when known) after a dispatch or registry-write failure. The HTTP create route only translates that typed outcome into `409 IDEMPOTENCY_CONFLICT`, `409 CREATE_RECONCILIATION_REQUIRED` (with the lifecycle's reason vocabulary), `201 created`, or a `200 reconciled` replay served from the registry object rather than stored JSON.
 - `packages/server/src/document-providers/google/{docs-adapter.ts,sheets-adapter.ts,slides-adapter.ts,reconciler.ts,read-state.ts}` implement Google document write, reconciliation, and read-state behavior.
 - `packages/server/src/document-providers/microsoft/{connection.ts,destinations.ts,reconciler.ts,read-state.ts,create-adapter.ts}` implement Microsoft Entra binding, destination discovery, reconciliation, and read-state behavior.
 - `packages/server/src/document-providers/local/{docx-engine.ts,xlsx-engine.ts,pptx-engine.ts,managed-storage.ts,safe-save.ts,file-watcher.ts,bridge.ts}` implement local office engine support, managed storage, safe-save coordination, and file watching.
@@ -91,6 +93,7 @@ The broader [runtime and data architecture](../architecture/runtime-and-data.md)
 | Read-only source in the convert dialog | Document conversion is blocked and the UI explains that the source is read-only |
 | Binary source or unsupported conversion target | The backend rejects the request rather than creating a derivative document |
 | Writable local source opened in the convert dialog | The UI can preview or create a new derivative document with preserved provenance |
+| T-003 document-integrations schema migration fails (table collision or ensure failure) | `mountDocumentIntegrations` in `packages/server/src/routes/document-integrations-mount.ts` does **not** mount the `/api/document-integrations` routers; the feature is dark, the failure is logged for the operator, and the rest of the server keeps running |
 
 Admin stores/configures Documents API access, but credentials are scoped bearer/service credentials and must not be embedded in documentation. The [security page](../operations/security-and-release.md) explains why object-permission enforcement is route-specific.
 

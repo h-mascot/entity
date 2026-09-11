@@ -38,6 +38,8 @@ interface SourcePayload {
 
 const VALID_AUTH_TYPES: FileSourceAuthType[] = ['none', 'bearer', 'api-key', 'basic', 'ssh'];
 
+const MANIFEST_EXCLUSIVE_ERROR = 'manifestPath and manifestUrl are mutually exclusive; configure only one manifest location.';
+
 function toBoolean(value: unknown, fallback = false): boolean {
   if (typeof value === 'boolean') {
     return value;
@@ -137,12 +139,22 @@ function withManifestCapability(
 
   const capabilities = parseCapabilities(rawCapabilities);
   if (typeof manifestPath !== 'undefined') {
-    if (manifestPath.trim()) capabilities.manifestPath = manifestPath.trim();
-    else delete capabilities.manifestPath;
+    if (manifestPath.trim()) {
+      capabilities.manifestPath = manifestPath.trim();
+      // The adapter treats the two manifest locations as mutually exclusive;
+      // configuring one must never leave the other poisoned in storage.
+      delete capabilities.manifestUrl;
+    } else {
+      delete capabilities.manifestPath;
+    }
   }
   if (typeof manifestUrl !== 'undefined') {
-    if (manifestUrl.trim()) capabilities.manifestUrl = manifestUrl.trim();
-    else delete capabilities.manifestUrl;
+    if (manifestUrl.trim()) {
+      capabilities.manifestUrl = manifestUrl.trim();
+      delete capabilities.manifestPath;
+    } else {
+      delete capabilities.manifestUrl;
+    }
   }
   return JSON.stringify(capabilities);
 }
@@ -157,6 +169,21 @@ function parseCapabilities(value: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+/**
+ * True when a capabilities JSON destined for storage would configure both
+ * manifest locations, which the http-markdown adapter refuses to load.
+ * Mirrors the adapter's own check so an ambiguous effective configuration is
+ * rejected before it can be persisted — no matter which combination of
+ * top-level fields and raw capabilities JSON produced it.
+ */
+function hasConflictingManifestLocations(capabilitiesJson: string | undefined): boolean {
+  if (typeof capabilitiesJson !== 'string') return false;
+  const capabilities = parseCapabilities(capabilitiesJson);
+  const manifestPath = typeof capabilities.manifestPath === 'string' ? capabilities.manifestPath.trim() : '';
+  const manifestUrl = typeof capabilities.manifestUrl === 'string' ? capabilities.manifestUrl.trim() : '';
+  return Boolean(manifestPath && manifestUrl);
 }
 
 function sourceIsConfigManaged(capabilities: unknown): boolean {
@@ -264,6 +291,16 @@ function parsePayload(body: SourcePayload): { ok: true; value: SourcePayload } |
     }
   }
 
+  // The adapter can load at most one manifest location; an ambiguous request
+  // is rejected instead of persisting a source whose every manifest load
+  // fails. An empty string is the explicit "clear this field" instruction and
+  // stays valid next to a non-empty value for the other field.
+  const manifestPathText = typeof body.manifestPath === 'string' ? body.manifestPath.trim() : '';
+  const manifestUrlText = typeof body.manifestUrl === 'string' ? body.manifestUrl.trim() : '';
+  if (manifestPathText && manifestUrlText) {
+    return { ok: false, error: MANIFEST_EXCLUSIVE_ERROR };
+  }
+
   return { ok: true, value: body };
 }
 
@@ -301,6 +338,18 @@ export function registerSourceRoutes(app: Express): void {
       const basePath = type === 'local'
         ? await assertAllowedLocalSourceBasePath(payload.basePath)
         : payload.basePath?.trim() || undefined;
+      const capabilities = capabilitiesForStorage(
+        type,
+        withManifestCapability(payload.capabilities, payload.manifestPath, payload.manifestUrl),
+        basePath,
+        undefined,
+        type === 'local' && Boolean(basePath) && localSourceOverlapsReadOnlyRoot(basePath!, repo.listSources(true)),
+      );
+      // The pair can also ride in through the raw capabilities JSON, so the
+      // check runs on the effective configuration after top-level overrides.
+      if (hasConflictingManifestLocations(capabilities)) {
+        return res.status(400).json({ error: MANIFEST_EXCLUSIVE_ERROR });
+      }
       const created = repo.createSource({
         id: payload.id?.trim() || undefined,
         display_name: displayName,
@@ -311,13 +360,7 @@ export function registerSourceRoutes(app: Express): void {
         auth_ref: payload.authRef?.trim() || undefined,
         enabled: typeof payload.enabled === 'undefined' ? true : toBoolean(payload.enabled),
         icon: payload.icon?.trim() || undefined,
-        capabilities: capabilitiesForStorage(
-          type,
-          withManifestCapability(payload.capabilities, payload.manifestPath, payload.manifestUrl),
-          basePath,
-          undefined,
-          type === 'local' && Boolean(basePath) && localSourceOverlapsReadOnlyRoot(basePath!, repo.listSources(true)),
-        ),
+        capabilities,
       });
 
       // Kick off an index run for the created source (async; status is reflected via /api/fs/metrics).
@@ -358,8 +401,33 @@ export function registerSourceRoutes(app: Express): void {
         ? await assertAllowedLocalSourceBasePath(payload.basePath ?? existing.base_path)
         : payload.basePath;
       const storageBasePath = nextType === 'local' ? basePath ?? existing.base_path : basePath;
-      const manifestCapabilities = withManifestCapability(payload.capabilities, payload.manifestPath, payload.manifestUrl);
+      // Manifest-only updates merge on top of the stored capabilities so
+      // unrelated keys (visibility policy, permission_state, config readOnly,
+      // …) survive; an explicit capabilities string still replaces wholesale.
+      const manifestRequested = typeof payload.manifestPath !== 'undefined' || typeof payload.manifestUrl !== 'undefined';
+      const manifestCapabilities = withManifestCapability(
+        manifestRequested && typeof payload.capabilities !== 'string' ? existing.capabilities : payload.capabilities,
+        payload.manifestPath,
+        payload.manifestUrl,
+      );
       const shouldUpdateCapabilities = nextType === 'local' || typeof manifestCapabilities === 'string';
+      const nextCapabilities = shouldUpdateCapabilities
+        ? capabilitiesForStorage(
+            nextType,
+            manifestCapabilities,
+            storageBasePath,
+            existing.capabilities,
+            nextType === 'local' &&
+              Boolean(storageBasePath) &&
+              localSourceOverlapsReadOnlyRoot(storageBasePath!, repo.listSources(true)),
+          )
+        : undefined;
+      // Validate the effective stored configuration after overrides; updates
+      // that leave capabilities untouched (nextCapabilities undefined) stay
+      // valid so legacy rows can still be remediated through other fields.
+      if (hasConflictingManifestLocations(nextCapabilities)) {
+        return res.status(400).json({ error: MANIFEST_EXCLUSIVE_ERROR });
+      }
       const updated = repo.updateSource(id, {
         display_name: payload.displayName,
         type: payload.type ? nextType : undefined,
@@ -369,17 +437,7 @@ export function registerSourceRoutes(app: Express): void {
         auth_ref: payload.authRef,
         enabled: typeof payload.enabled === 'undefined' ? undefined : toBoolean(payload.enabled),
         icon: payload.icon,
-        capabilities: shouldUpdateCapabilities
-          ? capabilitiesForStorage(
-              nextType,
-              manifestCapabilities,
-              storageBasePath,
-              existing.capabilities,
-              nextType === 'local' &&
-                Boolean(storageBasePath) &&
-                localSourceOverlapsReadOnlyRoot(storageBasePath!, repo.listSources(true)),
-            )
-          : undefined,
+        capabilities: nextCapabilities,
         health: payload.health ? parseHealth(payload.health) ?? undefined : undefined,
         last_synced_at: payload.lastSyncedAt,
       });
@@ -514,9 +572,11 @@ export function registerSourceRoutes(app: Express): void {
       await adapter.validate(source);
       const durationMs = Date.now() - startedAt;
       recordFsOperation({ operation: 'sources.test', sourceId: source.id, durationMs, success: true });
+      // A connection test is not a sync run: only health is recorded here so
+      // clients never label a test timestamp as a sync time. The index runner
+      // owns last_synced_at for real sync runs.
       repo.updateSource(source.id, {
         health: 'ok',
-        last_synced_at: new Date().toISOString(),
       });
 
       return res.json({
@@ -533,7 +593,6 @@ export function registerSourceRoutes(app: Express): void {
       if (existing) {
         repo.updateSource(id, {
           health: 'error',
-          last_synced_at: new Date().toISOString(),
         });
       }
       // Keep the fail-closed 200/error envelope for Admin diagnostics, but

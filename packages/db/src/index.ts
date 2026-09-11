@@ -771,6 +771,12 @@ export interface NotificationRepository {
     inbox_state?: NotificationInboxState | 'all';
     limit?: number;
   }) => NotificationRecord[];
+  /** Exact-match event lookup for dedupe; unlike the clamped inbox listing it sees rows beyond the newest-first limit window. */
+  hasNotificationForRecipient: (input: {
+    org_id?: string;
+    recipient_principal_id: string;
+    canonical_event_id: string;
+  }) => boolean;
   updateInboxState: (id: string, inboxState: NotificationInboxState | string) => NotificationRecord | undefined;
   addDeliveryAttempt: (notificationId: string, input: CreateNotificationDeliveryInput) => NotificationDeliveryRecord;
   listDeliveryAttempts: (notificationId: string) => NotificationDeliveryRecord[];
@@ -10673,6 +10679,14 @@ export function createNotificationRepository(): NotificationRepository {
     ORDER BY datetime(created_at) DESC, id DESC
     LIMIT ?
   `);
+  const hasByEventStmt = db.prepare(`
+    SELECT 1
+    FROM notifications
+    WHERE canonical_event_id = ?
+      AND org_id = ?
+      AND recipient_principal_id = ?
+    LIMIT 1
+  `);
   const createStmt = db.prepare(`
     INSERT INTO notifications (
       id,
@@ -10807,6 +10821,20 @@ export function createNotificationRepository(): NotificationRepository {
       ) as Array<Record<string, unknown>>)
         .map((row) => withDeliveries(row))
         .filter((record): record is NotificationRecord => Boolean(record));
+    },
+
+    hasNotificationForRecipient: (input) => {
+      const recipientPrincipalId = normalizeBlockerReason(input.recipient_principal_id);
+      const canonicalEventId = normalizeBlockerReason(String(input.canonical_event_id));
+      if (!recipientPrincipalId || !canonicalEventId) {
+        return false;
+      }
+      const row = hasByEventStmt.get(
+        canonicalEventId,
+        normalizeWorkspaceId(input.org_id, DEFAULT_WORKSPACE_ORG_ID),
+        recipientPrincipalId
+      );
+      return Boolean(row);
     },
 
     updateInboxState: (id: string, inboxState: NotificationInboxState | string) => {

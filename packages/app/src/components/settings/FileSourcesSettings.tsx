@@ -53,6 +53,42 @@ const HEALTH_STYLES: Record<FileSource['health'], string> = {
   error: 'bg-red-100 text-red-700',
 };
 
+/** Local connectors are rooted by basePath; every other connector is addressed by baseUrl. */
+export function sourceTypeUsesBasePath(type: FileSource['type']): boolean {
+  return SOURCE_TYPE_HINTS[type].localOnly;
+}
+
+/**
+ * Switches the form's source type and clears the location field the next
+ * type does not use, so a stale value can never linger invisibly and later
+ * be submitted for (or displayed beside) the wrong connector.
+ */
+export function withSourceTypeSwitched(form: SourceFormState, type: FileSource['type']): SourceFormState {
+  return sourceTypeUsesBasePath(type)
+    ? { ...form, type, baseUrl: '' }
+    : { ...form, type, basePath: '' };
+}
+
+/**
+ * Builds the create payload from the form, sending only the location field
+ * the selected connector type actually uses. The server stores both columns,
+ * and the list UI prefers basePath, so a leftover field would show up as the
+ * wrong location for remote sources.
+ */
+export function buildSourceCreatePayload(form: SourceFormState) {
+  const usesBasePath = sourceTypeUsesBasePath(form.type);
+  return {
+    displayName: form.displayName.trim(),
+    type: form.type,
+    baseUrl: usesBasePath ? undefined : form.baseUrl.trim() || undefined,
+    basePath: usesBasePath ? form.basePath.trim() || undefined : undefined,
+    manifestPath: form.type === 'http-markdown' ? form.manifestPath.trim() || undefined : undefined,
+    authType: form.authType,
+    authRef: form.authType === 'none' ? undefined : form.authRef.trim(),
+    icon: form.icon.trim() || undefined,
+  };
+}
+
 function formatSyncedAt(value: string | null): string {
   if (!value) {
     return 'Never synced';
@@ -129,16 +165,7 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
     }
 
     try {
-      await createSource({
-        displayName: form.displayName.trim(),
-        type: form.type,
-        baseUrl: form.baseUrl.trim() || undefined,
-        basePath: form.basePath.trim() || undefined,
-        manifestPath: form.type === 'http-markdown' ? form.manifestPath.trim() || undefined : undefined,
-        authType: form.authType,
-        authRef: form.authType === 'none' ? undefined : form.authRef.trim(),
-        icon: form.icon.trim() || undefined,
-      });
+      await createSource(buildSourceCreatePayload(form));
       setForm(INITIAL_FORM);
     } catch (err) {
       setLocalError(toErrorMessage(err, 'Failed to create source.'));
@@ -254,7 +281,7 @@ export default function FileSourcesSettings({ apiBase = '', enabled = true }: Fi
           />
           <select
             value={form.type}
-            onChange={(event) => setForm((prev) => ({ ...prev, type: event.target.value as FileSource['type'] }))}
+            onChange={(event) => setForm((prev) => withSourceTypeSwitched(prev, event.target.value as FileSource['type']))}
             className="mc-shell-input px-2 py-1 text-xs"
             aria-label="Source type"
           >

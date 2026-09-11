@@ -134,6 +134,23 @@ describe('admin report repository (MC #1369)', () => {
     expect(report.byDay).toHaveLength(1);
   });
 
+  it('resolves usage actor filters by principal display name or email, not only principal ids', async () => {
+    const { reports } = await loadFixture();
+
+    // The Admin UI sends one `actor` filter to every tab and its placeholder
+    // suggests display names; usage used to compare only principal ids, so a
+    // display-name search returned activity hits and an empty usage report.
+    const byDisplayName = reports.getUsageReport({ actor: 'Ada' });
+    expect(byDisplayName.totals).toEqual({ runs: 2, tokens: 150 });
+    expect(byDisplayName.byActor).toEqual([{ actor: 'ada', runs: 2, tokens: 150 }]);
+
+    const byEmail = reports.getUsageReport({ actor: 'ada@example.com' });
+    expect(byEmail.totals.runs).toBe(2);
+
+    const unrelated = reports.getUsageReport({ actor: 'Nobody' });
+    expect(unrelated.totals).toEqual({ runs: 0, tokens: 0 });
+  });
+
   it('returns audit events with outcome counts and excludes another org', async () => {
     const { reports } = await loadFixture();
 

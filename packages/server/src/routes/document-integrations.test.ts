@@ -144,6 +144,8 @@ function setup(overrides: Partial<DocumentIntegrationsRouterDeps> = {}): TestCon
 
   const deps: DocumentIntegrationsRouterDeps = {
     registry,
+    // R-026: the create path persists idempotency keys through the T-003 operation store.
+    operations: repo,
     adapters: (provider: string) => adapters.get(provider),
     policies,
     destinations,
@@ -1412,6 +1414,7 @@ describe('T-008 provider-neutral document API — workspace isolation blast radi
     const registry2 = createDocumentRegistry(db);
     const depsNoWs: DocumentIntegrationsRouterDeps = {
       registry: registry2,
+      operations: repo,
       adapters: () => undefined,
       policies: [],
       destinations: [],
@@ -1445,6 +1448,7 @@ describe('T-008 — B4 wall-clock production clock (no injected `now`)', () => {
       '/api/document-integrations',
       createDocumentIntegrationsRouter({
         registry: registry2,
+        operations: repo,
         adapters: (p) => adapters.get(p),
         policies,
         destinations,
@@ -1738,5 +1742,320 @@ describe('T-014 (THE-955) — Google Docs lane through the T-013 gate stack (rou
     expect(body.error.code).toBe('STALE_REVISION');
     expect(body.error.retryable).toBe(true);
     expect(body.error.expectedRevision).toBe('google-rev-DOES-NOT-EXIST');
+  });
+});
+
+/**
+ * Bugbot 3846757919 (write-gate truthfulness): the audited flag gate stays fail closed for
+ * EVERY provider, but the denial reason must name the ACTUAL provider — a microsoft_365 or
+ * local_office write must never be told it failed because of a "Google" gate.
+ */
+describe('write-gate flag-off denial reason is provider-truthful (not Google-specific)', () => {
+  const flagOff = resolvePhase2Flags({ ENTITY_PHASE2_CAPABILITY_RESOLVER_ENFORCEMENT: 'off' });
+
+  it('microsoft_365 create under flag-off: WRITE_DISABLED names microsoft_365, never Google', async () => {
+    const ctx = setup({ flags: flagOff });
+    ctx.adapters.set('microsoft_365', createFakeDocumentProviderAdapter({ provider: 'microsoft_365' }));
+    ctx.policies.push(basePolicy({ provider: 'microsoft_365' }));
+    ctx.destinations.push(baseDestination({ provider: 'microsoft_365' }));
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: createBody({ provider: 'microsoft_365' }),
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('WRITE_DISABLED');
+    expect(body.error.message).toContain('microsoft_365');
+    expect(body.error.message).not.toContain('Google');
+  });
+
+  it('local_office create under flag-off: WRITE_DISABLED names local_office, never Google', async () => {
+    const ctx = setup({ flags: flagOff });
+    ctx.adapters.set('local_office', createFakeDocumentProviderAdapter({ provider: 'local_office' }));
+    ctx.policies.push(basePolicy({ provider: 'local_office' }));
+    ctx.destinations.push(baseDestination({ provider: 'local_office' }));
+    const res = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: createBody({ provider: 'local_office' }),
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('WRITE_DISABLED');
+    expect(body.error.message).toContain('local_office');
+    expect(body.error.message).not.toContain('Google');
+  });
+
+  it('local_office mutation under flag-off: WRITE_DISABLED names local_office, never Google', async () => {
+    const ctx = setup({ flags: flagOff });
+    const adapter = createFakeDocumentProviderAdapter({ provider: 'local_office' });
+    ctx.adapters.set('local_office', adapter);
+    ctx.policies.push(basePolicy({ provider: 'local_office' }));
+    ctx.destinations.push(baseDestination({ provider: 'local_office' }));
+    // Seed the artifact + registry directly (the create route is itself gated under flag-off).
+    const seeded = await adapter.create({
+      artifact_type: 'document',
+      title: 'flag-off seed',
+      idempotencyKey: 'op-seed-flagoff',
+      now: TEST_NOW,
+    });
+    const registered = ctx.registry.register(
+      baseWriteInput({ provider: 'local_office', external_id: seeded.descriptor.external_id }),
+      'ws_A',
+    );
+    const res = await requestApp(ctx.app, {
+      path: `/api/document-integrations/${registered.record.id}/mutations`,
+      method: 'POST',
+      body: {
+        expectedRevision: 'rev-1',
+        idempotencyKey: 'op_flagoff_mutation',
+        operation: { kind: 'replace_text', content: 'x' },
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = await bodyOf(res);
+    expect(body.error.code).toBe('WRITE_DISABLED');
+    expect(body.error.message).toContain('local_office');
+    expect(body.error.message).not.toContain('Google');
+  });
+});
+
+/**
+ * Bugbot 3847563957 / R-026: the shared HTTP create path must persist the idempotency key in
+ * the T-003 `document_operations` store BEFORE the provider dispatch, so a
+ * timeout-after-provider-success (F-001) or a failed post-provider registry write (F-002)
+ * reconciles instead of duplicating the provider artifact.
+ */
+describe('R-026 create operation claim at the route boundary (F-001/F-002)', () => {
+  /** Wrap an adapter, counting create dispatches (provider-side artifact attempts). */
+  function countingAdapter(
+    base: DocumentProviderAdapter,
+    counter: { createDispatches: number },
+  ): DocumentProviderAdapter {
+    return {
+      ...base,
+      create: async (input: Parameters<DocumentProviderAdapter['create']>[0]) => {
+        counter.createDispatches += 1;
+        return base.create(input);
+      },
+    };
+  }
+
+  it('F-001: after a post-dispatch failure, a retry NEVER re-dispatches the provider create — it demands reconciliation (409)', async () => {
+    const db = openFreshDb();
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    const registry = createDocumentRegistry(db);
+    const counter = { createDispatches: 0 };
+    const adapter = createFakeDocumentProviderAdapter();
+    // Simulate F-002/F-001: the provider create succeeds, then the canonical registry write fails.
+    const failingRegistry: DocumentRegistry = {
+      ...registry,
+      create: () => {
+        throw new Error('simulated post-provider registry write failure');
+      },
+    };
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api/document-integrations',
+      createDocumentIntegrationsRouter({
+        registry: failingRegistry,
+        adapters: () => countingAdapter(adapter, counter),
+        policies: [basePolicy()],
+        destinations: [baseDestination()],
+        flags: resolvePhase2Flags(),
+        resolveWorkspace: () => 'ws_A',
+        connectionStateFor: () => 'authorized',
+        now: () => TEST_NOW,
+        operations: repo,
+      } as DocumentIntegrationsRouterDeps),
+    );
+    const body = {
+      artifactType: 'document',
+      title: 'Q3',
+      provider: 'google_workspace',
+      destinationId: 'dest_1',
+      idempotencyKey: 'op_f001',
+    };
+    const first = await requestApp(app, { path: '/api/document-integrations', method: 'POST', body });
+    expect(first.status).toBe(500); // the simulated registry failure surfaces (provider artifact exists)
+    expect(counter.createDispatches).toBe(1);
+
+    // A NEW process (fresh adapter — no in-memory idempotency) retries the same key: the
+    // persisted operation claim must block a second provider dispatch.
+    const freshCounter = { createDispatches: 0 };
+    const freshAdapter = createFakeDocumentProviderAdapter();
+    const app2 = express();
+    app2.use(express.json());
+    app2.use(
+      '/api/document-integrations',
+      createDocumentIntegrationsRouter({
+        registry, // registry works now — only the duplicate dispatch is at stake
+        adapters: () => countingAdapter(freshAdapter, freshCounter),
+        policies: [basePolicy()],
+        destinations: [baseDestination()],
+        flags: resolvePhase2Flags(),
+        resolveWorkspace: () => 'ws_A',
+        connectionStateFor: () => 'authorized',
+        now: () => TEST_NOW,
+        operations: repo,
+      } as DocumentIntegrationsRouterDeps),
+    );
+    const retry = await requestApp(app2, { path: '/api/document-integrations', method: 'POST', body });
+    expect(retry.status).toBe(409);
+    const retryBody = await bodyOf(retry);
+    expect(retryBody.error.code).toBe('CREATE_RECONCILIATION_REQUIRED');
+    expect(freshCounter.createDispatches).toBe(0); // NO second provider artifact
+    expect(counter.createDispatches).toBe(1);
+  });
+
+  it('R-026 replay: a retry in a NEW process (fresh adapter) replays the persisted result without re-dispatching', async () => {
+    const db = openFreshDb();
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    const registry = createDocumentRegistry(db);
+    const counter = { createDispatches: 0 };
+    const adapter = createFakeDocumentProviderAdapter();
+    const deps = (): DocumentIntegrationsRouterDeps => ({
+      registry,
+      adapters: () => countingAdapter(adapter, counter),
+      policies: [basePolicy()],
+      destinations: [baseDestination()],
+      flags: resolvePhase2Flags(),
+      resolveWorkspace: () => 'ws_A',
+      connectionStateFor: () => 'authorized',
+      now: () => TEST_NOW,
+      operations: repo,
+    } as DocumentIntegrationsRouterDeps);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/document-integrations', createDocumentIntegrationsRouter(deps()));
+    const body = {
+      artifactType: 'document',
+      title: 'Q3',
+      provider: 'google_workspace',
+      destinationId: 'dest_1',
+      idempotencyKey: 'op_replay_store',
+    };
+    const first = await requestApp(app, { path: '/api/document-integrations', method: 'POST', body });
+    expect(first.status).toBe(201);
+    const firstId = (await bodyOf(first)).documentId;
+    expect(counter.createDispatches).toBe(1);
+
+    // New process: SAME persisted db + operation store, but a FRESH adapter instance whose
+    // in-memory idempotency map is empty. The persisted claim must serve the replay.
+    const freshCounter = { createDispatches: 0 };
+    const freshAdapter = createFakeDocumentProviderAdapter();
+    const app2 = express();
+    app2.use(express.json());
+    app2.use(
+      '/api/document-integrations',
+      createDocumentIntegrationsRouter({
+        ...deps(),
+        adapters: () => countingAdapter(freshAdapter, freshCounter),
+      } as DocumentIntegrationsRouterDeps),
+    );
+    const retry = await requestApp(app2, { path: '/api/document-integrations', method: 'POST', body });
+    expect(retry.status).toBe(200);
+    const retryBody = await bodyOf(retry);
+    expect(retryBody.reconciled).toBe(true);
+    expect(retryBody.documentId).toBe(firstId);
+    expect(freshCounter.createDispatches).toBe(0);
+  });
+
+  it('R-026 conflict: the same idempotency key reused for a DIFFERENT request is a typed conflict, never a silent reconcile', async () => {
+    const ctx = setup();
+    ctx.adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    ctx.policies.push(basePolicy());
+    ctx.destinations.push(baseDestination());
+    const first = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: createBody({ title: 'Original request', idempotencyKey: 'op_reused_key' }),
+    });
+    expect(first.status).toBe(201);
+    // Same key, DIFFERENT title: a different creation request must not silently reconcile.
+    const second = await requestApp(ctx.app, {
+      path: '/api/document-integrations',
+      method: 'POST',
+      body: createBody({ title: 'A different request', idempotencyKey: 'op_reused_key' }),
+    });
+    expect(second.status).toBe(409);
+    const body = await bodyOf(second);
+    expect(body.error.code).toBe('IDEMPOTENCY_CONFLICT');
+  });
+});
+
+/**
+ * Root follow-up: a completed-operation replay must validate the LIVE canonical registry object
+ * (existence + expected provider) — never blindly trust the stored result payload, and never
+ * report success for a document that no longer exists.
+ */
+describe('R-026 completed-operation replay validates the live canonical registry object', () => {
+  function replayHarness() {
+    const db = openFreshDb();
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    const registry = createDocumentRegistry(db);
+    const adapters = new Map<string, DocumentProviderAdapter>();
+    adapters.set('google_workspace', createFakeDocumentProviderAdapter());
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api/document-integrations',
+      createDocumentIntegrationsRouter({
+        registry,
+        operations: repo,
+        adapters: (p) => adapters.get(p),
+        policies: [basePolicy()],
+        destinations: [baseDestination()],
+        flags: resolvePhase2Flags(),
+        resolveWorkspace: () => 'ws_A',
+        connectionStateFor: () => 'authorized',
+        now: () => TEST_NOW,
+      }),
+    );
+    const body = {
+      artifactType: 'document',
+      title: 'Q3',
+      provider: 'google_workspace',
+      destinationId: 'dest_1',
+      idempotencyKey: 'op_replay_validate',
+    };
+    return { db, repo, registry, app, body };
+  }
+
+  it('a replay whose canonical document was DELETED is a typed reconciliation demand, never success', async () => {
+    const h = replayHarness();
+    const first = await requestApp(h.app, { path: '/api/document-integrations', method: 'POST', body: h.body });
+    expect(first.status).toBe(201);
+    const documentId = (await bodyOf(first)).documentId;
+    // The canonical record is removed after the operation completed (document deleted).
+    h.db.prepare('DELETE FROM document_objects WHERE id = ?').run(documentId);
+    const retry = await requestApp(h.app, { path: '/api/document-integrations', method: 'POST', body: h.body });
+    expect(retry.status).toBe(409);
+    const retryBody = await bodyOf(retry);
+    expect(retryBody.error.code).toBe('CREATE_RECONCILIATION_REQUIRED');
+  });
+
+  it('a replay whose persisted result names a DIFFERENT provider than the requested create fails closed', async () => {
+    const h = replayHarness();
+    const first = await requestApp(h.app, { path: '/api/document-integrations', method: 'POST', body: h.body });
+    expect(first.status).toBe(201);
+    const documentId = (await bodyOf(first)).documentId;
+    // Corrupt/swap the persisted provider while keeping an otherwise well-formed stored result.
+    h.db
+      .prepare('UPDATE document_operations SET result_json = ? WHERE workspace_id = ? AND idempotency_key = ?')
+      .run(
+        JSON.stringify({ documentId, entityUrl: `/documents/${documentId}`, provider: 'microsoft_365', revision: 'rev-1' }),
+        'ws_A',
+        'op_replay_validate',
+      );
+    const retry = await requestApp(h.app, { path: '/api/document-integrations', method: 'POST', body: h.body });
+    expect(retry.status).toBe(409);
+    const retryBody = await bodyOf(retry);
+    expect(retryBody.error.code).toBe('CREATE_RECONCILIATION_REQUIRED');
   });
 });

@@ -83,6 +83,7 @@ packages/server/src/index.ts]
   WebApp --&gt;|served by| Server
 </code></pre>
 <p>Caption: both shells are wrappers around the same server-backed web app.</p>
+<p>The shells deliberately keep different React majors: the mobile package pins <code>react</code> 18.3.1 for React Native while the web app pins <code>react</code>/<code>react-dom</code> 19, and workspace hoisting puts the mobile copy at the repo root. To keep that split from bundling a second React core into the web app, <code>packages/app/vite.config.ts</code> sets <code>resolve.dedupe: [&#39;react&#39;, &#39;react-dom&#39;]</code> (with <code>@vitejs/plugin-react</code> compatible with the app&#39;s Vite 8 build) so root-hoisted packages that peer React — zustand, use-sync-external-store, react-markdown, and similar — resolve from this workspace; without it the app can fail at runtime with hooks errors such as &quot;Cannot read properties of null (reading &#39;useRef&#39;)&quot;. The manual chunking still isolates <code>react-vendor</code>, so the dedupe rule changes which copy is bundled, not how it is split.</p>
 <h2 id="degraded-states-and-operator-notes">Degraded states and operator notes</h2>
 <ul>
 <li>The desktop shell can show a connecting page while it waits for the server or spawns one locally.</li>

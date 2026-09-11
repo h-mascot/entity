@@ -3,6 +3,15 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    // Workspace hoisting puts mobile's react@18.3.1 at the repo root while the
+    // app nests react@19/react-dom@19; root-hoisted packages that peer react
+    // (zustand, use-sync-external-store, react-markdown, …) would otherwise
+    // resolve the root copy and bundle a second React core, breaking hooks at
+    // runtime ("Cannot read properties of null (reading 'useRef')"). Always
+    // resolve react/react-dom from this workspace so the app ships one React.
+    dedupe: ['react', 'react-dom'],
+  },
   build: {
     rollupOptions: {
       output: {

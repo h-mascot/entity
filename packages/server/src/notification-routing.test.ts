@@ -59,6 +59,13 @@ function createMemoryNotificationRepository(): NotificationRepository {
     },
     getNotification: (id: string) => notifications.get(id),
     listNotificationsForRecipient: () => [...notifications.values()],
+    hasNotificationForRecipient: (input) =>
+      [...notifications.values()].some(
+        (notification) =>
+          notification.canonical_event_id === input.canonical_event_id &&
+          notification.recipient_principal_id === input.recipient_principal_id &&
+          (!input.org_id || notification.org_id === input.org_id)
+      ),
     updateInboxState: (id, inboxState) => {
       const notification = notifications.get(id);
       if (!notification) return undefined;

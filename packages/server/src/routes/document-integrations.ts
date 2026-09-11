@@ -74,6 +74,11 @@ import {
 } from '../document-providers/write-policy';
 import type { DocumentDestination } from '../document-providers/destinations';
 import {
+  runDocumentCreateOperation,
+  documentCreateReconciliationMessage,
+  type DocumentOperationStore,
+} from '../document-providers/create-operation';
+import {
   UnsafeMutationError,
   preflightMutation,
   staleRevisionBody,
@@ -102,6 +107,7 @@ export type DocumentApiErrorCode =
   | 'INVALID_REQUEST'
   | 'UNSUPPORTED_OPERATION'
   | 'CREATE_RECONCILIATION_REQUIRED'
+  | 'IDEMPOTENCY_CONFLICT'
   | 'PROVIDER_UNAVAILABLE';
 
 /** Typed API error: statusCode + machine-readable code + optional detail for the 409 contract. */
@@ -128,6 +134,12 @@ export interface DocumentIntegrationsRouterDeps {
   registry: DocumentRegistry;
   /** Provider selection. Returns the adapter for a provider kind, or undefined (fail closed). */
   adapters: (provider: string) => DocumentProviderAdapter | undefined;
+  /**
+   * R-026 operation store: the T-003 `document_operations` claim/complete API the create path
+   * MUST persist the idempotency key through BEFORE the provider dispatch (F-001/F-002
+   * reconciliation reads from it). Required — a create path without it is not R-026-conformant.
+   */
+  operations: DocumentOperationStore;
   /** R-003 write policies. */
   policies: readonly WritePolicy[];
   /** R-003 destination records. */
@@ -213,27 +225,30 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 /**
  * T-013 (R-005 "deployment-level feature availability"; 14.6 rollback) — the audited feature
- * gate is the master availability switch for Google WRITE authorization.
+ * gate is the master availability switch for document-integration WRITES.
  *
  * OQ-018 ("Which current Entity feature-flag mechanism should host the write gates?") is open;
- * there is NO dedicated Google-write audited flag. Per the task we reuse the existing audited
- * flag surface rather than inventing a new untracked flag: `capability_resolver_enforcement`
+ * there is NO dedicated per-provider write audited flag. Per the task we reuse the existing
+ * audited flag surface rather than inventing a new untracked flag: `capability_resolver_enforcement`
  * (packages/server/src/phase2-flags.ts, surface `document_capabilities`) is the on-point audited
  * flag already governing the resolver-driven write machinery. When it is DISABLED we fail closed
- * Google writes (WRITE_DISABLED) — disabling the audited flag immediately restores effective
- * read-only behavior WITHOUT schema rollback (14.6). The flag can only ever DISABLE a Google
- * write; it can never lift the admin/destination/write-mode/confirmation gates.
+ * writes for EVERY provider (the flag also gates capability resolution itself, so letting a
+ * write proceed under flag-off would dispatch without capability evidence — never allowed).
+ * The denial reason names the ACTUAL provider (Bugbot 3846757919: a microsoft_365/local_office
+ * write must never be told it failed because of a "Google" gate). The flag can only ever
+ * DISABLE a write; it can never lift the admin/destination/write-mode/confirmation gates.
  */
-function assertGoogleWriteDeploymentAvailable(
+function assertWriteDeploymentAvailable(
   deps: DocumentIntegrationsRouterDeps,
+  provider: string,
   operation: string,
 ): void {
   if (!capabilityResolutionEnabled(deps.flags)) {
     throw new DocumentApiError(
       403,
       'WRITE_DISABLED',
-      `Google ${operation} is not deployed: the audited write-gate feature flag is disabled; ` +
-        `restoring read-only behavior (fail closed, no schema rollback).`,
+      `${provider} ${operation} is not deployed: the audited write-gate feature flag is ` +
+        `disabled; writes fail closed (read-only behavior, no schema rollback).`,
     );
   }
 }
@@ -638,8 +653,8 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
       const destinationId = optionalString(body as unknown as Record<string, unknown>, 'destinationId');
       const adapter = getAdapter(deps, provider);
       // T-013 (R-005 #1) deployment-level feature availability: the audited flag is the master
-      // availability switch for Google writes. Disabled => create is undispatched (read-only).
-      assertGoogleWriteDeploymentAvailable(deps, 'create');
+      // availability switch for writes. Disabled => create is undispatched (read-only).
+      assertWriteDeploymentAvailable(deps, provider, 'create');
       // R-005 #7 applicable confirmation policy: an explicit, truthful confirmation flag from the
       // caller is required when the governing confirmation policy demands it (OQ-003 default open).
       const confirmed = (body as unknown as Record<string, unknown>).confirmed === true;
@@ -730,77 +745,24 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
           );
         }
       }
-      const created = await adapter.create({
-        artifact_type: artifactType,
-        title,
-        idempotencyKey,
-        now: nowIso(),
-      });
-      // B2 (THE-949/T-008): an idempotency-key REPLAY (created.created === false) must reconcile,
-      // never 409 DOCUMENT_ALREADY_EXISTS. The fake adapter returns created:false for a replayed
-      // key; the route returns the existing registry record (or a typed CREATE_RECONCILIATION_REQUIRED
-      // when the record is not yet present).
-      if (created.created === false) {
-        const existing = created.descriptor.external_id
-          ? deps.registry.findByProviderIdentity(
-              created.descriptor.provider_connection_id ?? null,
-              created.descriptor.external_id,
-              workspaceId,
-            )
-          : undefined;
-        if (existing) {
-          return res.status(200).json({
-            documentId: existing.id,
-            entityUrl: `/documents/${existing.id}`,
-            provider,
-            revision: existing.current_revision,
-            operationId: idempotencyKey,
-            receiptId: null,
-            reconciled: true,
-          });
-        }
-        // A succeeded-on-provider but not-yet-registered replay needs explicit reconciliation.
-        throw new DocumentApiError(
-          409,
-          'CREATE_RECONCILIATION_REQUIRED',
-          'the provider already created a document for this idempotency key, but no canonical ' +
-            'record is present; reconciliation is required (returning the existing artifact).',
-        );
-      }
-      // Strict create (THE-944 r2 F7): a provider identity already owned anywhere surfaces a
-      // typed conflict WITHOUT revealing whether it belongs to this workspace (no existence
-      // oracle). The registry's own derived id is authoritative (THE-945 r3 F4).
-      let canonical: DocumentObjectRecord;
+      // R-026 (Bugbot 3847563957): the provider-neutral create lifecycle — claim BEFORE the
+      // provider dispatch, replay validated against the LIVE canonical record, registry
+      // persistence, uncertain-marking after post-dispatch failures — lives in
+      // document-providers/create-operation.ts (the same orchestrator the T-032 agent tool
+      // uses). This route only translates the typed outcome into the HTTP envelope; every
+      // authorization/destination/confirmation/capability gate above has already run.
+      const createIdentity = { provider, artifactType, title, destinationId };
+      let outcome: Awaited<ReturnType<typeof runDocumentCreateOperation>>;
       try {
-        canonical = deps.registry.create(
-          {
-            provider,
-            artifact_type: artifactType,
-            title,
-            // Persist the destination the document was created into so downstream evidence
-            // (mutation/version/capability scopes read record.destination_id) resolves against
-            // the R-003 destination rather than failing closed on a null destination.
-            destination_id: destinationId,
-            external_id: created.descriptor.external_id,
-            provider_connection_id: created.descriptor.provider_connection_id,
-            provider_url: created.descriptor.provider_url,
-            owner_summary: null,
-            tenant_external_id: null,
-            permissions_summary_json: null,
-            sensitivity_label: null,
-            auth_state: created.descriptor.auth_state,
-            readiness_state: created.descriptor.readiness_state,
-            current_revision: created.descriptor.current_revision,
-            provider_modified_at: created.descriptor.provider_modified_at,
-            preview_state: created.descriptor.preview_state,
-            conflict_state: created.descriptor.conflict_state,
-          },
-          workspaceId,
+        outcome = await runDocumentCreateOperation(
+          { operations: deps.operations, registry: deps.registry, adapter },
+          { workspaceId, idempotencyKey, identity: createIdentity, now: nowIso() },
         );
       } catch (err) {
+        // Strict create (THE-944 r2 F7): a provider identity already owned anywhere surfaces a
+        // typed conflict WITHOUT revealing whether it belongs to this workspace (no existence
+        // oracle). The registry's own derived id is authoritative (THE-945 r3 F4).
         if (err instanceof DocumentRegistryIdentityConflictError) {
-          // Same typed conflict for same-workspace duplicate and cross-workspace ownership —
-          // never reveals which workspace owns the identity.
           throw new DocumentApiError(
             409,
             'DOCUMENT_ALREADY_EXISTS',
@@ -809,14 +771,43 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
         }
         throw err;
       }
-      return res.status(201).json({
-        documentId: canonical.id,
-        entityUrl: `/documents/${canonical.id}`,
-        provider,
-        revision: canonical.current_revision,
-        operationId: idempotencyKey,
-        receiptId: null,
-      });
+      switch (outcome.kind) {
+        case 'idempotency_conflict':
+          throw new DocumentApiError(
+            409,
+            'IDEMPOTENCY_CONFLICT',
+            'this idempotency key was already used for a different creation request (fail closed).',
+          );
+        case 'reconciliation_required':
+          throw new DocumentApiError(
+            409,
+            'CREATE_RECONCILIATION_REQUIRED',
+            documentCreateReconciliationMessage(outcome.reason),
+          );
+        case 'replayed':
+        case 'reconciled':
+          // B2 (THE-949/T-008): an idempotency-key replay reconciles to the live canonical
+          // record (200, never 409 DOCUMENT_ALREADY_EXISTS) — served from the registry object,
+          // never from unvalidated stored JSON.
+          return res.status(200).json({
+            documentId: outcome.record.id,
+            entityUrl: `/documents/${outcome.record.id}`,
+            provider: outcome.record.provider,
+            revision: outcome.record.current_revision,
+            operationId: idempotencyKey,
+            receiptId: null,
+            reconciled: true,
+          });
+        case 'created':
+          return res.status(201).json({
+            documentId: outcome.record.id,
+            entityUrl: `/documents/${outcome.record.id}`,
+            provider,
+            revision: outcome.record.current_revision,
+            operationId: idempotencyKey,
+            receiptId: null,
+          });
+      }
     } catch (err) {
       return sendDocumentApiError(res, err);
     }
@@ -833,7 +824,7 @@ export function createDocumentIntegrationsRouter(deps: DocumentIntegrationsRoute
       const mutation = parseMutation((body as unknown as Record<string, unknown>).operation);
       const adapter = getAdapter(deps, record.provider);
       // T-013 (R-005 #1) deployment-level feature availability (master write-gate switch).
-      assertGoogleWriteDeploymentAvailable(deps, 'mutation');
+      assertWriteDeploymentAvailable(deps, record.provider, 'mutation');
       // T-013 (R-005 #7) applicable confirmation policy.
       const confirmed = (body as unknown as Record<string, unknown>).confirmed === true;
 

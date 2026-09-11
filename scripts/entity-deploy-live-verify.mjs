@@ -15,7 +15,7 @@
 // decideDrift() compares those facts against the expected release SHA and
 // fails closed on any contradiction or unavailable fact.
 import { existsSync, readFileSync, realpathSync, readlinkSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { maybeTreeHash } from "./entity-release-info.mjs";
 
@@ -46,7 +46,12 @@ export async function collectLiveState(config, inject = {}) {
   if (releaseMode) {
     try {
       const linkTarget = readlinkSync(config.currentLink);
-      state.currentRealpath = realpathSync(linkTarget || config.currentLink);
+      // Relative symlink text (e.g. `releases/<sha>`) resolves against the
+      // link's own directory, never process.cwd() — resolving the raw text
+      // directly made healthy relative `current` links read as missing/wrong.
+      state.currentRealpath = realpathSync(
+        linkTarget ? resolve(dirname(config.currentLink), linkTarget) : config.currentLink,
+      );
     } catch {
       state.currentRealpath = null;
     }

@@ -310,6 +310,8 @@ function setup(overrides: Partial<DocumentAgentDeps> = {}): Harness {
 
   const deps: DocumentAgentDeps = {
     registry,
+    // R-026: document.create persists idempotency keys through the T-003 operation store.
+    operations: repo,
     adapters: (provider: string) => adapters.get(provider),
     policies,
     destinations,
@@ -448,6 +450,7 @@ describe('T-032 agent tools — negative capability / provider / authorization /
     const destinations = [destinationFor('google_workspace')];
     const tools = createDocumentAgentTools({
       registry,
+      operations: repo,
       adapters: (p) => adapters.get(p),
       policies,
       destinations,
@@ -503,6 +506,7 @@ describe('T-032 agent tools — negative capability / provider / authorization /
     adapters.set('microsoft_365', createFakeDocumentProviderAdapter({ provider: 'microsoft_365' }));
     const tools = createDocumentAgentTools({
       registry,
+      operations: repo,
       adapters: (p) => adapters.get(p),
       policies: [], // no policy => not authorized
       destinations: [],
@@ -582,6 +586,7 @@ describe('T-032 agent tools — negative capability / provider / authorization /
     adapters.set('google_workspace', createFakeDocumentProviderAdapter({ provider: 'google_workspace' }));
     const tools = createDocumentAgentTools({
       registry,
+      operations: repo,
       adapters: (p) => adapters.get(p),
       policies: [],
       destinations: [],
@@ -591,5 +596,196 @@ describe('T-032 agent tools — negative capability / provider / authorization /
     });
     const result = await tools.read({ documentId: 'doc_x' });
     expect(result.status).toBe('denied');
+  });
+});
+
+/**
+ * Bugbot 3847563957 / R-026 at the agent lane: `document.create` must persist the idempotency
+ * key in the T-003 operation store BEFORE the provider dispatch (the input docstring already
+ * promises exactly that), so F-001/F-002 reconcile instead of duplicating the provider artifact.
+ */
+describe('R-026 create operation claim at the agent document.create tool (F-001/F-002)', () => {
+  function countingAdapter(
+    base: DocumentProviderAdapter,
+    counter: { createDispatches: number },
+  ): DocumentProviderAdapter {
+    return {
+      ...base,
+      create: async (input: Parameters<DocumentProviderAdapter['create']>[0]) => {
+        counter.createDispatches += 1;
+        return base.create(input);
+      },
+    };
+  }
+
+  it('F-001: after a post-dispatch registry failure, a retry demands reconciliation and never re-dispatches the provider', async () => {
+    const db = openFreshDb();
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    const registry = createDocumentRegistry(db);
+    const counter = { createDispatches: 0 };
+    const adapter = createFakeDocumentProviderAdapter({ provider: 'google_workspace' });
+    const failingRegistry: DocumentRegistry = {
+      ...registry,
+      create: () => {
+        throw new Error('simulated post-provider registry write failure');
+      },
+    };
+    const deps = (reg: DocumentRegistry, ad: DocumentProviderAdapter): DocumentAgentDeps => ({
+      registry: reg,
+      adapters: () => countingAdapter(ad, counter),
+      policies: [policyFor('google_workspace', '*')],
+      destinations: [destinationFor('google_workspace')],
+      flags: resolvePhase2Flags(),
+      resolveWorkspace: () => WS,
+      connectionStateFor: () => 'authorized',
+      now: () => TEST_NOW,
+      operations: repo,
+    } as DocumentAgentDeps);
+    const first = await createDocumentAgentTools(deps(failingRegistry, adapter)).create({
+      provider: 'google_workspace',
+      artifactType: 'document',
+      title: 'Agent plan',
+      destinationId: 'dest-google_workspace',
+      idempotencyKey: 'agent-op-f001',
+    }).catch((err: unknown) => err as Error);
+    // The simulated registry failure propagates (the tool rethrows unexpected errors); the
+    // provider artifact exists while no canonical record was written (the F-001/F-002 seam).
+    expect(first).toBeInstanceOf(Error);
+    expect((first as Error).message).toContain('simulated post-provider registry write failure');
+    expect(counter.createDispatches).toBe(1);
+
+    // NEW process: fresh adapter (empty in-memory idempotency), SAME persisted db/operation store.
+    const freshCounter = { createDispatches: 0 };
+    const freshAdapter = createFakeDocumentProviderAdapter({ provider: 'google_workspace' });
+    const retry = await createDocumentAgentTools(
+      (() => {
+        const d = deps(registry, freshAdapter);
+        (d as { adapters: (p: string) => DocumentProviderAdapter | undefined }).adapters = () =>
+          countingAdapter(freshAdapter, freshCounter);
+        return d;
+      })(),
+    ).create({
+      provider: 'google_workspace',
+      artifactType: 'document',
+      title: 'Agent plan',
+      destinationId: 'dest-google_workspace',
+      idempotencyKey: 'agent-op-f001',
+    });
+    expect(retry.status).toBe('conflict');
+    expect(retry.warnings.join(' ')).toContain('reconciliation');
+    expect(freshCounter.createDispatches).toBe(0); // NO second provider artifact
+    expect(counter.createDispatches).toBe(1);
+  });
+
+  it('R-026 replay: a retry in a NEW process replays the persisted result without re-dispatching', async () => {
+    const db = openFreshDb();
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    const registry = createDocumentRegistry(db);
+    const counter = { createDispatches: 0 };
+    const adapter = createFakeDocumentProviderAdapter({ provider: 'google_workspace' });
+    const depsFor = (ad: DocumentProviderAdapter, cnt: { createDispatches: number }): DocumentAgentDeps =>
+      ({
+        registry,
+        adapters: () => countingAdapter(ad, cnt),
+        policies: [policyFor('google_workspace', '*')],
+        destinations: [destinationFor('google_workspace')],
+        flags: resolvePhase2Flags(),
+        resolveWorkspace: () => WS,
+        connectionStateFor: () => 'authorized',
+        now: () => TEST_NOW,
+        operations: repo,
+      } as DocumentAgentDeps);
+    const first = await createDocumentAgentTools(depsFor(adapter, counter)).create({
+      provider: 'google_workspace',
+      artifactType: 'document',
+      title: 'Agent plan',
+      destinationId: 'dest-google_workspace',
+      idempotencyKey: 'agent-op-replay',
+    });
+    expect(first.status).toBe('ok');
+    expect(counter.createDispatches).toBe(1);
+
+    const freshCounter = { createDispatches: 0 };
+    const freshAdapter = createFakeDocumentProviderAdapter({ provider: 'google_workspace' });
+    const retry = await createDocumentAgentTools(depsFor(freshAdapter, freshCounter)).create({
+      provider: 'google_workspace',
+      artifactType: 'document',
+      title: 'Agent plan',
+      destinationId: 'dest-google_workspace',
+      idempotencyKey: 'agent-op-replay',
+    });
+    expect(retry.status).toBe('ok');
+    expect(retry.documentId).toBe(first.documentId);
+    expect(freshCounter.createDispatches).toBe(0);
+  });
+
+  it('R-026 conflict: the same key reused for a DIFFERENT request is a typed conflict, never a silent reconcile', async () => {
+    const db = openFreshDb();
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    const registry = createDocumentRegistry(db);
+    const adapters = new Map<string, DocumentProviderAdapter>();
+    adapters.set('google_workspace', createFakeDocumentProviderAdapter({ provider: 'google_workspace' }));
+    const tools = createDocumentAgentTools({
+      registry,
+      adapters: (p) => adapters.get(p),
+      policies: [policyFor('google_workspace', '*')],
+      destinations: [destinationFor('google_workspace')],
+      flags: resolvePhase2Flags(),
+      resolveWorkspace: () => WS,
+      connectionStateFor: () => 'authorized',
+      now: () => TEST_NOW,
+      operations: repo,
+    } as DocumentAgentDeps);
+    const input = {
+      provider: 'google_workspace' as const,
+      artifactType: 'document' as const,
+      destinationId: 'dest-google_workspace',
+      idempotencyKey: 'agent-op-conflict',
+    };
+    const first = await tools.create({ ...input, title: 'Original request' });
+    expect(first.status).toBe('ok');
+    // Same key, DIFFERENT title: must not silently reconcile to the first document.
+    const second = await tools.create({ ...input, title: 'A different request' });
+    expect(second.status).toBe('conflict');
+    expect(second.documentId).not.toBe(first.documentId);
+  });
+});
+
+/** Root follow-up: a completed-operation replay must validate the live canonical record. */
+describe('R-026 completed-operation replay validates the live registry object (agent lane)', () => {
+  it('a replay whose canonical document was DELETED is a typed conflict, never an ok replay', async () => {
+    const db = openFreshDb();
+    const repo = createDocumentIntegrationsRepository(db);
+    repo.ensureSchema();
+    const registry = createDocumentRegistry(db);
+    const adapters = new Map<string, DocumentProviderAdapter>();
+    adapters.set('google_workspace', createFakeDocumentProviderAdapter({ provider: 'google_workspace' }));
+    const tools = createDocumentAgentTools({
+      registry,
+      operations: repo,
+      adapters: (p) => adapters.get(p),
+      policies: [policyFor('google_workspace', '*')],
+      destinations: [destinationFor('google_workspace')],
+      flags: resolvePhase2Flags(),
+      resolveWorkspace: () => WS,
+      connectionStateFor: () => 'authorized',
+      now: () => TEST_NOW,
+    });
+    const input = {
+      provider: 'google_workspace' as const,
+      artifactType: 'document' as const,
+      title: 'Agent plan',
+      destinationId: 'dest-google_workspace',
+      idempotencyKey: 'agent-op-replay-deleted',
+    };
+    const first = await tools.create(input);
+    expect(first.status).toBe('ok');
+    db.prepare('DELETE FROM document_objects WHERE id = ?').run(first.documentId);
+    const retry = await tools.create(input);
+    expect(retry.status).toBe('conflict');
+    expect(retry.warnings.join(' ')).toContain('reconciliation');
   });
 });

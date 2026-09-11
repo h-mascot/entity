@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,6 +109,52 @@ test("decision: metadata-less resume requires the exact expected SHA basename ev
   const result = decideDeployTarget(probe({ basename: shaB }), shaA);
   assert.equal(result.ok, false);
   assert.equal(result.reason, "BASENAME_COLLISION");
+});
+
+test("decision: ancestor-only symlink resolution (macOS /var -> /private/var) is a safe target", () => {
+  // Ancestor components being symlinks (stable parent aliases) must not be
+  // confused with the configured leaf itself being a deploy symlink. Exact-SHA
+  // release directories under such parents are legitimate deploy targets.
+  const result = decideDeployTarget(
+    probe({
+      configured: "/var/entity/releases/" + shaA,
+      abspath: "/var/entity/releases/" + shaA,
+      realpath: "/private/var/entity/releases/" + shaA,
+      basename: shaA,
+      islink: false,
+    }),
+    shaA,
+  );
+  assert.equal(result.ok, true, JSON.stringify(result));
+});
+
+test("decision: probe explicitly reporting a leaf symlink is rejected even when paths coincide", () => {
+  const result = decideDeployTarget(
+    probe({
+      configured: "/srv/entity-sandbox/current",
+      abspath: "/srv/entity-sandbox/current",
+      realpath: "/srv/entity-sandbox/current",
+      basename: "current",
+      islink: true,
+    }),
+    shaA,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "SYMLINK_TARGET");
+});
+
+test("decision: legacy probe without islink keeps the fail-closed realpath comparison", () => {
+  const result = decideDeployTarget(
+    probe({
+      configured: "/srv/entity-sandbox/current",
+      abspath: "/srv/entity-sandbox/current",
+      realpath: `/srv/entity-sandbox/releases/${shaB}`,
+      basename: shaB,
+    }),
+    shaA,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "SYMLINK_TARGET");
 });
 
 test("decision: trailing-slash destinations do not false-positive as symlinks", () => {
@@ -367,6 +413,75 @@ test("deploy.sh: allows a fresh exact-SHA release directory and proceeds past th
   assert.match(sshLog, /select count\(\*\) from tasks/);
   assert.doesNotMatch(result.stderr, /SYMLINK_TARGET|IDENTITY_COLLISION|BASENAME_COLLISION/);
   assert.match(result.stderr, /only 0 tasks/);
+});
+
+// Extract the actual destination-probe python heredoc from deploy.sh so the
+// probe emitted in production (not a hand-copied fixture) is what we test.
+function extractDeployProbePython() {
+  const source = readFileSync(deployScript, "utf8");
+  const anchor = source.indexOf("TARGET_GUARD_PROBE=");
+  assert.ok(anchor >= 0, "deploy.sh must keep the TARGET_GUARD_PROBE probe");
+  const start = source.indexOf("<<'PY'", anchor);
+  const end = source.indexOf("\nPY\n", start);
+  assert.ok(start >= 0 && end > start, "deploy.sh destination probe heredoc not found");
+  return source.slice(start + "<<'PY'".length, end + 1);
+}
+
+function runDeployProbe(probePython, configured) {
+  const probed = spawnSync("python3", ["-", configured], {
+    input: probePython,
+    encoding: "utf8",
+  });
+  assert.equal(probed.status, 0, probed.stderr);
+  return JSON.parse(probed.stdout);
+}
+
+function runGuardCli(probeJson, expectedSha, configured) {
+  return spawnSync(
+    process.execPath,
+    [guardScript, "--expected-sha", expectedSha, "--configured", configured],
+    { input: JSON.stringify(probeJson), encoding: "utf8" },
+  );
+}
+
+test("deploy.sh probe + guard: ancestor symlink parent does not block an exact-SHA release dir", () => {
+  const root = mkdtempSync(join(tmpdir(), "entity-deploy-guard-probe-"));
+  const realReleases = join(root, "real", "releases");
+  mkdirSync(join(realReleases, shaA), { recursive: true });
+  // `alias` is a symlink ancestor (like macOS /var -> /private/var): the
+  // configured leaf directory is real, but realpath diverges from abspath.
+  const alias = join(root, "alias");
+  symlinkSync(join(root, "real"), alias);
+  const configured = join(alias, "releases", shaA);
+  try {
+    const probeJson = runDeployProbe(extractDeployProbePython(), configured);
+    assert.equal(probeJson.islink, false);
+    assert.notEqual(probeJson.realpath, probeJson.abspath);
+    const result = runGuardCli(probeJson, shaA, configured);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /NO_METADATA_RESUME/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deploy.sh probe + guard: a configured leaf symlink (the `current` profile) is still refused", () => {
+  const root = mkdtempSync(join(tmpdir(), "entity-deploy-guard-probe-"));
+  const realReleases = join(root, "real", "releases");
+  mkdirSync(join(realReleases, shaB), { recursive: true });
+  const alias = join(root, "alias");
+  symlinkSync(join(root, "real"), alias);
+  symlinkSync(join("releases", shaB), join(alias, "current"));
+  const configured = join(alias, "current");
+  try {
+    const probeJson = runDeployProbe(extractDeployProbePython(), configured);
+    assert.equal(probeJson.islink, true);
+    const result = runGuardCli(probeJson, shaA, configured);
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /SYMLINK_TARGET/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("entity-deploy-sandbox.sh: refuses the unsafe `current` symlink profile before doing any work", () => {

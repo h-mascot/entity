@@ -9,6 +9,7 @@ import type { NotificationRoutingInput, NotificationRoutingResult } from './noti
 import {
   DEFAULT_DUE_REMINDER_STAGES,
   createDueReminderScheduler,
+  isPlaceholderPrincipalId,
   isTaskOpenForReminders,
   reminderEventId,
   scanDueDateReminders,
@@ -48,6 +49,26 @@ function makeTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
   } as TaskRecord;
 }
 
+function makeSeedNotification(overrides: Partial<NotificationRecord> = {}): NotificationRecord {
+  return {
+    id: 'seed-notification',
+    org_id: 'curacel',
+    recipient_principal_id: 'sam',
+    canonical_event_id: 'seed-event',
+    object_ref: { object_type: 'task', object_id: '101', link_role: 'target' },
+    notification_type: 'task_nudge',
+    inbox_state: 'unread',
+    title: 'Seed notification',
+    body: '',
+    policy_reason_chain_json: '[]',
+    metadata_json: '{}',
+    created_at: '2026-08-26T00:00:00.000Z',
+    updated_at: '2026-08-26T00:00:00.000Z',
+    deliveries: [],
+    ...overrides,
+  } as NotificationRecord;
+}
+
 function createMemoryNotificationRepository(seed: NotificationRecord[] = []): NotificationRepository {
   const notifications = new Map<string, NotificationRecord>(seed.map((n) => [n.id, n]));
   let counter = seed.length;
@@ -75,8 +96,20 @@ function createMemoryNotificationRepository(seed: NotificationRecord[] = []): No
     },
     getNotification: (id) => notifications.get(id),
     listNotificationsForRecipient: (input) =>
-      [...notifications.values()].filter(
+      [...notifications.values()]
+        .filter(
+          (n) =>
+            n.recipient_principal_id === input.recipient_principal_id &&
+            (!input.org_id || n.org_id === input.org_id) &&
+            (!input.inbox_state || input.inbox_state === 'all' || n.inbox_state === input.inbox_state)
+        )
+        // Mirrors the real repository: newest first, limit clamped to 500.
+        .sort((a, b) => (a.created_at === b.created_at ? (a.id < b.id ? 1 : -1) : a.created_at < b.created_at ? 1 : -1))
+        .slice(0, Math.min(input.limit ?? 100, 500)),
+    hasNotificationForRecipient: (input) =>
+      [...notifications.values()].some(
         (n) =>
+          n.canonical_event_id === input.canonical_event_id &&
           n.recipient_principal_id === input.recipient_principal_id &&
           (!input.org_id || n.org_id === input.org_id)
       ),
@@ -274,6 +307,50 @@ describe('scanDueDateReminders', () => {
     expect(result.createdNotifications).toBe(0);
   });
 
+  it('skips placeholder principals that task mapping seeds for unset fields', async () => {
+    const repo = createMemoryNotificationRepository();
+    const { service, routed } = makeRoutingCapture(repo);
+    // Real listTasks rows always carry these sentinels when fields are unset
+    // (packages/db mapTaskRow / createTask / updateTask defaults).
+    const result = await scanDueDateReminders({
+      notificationRepository: repo,
+      routingService: service,
+      listTasks: () => [
+        makeTask({
+          assignee: 'Unassigned',
+          executor_principal_id: null,
+          owner_principal_id: 'legacy-owner',
+          initiator_principal_id: 'legacy-unknown',
+        }),
+      ],
+      now: () => NOW,
+    });
+
+    expect(result.skippedNoRecipient).toBe(1);
+    expect(result.createdNotifications).toBe(0);
+    expect(routed).toEqual([]);
+  });
+
+  it('notifies only real principals when a task mixes real and placeholder fields', async () => {
+    const repo = createMemoryNotificationRepository();
+    const { service, routed } = makeRoutingCapture(repo);
+    const result = await scanDueDateReminders({
+      notificationRepository: repo,
+      routingService: service,
+      listTasks: () => [
+        makeTask({
+          assignee: 'sam',
+          owner_principal_id: 'legacy-owner',
+          initiator_principal_id: 'ada',
+        }),
+      ],
+      now: () => NOW,
+    });
+
+    expect(routed.map((r) => r.recipientPrincipalId).sort()).toEqual(['ada', 'sam']);
+    expect(result.createdNotifications).toBe(2);
+  });
+
   it('isolates dedupe per recipient', async () => {
     const repo = createMemoryNotificationRepository();
     const { service } = makeRoutingCapture(repo);
@@ -293,6 +370,67 @@ describe('scanDueDateReminders', () => {
     });
     expect(second.skippedDuplicate).toBe(2);
     expect(second.createdNotifications).toBe(0);
+  });
+
+  it('stays idempotent when the recipient inbox exceeds the repository limit clamp', async () => {
+    // 500 newer unrelated notifications push the reminder row out of the
+    // newest-first list window (real repo clamps any limit to 500), so
+    // dedupe must not depend on that listing.
+    const noise = Array.from({ length: 500 }, (_, i) =>
+      makeSeedNotification({
+        id: `noise-${i}`,
+        canonical_event_id: `noise-event-${i}`,
+        created_at: '2026-08-26T00:00:00.000Z',
+        updated_at: '2026-08-26T00:00:00.000Z',
+      })
+    );
+    const repo = createMemoryNotificationRepository(noise);
+    const { service } = makeRoutingCapture(repo);
+    const deps = {
+      notificationRepository: repo,
+      routingService: service,
+      listTasks: () => [makeTask()],
+      now: () => NOW,
+    };
+    const first = await scanDueDateReminders(deps);
+    expect(first.createdNotifications).toBe(1);
+    const second = await scanDueDateReminders(deps);
+
+    expect(second.createdNotifications).toBe(0);
+    expect(second.skippedDuplicate).toBe(1);
+    // The reminder row exists and is findable beyond the clamped listing window.
+    expect(repo.hasNotificationForRecipient({
+      recipient_principal_id: 'sam',
+      canonical_event_id: 'due-reminder:101:due-soon:2026-08-25T18:00:00.000Z',
+    })).toBe(true);
+  });
+});
+
+describe('isPlaceholderPrincipalId', () => {
+  it('rejects sentinel values the task layer writes for unset principals', () => {
+    for (const value of [
+      'Unassigned',
+      'unassigned',
+      'UNASSIGNED',
+      'legacy-owner',
+      'legacy-unknown',
+      'legacy-system',
+      'system',
+      'unknown',
+      'none',
+      '  ',
+      '',
+      null,
+      undefined,
+    ]) {
+      expect(isPlaceholderPrincipalId(value)).toBe(true);
+    }
+  });
+
+  it('accepts real principal ids, preserving exact identity', () => {
+    for (const value of ['sam', 'User', 'Alice Smith', 'Atlas', 'legacy-custodian']) {
+      expect(isPlaceholderPrincipalId(value)).toBe(false);
+    }
   });
 });
 

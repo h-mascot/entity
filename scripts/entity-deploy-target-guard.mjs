@@ -38,7 +38,15 @@ export function decideDeployTarget(probe, expectedSha) {
   if (!abspath || !realpath) {
     return { ok: false, reason: "INVALID_PROBE", message: "destination probe lacks abspath/realpath" };
   }
-  if (realpath !== abspath) {
+  // SYMLINK_TARGET: the configured destination itself resolves through a
+  // symlink — the historical `current` profile that rsync followed to mutate a
+  // previously deployed release in place. Ancestor-only divergence (e.g.
+  // macOS /var -> /private/var) is a stable parent alias, not a deploy
+  // symlink, and must not block legitimate exact-SHA release directories.
+  // Probes that predate the `islink` field fail closed on any divergence.
+  const leafIsSymlink =
+    probe.islink === true || (probe.islink === undefined && realpath !== abspath);
+  if (leafIsSymlink) {
     return {
       ok: false,
       reason: "SYMLINK_TARGET",

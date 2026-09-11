@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { UserProfile } from '../lib/userProfile';
+import { findReusableOnboardingSource, type OnboardingSourceSummary } from './onboardingSourceReuse.ts';
 
 type AppTheme = 'dark' | 'light' | 'kitz' | 'nebula' | 'aurora' | 'paper';
 type SetupMode = 'quick' | 'agent' | 'manual';
@@ -1112,16 +1113,28 @@ export default function OnboardingFlow({
       // Create (or reuse) the source, then run the real connection test.
       // Configuration being saved is NOT the same as the source being reachable.
       let sourceId: string | null = null;
-      const createRes = await fetch(apiPath(apiBase, '/api/sources'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (createRes.ok) {
-        const created = (await createRes.json()) as { id?: string };
-        sourceId = created.id ?? null;
-      } else if (createRes.status !== 409) {
-        throw new Error(`source create ${createRes.status}`);
+
+      // Reuse before create: the create endpoint never returns 409 and display
+      // names are not unique, so an unchecked create would leave a duplicate
+      // source behind every test click (failed tests make re-clicks likely).
+      const existingRes = await fetch(apiPath(apiBase, '/api/sources?includeDisabled=true'));
+      if (existingRes.ok) {
+        const existing = (await existingRes.json()) as { sources?: OnboardingSourceSummary[] };
+        sourceId = findReusableOnboardingSource(existing.sources ?? [], payload)?.id ?? null;
+      }
+
+      if (!sourceId) {
+        const createRes = await fetch(apiPath(apiBase, '/api/sources'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (createRes.ok) {
+          const created = (await createRes.json()) as { id?: string };
+          sourceId = created.id ?? null;
+        } else if (createRes.status !== 409) {
+          throw new Error(`source create ${createRes.status}`);
+        }
       }
 
       if (!sourceId) {

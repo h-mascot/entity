@@ -1,5 +1,60 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http';
+import { buildApiCandidates, requestJsonWithFallback, toErrorMessage } from '../lib/http.ts';
+import type { UserProfile } from '../lib/userProfile.ts';
+
+/**
+ * Exact inbox principal identities for the local profile's notifications.
+ *
+ * Two legitimate producer paths address reminders with different profile
+ * fields, and both must stay visible:
+ * - Mission Control stamps the profile displayName into UI-created task
+ *   principal fields (assignee options, created_by/initiator/owner), so
+ *   task-driven reminders are addressed by displayName.
+ * - API-created tasks may store the profile handle in owner/initiator
+ *   (server persists request principals verbatim), so reminders can be
+ *   addressed by handle.
+ * Identities are queried individually and exactly — no case folding, no
+ * directory mapping; distinct spellings (including case variants) are
+ * distinct opaque ids and are all queried.
+ */
+export function inboxRecipientPrincipalIds(
+  profile: Pick<UserProfile, 'displayName' | 'handle'>
+): string[] {
+  const identities: string[] = [];
+  for (const value of [profile.displayName, profile.handle]) {
+    const id = value.trim();
+    if (id && !identities.includes(id)) {
+      identities.push(id);
+    }
+  }
+  return identities;
+}
+
+/** One exact-recipient inbox query per identity, in the same shape the bell route serves. */
+export function buildInboxRequestPaths(recipientPrincipalIds: string[]): string[] {
+  return recipientPrincipalIds
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .map((recipient) => {
+      const query = new URLSearchParams({ recipientPrincipalId: recipient, inboxState: 'all' });
+      return `/notifications?${query.toString()}`;
+    });
+}
+
+/** Union per-identity inbox listings by notification id, newest first (mirrors repository ordering). */
+export function unionNotificationsById(lists: EntityNotification[][]): EntityNotification[] {
+  const byId = new Map<string, EntityNotification>();
+  for (const list of lists) {
+    for (const item of list) {
+      if (!byId.has(item.id)) {
+        byId.set(item.id, item);
+      }
+    }
+  }
+  return [...byId.values()].sort((a, b) =>
+    a.created_at === b.created_at ? (a.id < b.id ? 1 : -1) : a.created_at < b.created_at ? 1 : -1
+  );
+}
 
 export interface EntityNotificationDelivery {
   id: number;
@@ -44,35 +99,52 @@ interface EntityNotificationsPayload {
 
 export function useEntityNotifications({
   apiBase = '',
-  recipientPrincipalId,
+  recipientPrincipalIds,
   enabled,
 }: {
   apiBase?: string;
-  recipientPrincipalId: string;
+  recipientPrincipalIds: string[];
   enabled: boolean;
 }) {
   const [notifications, setNotifications] = useState<EntityNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Recompute only when the exact identity set changes, not on every render
+  // (callers may pass a fresh array literal each render).
+  const recipientKey = JSON.stringify(recipientPrincipalIds);
+  const requestPaths = useMemo(
+    () => buildInboxRequestPaths(JSON.parse(recipientKey) as string[]),
+    [recipientKey]
+  );
+
   const load = useCallback(async () => {
-    const recipient = recipientPrincipalId.trim();
-    if (!enabled || !recipient) return;
+    if (!enabled || requestPaths.length === 0) return;
     setLoading(true);
     setError(null);
     try {
-      const query = new URLSearchParams({ recipientPrincipalId: recipient, inboxState: 'all' });
-      const payload = await requestJsonWithFallback<EntityNotificationsPayload>({
-        urls: buildApiCandidates(`/notifications?${query.toString()}`, apiBase),
-        fallbackError: 'Unable to load Entity notifications.',
-      });
-      setNotifications(Array.isArray(payload.notifications) ? payload.notifications : []);
+      // One exact-recipient query per profile identity. Each goes through the
+      // shared request helper so the stored API bearer token (authenticated
+      // principal context) and error semantics stay identical to before.
+      const payloads = await Promise.all(
+        requestPaths.map((path) =>
+          requestJsonWithFallback<EntityNotificationsPayload>({
+            urls: buildApiCandidates(path, apiBase),
+            fallbackError: 'Unable to load Entity notifications.',
+          })
+        )
+      );
+      setNotifications(
+        unionNotificationsById(
+          payloads.map((payload) => (Array.isArray(payload.notifications) ? payload.notifications : []))
+        )
+      );
     } catch (err) {
       setError(toErrorMessage(err, 'Unable to load Entity notifications.'));
     } finally {
       setLoading(false);
     }
-  }, [apiBase, enabled, recipientPrincipalId]);
+  }, [apiBase, enabled, requestPaths]);
 
   useEffect(() => {
     void load();

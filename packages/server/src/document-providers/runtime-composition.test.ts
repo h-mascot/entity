@@ -102,6 +102,15 @@ async function requestApp(
       res.statusCode = code;
       return res;
     };
+    // Express's default final handler (unmounted routes -> 404) uses send/type, not json.
+    res.type = (type: string) => {
+      res.setHeader('content-type', type);
+      return res;
+    };
+    res.send = (payload: unknown) => {
+      res.end(typeof payload === 'string' || Buffer.isBuffer(payload) ? payload : String(payload));
+      return res;
+    };
     res.json = (payload: unknown) => {
       res.setHeader('content-type', 'application/json; charset=utf-8');
       res.end(JSON.stringify(payload));
@@ -109,7 +118,21 @@ async function requestApp(
     };
     res.on('error', reject);
     try {
-      (app as any).handle(req, res, reject);
+      // When a callback is provided, Express uses it INSTEAD of finalhandler — an exhausted
+      // router (unmounted namespace) calls done() with no error. Synthesize the default 404
+      // so the response promise resolves (mirrors a real server's finalhandler behavior).
+      const done = (err?: unknown) => {
+        if (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        if (!res.headersSent) {
+          res.statusCode = 404;
+          res.setHeader('content-type', 'text/plain; charset=utf-8');
+        }
+        res.end(`Cannot ${req.method} ${req.url}`);
+      };
+      (app as any).handle(req, res, done);
     } catch (error) {
       reject(error);
     }
@@ -393,5 +416,51 @@ describe('production composition through the real mount', () => {
     const statusBody = await status.json();
     expect(statusBody.runtime).toEqual({ mode: 'production', sandboxBootstrap: 'refused' });
     expect(statusBody.providers.google_workspace.adapterRegistered).toBe(false);
+  });
+});
+
+/**
+ * Bugbot 3847563963 (migration failure must fail closed): when the additive T-003 schema cannot
+ * be applied (table-name collision with an incompatible pre-existing table, or an ensure
+ * failure), the document-integrations routers must NOT be mounted — no route may run against a
+ * missing or wrong schema producing opaque runtime failures. The rest of the server stays up;
+ * the feature is dark (fail closed) and the failure is logged loudly.
+ */
+describe('migration failure fails closed at the mount (no routes against a wrong schema)', () => {
+  /** Seed an INCOMPATIBLE pre-existing document_objects table (extra unexpected column). */
+  function seedCollidingSchema(db: Database.Database): void {
+    db.exec('CREATE TABLE document_objects (unexpected_column TEXT)');
+  }
+
+  it('a schema collision leaves /api/document-integrations unmounted (404), never a wrong-schema 500', async () => {
+    const db = openFreshDb();
+    seedCollidingSchema(db);
+    seedProviderFixtures(db, { provider: 'google_workspace' });
+    const errors: string[] = [];
+    const app = mountFixtureServer(db, { NODE_ENV: 'test' });
+    // Re-mount with a capturing logger to prove the loud operator log (the mount above shares
+    // console; a second mount on the same db exercises the same collision path deterministically).
+    const app2 = express();
+    app2.use(express.json());
+    mountDocumentIntegrations(app2, {
+      db,
+      env: { NODE_ENV: 'test' },
+      flags: resolvePhase2Flags({}),
+      resolveWorkspace: () => 'ws_A',
+      logger: { error: (...args: unknown[]) => errors.push(args.map(String).join(' ')), log: () => {} },
+    });
+
+    for (const target of [app, app2]) {
+      const created = await requestApp(target, {
+        path: '/api/document-integrations',
+        method: 'POST',
+        body: createBody('google_workspace'),
+      });
+      expect(created.status).toBe(404); // unmounted — fail closed, no wrong-schema execution
+      const status = await requestApp(target, { path: '/api/document-integrations/admin/status' });
+      expect(status.status).toBe(404);
+    }
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0]).toContain('not applied');
   });
 });

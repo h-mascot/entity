@@ -106,6 +106,7 @@
 <li><code>packages/app/src/views/FilesView.tsx</code> chooses the unified dashboard or basic file state, then hosts <code>DocumentEditorView</code> inside <code>DocHubWorkspaceChrome</code>.</li>
 <li><code>components/UnifiedFileDashboard.tsx</code> owns multi-source results, filters, sorting, restriction behavior, and result opening.</li>
 <li><code>hooks/useFileSources.ts</code> calls source, tree, file, folder, and search endpoints and applies cached-read fallback.</li>
+<li><code>packages/app/src/components/onboardingSourceReuse.ts</code> backs the onboarding &quot;Test source&quot; click in <code>OnboardingFlow.tsx</code>: because <code>POST /api/sources</code> never returns 409 and display names are not unique, <code>findReusableOnboardingSource</code> lists <code>GET /api/sources?includeDisabled=true</code> first and reuses a source only when it is enabled and matches displayName plus connector type plus normalized location (trailing slashes ignored), so a failed test click cannot fork duplicate sources or silently test a stale or deliberately disabled one.</li>
 <li><code>lib/documents-client.ts</code> defines the collaboration API model: sessions, authorship, presence, comments/replies, suggestions, review runs/findings, edits, and cursor updates.</li>
 <li><code>views/DocsRouteView.tsx</code> is a standalone reading/TTS route, not the full editing workspace.</li>
 </ul>
@@ -117,6 +118,7 @@
 <li><code>packages/db/src/document-collab.ts</code> persists sessions, authorship, presence, comment threads/replies, suggestions, and review data.</li>
 <li><code>packages/server/src/routes/agent-api.ts</code> exposes scoped <code>/api/documents/*</code> operations; these self-authenticate with document token/scopes when the native editor is enabled.</li>
 <li><code>packages/server/src/routes/document-integrations.ts</code> wires the provider-neutral document API to provider-specific adapters and enforces write-policy and destination checks before create/update actions proceed.</li>
+<li><code>packages/server/src/document-providers/create-operation.ts</code> owns the provider-neutral create lifecycle (<code>runDocumentCreateOperation</code>): it persists the idempotency claim in the T-003 <code>document_operations</code> store <em>before</em> the provider dispatch, replays a completed key only against the live canonical registry record, reconciles an adapter-reported replay onto the live record, and marks the claim <code>uncertain</code> (recording the provider external id when known) after a dispatch or registry-write failure. The HTTP create route only translates that typed outcome into <code>409 IDEMPOTENCY_CONFLICT</code>, <code>409 CREATE_RECONCILIATION_REQUIRED</code> (with the lifecycle&#39;s reason vocabulary), <code>201 created</code>, or a <code>200 reconciled</code> replay served from the registry object rather than stored JSON.</li>
 <li><code>packages/server/src/document-providers/google/{docs-adapter.ts,sheets-adapter.ts,slides-adapter.ts,reconciler.ts,read-state.ts}</code> implement Google document write, reconciliation, and read-state behavior.</li>
 <li><code>packages/server/src/document-providers/microsoft/{connection.ts,destinations.ts,reconciler.ts,read-state.ts,create-adapter.ts}</code> implement Microsoft Entra binding, destination discovery, reconciliation, and read-state behavior.</li>
 <li><code>packages/server/src/document-providers/local/{docx-engine.ts,xlsx-engine.ts,pptx-engine.ts,managed-storage.ts,safe-save.ts,file-watcher.ts,bridge.ts}</code> implement local office engine support, managed storage, safe-save coordination, and file watching.</li>
@@ -185,6 +187,10 @@
 <tr>
 <td>Writable local source opened in the convert dialog</td>
 <td>The UI can preview or create a new derivative document with preserved provenance</td>
+</tr>
+<tr>
+<td>T-003 document-integrations schema migration fails (table collision or ensure failure)</td>
+<td><code>mountDocumentIntegrations</code> in <code>packages/server/src/routes/document-integrations-mount.ts</code> does <strong>not</strong> mount the <code>/api/document-integrations</code> routers; the feature is dark, the failure is logged for the operator, and the rest of the server keeps running</td>
 </tr>
 </tbody></table>
 <p>Admin stores/configures Documents API access, but credentials are scoped bearer/service credentials and must not be embedded in documentation. The <a href="/docs/source/entity-wiki/operations/security-and-release.html" target="_top">security page</a> explains why object-permission enforcement is route-specific.</p>

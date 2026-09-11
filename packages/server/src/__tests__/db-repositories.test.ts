@@ -2091,6 +2091,107 @@ describe('NotificationRepository', () => {
     })).toHaveLength(1);
   });
 
+  it('keeps recipient identities case-sensitive and org-scoped in inbox lookups', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const notificationRepo = dbMod.createNotificationRepository();
+    const baseRef = { object_type: 'task', object_id: '9', link_role: 'target' };
+    notificationRepo.createNotification({
+      id: 'notif-alice-upper',
+      org_id: 'org-case',
+      recipient_principal_id: 'Alice',
+      canonical_event_id: 'event-case-1',
+      object_ref: baseRef,
+      notification_type: 'task_nudge',
+      title: 'For Alice',
+    });
+    notificationRepo.createNotification({
+      id: 'notif-alice-lower',
+      org_id: 'org-case',
+      recipient_principal_id: 'alice',
+      canonical_event_id: 'event-case-2',
+      object_ref: baseRef,
+      notification_type: 'task_nudge',
+      title: 'For alice',
+    });
+
+    // Principal ids are opaque: Alice and alice are distinct recipients.
+    expect(notificationRepo.listNotificationsForRecipient({
+      org_id: 'org-case', recipient_principal_id: 'Alice', inbox_state: 'all',
+    }).map((n) => n.id)).toEqual(['notif-alice-upper']);
+    expect(notificationRepo.listNotificationsForRecipient({
+      org_id: 'org-case', recipient_principal_id: 'alice', inbox_state: 'all',
+    }).map((n) => n.id)).toEqual(['notif-alice-lower']);
+    // Org scope stays exact.
+    expect(notificationRepo.listNotificationsForRecipient({
+      org_id: 'other-org', recipient_principal_id: 'Alice', inbox_state: 'all',
+    })).toEqual([]);
+
+    // The exact-match event lookup keeps the same recipient/org boundaries.
+    expect(notificationRepo.hasNotificationForRecipient({
+      org_id: 'org-case', recipient_principal_id: 'Alice', canonical_event_id: 'event-case-1',
+    })).toBe(true);
+    expect(notificationRepo.hasNotificationForRecipient({
+      org_id: 'org-case', recipient_principal_id: 'alice', canonical_event_id: 'event-case-1',
+    })).toBe(false);
+    expect(notificationRepo.hasNotificationForRecipient({
+      org_id: 'org-case', recipient_principal_id: 'Alice', canonical_event_id: 'event-case-2',
+    })).toBe(false);
+    expect(notificationRepo.hasNotificationForRecipient({
+      org_id: 'other-org', recipient_principal_id: 'Alice', canonical_event_id: 'event-case-1',
+    })).toBe(false);
+  });
+
+  it('detects already-notified events beyond the clamped inbox window', async () => {
+    const dbMod = await import('../../../../packages/db/src/index');
+    const notificationRepo = dbMod.createNotificationRepository();
+    const reminderEventId = 'due-reminder:7:due-soon:2026-08-25T18:00:00.000Z';
+    const objectRef = { object_type: 'task', object_id: '7', link_role: 'target' };
+    notificationRepo.createNotification({
+      id: 'a-due-reminder-row',
+      org_id: 'org-window',
+      recipient_principal_id: 'owner-1',
+      canonical_event_id: reminderEventId,
+      object_ref: objectRef,
+      notification_type: 'task_nudge',
+      title: 'Due soon',
+    });
+    for (let i = 0; i < 600; i += 1) {
+      notificationRepo.createNotification({
+        id: `z-noise-${i}`,
+        org_id: 'org-window',
+        recipient_principal_id: 'owner-1',
+        canonical_event_id: `noise-event-${i}`,
+        object_ref: objectRef,
+        notification_type: 'task_nudge',
+        title: 'noise',
+      });
+    }
+
+    // The clamped newest-first listing can no longer see the reminder row...
+    const windowed = notificationRepo.listNotificationsForRecipient({
+      org_id: 'org-window',
+      recipient_principal_id: 'owner-1',
+      inbox_state: 'all',
+      limit: 1000,
+    });
+    expect(windowed).toHaveLength(500);
+    expect(windowed.some((n) => n.canonical_event_id === reminderEventId)).toBe(false);
+
+    // ...but the indexed event lookup still finds it, for every recipient scope.
+    expect(notificationRepo.hasNotificationForRecipient({
+      org_id: 'org-window', recipient_principal_id: 'owner-1', canonical_event_id: reminderEventId,
+    })).toBe(true);
+    expect(notificationRepo.hasNotificationForRecipient({
+      org_id: 'org-window', recipient_principal_id: 'owner-1', canonical_event_id: 'noise-event-599',
+    })).toBe(true);
+    expect(notificationRepo.hasNotificationForRecipient({
+      org_id: 'org-window', recipient_principal_id: 'someone-else', canonical_event_id: reminderEventId,
+    })).toBe(false);
+    expect(notificationRepo.hasNotificationForRecipient({
+      org_id: 'org-window', recipient_principal_id: 'owner-1', canonical_event_id: 'missing-event',
+    })).toBe(false);
+  });
+
   it('provides fixture samples for every canonical PRD notification type', async () => {
     const dbMod = await import('../../../../packages/db/src/index');
     const notificationRepo = dbMod.createNotificationRepository();
