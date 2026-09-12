@@ -95,6 +95,22 @@
 <li><code>?project=</code> for project scoping;</li>
 <li><code>?includeActivity=true</code> for embedded activity, with an explicit small-limit guard.</li>
 </ul>
+<h2 id="duplicate-title-gating-on-create-versus-update">Duplicate-title gating on create versus update</h2>
+<p>Title dedupe protects against near-duplicate active tasks, but it only runs where a title is actually being chosen. Creation always dedupes: <code>POST /api/tasks</code> scopes the candidate list with <code>scopeTasksForCreateDedupe</code> before calling <code>findTaskDuplicateCandidates</code>. The shared <code>PUT</code>/<code>PATCH /api/tasks/:id</code> handler (<code>handleUpdateTask</code> in <code>packages/server/src/routes/tasks.ts</code>) gates dedupe on a genuinely changed title: a submitted <code>name</code> is trimmed and compared through <code>normalizeTaskTitle</code> against the existing task&#39;s title, and only a normalized difference runs <code>listTasks()</code> and <code>findTaskDuplicateCandidates</code> with <code>excludeTaskId</code> set to the task being edited. State-only updates — moving a column, recording <code>progress_status</code>, updating <code>metadata</code>, or any other field change that does not touch <code>name</code> — therefore never trigger duplicate detection, and a title resubmitted in an equivalent normalized form (different case, punctuation, or surrounding whitespace) passes without a candidate scan. The update scan reads the full active-task list from the task sync layer, so unlike the tenant-authorized <code>GET /api/tasks/duplicates</code> search route it is not narrowed by <code>filterTasksForRequest</code>; only serialized candidate summaries are returned to the caller.</p>
+<pre><code class="language-mermaid">flowchart TD
+    Update[&quot;PUT or PATCH /api/tasks/:id&quot;] --&gt; Name{&quot;name present in request body?&quot;}
+    Name --&gt;|&quot;no&quot;| Apply[&quot;Skip dedupe and apply update&quot;]
+    Name --&gt;|&quot;yes, trims to empty&quot;| Reject[&quot;400 name cannot be empty&quot;]
+    Name --&gt;|&quot;yes, non-empty&quot;| Changed{&quot;normalizeTaskTitle changed vs existing title?&quot;}
+    Changed --&gt;|&quot;no, normalized-equivalent&quot;| Apply
+    Changed --&gt;|&quot;yes&quot;| Candidates[&quot;findTaskDuplicateCandidates with excludeTaskId&quot;]
+    Candidates --&gt; Override{&quot;create_anyway override set?&quot;}
+    Override --&gt;|&quot;yes&quot;| Apply
+    Override --&gt;|&quot;no, candidates found&quot;| Conflict[&quot;409 with duplicateType and allowCreateAnyway&quot;]
+    Override --&gt;|&quot;no candidates&quot;| Apply
+</code></pre>
+<p>Caption: update-path dedupe in <code>packages/server/src/routes/tasks.ts</code> runs only when the submitted title differs in normalized form from the existing title; the empty-name rejection happens before the dedupe branch.</p>
+<p>When a conflict is returned, the response keeps the create-path shape: <code>error</code> of <code>Duplicate task title</code> or <code>Potential duplicate tasks found</code>, <code>duplicateType</code> of <code>exact</code> or <code>fuzzy</code>, the serialized candidate list, and <code>allowCreateAnyway: true</code>; the caller can resend with <code>create_anyway</code> (or the <code>dedupe_override</code>/<code>createAnyway</code> aliases) to keep the update. Candidates come from <code>findTaskDuplicateCandidates</code> in <code>packages/server/src/task-dedupe.ts</code>, which ignores archived and done tasks, always includes blocked tasks, and uses a fuzzy similarity threshold of 0.72. The client already uses that override on the follow-up-task path, which sends <code>create_anyway: true</code> with the derived <code>Follow-up:</code> title. <code>packages/server/src/routes/tasks-update-dedupe.test.ts</code> is the focused regression seam: it proves for both verbs that a state-only update succeeds without invoking the dedupe helper, that a changed title with a fuzzy candidate still fails with 409, and that a normalized-equivalent resubmitted title is accepted.</p>
 <h2 id="review-and-human-gate-lifecycle">Review and human-gate lifecycle</h2>
 <p>The review flow is intentionally separate from a bare task status change. Review state and human-gate state are tracked on the task record, and the server gates those transitions through explicit review endpoints.</p>
 <pre><code class="language-mermaid">sequenceDiagram
@@ -136,7 +152,7 @@
 <p>When changing Mission Control, check these seams together:</p>
 <ol>
 <li><code>packages/app/src/components/mission-control/TaskDetailPanel.tsx</code> for what the user sees.</li>
-<li><code>packages/server/src/routes/tasks.ts</code> for read/write behavior and query filters.</li>
+<li><code>packages/server/src/routes/tasks.ts</code> for read/write behavior and query filters; when changing that shared update handler, run <code>packages/server/src/routes/tasks-update-dedupe.test.ts</code> so title-dedupe gating for non-title updates stays intact.</li>
 <li><code>packages/server/src/due-reminders.ts</code>, <code>packages/server/src/notification-routing.ts</code>, and <code>packages/server/src/routes/notifications.ts</code> for due-date reminder generation, inbox exposure, and routing boundaries.</li>
 <li><code>packages/server/src/routes/task-review-gates.ts</code> for review and human-gate state transitions.</li>
 <li><code>packages/db/src/index.ts</code> and <code>packages/db/src/task-sync.ts</code> for data shape and adapter mode.</li>
