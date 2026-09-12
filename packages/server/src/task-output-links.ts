@@ -73,7 +73,7 @@ export function normalizeTaskOutputLinks(
     const [rawRoot, rawSecond] = normalizedPath.split('/');
     const root = rawRoot.toLowerCase();
     const second = rawSecond?.toLowerCase();
-    const alreadyEntityDocsUrl = root === 'docs' && second !== undefined && DOCS_ROUTE_ROOTS.has(second);
+    const alreadyEntityDocsUrl = root === 'docs' && second !== undefined && (DOCS_ROUTE_ROOTS.has(second) || second === 'source');
 
     if (alreadyEntityDocsUrl) {
       const { core, suffix } = trimTrailingPunctuation(String(docsPath));
