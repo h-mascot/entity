@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { normalizeTaskTitle } from "../task-dedupe";
 import type {
   TaskRecord,
   UpdateRoadmapItemInput,
@@ -945,9 +946,11 @@ export function registerTaskRoutes(app: Express, prefix: "" | "/api", deps: Regi
         normalizeBlockedInput(dedupe_override) ??
         normalizeBlockedInput(createAnyway) ??
         false;
-      const candidateName =
-        typeof name === "string" ? name.trim() : existingTask.name;
-      if (candidateName) {
+      const candidateName = typeof name === "string" ? name.trim() : undefined;
+      const titleChanged =
+        candidateName !== undefined &&
+        normalizeTaskTitle(candidateName) !== normalizeTaskTitle(existingTask.name ?? "");
+      if (titleChanged) {
         const allTasks = await taskBackend.listTasks();
         const dedupeCandidates = findTaskDuplicateCandidates(
           candidateName,
