@@ -106,6 +106,29 @@ The implemented flow is intentionally conservative:
 
 The handoff repository lives in `packages/db/src/handoffs.ts`, and the principal authorization rules come from `packages/db/src/principals.ts`. The route-level coverage in `packages/server/src/routes/tasks-handoffs-route.test.ts` verifies the local-only path, scope checks, cloud fail-closed behavior, rollback scoping, and refresh broadcasts. The `taskHandoffHistory.test.ts` unit coverage now proves the history merger accepts direct, incoming, and outgoing rows while deduplicating shared ids, and `TaskDetailPanel` keeps the `handoffs` tab wired to `TaskHandoffSection` so the UI cannot silently lose the section.
 
+## Task-output link normalization
+
+Task `output` text is normalized on the server before it is persisted. `normalizeTaskOutputLinks` in `packages/server/src/task-output-links.ts` runs on the create path and on the shared update handler in `packages/server/src/routes/tasks.ts`, so the same rules apply whether a task is first saved or edited later. The effect for users is that artifact links in task output stay openable in the Doc Hub: relative docs paths (for example `output/report.md`) and legacy file-server links (such as the old `:8788` host or a `~/clawd/...` path) are rewritten to canonical Entity docs URLs.
+
+For links that already point at Entity docs, normalization is origin normalization, not path rewriting. Any absolute URL whose docs path begins with `/docs/<root>` for a recognized root (`output`, `memory`, `workspace`, `projects`, `zora`, `spock`) **or** with `/docs/source/<sourceId>/...` is treated as already normalized: only the host is re-anchored to the configured Entity base URL (`PUBLIC_ENTITY_BASE_URL` or `ENTITY_BASE_URL`, defaulting to `http://localhost:3000`, trailing slashes stripped), and the path is preserved as-is. Source-backed artifact URLs such as `/docs/source/agent-output/mc-1496/receipt-20260912.txt` therefore survive repeated task saves unchanged instead of being re-mangled into a different route, and a saved receipt link keeps its exact path when the deployment origin changes. Root-relative `/docs/source/...` strings are left untouched as well: the trailing bare-path rewriter only fires on segments that begin directly with a route root such as `output/` or `docs/`, so the leading slash keeps them out of scope. Unrelated external `/source/...` URLs on other hosts keep their prior behavior and are returned unchanged. These rules are pinned by `packages/server/src/task-output-links.test.ts` (stability across repeated saves, origin update, unrelated external sources, and root-relative paths) alongside the broader suite in `packages/server/src/__tests__/task-output-links.test.ts`.
+
+```mermaid
+flowchart TD
+    Save["Task create or update with output text"] --> Scan["Scan output for absolute URLs"]
+    Scan --> Classify{"Docs path starts with docs plus a known root or docs/source?"}
+    Classify -->|"yes"| Reanchor["Re-anchor host to configured Entity base URL and keep path unchanged"]
+    Classify -->|"no"| Legacy{"Legacy :8788 file server or matching docs-relative path?"}
+    Legacy -->|"yes"| Rewrite["Rewrite to canonical Entity docs URL"]
+    Legacy -->|"no"| Keep["Leave URL unchanged"]
+    Reanchor --> Persist["Persist normalized output"]
+    Rewrite --> Persist
+    Keep --> Persist
+```
+
+Caption: how `normalizeTaskOutputLinks` classifies URLs in task output; already-normalized `/docs/source/<sourceId>/...` URLs only get their origin re-anchored, which keeps repeated saves idempotent.
+
+The `/docs/source/<sourceId>/...` routes being preserved here are the Doc Hub source-backed browsing routes described in [Files and documents](files-and-docs.md). The client half of this behavior — filling in the selected task org and preserving `#section` fragments when a task-output link omits `?org=` — is covered with the task-navigation seams in [Mission Control and tasks](features/mission-control-and-tasks.md).
+
 ## Receipt-backed completion and proof
 
 The task detail panel does more than show status: it renders proof-oriented state for completed work, including receipt links, content hashes, evidence summaries, and degraded/missing-evidence signals. That makes Mission Control the place where operators can inspect whether a completed task is actually backed by an artifact.
