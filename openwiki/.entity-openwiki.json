@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "openwikiVersion": "0.2.5",
-  "sourceFingerprint": "1dcd9bf6b075cd995b0694cfe36b48c17e3b400cfd75368a3033586f2232f43d",
+  "sourceFingerprint": "4611cb43dc6f893a789cf0caca54a0cf9cab7f48bc61bf58f3db0146cbf642cf",
   "provider": "openai-compatible",
   "model": "glm-5.3",
-  "generatedAt": "2026-09-12T18:50:45.138Z"
+  "generatedAt": "2026-09-12T19:28:00.117Z"
 }

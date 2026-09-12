@@ -127,6 +127,8 @@ flowchart TD
 
 Caption: how `normalizeTaskOutputLinks` classifies URLs in task output; already-normalized `/docs/source/<sourceId>/...` URLs only get their origin re-anchored, which keeps repeated saves idempotent.
 
+The rendered side of the detail panel follows the same rule. `normalizeTaskOutputHref` in `packages/app/src/components/mission-control/taskDetailWorkplaneSeams.ts` — the pure seam module that `TaskDetailPanel.tsx` imports for rendered output links and receipt `Open` actions — treats `source` as a recognized docs root: an absolute Entity URL such as `http://127.0.0.1:3008/docs/source/<sourceId>/<path>` collapses to the canonical root-relative `/docs/source/<sourceId>/<path>` instead of falling through to the legacy workspace rewrite that produced corrupted `/docs/workspace/docs/source/...` links, root-relative `/docs/source/...` strings pass through unchanged, and unrelated external `/source/...` URLs on other hosts stay external. `extractTaskOutputLinks` therefore hands the receipt `Open` action a canonical, non-external href, and the helper stays idempotent across repeated passes. These cases are pinned by the colocated `taskDetailWorkplaneSeams.test.ts`.
+
 The `/docs/source/<sourceId>/...` routes being preserved here are the Doc Hub source-backed browsing routes described in [Files and documents](files-and-docs.md). The client half of this behavior — filling in the selected task org and preserving `#section` fragments when a task-output link omits `?org=` — is covered with the task-navigation seams in [Mission Control and tasks](features/mission-control-and-tasks.md).
 
 ## Receipt-backed completion and proof

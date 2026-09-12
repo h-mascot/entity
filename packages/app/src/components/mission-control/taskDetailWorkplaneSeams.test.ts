@@ -18,6 +18,24 @@ test('normalizeTaskOutputHref maps Entity docs and workspace paths', () => {
   assert.equal(normalizeTaskOutputHref(''), null);
 });
 
+test('normalizeTaskOutputHref preserves source document routes used by task output links', () => {
+  const path = '/docs/source/fixture-proof/receipt.md';
+  assert.equal(normalizeTaskOutputHref(`http://127.0.0.1:3008${path}`), path);
+  assert.equal(normalizeTaskOutputHref(`https://entity.example${path}`), path);
+  assert.equal(normalizeTaskOutputHref(path), path);
+  assert.equal(normalizeTaskOutputHref(normalizeTaskOutputHref(`http://127.0.0.1:3008${path}`)!), path);
+  assert.equal(normalizeTaskOutputHref('https://external.example/source/report.txt'), 'https://external.example/source/report.txt');
+});
+
+test('extractTaskOutputLinks keeps canonical source receipt links for the Open action', () => {
+  const label = 'http://127.0.0.1:3008/docs/source/fixture-proof/receipt.md';
+  assert.deepEqual(extractTaskOutputLinks(`Receipt: ${label}`), [{
+    label,
+    href: '/docs/source/fixture-proof/receipt.md',
+    external: false,
+  }]);
+});
+
 test('extractTaskOutputLinks success path collects distinct normalized links', () => {
   const links = extractTaskOutputLinks(
     'See output/demo/proof.md and https://example.com/artifact.json plus output/demo/proof.md again.',

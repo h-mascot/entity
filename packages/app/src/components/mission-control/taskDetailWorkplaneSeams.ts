@@ -266,7 +266,7 @@ export function normalizeTaskOutputHref(rawHref: string): string | null {
 
   const normalized = href.replace(/\\/g, '/');
 
-  const entityDocsUrlMatch = normalized.match(/^https?:\/\/[^/\s<>()]+\/docs\/(output|memory|workspace|projects|zora|spock)\/(.+)$/i);
+  const entityDocsUrlMatch = normalized.match(/^https?:\/\/[^/\s<>()]+\/docs\/(output|memory|workspace|projects|zora|spock|source)\/(.+)$/i);
   if (entityDocsUrlMatch) {
     const [, root, rest] = entityDocsUrlMatch;
     return `/docs/${root.toLowerCase()}/${rest}`;
